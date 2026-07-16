@@ -822,6 +822,7 @@ function Inventory({ lowStock }: { lowStock: Part[] }) {
 function Projects() {
   const [projectSites, setProjectSites] = useState(projects);
   const [selectedProjectName, setSelectedProjectName] = useState(projects[0].name);
+  const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
   const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
@@ -849,6 +850,7 @@ function Projects() {
     };
     setProjectSites((current) => [draftProject, ...current]);
     setSelectedProjectName(draftName);
+    setActionStatus(`${draftName} created. Fill in the site information, SOW, and BOM below.`);
   }
 
   function updateSelectedProject(updater: (project: ProjectSite) => ProjectSite) {
@@ -872,18 +874,28 @@ function Projects() {
     if (!file) {
       return;
     }
+
+    if (file.name.toLowerCase().includes("emerald queen")) {
+      buildSalesBomAndScope(file.name);
+      event.target.value = "";
+      return;
+    }
+
     updateProjectField("salesQuoteFile", file.name);
+    setActionStatus(`${file.name} attached to ${selectedProject.name}. Automated extraction will be wired to the backend next.`);
     event.target.value = "";
   }
 
-  function buildSalesBomAndScope() {
-    const exists = projectSites.some((project) => project.name === emeraldQueenImportedProject.name);
+  function buildSalesBomAndScope(sourceFile = emeraldQueenImportedProject.salesQuoteFile) {
+    const importedProject = { ...emeraldQueenImportedProject, salesQuoteFile: sourceFile };
+    const exists = projectSites.some((project) => project.name === importedProject.name);
     if (exists) {
-      setProjectSites((current) => current.map((project) => (project.name === emeraldQueenImportedProject.name ? emeraldQueenImportedProject : project)));
+      setProjectSites((current) => current.map((project) => (project.name === importedProject.name ? importedProject : project)));
     } else {
-      setProjectSites((current) => [emeraldQueenImportedProject, ...current]);
+      setProjectSites((current) => [importedProject, ...current]);
     }
-    setSelectedProjectName(emeraldQueenImportedProject.name);
+    setSelectedProjectName(importedProject.name);
+    setActionStatus(`${importedProject.name} was built from the sales quote with SOW and BOM fields populated.`);
   }
 
   return (
@@ -892,13 +904,14 @@ function Projects() {
         <div className="action-header">
           <PanelHeader title="Projects" label="Site setup, client location, PM BOM, and purchasing handoff" />
           <div className="action-row">
-            <button className="secondary-action" onClick={buildSalesBomAndScope}><FileText size={17} /> Build Sales BOM and Scope</button>
-            <button className="primary-action" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
+            <button className="secondary-action" type="button" onClick={() => buildSalesBomAndScope()}><FileText size={17} /> Build Sales BOM and Scope</button>
+            <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
           </div>
         </div>
+        <div className="action-status">{actionStatus}</div>
         <div className="project-selector-grid">
           {projectSites.map((project) => (
-            <button className={`project-select-card ${selectedProject.name === project.name ? "active" : ""}`} key={project.name} onClick={() => setSelectedProjectName(project.name)}>
+            <button className={`project-select-card ${selectedProject.name === project.name ? "active" : ""}`} type="button" key={project.name} onClick={() => setSelectedProjectName(project.name)}>
               <div>
                 <strong>{project.name}</strong>
                 <span>{project.client}</span>

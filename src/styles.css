@@ -463,6 +463,16 @@ td small {
   padding: 0 14px;
 }
 
+.action-status {
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  color: #514b43;
+  font-size: 13px;
+  margin-bottom: 14px;
+  padding: 11px 12px;
+}
+
 .project-selector-grid {
   display: grid;
   gap: 10px;
