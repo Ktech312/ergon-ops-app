@@ -473,6 +473,43 @@ td small {
   padding: 11px 12px;
 }
 
+.table-action {
+  background: #174c43;
+  border: 1px solid #174c43;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.progress-cell {
+  display: grid;
+  gap: 6px;
+  min-width: 130px;
+}
+
+.progress-cell span {
+  color: #514b43;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.progress-cell i {
+  background: #ebe5d8;
+  border-radius: 999px;
+  display: block;
+  height: 8px;
+  overflow: hidden;
+}
+
+.progress-cell b {
+  background: #174c43;
+  display: block;
+  height: 100%;
+}
+
 .project-selector-grid {
   display: grid;
   gap: 10px;

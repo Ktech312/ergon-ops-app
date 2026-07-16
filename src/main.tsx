@@ -822,10 +822,23 @@ function Inventory({ lowStock }: { lowStock: Part[] }) {
 function Projects() {
   const [projectSites, setProjectSites] = useState(projects);
   const [selectedProjectName, setSelectedProjectName] = useState(projects[0].name);
+  const [projectMode, setProjectMode] = useState<"list" | "detail">("list");
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
   const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
+  const totalProjectValue = projectSites.reduce((sum, project) => sum + project.allocated, 0);
+  const purchasingProjects = projectSites.filter((project) => project.status === "Purchasing").length;
+  const draftProjects = projectSites.filter((project) => project.status === "Draft" || project.status === "Planning").length;
+
+  function projectCompletion(project: ProjectSite) {
+    if (project.bom.length === 0) {
+      return 0;
+    }
+
+    const done = project.bom.filter((line) => line.status === "Completed" || line.status === "Delivered to Office" || line.status === "Delivered to Client" || line.status === "From Inventory").length;
+    return Math.round((done / project.bom.length) * 100);
+  }
 
   function addDraftProject() {
     const draftName = `New Parking Site ${projectSites.length + 1}`;
@@ -850,7 +863,8 @@ function Projects() {
     };
     setProjectSites((current) => [draftProject, ...current]);
     setSelectedProjectName(draftName);
-    setActionStatus(`${draftName} created. Fill in the site information, SOW, and BOM below.`);
+    setProjectMode("detail");
+    setActionStatus(`${draftName} created. Fill in the site information, SOW, and BOM inside the project.`);
   }
 
   function updateSelectedProject(updater: (project: ProjectSite) => ProjectSite) {
@@ -895,31 +909,80 @@ function Projects() {
       setProjectSites((current) => [importedProject, ...current]);
     }
     setSelectedProjectName(importedProject.name);
+    setProjectMode("detail");
     setActionStatus(`${importedProject.name} was built from the sales quote with SOW and BOM fields populated.`);
+  }
+
+  function openProject(projectName: string) {
+    setSelectedProjectName(projectName);
+    setProjectMode("detail");
+    setActionStatus(`${projectName} opened.`);
+  }
+
+  if (projectMode === "list") {
+    return (
+      <div className="content-grid projects-layout">
+        <section className="panel wide">
+          <div className="action-header">
+            <PanelHeader title="Projects" label="Project list, completion, and PM handoff status" />
+            <div className="action-row">
+              <button className="secondary-action" type="button" onClick={() => buildSalesBomAndScope()}><FileText size={17} /> Build Sales BOM and Scope</button>
+              <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
+            </div>
+          </div>
+          <div className="action-status">{actionStatus}</div>
+        </section>
+
+        <section className="metric-grid">
+          <Metric icon={<ClipboardList size={20} />} label="Projects" value={String(projectSites.length)} />
+          <Metric icon={<DollarSign size={20} />} label="Allocated Value" value={money(totalProjectValue)} />
+          <Metric icon={<ShoppingCart size={20} />} label="In Purchasing" value={String(purchasingProjects)} />
+          <Metric icon={<FileText size={20} />} label="Draft / Planning" value={String(draftProjects)} />
+        </section>
+
+        <section className="panel full">
+          <PanelHeader title="Project List" label="Open a project to edit site info, SOW, and BOM" />
+          <table>
+            <thead>
+              <tr><th>Project</th><th>Client</th><th>Status</th><th>Completion</th><th>Open BOM</th><th>Target</th><th>Allocated</th><th></th></tr>
+            </thead>
+            <tbody>
+              {projectSites.map((project) => {
+                const completion = projectCompletion(project);
+                const openLines = project.bom.filter((line) => line.status === "Need Quote" || line.status === "Not started").length;
+                return (
+                  <tr key={project.name}>
+                    <td><strong>{project.name}</strong><small>{project.type} - {project.package}</small></td>
+                    <td>{project.client}</td>
+                    <td><span className={`status ${project.status === "Purchasing" ? "warn" : project.status === "Install Ready" ? "ok" : ""}`}>{project.status}</span></td>
+                    <td>
+                      <div className="progress-cell"><span>{completion}%</span><i><b style={{ width: `${completion}%` }} /></i></div>
+                    </td>
+                    <td>{openLines}</td>
+                    <td>{project.due}</td>
+                    <td>{money(project.allocated)}</td>
+                    <td><button className="table-action" type="button" onClick={() => openProject(project.name)}>Open</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      </div>
+    );
   }
 
   return (
     <div className="content-grid projects-layout">
       <section className="panel wide">
         <div className="action-header">
-          <PanelHeader title="Projects" label="Site setup, client location, PM BOM, and purchasing handoff" />
+          <PanelHeader title={selectedProject.name} label="Project workspace: site information, SOW, and BOM" />
           <div className="action-row">
-            <button className="secondary-action" type="button" onClick={() => buildSalesBomAndScope()}><FileText size={17} /> Build Sales BOM and Scope</button>
+            <button className="secondary-action" type="button" onClick={() => setProjectMode("list")}>Back to Projects</button>
             <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
           </div>
         </div>
         <div className="action-status">{actionStatus}</div>
-        <div className="project-selector-grid">
-          {projectSites.map((project) => (
-            <button className={`project-select-card ${selectedProject.name === project.name ? "active" : ""}`} type="button" key={project.name} onClick={() => setSelectedProjectName(project.name)}>
-              <div>
-                <strong>{project.name}</strong>
-                <span>{project.client}</span>
-              </div>
-              <span className={`status ${project.status === "Purchasing" ? "warn" : project.status === "Install Ready" ? "ok" : ""}`}>{project.status}</span>
-            </button>
-          ))}
-        </div>
       </section>
 
       <section className="panel full">
