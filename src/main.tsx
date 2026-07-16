@@ -1,4 +1,4 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BarChart3,
@@ -831,6 +831,32 @@ function Projects() {
   const purchasingProjects = projectSites.filter((project) => project.status === "Purchasing").length;
   const draftProjects = projectSites.filter((project) => project.status === "Draft" || project.status === "Planning").length;
 
+  useEffect(() => {
+    window.history.replaceState({ ergonProjectMode: "list" }, "", "#projects");
+
+    function handlePopState(event: PopStateEvent) {
+      const state = event.state as { ergonProjectMode?: "list" | "detail"; projectName?: string } | null;
+
+      if (state?.ergonProjectMode === "detail" && state.projectName) {
+        setSelectedProjectName(state.projectName);
+        setProjectMode("detail");
+        setActionStatus(`${state.projectName} opened.`);
+        return;
+      }
+
+      setProjectMode("list");
+      setActionStatus("Back to project list.");
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  function pushProjectHistory(mode: "list" | "detail", projectName?: string) {
+    const slug = projectName ? projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") : "";
+    window.history.pushState({ ergonProjectMode: mode, projectName }, "", mode === "detail" ? `#projects/${slug}` : "#projects");
+  }
+
   function projectCompletion(project: ProjectSite) {
     if (project.bom.length === 0) {
       return 0;
@@ -864,6 +890,7 @@ function Projects() {
     setProjectSites((current) => [draftProject, ...current]);
     setSelectedProjectName(draftName);
     setProjectMode("detail");
+    pushProjectHistory("detail", draftName);
     setActionStatus(`${draftName} created. Fill in the site information, SOW, and BOM inside the project.`);
   }
 
@@ -910,13 +937,21 @@ function Projects() {
     }
     setSelectedProjectName(importedProject.name);
     setProjectMode("detail");
+    pushProjectHistory("detail", importedProject.name);
     setActionStatus(`${importedProject.name} was built from the sales quote with SOW and BOM fields populated.`);
   }
 
   function openProject(projectName: string) {
     setSelectedProjectName(projectName);
     setProjectMode("detail");
+    pushProjectHistory("detail", projectName);
     setActionStatus(`${projectName} opened.`);
+  }
+
+  function backToProjectList() {
+    setProjectMode("list");
+    window.history.replaceState({ ergonProjectMode: "list" }, "", "#projects");
+    setActionStatus("Back to project list.");
   }
 
   if (projectMode === "list") {
@@ -978,7 +1013,7 @@ function Projects() {
         <div className="action-header">
           <PanelHeader title={selectedProject.name} label="Project workspace: site information, SOW, and BOM" />
           <div className="action-row">
-            <button className="secondary-action" type="button" onClick={() => setProjectMode("list")}>Back to Projects</button>
+            <button className="secondary-action" type="button" onClick={backToProjectList}>Back to Projects</button>
             <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
           </div>
         </div>
