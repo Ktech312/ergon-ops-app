@@ -3,16 +3,20 @@ import { createRoot } from "react-dom/client";
 import {
   BarChart3,
   Boxes,
+  Building2,
   CalendarDays,
   ClipboardList,
   DollarSign,
   FileText,
   FolderOpen,
   LayoutDashboard,
+  MapPin,
+  Plus,
   Search,
   ShoppingCart,
   Truck,
   Upload,
+  User,
 } from "lucide-react";
 import "./styles.css";
 
@@ -66,6 +70,30 @@ type UploadedDoc = {
   project: string;
   size: number;
   status: "Ready to review";
+};
+
+type BomLine = {
+  item: string;
+  qty: number;
+  status: "Need Quote" | "Not started" | "Ordered" | "Completed" | "From Inventory" | "Delivered to Office" | "Delivered to Client";
+  requestSpeed: "ASAP" | "Standard" | "Future";
+  po?: string;
+  notes?: string;
+};
+
+type ProjectSite = {
+  name: string;
+  client: string;
+  type: "Parking Garage" | "Surface Lot" | "Campus Parking" | "Mixed Parking";
+  address: string;
+  owner: string;
+  status: "Draft" | "Planning" | "Purchasing" | "Staging" | "Install Ready";
+  due: string;
+  package: string;
+  cameras: number;
+  allocated: number;
+  siteNotes: string;
+  bom: BomLine[];
 };
 
 const parts: Part[] = [
@@ -262,10 +290,89 @@ const purchaseOrders: PurchaseOrder[] = [
   },
 ];
 
-const projects = [
-  { name: "Lakeside Gate", package: "Constant Power + WiFi", status: "Staging", cameras: 2, allocated: 1740, due: "Jul 30" },
-  { name: "North Lot", package: "No Power + No WiFi", status: "Purchasing", cameras: 4, allocated: 3441, due: "Aug 09" },
-  { name: "Warehouse East", package: "Intermittent Power + No WiFi", status: "Install Ready", cameras: 3, allocated: 2690, due: "Aug 15" },
+const projects: ProjectSite[] = [
+  {
+    name: "NNSB 37th Street",
+    client: "Newport News Shipbuilding",
+    type: "Parking Garage",
+    address: "37th Street garage, Newport News, VA",
+    owner: "Projects / Implementation",
+    status: "Purchasing",
+    due: "Aug 09",
+    package: "Garage camera + single space sensor rollout",
+    cameras: 90,
+    allocated: 48250,
+    siteNotes: "Large garage install with cameras, VPU hardware, outdoor PoE boxes, UPS units, sign controllers, VMS signs, and sensor field equipment.",
+    bom: [
+      { item: "Single Lens Camera", qty: 90, status: "Ordered", requestSpeed: "ASAP", po: "#1225", notes: "Camera coverage for garage lanes and zones" },
+      { item: "VPU", qty: 6, status: "Need Quote", requestSpeed: "ASAP", notes: "Video processing units for garage deployment" },
+      { item: "Outdoor PoE switch with enclosure", qty: 20, status: "Need Quote", requestSpeed: "ASAP", notes: "Field network boxes for camera/sensor runs" },
+      { item: "Outdoor UPS for PoE boxes", qty: 20, status: "Need Quote", requestSpeed: "ASAP", notes: "Power backup at distributed PoE locations" },
+      { item: "Parksol RGB single space sensor", qty: 73, status: "Need Quote", requestSpeed: "ASAP", notes: "Sensor count from PM hardware tracker" },
+      { item: "VMS display signage", qty: 126, status: "Ordered", requestSpeed: "Standard", notes: "Mixed 8x57, 15x57, and monument signs" },
+    ],
+  },
+  {
+    name: "Straub Medical HI",
+    client: "Straub Medical",
+    type: "Parking Garage",
+    address: "10225 Prospect Ave, Santee CA 92071",
+    owner: "Chris Scheppmann",
+    status: "Purchasing",
+    due: "Jul 30",
+    package: "Garage server, camera, sign, and UPS package",
+    cameras: 63,
+    allocated: 28650,
+    siteNotes: "Current purchasing reference for the NeweggBusiness orders. Hardware includes servers, storage, GPUs, camera coverage, sign equipment, and UPS support.",
+    bom: [
+      { item: "Dual Lens Camera", qty: 33, status: "Ordered", requestSpeed: "ASAP", po: "1222" },
+      { item: "Single Lens Camera", qty: 30, status: "Ordered", requestSpeed: "ASAP", po: "1222" },
+      { item: "VPU", qty: 11, status: "Need Quote", requestSpeed: "ASAP" },
+      { item: "Server UPS", qty: 11, status: "Need Quote", requestSpeed: "ASAP" },
+      { item: "Switch UPS / rack mounted booster", qty: 9, status: "Need Quote", requestSpeed: "ASAP" },
+      { item: "Interior signs and wall brackets", qty: 48, status: "Not started", requestSpeed: "Standard" },
+    ],
+  },
+  {
+    name: "East Central Garage",
+    client: "East Central",
+    type: "Parking Garage",
+    address: "133 S. 40th Street, Springdale, AR 72762",
+    owner: "Projects / Implementation",
+    status: "Staging",
+    due: "Aug 15",
+    package: "Garage camera, VPU, sign controller, and sensor package",
+    cameras: 7,
+    allocated: 12400,
+    siteNotes: "Several items completed or shipped. Keep as a good example of PM hardware request turning into purchasing and inventory movement.",
+    bom: [
+      { item: "Single Lens Camera", qty: 7, status: "Completed", requestSpeed: "ASAP", notes: "Not ordered in source tracker" },
+      { item: "PoE Switch", qty: 1, status: "Completed", requestSpeed: "ASAP" },
+      { item: "Server UPS", qty: 1, status: "Completed", requestSpeed: "ASAP", notes: "Ship date 2/27/2026" },
+      { item: "Server Rack", qty: 1, status: "Completed", requestSpeed: "ASAP", notes: "Ship date 2/28/2026" },
+      { item: "Single Space Sensors - Parksol", qty: 20, status: "Completed", requestSpeed: "ASAP" },
+      { item: "Sign Controller", qty: 3, status: "Completed", requestSpeed: "ASAP" },
+    ],
+  },
+  {
+    name: "Lakeside Gate",
+    client: "Demo Client",
+    type: "Surface Lot",
+    address: "TBD site address",
+    owner: "Project Management",
+    status: "Staging",
+    due: "Jul 30",
+    package: "Constant Power + WiFi",
+    cameras: 2,
+    allocated: 1740,
+    siteNotes: "Small surface lot demo project for the standard package matrix.",
+    bom: [
+      { item: "FLI Edge VPI", qty: 1, status: "From Inventory", requestSpeed: "Standard" },
+      { item: "Camera", qty: 2, status: "Need Quote", requestSpeed: "Standard" },
+      { item: "Network Switch", qty: 1, status: "Need Quote", requestSpeed: "Standard" },
+      { item: "Power Junction Box", qty: 1, status: "Need Quote", requestSpeed: "Standard" },
+    ],
+  },
 ];
 
 function money(value: number) {
@@ -633,26 +740,131 @@ function Inventory({ lowStock }: { lowStock: Part[] }) {
 }
 
 function Projects() {
+  const [projectSites, setProjectSites] = useState(projects);
+  const [selectedProjectName, setSelectedProjectName] = useState(projects[0].name);
+  const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
+  const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
+  const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
+
+  function addDraftProject() {
+    const draftName = `New Parking Site ${projectSites.length + 1}`;
+    const draftProject: ProjectSite = {
+      name: draftName,
+      client: "New client",
+      type: "Parking Garage",
+      address: "Site address TBD",
+      owner: "Project Management",
+      status: "Draft",
+      due: "TBD",
+      package: "BOM to be built by PM",
+      cameras: 0,
+      allocated: 0,
+      siteNotes: "Draft project record. Add garage/lot details, install requirements, and BOM lines before sending to Purchasing.",
+      bom: [
+        { item: "Single Lens Camera", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add expected camera count" },
+        { item: "VPU / Edge Compute", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add processing needs" },
+        { item: "Network / PoE Hardware", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add switches, enclosures, UPS, and cable needs" },
+      ],
+    };
+    setProjectSites((current) => [draftProject, ...current]);
+    setSelectedProjectName(draftName);
+  }
+
   return (
-    <section className="panel full">
-      <PanelHeader title="Project Transfers" label="Inventory allocated by project" />
-      <div className="project-grid">
-        {projects.map((project) => (
-          <article className="project-card" key={project.name}>
-            <div className="project-top">
-              <h3>{project.name}</h3>
-              <span className="status">{project.status}</span>
-            </div>
-            <p>{project.package}</p>
-            <div className="project-details">
-              <span><CalendarDays size={15} /> {project.due}</span>
-              <span><Boxes size={15} /> {project.cameras} cameras</span>
-              <span><DollarSign size={15} /> {money(project.allocated)}</span>
-            </div>
-          </article>
-        ))}
-      </div>
-    </section>
+    <div className="content-grid projects-layout">
+      <section className="panel wide">
+        <div className="action-header">
+          <PanelHeader title="Projects" label="Site setup, client location, PM BOM, and purchasing handoff" />
+          <button className="primary-action" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
+        </div>
+        <div className="project-selector-grid">
+          {projectSites.map((project) => (
+            <button className={`project-select-card ${selectedProject.name === project.name ? "active" : ""}`} key={project.name} onClick={() => setSelectedProjectName(project.name)}>
+              <div>
+                <strong>{project.name}</strong>
+                <span>{project.client}</span>
+              </div>
+              <span className={`status ${project.status === "Purchasing" ? "warn" : project.status === "Install Ready" ? "ok" : ""}`}>{project.status}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel full">
+        <PanelHeader title="Add New Project" label="Generic project intake for a parking garage or lot" />
+        <div className="form-grid">
+          <label>Project name<input value={selectedProject.name} readOnly /></label>
+          <label>Client / property<input value={selectedProject.client} readOnly /></label>
+          <label>Site type<select value={selectedProject.type} disabled><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
+          <label>Project owner<input value={selectedProject.owner} readOnly /></label>
+          <label className="span-2">Client location / shipping address<input value={selectedProject.address} readOnly /></label>
+          <label>Status<select value={selectedProject.status} disabled><option>Draft</option><option>Planning</option><option>Purchasing</option><option>Staging</option><option>Install Ready</option></select></label>
+          <label>Target date<input value={selectedProject.due} readOnly /></label>
+          <label className="span-2">Site notes<textarea value={selectedProject.siteNotes} readOnly /></label>
+        </div>
+      </section>
+
+      <section className="panel">
+        <PanelHeader title="Site Information" label="Client, location, and install context" />
+        <div className="site-info-list">
+          <div><Building2 size={17} /><span>Client</span><strong>{selectedProject.client}</strong></div>
+          <div><MapPin size={17} /><span>Location</span><strong>{selectedProject.address}</strong></div>
+          <div><User size={17} /><span>Owner</span><strong>{selectedProject.owner}</strong></div>
+          <div><CalendarDays size={17} /><span>Target</span><strong>{selectedProject.due}</strong></div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <PanelHeader title="Project Snapshot" label="PM request summary" />
+        <div className="snapshot-grid">
+          <div><span>Cameras</span><strong>{selectedProject.cameras}</strong></div>
+          <div><span>BOM Units</span><strong>{bomUnits}</strong></div>
+          <div><span>Open BOM Lines</span><strong>{openBomLines}</strong></div>
+          <div><span>Allocated</span><strong>{money(selectedProject.allocated)}</strong></div>
+        </div>
+      </section>
+
+      <section className="panel full">
+        <PanelHeader title="BOM - Bill of Material" label="PM hardware request before Purchasing orders it" />
+        <table>
+          <thead>
+            <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th></tr>
+          </thead>
+          <tbody>
+            {selectedProject.bom.map((line) => (
+              <tr key={`${selectedProject.name}-${line.item}`}>
+                <td><strong>{line.item}</strong></td>
+                <td>{line.qty}</td>
+                <td><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span></td>
+                <td>{line.requestSpeed}</td>
+                <td>{line.po ?? "TBD"}</td>
+                <td>{line.notes ?? "Ready for PM details"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="panel full">
+        <PanelHeader title="Project Transfers" label="Inventory allocated by project" />
+        <div className="project-grid">
+          {projectSites.map((project) => (
+            <article className="project-card" key={project.name}>
+              <div className="project-top">
+                <h3>{project.name}</h3>
+                <span className="status">{project.status}</span>
+              </div>
+              <p>{project.package}</p>
+              <div className="project-details">
+                <span><CalendarDays size={15} /> {project.due}</span>
+                <span><Boxes size={15} /> {project.cameras} cameras</span>
+                <span><DollarSign size={15} /> {money(project.allocated)}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
 
