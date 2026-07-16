@@ -202,19 +202,28 @@ td small {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.order-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .package-card,
-.project-card {
+.project-card,
+.order-card {
   padding: 16px;
 }
 
 .package-card h3,
-.project-card h3 {
+.project-card h3,
+.order-card h3 {
   font-size: 15px;
   margin: 0 0 8px;
 }
 
 .package-card p,
 .project-card p,
+.order-card p,
 .mini-list {
   color: #756d62;
   font-size: 13px;
@@ -306,6 +315,101 @@ td small {
   justify-content: space-between;
 }
 
+.order-card {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+}
+
+.order-card-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.order-card-header p {
+  margin: 0;
+}
+
+.order-meta {
+  border-bottom: 1px solid #eee7dc;
+  border-top: 1px solid #eee7dc;
+  color: #756d62;
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  margin: 12px 0;
+  padding: 10px 0;
+}
+
+.line-list {
+  display: grid;
+  gap: 8px;
+}
+
+.line-item {
+  align-items: flex-start;
+  background: #f8f5ef;
+  border: 1px solid #eee7dc;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px;
+}
+
+.line-item div {
+  display: grid;
+  gap: 3px;
+}
+
+.line-item strong {
+  font-size: 13px;
+}
+
+.line-item span {
+  color: #756d62;
+  font-size: 12px;
+}
+
+.line-item b {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.order-totals {
+  align-items: center;
+  border-top: 1px solid #eee7dc;
+  color: #756d62;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.order-totals span {
+  font-size: 12px;
+}
+
+.order-totals strong {
+  color: #1b1a18;
+}
+
+.note-list {
+  color: #514b43;
+  display: grid;
+  font-size: 13px;
+  gap: 10px;
+  line-height: 1.5;
+}
+
+.note-list p {
+  margin: 0;
+}
+
 .project-details {
   display: grid;
   gap: 8px;
@@ -368,7 +472,8 @@ td small {
   .content-grid,
   .metric-grid,
   .package-grid,
-  .project-grid {
+  .project-grid,
+  .order-grid {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -383,6 +488,7 @@ td small {
   .metric-grid,
   .package-grid,
   .project-grid,
+  .order-grid,
   .nav-list {
     grid-template-columns: 1fr;
   }

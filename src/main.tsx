@@ -35,6 +35,30 @@ type PackageOption = {
   items: string[];
 };
 
+type PurchaseLine = {
+  name: string;
+  category: "Compute" | "Storage" | "Network" | "Power" | "Enclosure" | "Hardware" | "Rack" | "Other";
+  qty: number;
+  unitCost: number;
+  lineTotal?: number;
+};
+
+type PurchaseOrder = {
+  number: string;
+  vendor: "Amazon" | "NeweggBusiness";
+  date: string;
+  projectRef: "Straud Medical" | "Newport News" | "Newport News 37th St.";
+  status: "Imported" | "In Processing" | "On Hold";
+  subtotal: number;
+  tax: number;
+  shipping: number;
+  total: number;
+  sourceFile: string;
+  shipTo: string;
+  paymentNote: string;
+  lines: PurchaseLine[];
+};
+
 const parts: Part[] = [
   { name: "FLI Edge VPI", description: "NanoPC T6 compute unit", manufacturer: "FriendlyElec", category: "Base", cost: 295, stock: 14, reorderPoint: 6 },
   { name: "Camera", description: "Camera, limit of 4. Prefer Axis", manufacturer: "Axis", category: "Base", cost: 500, stock: 18, reorderPoint: 8 },
@@ -90,10 +114,143 @@ const packageOptions: PackageOption[] = [
   },
 ];
 
-const purchaseOrders = [
-  { number: "PO-1001", vendor: "FriendlyElec", items: "FLI Edge VPI x 6", total: 1770, status: "Ordered", due: "Jul 24" },
-  { number: "PO-1002", vendor: "Victron Energy", items: "Shunts, chargers, cables", total: 1540, status: "Draft", due: "Jul 28" },
-  { number: "PO-1003", vendor: "Renogy", items: "Solar kits", total: 1760, status: "Approval", due: "Aug 02" },
+const purchaseOrders: PurchaseOrder[] = [
+  {
+    number: "1304622160",
+    vendor: "NeweggBusiness",
+    date: "Jul 15, 2026",
+    projectRef: "Straud Medical",
+    status: "In Processing",
+    subtotal: 22436.95,
+    tax: 1738.87,
+    shipping: 0,
+    total: 24175.82,
+    sourceFile: "$24,175.82 NeweggBusiness.pdf",
+    shipTo: "EnSight Technologies, Santee CA",
+    paymentNote: "Visa ending 0950, payment verification pending",
+    lines: [
+      { name: "ASRock Z890 Taichi motherboard", category: "Compute", qty: 13, unitCost: 199.99, lineTotal: 2599.87 },
+      { name: "Intel Core Ultra 7 270K Plus processor", category: "Compute", qty: 17, unitCost: 311.5, lineTotal: 5295.5 },
+      { name: "CORSAIR RM1000x ATX power supply", category: "Power", qty: 14, unitCost: 217.99, lineTotal: 3051.86 },
+      { name: "Rosewill 2U rackmount server chassis", category: "Rack", qty: 13, unitCost: 149.99, lineTotal: 1949.87 },
+      { name: "GIGABYTE WindForce RTX 5070 graphics card", category: "Compute", qty: 15, unitCost: 635.99, lineTotal: 9539.85 },
+    ],
+  },
+  {
+    number: "1304622180",
+    vendor: "NeweggBusiness",
+    date: "Jul 15, 2026",
+    projectRef: "Straud Medical",
+    status: "In Processing",
+    subtotal: 3112.72,
+    tax: 241.24,
+    shipping: 0,
+    total: 3353.96,
+    sourceFile: "3,353.96 NeweggBusiness.pdf",
+    shipTo: "EnSight Technologies, Santee CA",
+    paymentNote: "Visa ending 0950, payment verification pending",
+    lines: [
+      { name: "Samsung 990 PRO SSD 1TB M.2 drive", category: "Storage", qty: 13, unitCost: 239.44, lineTotal: 3112.72 },
+    ],
+  },
+  {
+    number: "1304622200",
+    vendor: "NeweggBusiness",
+    date: "Jul 15, 2026",
+    projectRef: "Straud Medical",
+    status: "On Hold",
+    subtotal: 1040,
+    tax: 80.6,
+    shipping: 0,
+    total: 1120.6,
+    sourceFile: "1,120.60 NeweggBusiness.pdf",
+    shipTo: "EnSight Technologies, Santee CA",
+    paymentNote: "Visa ending 0950, order hold",
+    lines: [
+      { name: "Seagate Desktop HDD 2TB SATA internal drive", category: "Storage", qty: 13, unitCost: 80, lineTotal: 1040 },
+    ],
+  },
+  {
+    number: "112-0918552-2711412",
+    vendor: "Amazon",
+    date: "Jul 13, 2026",
+    projectRef: "Newport News",
+    status: "Imported",
+    subtotal: 3178.84,
+    tax: 246.35,
+    shipping: 0,
+    total: 3425.19,
+    sourceFile: "AMZ $3,286.24 and 138.pdf",
+    shipTo: "10225 Prospect Ave, Santee CA",
+    paymentNote: "Visa ending 0950 split transactions",
+    lines: [
+      { name: "AC Infinity AXIAL 8038 cooling fan", category: "Enclosure", qty: 7, unitCost: 18.42 },
+      { name: "Bud Industries IPV-1116 air vent", category: "Enclosure", qty: 20, unitCost: 11.99 },
+      { name: "VEVOR NEMA 4X steel electrical enclosure", category: "Enclosure", qty: 19, unitCost: 147.9 },
+    ],
+  },
+  {
+    number: "112-5785858-5127443",
+    vendor: "Amazon",
+    date: "Jun 4, 2026",
+    projectRef: "Newport News 37th St.",
+    status: "Imported",
+    subtotal: 1298.51,
+    tax: 107.13,
+    shipping: 0,
+    total: 1405.64,
+    sourceFile: "AMZ $790.20 and 615.pdf",
+    shipTo: "971 Laguna Ave, El Cajon CA",
+    paymentNote: "Visa ending 0950 split transactions",
+    lines: [
+      { name: "Self-drilling screw assortment kit", category: "Hardware", qty: 1, unitCost: 7.59 },
+      { name: "OM4 LC to LC fiber patch cable", category: "Network", qty: 1, unitCost: 6.83 },
+      { name: "ICC CAT6 wall mount patch panel", category: "Network", qty: 1, unitCost: 53.1 },
+      { name: "Outdoor electrical box with fan and thermostat", category: "Enclosure", qty: 1, unitCost: 169.99 },
+      { name: "Aluminum DIN rails, 30 piece pack", category: "Hardware", qty: 1, unitCost: 18.99 },
+      { name: "10GBase-LR SFP+ transceiver pack", category: "Network", qty: 1, unitCost: 94.89 },
+      { name: "Self tapping screw kit", category: "Hardware", qty: 1, unitCost: 7.98 },
+      { name: "Goldenmate lithium UPS battery backup", category: "Power", qty: 1, unitCost: 175.99 },
+      { name: "Cat6/Cat6a 1ft patch cables, 24 pack", category: "Network", qty: 1, unitCost: 19.94 },
+      { name: "Screw mount zip tie anchors", category: "Hardware", qty: 1, unitCost: 14.23 },
+      { name: "TRENDnet 240W DIN-rail power supply", category: "Power", qty: 1, unitCost: 168.99 },
+      { name: "TRENDnet 26-port industrial PoE switch", category: "Network", qty: 1, unitCost: 559.99 },
+    ],
+  },
+  {
+    number: "112-4648611-7664246",
+    vendor: "Amazon",
+    date: "Jul 14, 2026",
+    projectRef: "Newport News",
+    status: "Imported",
+    subtotal: 918,
+    tax: 55.08,
+    shipping: 0,
+    total: 973.08,
+    sourceFile: "amz 973.08.pdf",
+    shipTo: "10225 Prospect Ave, Santee CA",
+    paymentNote: "Visa ending 0950",
+    lines: [
+      { name: "Tecmojo 42U server rack network cabinet", category: "Rack", qty: 1, unitCost: 918, lineTotal: 918 },
+    ],
+  },
+  {
+    number: "112-8691883-8231436",
+    vendor: "Amazon",
+    date: "Jul 8, 2026",
+    projectRef: "Newport News",
+    status: "Imported",
+    subtotal: 73.49,
+    tax: 6.06,
+    shipping: 0,
+    total: 79.55,
+    sourceFile: "AMZ 79.55.pdf",
+    shipTo: "10225 Prospect Ave, Santee CA",
+    paymentNote: "Visa ending 0950",
+    lines: [
+      { name: "19-inch rack mount for UCG-Fiber and UXG-Fiber", category: "Rack", qty: 1, unitCost: 73.49, lineTotal: 73.49 },
+    ],
+  },
 ];
 
 const projects = [
@@ -104,6 +261,22 @@ const projects = [
 
 function money(value: number) {
   return value.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
+function moneyExact(value: number) {
+  return value.toLocaleString(undefined, { style: "currency", currency: "USD" });
+}
+
+function lineTotal(line: PurchaseLine) {
+  return line.lineTotal ?? line.qty * line.unitCost;
+}
+
+function sumBy<T extends string>(items: PurchaseOrder[], key: (order: PurchaseOrder) => T) {
+  return items.reduce<Record<T, number>>((totals, order) => {
+    const bucket = key(order);
+    totals[bucket] = (totals[bucket] ?? 0) + order.total;
+    return totals;
+  }, {} as Record<T, number>);
 }
 
 function App() {
@@ -174,12 +347,15 @@ function pageTitle(view: View) {
 }
 
 function Dashboard({ lowStock, inventoryValue, openPoValue }: { lowStock: Part[]; inventoryValue: number; openPoValue: number }) {
+  const importedLines = purchaseOrders.reduce((sum, order) => sum + order.lines.length, 0);
+  const heldOrders = purchaseOrders.filter((order) => order.status === "On Hold");
+
   return (
     <div className="content-grid">
       <section className="metric-grid">
         <Metric icon={<Boxes size={20} />} label="Inventory Value" value={money(inventoryValue)} />
-        <Metric icon={<ShoppingCart size={20} />} label="Open Purchasing" value={money(openPoValue)} />
-        <Metric icon={<PackageCheck size={20} />} label="Low Stock Items" value={String(lowStock.length)} />
+        <Metric icon={<ShoppingCart size={20} />} label="Recent Order Spend" value={money(openPoValue)} />
+        <Metric icon={<FileText size={20} />} label="Imported Line Items" value={String(importedLines)} />
         <Metric icon={<Truck size={20} />} label="Active Projects" value={String(projects.length)} />
       </section>
 
@@ -198,13 +374,22 @@ function Dashboard({ lowStock, inventoryValue, openPoValue }: { lowStock: Part[]
       </section>
 
       <section className="panel">
-        <PanelHeader title="Needs Attention" label="Reorder watch" />
+        <PanelHeader title="Purchasing Attention" label="Orders needing follow-up" />
         <div className="stack">
-          {lowStock.map((part) => (
+          {heldOrders.map((order) => (
+            <div className="row-card" key={order.number}>
+              <div>
+                <strong>{order.vendor} {order.number}</strong>
+                <span>{order.projectRef} - {order.paymentNote}</span>
+              </div>
+              <b>{money(order.total)}</b>
+            </div>
+          ))}
+          {lowStock.slice(0, 3).map((part) => (
             <div className="row-card" key={part.name}>
               <div>
                 <strong>{part.name}</strong>
-                <span>{part.category}</span>
+                <span>{part.category} reorder watch</span>
               </div>
               <b>{part.stock} left</b>
             </div>
@@ -231,27 +416,103 @@ function Dashboard({ lowStock, inventoryValue, openPoValue }: { lowStock: Part[]
 }
 
 function Purchasing() {
+  const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
+  const totalTax = purchaseOrders.reduce((sum, order) => sum + order.tax, 0);
+  const openOrders = purchaseOrders.filter((order) => order.status !== "Imported").length;
+  const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
+
   return (
-    <section className="panel full">
-      <PanelHeader title="Purchase Orders" label="Demo purchasing queue" />
-      <table>
-        <thead>
-          <tr><th>PO</th><th>Vendor</th><th>Items</th><th>Status</th><th>Due</th><th>Total</th></tr>
-        </thead>
-        <tbody>
-          {purchaseOrders.map((po) => (
-            <tr key={po.number}>
-              <td>{po.number}</td>
-              <td>{po.vendor}</td>
-              <td>{po.items}</td>
-              <td><span className="status">{po.status}</span></td>
-              <td>{po.due}</td>
-              <td>{money(po.total)}</td>
-            </tr>
+    <div className="content-grid purchasing-layout">
+      <section className="metric-grid">
+        <Metric icon={<ShoppingCart size={20} />} label="Recent Orders" value={String(purchaseOrders.length)} />
+        <Metric icon={<DollarSign size={20} />} label="Captured Spend" value={money(totalSpend)} />
+        <Metric icon={<FileText size={20} />} label="Sales Tax" value={money(totalTax)} />
+        <Metric icon={<ClipboardList size={20} />} label="Open Follow-ups" value={String(openOrders)} />
+      </section>
+
+      <section className="panel wide">
+        <PanelHeader title="Imported Purchase Queue" label="Recent PDFs organized by vendor, project reference, and status" />
+        <table>
+          <thead>
+            <tr><th>Order</th><th>Vendor</th><th>Project Ref</th><th>Status</th><th>Lines</th><th>Total</th></tr>
+          </thead>
+          <tbody>
+            {purchaseOrders.map((po) => (
+              <tr key={po.number}>
+                <td><strong>{po.number}</strong><small>{po.date}</small></td>
+                <td>{po.vendor}</td>
+                <td>{po.projectRef}</td>
+                <td><span className={`status ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`}>{po.status}</span></td>
+                <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small></td>
+                <td>{moneyExact(po.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="panel">
+        <PanelHeader title="Spend By Project" label="PDF PO/ref fields" />
+        <div className="stack">
+          {projectSpend.map(([project, total]) => (
+            <div className="row-card" key={project}>
+              <div>
+                <strong>{project}</strong>
+                <span>{purchaseOrders.filter((order) => order.projectRef === project).length} orders</span>
+              </div>
+              <b>{moneyExact(total)}</b>
+            </div>
           ))}
-        </tbody>
-      </table>
-    </section>
+        </div>
+      </section>
+
+      <section className="panel">
+        <PanelHeader title="Import Notes" label="What the PDFs told us" />
+        <div className="note-list">
+          <p>NeweggBusiness orders are tied to Straud Medical and include server compute, storage, GPU, power, and rack chassis hardware.</p>
+          <p>Amazon orders are tied to Newport News and Newport News 37th St. with field enclosures, networking, rack, UPS, and hardware supplies.</p>
+          <p>One NeweggBusiness order is on hold, so it is flagged for follow-up before inventory receiving.</p>
+        </div>
+      </section>
+
+      <section className="panel full">
+        <PanelHeader title="Order Line Items" label="Grouped from the attached order PDFs" />
+        <div className="order-grid">
+          {purchaseOrders.map((order) => (
+            <article className="order-card" key={order.number}>
+              <div className="order-card-header">
+                <div>
+                  <h3>{order.vendor}</h3>
+                  <p>{order.number} - {order.projectRef}</p>
+                </div>
+                <span className={`status ${order.status === "On Hold" ? "warn" : order.status === "Imported" ? "ok" : ""}`}>{order.status}</span>
+              </div>
+              <div className="order-meta">
+                <span>{order.date}</span>
+                <span>{order.shipTo}</span>
+                <span>{order.paymentNote}</span>
+              </div>
+              <div className="line-list">
+                {order.lines.map((line) => (
+                  <div className="line-item" key={`${order.number}-${line.name}`}>
+                    <div>
+                      <strong>{line.name}</strong>
+                      <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
+                    </div>
+                    <b>{moneyExact(lineTotal(line))}</b>
+                  </div>
+                ))}
+              </div>
+              <div className="order-totals">
+                <span>Subtotal {moneyExact(order.subtotal)}</span>
+                <span>Tax {moneyExact(order.tax)}</span>
+                <strong>{moneyExact(order.total)}</strong>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -313,30 +574,47 @@ function Projects() {
 }
 
 function Reports({ inventoryValue, openPoValue }: { inventoryValue: number; openPoValue: number }) {
+  const vendorSpend = Object.entries(sumBy(purchaseOrders, (order) => order.vendor)).sort((a, b) => b[1] - a[1]);
+  const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
+  const categorySpend = purchaseOrders
+    .flatMap((order) => order.lines)
+    .reduce<Record<PurchaseLine["category"], number>>((totals, line) => {
+      totals[line.category] = (totals[line.category] ?? 0) + lineTotal(line);
+      return totals;
+    }, {} as Record<PurchaseLine["category"], number>);
+  const categoryRows = Object.entries(categorySpend).sort((a, b) => b[1] - a[1]);
+  const largestCategory = Math.max(...categoryRows.map(([, total]) => total));
+
   return (
     <div className="content-grid">
       <section className="panel">
-        <PanelHeader title="Project Usage" label="Allocated materials" />
+        <PanelHeader title="Project Spend" label="From recent order PDFs" />
         <div className="stack">
-          {projects.map((project) => <div className="row-card" key={project.name}><strong>{project.name}</strong><b>{money(project.allocated)}</b></div>)}
+          {projectSpend.map(([project, total]) => <div className="row-card" key={project}><strong>{project}</strong><b>{moneyExact(total)}</b></div>)}
         </div>
       </section>
       <section className="panel">
-        <PanelHeader title="Spend Snapshot" label="Current demo totals" />
-        <div className="report-total">{money(inventoryValue + openPoValue)}</div>
-        <p className="muted">Inventory value plus open purchase orders.</p>
+        <PanelHeader title="Vendor Spend" label="NeweggBusiness and Amazon" />
+        <div className="stack">
+          {vendorSpend.map(([vendor, total]) => <div className="row-card" key={vendor}><strong>{vendor}</strong><b>{moneyExact(total)}</b></div>)}
+        </div>
       </section>
       <section className="panel wide">
-        <PanelHeader title="Package Cost Comparison" label="Without cameras" />
+        <PanelHeader title="Purchase Category Mix" label="Line-item spend before tax" />
         <div className="bar-list">
-          {packageOptions.map((pkg) => (
-            <div className="bar-row" key={pkg.name}>
-              <span>{pkg.name}</span>
-              <div><i style={{ width: `${(pkg.costWithoutCameras / 1441) * 100}%` }} /></div>
-              <b>{money(pkg.costWithoutCameras)}</b>
+          {categoryRows.map(([category, total]) => (
+            <div className="bar-row" key={category}>
+              <span>{category}</span>
+              <div><i style={{ width: `${(total / largestCategory) * 100}%` }} /></div>
+              <b>{moneyExact(total)}</b>
             </div>
           ))}
         </div>
+      </section>
+      <section className="panel wide">
+        <PanelHeader title="Ops Snapshot" label="Inventory plus captured purchasing" />
+        <div className="report-total">{money(inventoryValue + openPoValue)}</div>
+        <p className="muted">Current demo inventory value plus recent order PDFs now captured in Purchasing.</p>
       </section>
     </div>
   );
