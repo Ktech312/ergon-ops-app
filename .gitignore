@@ -12,6 +12,10 @@ node_modules/
 dist/
 build/
 coverage/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+dev-server.log
 
 # Logs
 *.log
