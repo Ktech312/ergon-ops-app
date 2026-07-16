@@ -287,6 +287,102 @@ td small {
   margin-top: 3px;
 }
 
+.upload-layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(280px, 1fr);
+}
+
+.upload-drop {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px dashed #b8ad9b;
+  border-radius: 8px;
+  color: #174c43;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-height: 150px;
+  padding: 22px;
+  text-align: center;
+}
+
+.upload-drop span {
+  color: #756d62;
+  font-size: 13px;
+}
+
+.upload-drop input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+
+.upload-controls {
+  display: grid;
+  gap: 12px;
+}
+
+.upload-controls label {
+  color: #514b43;
+  display: grid;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 7px;
+}
+
+.upload-controls select {
+  appearance: none;
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  color: #1b1a18;
+  font: inherit;
+  min-height: 44px;
+  padding: 0 12px;
+}
+
+.drive-card,
+.document-row {
+  align-items: center;
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+}
+
+.drive-card {
+  color: #174c43;
+}
+
+.drive-card div,
+.document-row div {
+  display: grid;
+  gap: 3px;
+}
+
+.drive-card span,
+.document-row span {
+  color: #756d62;
+  font-size: 12px;
+}
+
+.document-queue {
+  border-top: 1px solid #eee7dc;
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.document-row {
+  justify-content: space-between;
+}
+
 .status {
   background: #ebe5d8;
   border-radius: 999px;
@@ -473,7 +569,8 @@ td small {
   .metric-grid,
   .package-grid,
   .project-grid,
-  .order-grid {
+  .order-grid,
+  .upload-layout {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -489,6 +586,7 @@ td small {
   .package-grid,
   .project-grid,
   .order-grid,
+  .upload-layout,
   .nav-list {
     grid-template-columns: 1fr;
   }

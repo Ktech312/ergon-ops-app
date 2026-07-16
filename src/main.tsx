@@ -7,11 +7,12 @@ import {
   ClipboardList,
   DollarSign,
   FileText,
+  FolderOpen,
   LayoutDashboard,
-  PackageCheck,
   Search,
   ShoppingCart,
   Truck,
+  Upload,
 } from "lucide-react";
 import "./styles.css";
 
@@ -57,6 +58,14 @@ type PurchaseOrder = {
   shipTo: string;
   paymentNote: string;
   lines: PurchaseLine[];
+};
+
+type UploadedDoc = {
+  id: number;
+  name: string;
+  project: string;
+  size: number;
+  status: "Ready to review";
 };
 
 const parts: Part[] = [
@@ -267,6 +276,18 @@ function moneyExact(value: number) {
   return value.toLocaleString(undefined, { style: "currency", currency: "USD" });
 }
 
+function formatBytes(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function lineTotal(line: PurchaseLine) {
   return line.lineTotal ?? line.qty * line.unitCost;
 }
@@ -416,10 +437,26 @@ function Dashboard({ lowStock, inventoryValue, openPoValue }: { lowStock: Part[]
 }
 
 function Purchasing() {
+  const [selectedProject, setSelectedProject] = useState("Straud Medical");
+  const [uploadedDocs, setUploadedDocs] = useState<UploadedDoc[]>([]);
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
   const totalTax = purchaseOrders.reduce((sum, order) => sum + order.tax, 0);
   const openOrders = purchaseOrders.filter((order) => order.status !== "Imported").length;
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
+  const documentProjects = Array.from(new Set([...purchaseOrders.map((order) => order.projectRef), ...projects.map((project) => project.name)]));
+
+  function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    const newDocs = files.map((file, index) => ({
+      id: Date.now() + index,
+      name: file.name,
+      project: selectedProject,
+      size: file.size,
+      status: "Ready to review" as const,
+    }));
+    setUploadedDocs((current) => [...newDocs, ...current]);
+    event.target.value = "";
+  }
 
   return (
     <div className="content-grid purchasing-layout">
@@ -428,6 +465,52 @@ function Purchasing() {
         <Metric icon={<DollarSign size={20} />} label="Captured Spend" value={money(totalSpend)} />
         <Metric icon={<FileText size={20} />} label="Sales Tax" value={money(totalTax)} />
         <Metric icon={<ClipboardList size={20} />} label="Open Follow-ups" value={String(openOrders)} />
+      </section>
+
+      <section className="panel wide">
+        <PanelHeader title="Upload Purchasing Document" label="Assign a PDF or receipt to a project before review" />
+        <div className="upload-layout">
+          <label className="upload-drop">
+            <Upload size={24} />
+            <strong>Choose document</strong>
+            <span>PDF invoices, order confirmations, packing slips, or receipts</span>
+            <input type="file" accept=".pdf,.png,.jpg,.jpeg" multiple onChange={handleDocumentSelect} />
+          </label>
+          <div className="upload-controls">
+            <label>
+              Project
+              <select value={selectedProject} onChange={(event) => setSelectedProject(event.target.value)}>
+                {documentProjects.map((project) => (
+                  <option key={project} value={project}>{project}</option>
+                ))}
+              </select>
+            </label>
+            <div className="drive-card">
+              <FolderOpen size={18} />
+              <div>
+                <strong>Future Google Drive backup</strong>
+                <span>Documents can later be copied into the selected project folder automatically.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="document-queue">
+          {(uploadedDocs.length ? uploadedDocs : purchaseOrders.slice(0, 3).map((order, index) => ({
+            id: index,
+            name: order.sourceFile,
+            project: order.projectRef,
+            size: 0,
+            status: "Ready to review" as const,
+          }))).map((doc) => (
+            <div className="document-row" key={`${doc.id}-${doc.name}`}>
+              <div>
+                <strong>{doc.name}</strong>
+                <span>{doc.project}{doc.size ? ` - ${formatBytes(doc.size)}` : " - imported sample"}</span>
+              </div>
+              <span className="status ok">{doc.status}</span>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="panel wide">
