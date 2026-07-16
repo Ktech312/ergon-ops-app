@@ -81,6 +81,17 @@ type BomLine = {
   notes?: string;
 };
 
+type ScopeOfWork = {
+  summary: string;
+  preparation: string;
+  infrastructure: string;
+  installation: string;
+  commissioning: string;
+  fineTuning: string;
+  assumptions: string;
+  exclusions: string;
+};
+
 type ProjectSite = {
   name: string;
   client: string;
@@ -93,6 +104,8 @@ type ProjectSite = {
   cameras: number;
   allocated: number;
   siteNotes: string;
+  salesQuoteFile?: string;
+  sow: ScopeOfWork;
   bom: BomLine[];
 };
 
@@ -290,6 +303,57 @@ const purchaseOrders: PurchaseOrder[] = [
   },
 ];
 
+const blankSow: ScopeOfWork = {
+  summary: "Define the garage or lot scope, included modules, parking guidance goals, and expected outcome.",
+  preparation: "Confirm site requirements, drawings, use cases, and functional specification before ordering equipment.",
+  infrastructure: "Confirm power, conduit, network drops, internet, mounting surfaces, and client-provided equipment.",
+  installation: "Coordinate access, safety requirements, equipment mounting, cabling, and final terminations.",
+  commissioning: "Configure hardware and software, verify connectivity, set camera fields of view, and validate sign data.",
+  fineTuning: "Audit counting results, tune system accuracy, and coordinate go-live when the system is stable.",
+  assumptions: "Client will provide required access, network path, and timely approval of final installation details.",
+  exclusions: "Tax, permits, major infrastructure work, and third-party rework are outside the base scope unless added.",
+};
+
+const emeraldQueenImportedProject: ProjectSite = {
+  name: "Emerald Queen Tacoma - New Garage",
+  client: "Emerald Queen Casino & Hotel",
+  type: "Parking Garage",
+  address: "Tacoma, WA - new construction parking garage",
+  owner: "Steven Oakes / Sales",
+  status: "Planning",
+  due: "TBD",
+  package: "Total occupancy guidance system with full matrix signage",
+  cameras: 11,
+  allocated: 307225,
+  salesQuoteFile: "EnSight - New Garage - Emerald Queen Tacoma Casino & Hotel - Parking Occupancy Management & Guidance Proposal - February 11th, 2026.pdf",
+  siteNotes: "Imported from sales proposal dated February 11, 2026. Includes occupancy management, guidance signage, LPR, level counting, and software/support scope.",
+  sow: {
+    summary: "Provide a parking occupancy management and guidance system for the new Emerald Queen parking garage with real-time occupancy/utilization data, entrance and interior full matrix signs, LPR at entrance/exit points, level counting cameras, and EnSightful portal reporting.",
+    preparation: "Agree on functional specification and use cases, then order equipment. Equipment is received at the EnSight office for programming and factory acceptance testing before installation scheduling.",
+    infrastructure: "Cat6 conduit and cable paths are needed to each camera, sign, and onsite server. Signage requires 120VAC before installation. Client-provided network equipment is excluded from the base quote.",
+    installation: "Client electrician/installation team installs the EnSight system. Proposal estimates approximately 4-6 weeks for a project of this size.",
+    commissioning: "After equipment is installed and connected to network, set camera fields of view, install/configure FLI counting software, verify counting, push data to Aggregator/signage, and confirm data reaches the EnSightful portal.",
+    fineTuning: "Fine-tuning period is estimated at 2-3 weeks. Team audits results, optimizes accuracy, agrees on go-live date, and turns signs on for occupancy display.",
+    assumptions: "Existing rack/UPS assumed in garage data closet. Client provides managed switches/network equipment, segmented network access, remote access utility approval, 120V signage power, and annual SSSA.",
+    exclusions: "Tax, installation/infrastructure, switches, routers, WAPs, UPSs, scanning/X-raying, bonds, permits, certifications, engineered drawings, foundation design, and third-party rework.",
+  },
+  bom: [
+    { item: "EnSightful Edge Vision Processing Unit", qty: 1, status: "Need Quote", requestSpeed: "ASAP", notes: "One per site; proposal notes max 18 cameras per server" },
+    { item: "Network equipment", qty: 1, status: "Need Quote", requestSpeed: "ASAP", notes: "Excluded from proposal; client-provided managed switches/network equipment" },
+    { item: "EnSight Eyes vehicle counting camera and software", qty: 5, status: "Need Quote", requestSpeed: "ASAP", notes: "Vehicle counting camera/software scope" },
+    { item: "Dual lens camera for FLI counting and rear plate LPR", qty: 6, status: "Need Quote", requestSpeed: "ASAP", notes: "Includes FLI and LPR licenses" },
+    { item: "Full Matrix Display - 2ft H x 7ft W - 5mm", qty: 7, status: "Need Quote", requestSpeed: "ASAP", notes: "Entrance/interior guidance signage" },
+    { item: "Full Matrix Display - 6ft H x 4.5ft W - 5mm", qty: 4, status: "Need Quote", requestSpeed: "ASAP", notes: "Large full matrix display signage" },
+    { item: "Sign mount hardware", qty: 11, status: "Need Quote", requestSpeed: "ASAP", notes: "Proposal lists 4 plus 7 sign mount hardware lines" },
+    { item: "EnSight sign controller", qty: 11, status: "Need Quote", requestSpeed: "ASAP", notes: "Smart sign control hardware" },
+    { item: "Remote implementation services", qty: 40, status: "Need Quote", requestSpeed: "Standard", notes: "PM, engineering/drawings, and software configuration hours" },
+    { item: "On-site commissioning and go-live support", qty: 56, status: "Need Quote", requestSpeed: "Standard", notes: "40 commissioning hours plus 16 go-live support hours" },
+    { item: "Travel and related expenses", qty: 1, status: "Need Quote", requestSpeed: "Standard" },
+    { item: "Shipping", qty: 1, status: "Need Quote", requestSpeed: "Standard" },
+    { item: "Annual SSSA", qty: 1, status: "Need Quote", requestSpeed: "Future", notes: "$18,325 annual software and support services agreement" },
+  ],
+};
+
 const projects: ProjectSite[] = [
   {
     name: "NNSB 37th Street",
@@ -303,6 +367,11 @@ const projects: ProjectSite[] = [
     cameras: 90,
     allocated: 48250,
     siteNotes: "Large garage install with cameras, VPU hardware, outdoor PoE boxes, UPS units, sign controllers, VMS signs, and sensor field equipment.",
+    sow: {
+      ...blankSow,
+      summary: "Garage camera and single-space sensor rollout for Newport News Shipbuilding with field networking, UPS, signage, and sensor equipment.",
+      infrastructure: "Outdoor PoE boxes, UPS, managed switching, sign posts, and sensor base stations need to be planned before purchasing.",
+    },
     bom: [
       { item: "Single Lens Camera", qty: 90, status: "Ordered", requestSpeed: "ASAP", po: "#1225", notes: "Camera coverage for garage lanes and zones" },
       { item: "VPU", qty: 6, status: "Need Quote", requestSpeed: "ASAP", notes: "Video processing units for garage deployment" },
@@ -324,6 +393,11 @@ const projects: ProjectSite[] = [
     cameras: 63,
     allocated: 28650,
     siteNotes: "Current purchasing reference for the NeweggBusiness orders. Hardware includes servers, storage, GPUs, camera coverage, sign equipment, and UPS support.",
+    sow: {
+      ...blankSow,
+      summary: "Parking garage deployment for Straub Medical with camera coverage, server/VPU hardware, UPS support, and sign equipment.",
+      infrastructure: "Confirm rack, UPS, switch, sign power, and camera cabling requirements before releasing remaining orders.",
+    },
     bom: [
       { item: "Dual Lens Camera", qty: 33, status: "Ordered", requestSpeed: "ASAP", po: "1222" },
       { item: "Single Lens Camera", qty: 30, status: "Ordered", requestSpeed: "ASAP", po: "1222" },
@@ -345,6 +419,11 @@ const projects: ProjectSite[] = [
     cameras: 7,
     allocated: 12400,
     siteNotes: "Several items completed or shipped. Keep as a good example of PM hardware request turning into purchasing and inventory movement.",
+    sow: {
+      ...blankSow,
+      summary: "Garage deployment with cameras, VPU, sign controllers, Parksol sensors, PoE switch, UPS, and server rack.",
+      commissioning: "Completed hardware lines should move toward inventory receiving, staging, and commissioning closeout.",
+    },
     bom: [
       { item: "Single Lens Camera", qty: 7, status: "Completed", requestSpeed: "ASAP", notes: "Not ordered in source tracker" },
       { item: "PoE Switch", qty: 1, status: "Completed", requestSpeed: "ASAP" },
@@ -366,6 +445,7 @@ const projects: ProjectSite[] = [
     cameras: 2,
     allocated: 1740,
     siteNotes: "Small surface lot demo project for the standard package matrix.",
+    sow: blankSow,
     bom: [
       { item: "FLI Edge VPI", qty: 1, status: "From Inventory", requestSpeed: "Standard" },
       { item: "Camera", qty: 2, status: "Need Quote", requestSpeed: "Standard" },
@@ -760,6 +840,7 @@ function Projects() {
       cameras: 0,
       allocated: 0,
       siteNotes: "Draft project record. Add garage/lot details, install requirements, and BOM lines before sending to Purchasing.",
+      sow: blankSow,
       bom: [
         { item: "Single Lens Camera", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add expected camera count" },
         { item: "VPU / Edge Compute", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add processing needs" },
@@ -770,12 +851,50 @@ function Projects() {
     setSelectedProjectName(draftName);
   }
 
+  function updateSelectedProject(updater: (project: ProjectSite) => ProjectSite) {
+    setProjectSites((current) => current.map((project) => (project.name === selectedProject.name ? updater(project) : project)));
+  }
+
+  function updateProjectField<K extends keyof ProjectSite>(field: K, value: ProjectSite[K]) {
+    const previousName = selectedProject.name;
+    updateSelectedProject((project) => ({ ...project, [field]: value }));
+    if (field === "name" && typeof value === "string" && previousName === selectedProjectName) {
+      setSelectedProjectName(value);
+    }
+  }
+
+  function updateSowField<K extends keyof ScopeOfWork>(field: K, value: ScopeOfWork[K]) {
+    updateSelectedProject((project) => ({ ...project, sow: { ...project.sow, [field]: value } }));
+  }
+
+  function handleSalesQuoteSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    updateProjectField("salesQuoteFile", file.name);
+    event.target.value = "";
+  }
+
+  function buildSalesBomAndScope() {
+    const exists = projectSites.some((project) => project.name === emeraldQueenImportedProject.name);
+    if (exists) {
+      setProjectSites((current) => current.map((project) => (project.name === emeraldQueenImportedProject.name ? emeraldQueenImportedProject : project)));
+    } else {
+      setProjectSites((current) => [emeraldQueenImportedProject, ...current]);
+    }
+    setSelectedProjectName(emeraldQueenImportedProject.name);
+  }
+
   return (
     <div className="content-grid projects-layout">
       <section className="panel wide">
         <div className="action-header">
           <PanelHeader title="Projects" label="Site setup, client location, PM BOM, and purchasing handoff" />
-          <button className="primary-action" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
+          <div className="action-row">
+            <button className="secondary-action" onClick={buildSalesBomAndScope}><FileText size={17} /> Build Sales BOM and Scope</button>
+            <button className="primary-action" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
+          </div>
         </div>
         <div className="project-selector-grid">
           {projectSites.map((project) => (
@@ -793,15 +912,18 @@ function Projects() {
       <section className="panel full">
         <PanelHeader title="Add New Project" label="Generic project intake for a parking garage or lot" />
         <div className="form-grid">
-          <label>Project name<input value={selectedProject.name} readOnly /></label>
-          <label>Client / property<input value={selectedProject.client} readOnly /></label>
-          <label>Site type<select value={selectedProject.type} disabled><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
-          <label>Project owner<input value={selectedProject.owner} readOnly /></label>
-          <label className="span-2">Client location / shipping address<input value={selectedProject.address} readOnly /></label>
-          <label>Status<select value={selectedProject.status} disabled><option>Draft</option><option>Planning</option><option>Purchasing</option><option>Staging</option><option>Install Ready</option></select></label>
-          <label>Target date<input value={selectedProject.due} readOnly /></label>
-          <label className="span-2">Site notes<textarea value={selectedProject.siteNotes} readOnly /></label>
+          <label>Project name<input value={selectedProject.name} onChange={(event) => updateProjectField("name", event.target.value)} /></label>
+          <label>Client / property<input value={selectedProject.client} onChange={(event) => updateProjectField("client", event.target.value)} /></label>
+          <label>Site type<select value={selectedProject.type} onChange={(event) => updateProjectField("type", event.target.value as ProjectSite["type"])}><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
+          <label>Project owner<input value={selectedProject.owner} onChange={(event) => updateProjectField("owner", event.target.value)} /></label>
+          <label className="span-2">Client location / shipping address<input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} /></label>
+          <label>Status<select value={selectedProject.status} onChange={(event) => updateProjectField("status", event.target.value as ProjectSite["status"])}><option>Draft</option><option>Planning</option><option>Purchasing</option><option>Staging</option><option>Install Ready</option></select></label>
+          <label>Target date<input value={selectedProject.due} onChange={(event) => updateProjectField("due", event.target.value)} /></label>
+          <label className="span-2">Sales quote PDF<input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} /></label>
+          <label className="span-2">Solution / package<input value={selectedProject.package} onChange={(event) => updateProjectField("package", event.target.value)} /></label>
+          <label className="span-2">Site notes<textarea value={selectedProject.siteNotes} onChange={(event) => updateProjectField("siteNotes", event.target.value)} /></label>
         </div>
+        {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
       </section>
 
       <section className="panel">
@@ -821,6 +943,20 @@ function Projects() {
           <div><span>BOM Units</span><strong>{bomUnits}</strong></div>
           <div><span>Open BOM Lines</span><strong>{openBomLines}</strong></div>
           <div><span>Allocated</span><strong>{money(selectedProject.allocated)}</strong></div>
+        </div>
+      </section>
+
+      <section className="panel full">
+        <PanelHeader title="SOW - Scope of Work" label="Generated from sales quote and editable by the team" />
+        <div className="sow-grid">
+          <label className="span-2">Summary<textarea value={selectedProject.sow.summary} onChange={(event) => updateSowField("summary", event.target.value)} /></label>
+          <label>Preparation<textarea value={selectedProject.sow.preparation} onChange={(event) => updateSowField("preparation", event.target.value)} /></label>
+          <label>Infrastructure<textarea value={selectedProject.sow.infrastructure} onChange={(event) => updateSowField("infrastructure", event.target.value)} /></label>
+          <label>Installation<textarea value={selectedProject.sow.installation} onChange={(event) => updateSowField("installation", event.target.value)} /></label>
+          <label>Commissioning<textarea value={selectedProject.sow.commissioning} onChange={(event) => updateSowField("commissioning", event.target.value)} /></label>
+          <label>Fine tuning / go-live<textarea value={selectedProject.sow.fineTuning} onChange={(event) => updateSowField("fineTuning", event.target.value)} /></label>
+          <label>Assumptions<textarea value={selectedProject.sow.assumptions} onChange={(event) => updateSowField("assumptions", event.target.value)} /></label>
+          <label className="span-2">Exclusions<textarea value={selectedProject.sow.exclusions} onChange={(event) => updateSowField("exclusions", event.target.value)} /></label>
         </div>
       </section>
 
