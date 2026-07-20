@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import formidable from "formidable";
-import { PDFParse } from "pdf-parse";
+import pdfParse from "pdf-parse/lib/pdf-parse.js";
 
 export const config = {
   api: {
@@ -62,10 +62,24 @@ function sectionBetween(text, startPattern, endPatterns) {
   return clean(rest.slice(0, end));
 }
 
-function quantityFor(text, label) {
+function quantityFor(text, label, nextLabel = "") {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const matches = [...text.matchAll(new RegExp(`${escaped}(?:\\s*\\([^)]*\\))?\\s+(\\d+)`, "gi"))];
-  return matches.reduce((sum, match) => sum + Number(match[1]), 0);
+  const sameLineMatches = [...text.matchAll(new RegExp(`${escaped}(?:\\s*\\([^)]*\\))?\\s*(\\d+)`, "gi"))];
+  const sameLineTotal = sameLineMatches.reduce((sum, match) => sum + Number(match[1]), 0);
+  if (sameLineTotal > 0) {
+    return sameLineTotal;
+  }
+
+  const start = text.indexOf(label);
+  if (start < 0) {
+    return 0;
+  }
+
+  const end = nextLabel ? text.indexOf(nextLabel, start + label.length) : -1;
+  const section = text.slice(start + label.length, end > start ? end : start + label.length + 900);
+  const standaloneNumbers = [...section.matchAll(/(?:^|\n)\s*(\d{1,4})\s*(?=\n|$)/g)].map((match) => Number(match[1]));
+
+  return standaloneNumbers.at(-1) ?? 0;
 }
 
 function moneyValue(text, patterns) {
@@ -92,13 +106,17 @@ function buildBom(text) {
   ];
 
   return lines
-    .map(([item, notes]) => ({
-      item,
-      qty: quantityFor(text, item),
-      status: "Need Quote",
-      requestSpeed: "Standard",
-      notes,
-    }))
+    .map(([item, notes], index) => {
+      const nextItem = lines[index + 1]?.[0] ?? "";
+
+      return {
+        item,
+        qty: quantityFor(text, item, nextItem),
+        status: "Need Quote",
+        requestSpeed: "Standard",
+        notes,
+      };
+    })
     .filter((line) => line.qty > 0);
 }
 
@@ -107,9 +125,9 @@ export function extractQuoteData(text, sourceFile, projectRef = "") {
   const lower = normalized.toLowerCase();
   const isEmeraldQueen = lower.includes("emerald queen");
   const projectTitle = clean(normalized.split("\n").find((line) => line.trim().length > 8) ?? "New Sales Quote Project");
-  const client = preparedFor(normalized, isEmeraldQueen ? "Emerald Queen Casino & Hotel" : "Client from sales quote");
+  const client = isEmeraldQueen ? "Emerald Queen Casino & Hotel" : preparedFor(normalized, "Client from sales quote");
   const hardwareTotal = moneyValue(normalized, [/System Hardware and Technology Investment Total\s+(\$[\d,]+\.\d{2})/i]);
-  const sssaTotal = moneyValue(normalized, [/Annual Software and Support Services Agreement \(SSSA\) Total:\s+(\$[\d,]+\.\d{2})/i]);
+  const sssaTotal = moneyValue(normalized, [/Annual Software and Support Services Agreement \(SSSA\) Total:\s*(\$[\d,]+\.\d{2})/i]);
   const bom = buildBom(normalized);
   const cameraQty = bom
     .filter((line) => line.item.toLowerCase().includes("camera"))
@@ -214,9 +232,7 @@ export default async function handler(req, res) {
     }
 
     const buffer = await readFile(upload.filepath);
-    const parser = new PDFParse({ data: buffer });
-    const parsed = await parser.getText();
-    await parser.destroy?.();
+    const parsed = await pdfParse(buffer);
 
     const sourceFile = upload.originalFilename || "sales-quote.pdf";
     const projectRef = single(fields.projectRef) || "";
