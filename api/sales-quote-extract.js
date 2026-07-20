@@ -211,6 +211,16 @@ async function parseForm(req) {
   });
 }
 
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.from(chunk));
+  }
+
+  const raw = Buffer.concat(chunks).toString("utf8");
+  return raw ? JSON.parse(raw) : {};
+}
+
 function single(value) {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -223,6 +233,18 @@ export default async function handler(req, res) {
   }
 
   try {
+    if (String(req.headers["content-type"] || "").includes("application/json")) {
+      const body = await readJsonBody(req);
+      if (!body.text) {
+        res.status(400).json({ error: "No extracted PDF text was provided." });
+        return;
+      }
+
+      const extraction = extractQuoteData(body.text, body.sourceFile || "sales-quote.pdf", body.projectRef || "");
+      res.status(200).json(extraction);
+      return;
+    }
+
     const { fields, files } = await parseForm(req);
     const upload = single(files.file);
 

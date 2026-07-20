@@ -958,21 +958,49 @@ function Projects() {
     }
   }
 
+  async function extractPdfText(file: File) {
+    const pdfjs = await import("pdfjs-dist");
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url).toString();
+
+    const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const pageTexts: string[] = [];
+
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ");
+      pageTexts.push(text);
+    }
+
+    await pdf.cleanup();
+    return pageTexts.join("\n\n");
+  }
+
   async function handleSalesQuoteFile(file: File) {
     const projectName = selectedProject.name;
     const projectRef = selectedProject.ref;
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("projectRef", projectRef);
 
     updateProjectField("salesQuoteFile", file.name);
     setIsExtractingQuote(true);
-    setActionStatus(`Reading ${file.name} for ${projectRef}. Extracting project details, SOW, and BOM lines...`);
+    setActionStatus(`Reading ${file.name} for ${projectRef}. Extracting PDF text in the browser...`);
 
     try {
+      const extractedText = await extractPdfText(file);
+      if (extractedText.trim().length < 100) {
+        throw new Error("The PDF text was too short to map automatically.");
+      }
+
+      setActionStatus(`Mapping ${file.name} into project details, SOW, and BOM lines...`);
       const response = await fetch("/api/sales-quote-extract", {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectRef,
+          sourceFile: file.name,
+          text: extractedText,
+        }),
       });
 
       if (!response.ok) {
