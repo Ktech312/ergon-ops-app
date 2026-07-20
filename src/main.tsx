@@ -961,7 +961,6 @@ function Projects() {
           <div className="action-header">
             <PanelHeader title="Projects" label="Project list, completion, and PM handoff status" />
             <div className="action-row">
-              <button className="secondary-action" type="button" onClick={() => buildSalesBomAndScope()}><FileText size={17} /> Build Sales BOM and Scope</button>
               <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
             </div>
           </div>
@@ -1014,14 +1013,14 @@ function Projects() {
           <PanelHeader title={selectedProject.name} label="Project workspace: site information, SOW, and BOM" />
           <div className="action-row">
             <button className="secondary-action" type="button" onClick={backToProjectList}>Back to Projects</button>
-            <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
+            <button className="primary-action" type="button" onClick={() => buildSalesBomAndScope()}><FileText size={17} /> Build Sales BOM and Scope</button>
           </div>
         </div>
         <div className="action-status">{actionStatus}</div>
       </section>
 
       <section className="panel full">
-        <PanelHeader title="Add New Project" label="Generic project intake for a parking garage or lot" />
+        <PanelHeader title="Project Details" label="Editable site intake for this parking garage or lot" />
         <div className="form-grid">
           <label>Project name<input value={selectedProject.name} onChange={(event) => updateProjectField("name", event.target.value)} /></label>
           <label>Client / property<input value={selectedProject.client} onChange={(event) => updateProjectField("client", event.target.value)} /></label>
