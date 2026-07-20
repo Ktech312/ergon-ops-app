@@ -111,6 +111,13 @@ type ProjectSite = {
   bom: BomLine[];
 };
 
+type SalesQuoteExtractResponse = {
+  confidence: "high" | "draft";
+  mode: string;
+  project: ProjectSite;
+  extractedTextPreview: string;
+};
+
 const parts: Part[] = [
   { ref: "INV-0001", name: "FLI Edge VPI", description: "NanoPC T6 compute unit", manufacturer: "FriendlyElec", category: "Base", cost: 295, stock: 14, reorderPoint: 6 },
   { ref: "INV-0002", name: "Camera", description: "Camera, limit of 4. Prefer Axis", manufacturer: "Axis", category: "Base", cost: 500, stock: 18, reorderPoint: 8 },
@@ -832,6 +839,7 @@ function Projects() {
   const [selectedProjectName, setSelectedProjectName] = useState(projects[0].name);
   const [projectMode, setProjectMode] = useState<"list" | "detail">("list");
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
+  const [isExtractingQuote, setIsExtractingQuote] = useState(false);
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
   const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
@@ -940,20 +948,50 @@ function Projects() {
 
   function handleSalesQuoteDrop(event: React.DragEvent<HTMLLabelElement>) {
     event.preventDefault();
+    if (isExtractingQuote) {
+      return;
+    }
+
     const file = event.dataTransfer.files?.[0];
     if (file) {
       handleSalesQuoteFile(file);
     }
   }
 
-  function handleSalesQuoteFile(file: File) {
-    if (file.name.toLowerCase().includes("emerald queen")) {
-      applySalesQuoteToCurrentProject(file.name);
-      return;
-    }
+  async function handleSalesQuoteFile(file: File) {
+    const projectName = selectedProject.name;
+    const projectRef = selectedProject.ref;
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("projectRef", projectRef);
 
     updateProjectField("salesQuoteFile", file.name);
-    setActionStatus(`${file.name} attached to ${selectedProject.ref}. AI extraction will read and map this quote once the backend parser is connected.`);
+    setIsExtractingQuote(true);
+    setActionStatus(`Reading ${file.name} for ${projectRef}. Extracting project details, SOW, and BOM lines...`);
+
+    try {
+      const response = await fetch("/api/sales-quote-extract", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Extraction failed with status ${response.status}`);
+      }
+
+      const extraction = (await response.json()) as SalesQuoteExtractResponse;
+      applyExtractedQuoteToProject(projectName, projectRef, extraction);
+    } catch (error) {
+      if (file.name.toLowerCase().includes("emerald queen")) {
+        applySalesQuoteToCurrentProject(file.name);
+        setActionStatus(`${projectRef} used the seeded Emerald Queen extraction because the live API was not available locally.`);
+        return;
+      }
+
+      setActionStatus(`${file.name} is attached to ${projectRef}, but extraction did not finish yet. ${error instanceof Error ? error.message : "Try again after deployment."}`);
+    } finally {
+      setIsExtractingQuote(false);
+    }
   }
 
   function applySalesQuoteToCurrentProject(sourceFile = emeraldQueenImportedProject.salesQuoteFile) {
@@ -965,6 +1003,17 @@ function Projects() {
     setProjectSites((current) => current.map((project) => (project.name === selectedProject.name ? importedProject : project)));
     setSelectedProjectName(importedProject.name);
     setActionStatus(`${selectedProject.ref} was filled from ${sourceFile}. Review and edit the project details, SOW, and BOM before purchasing.`);
+  }
+
+  function applyExtractedQuoteToProject(projectName: string, projectRef: string, extraction: SalesQuoteExtractResponse) {
+    const importedProject = {
+      ...extraction.project,
+      ref: projectRef,
+    };
+
+    setProjectSites((current) => current.map((project) => (project.name === projectName ? importedProject : project)));
+    setSelectedProjectName(importedProject.name);
+    setActionStatus(`${projectRef} was extracted from ${importedProject.salesQuoteFile} using ${extraction.mode}. Confidence: ${extraction.confidence}. Review every field before purchasing.`);
   }
 
   function openProject(projectName: string) {
@@ -1047,11 +1096,11 @@ function Projects() {
 
       <section className="panel full">
         <PanelHeader title="Build Sales BOM and Scope" label="Upload a sales quote PDF to fill this project" />
-        <label className="sales-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
+        <label className={`sales-dropzone ${isExtractingQuote ? "is-working" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
           <Upload size={26} />
-          <strong>Drag sales quote PDF here</strong>
-          <span>or choose a file to queue it for AI extraction into Project Details, SOW, and BOM.</span>
-          <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} />
+          <strong>{isExtractingQuote ? "Reading sales quote..." : "Drag sales quote PDF here"}</strong>
+          <span>{isExtractingQuote ? "Extracting project details, SOW sections, totals, and BOM lines." : "or choose a file to extract it into Project Details, SOW, and BOM."}</span>
+          <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} disabled={isExtractingQuote} />
         </label>
         {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
       </section>

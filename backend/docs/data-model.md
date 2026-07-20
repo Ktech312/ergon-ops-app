@@ -19,9 +19,24 @@ Stores app users linked to Supabase Auth users.
 `projects`
 
 Stores project names, customer names, dates, status, owner, budget fields, and
-Google Drive folder links.
+Google Drive folder links. `project_number` is the internal reference used on
+screens, uploads, purchasing requests, and reports.
 
 The project name is the reporting anchor for inventory transfers.
+
+`project_documents`
+
+Stores uploaded or linked files for a project, including sales quotes, SOWs,
+BOMs, purchase orders, invoices, field photos, and other reference documents.
+The first MVP can store Google Drive URLs here; later Supabase Storage can hold
+private file copies.
+
+`sales_quote_extractions`
+
+Stores the parsed result from a sales quote PDF. The raw file stays in
+`project_documents`; this table keeps the extracted project fields, SOW, BOM,
+confidence, parser mode, and review status so PM or Purchasing can correct it
+before it becomes live purchasing data.
 
 ## Purchasing
 

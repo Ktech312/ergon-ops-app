@@ -612,6 +612,12 @@ td small {
   border-color: #174c43;
 }
 
+.sales-dropzone.is-working {
+  background: #eef5f1;
+  border-color: #174c43;
+  cursor: progress;
+}
+
 .sales-dropzone strong {
   color: #174c43;
   font-size: 17px;
