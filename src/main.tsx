@@ -23,6 +23,7 @@ import "./styles.css";
 type View = "dashboard" | "purchasing" | "inventory" | "projects" | "reports";
 
 type Part = {
+  ref: string;
   name: string;
   description: string;
   manufacturer: string;
@@ -93,6 +94,7 @@ type ScopeOfWork = {
 };
 
 type ProjectSite = {
+  ref: string;
   name: string;
   client: string;
   type: "Parking Garage" | "Surface Lot" | "Campus Parking" | "Mixed Parking";
@@ -110,25 +112,25 @@ type ProjectSite = {
 };
 
 const parts: Part[] = [
-  { name: "FLI Edge VPI", description: "NanoPC T6 compute unit", manufacturer: "FriendlyElec", category: "Base", cost: 295, stock: 14, reorderPoint: 6 },
-  { name: "Camera", description: "Camera, limit of 4. Prefer Axis", manufacturer: "Axis", category: "Base", cost: 500, stock: 18, reorderPoint: 8 },
-  { name: "VPU case", description: "White steel junction box", manufacturer: "Joinfworld", category: "Base", cost: 255, stock: 9, reorderPoint: 4 },
-  { name: "Cellular Data Connection", description: "Internal LTE in Nano", manufacturer: "SixFab / Telit", category: "Communications", cost: 65, stock: 7, reorderPoint: 5 },
-  { name: "External Antenna", description: "External LTE antenna", manufacturer: "Bingfu / Dixingtech", category: "Communications", cost: 30, stock: 11, reorderPoint: 8 },
-  { name: "External Cell Modem", description: "Industrial mobile router", manufacturer: "Ubiquiti", category: "Communications", cost: 225, stock: 5, reorderPoint: 3 },
-  { name: "Network Switch", description: "Industrial PoE network switch", manufacturer: "LinoVision", category: "Communications", cost: 110, stock: 6, reorderPoint: 6 },
-  { name: "Solar Panel", description: "12V 100W minimum, geography dependent", manufacturer: "Renogy", category: "Power", cost: 85, stock: 10, reorderPoint: 6 },
-  { name: "Solar Charger", description: "MPPT 75 charger", manufacturer: "Victron Energy", category: "Power", cost: 75, stock: 8, reorderPoint: 5 },
-  { name: "Solar Panel Mount Hardware", description: "Panel mounting hardware", manufacturer: "Renogy", category: "Power", cost: 66, stock: 13, reorderPoint: 6 },
-  { name: "Solar Panel to MPPT Connection Cable", description: "12/2 outdoor AWG connection cable", manufacturer: "Field supply", category: "Power", cost: 25, stock: 15, reorderPoint: 10 },
-  { name: "Battery", description: "LiFEPO4 12VDC at 300Wh", manufacturer: "GreenOE", category: "Power", cost: 65, stock: 12, reorderPoint: 6 },
-  { name: "Smart Shunt", description: "300A shunt", manufacturer: "Victron Energy", category: "Power", cost: 85, stock: 6, reorderPoint: 6 },
-  { name: "Smart Shunt Energy Cable", description: "VE.Direct to USB interface", manufacturer: "Victron Energy", category: "Power", cost: 35, stock: 10, reorderPoint: 7 },
-  { name: "AC Charger", description: "AC charging adapter", manufacturer: "Amazon", category: "Power", cost: 25, stock: 16, reorderPoint: 8 },
-  { name: "Power Junction Box", description: "Field wiring enclosure", manufacturer: "Field supply", category: "Power", cost: 45, stock: 9, reorderPoint: 5 },
-  { name: "LED Light", description: "Optional additional lighting", manufacturer: "Amazon", category: "Lighting", cost: 145, stock: 4, reorderPoint: 3 },
-  { name: "Pole for LED Light", description: "16ft pole for LED light", manufacturer: "Field supply", category: "Lighting", cost: 175, stock: 2, reorderPoint: 2 },
-  { name: "32in Display", description: "Screen technology TBD", manufacturer: "TBD", category: "Display", cost: 3000, stock: 1, reorderPoint: 1 },
+  { ref: "INV-0001", name: "FLI Edge VPI", description: "NanoPC T6 compute unit", manufacturer: "FriendlyElec", category: "Base", cost: 295, stock: 14, reorderPoint: 6 },
+  { ref: "INV-0002", name: "Camera", description: "Camera, limit of 4. Prefer Axis", manufacturer: "Axis", category: "Base", cost: 500, stock: 18, reorderPoint: 8 },
+  { ref: "INV-0003", name: "VPU case", description: "White steel junction box", manufacturer: "Joinfworld", category: "Base", cost: 255, stock: 9, reorderPoint: 4 },
+  { ref: "INV-0004", name: "Cellular Data Connection", description: "Internal LTE in Nano", manufacturer: "SixFab / Telit", category: "Communications", cost: 65, stock: 7, reorderPoint: 5 },
+  { ref: "INV-0005", name: "External Antenna", description: "External LTE antenna", manufacturer: "Bingfu / Dixingtech", category: "Communications", cost: 30, stock: 11, reorderPoint: 8 },
+  { ref: "INV-0006", name: "External Cell Modem", description: "Industrial mobile router", manufacturer: "Ubiquiti", category: "Communications", cost: 225, stock: 5, reorderPoint: 3 },
+  { ref: "INV-0007", name: "Network Switch", description: "Industrial PoE network switch", manufacturer: "LinoVision", category: "Communications", cost: 110, stock: 6, reorderPoint: 6 },
+  { ref: "INV-0008", name: "Solar Panel", description: "12V 100W minimum, geography dependent", manufacturer: "Renogy", category: "Power", cost: 85, stock: 10, reorderPoint: 6 },
+  { ref: "INV-0009", name: "Solar Charger", description: "MPPT 75 charger", manufacturer: "Victron Energy", category: "Power", cost: 75, stock: 8, reorderPoint: 5 },
+  { ref: "INV-0010", name: "Solar Panel Mount Hardware", description: "Panel mounting hardware", manufacturer: "Renogy", category: "Power", cost: 66, stock: 13, reorderPoint: 6 },
+  { ref: "INV-0011", name: "Solar Panel to MPPT Connection Cable", description: "12/2 outdoor AWG connection cable", manufacturer: "Field supply", category: "Power", cost: 25, stock: 15, reorderPoint: 10 },
+  { ref: "INV-0012", name: "Battery", description: "LiFEPO4 12VDC at 300Wh", manufacturer: "GreenOE", category: "Power", cost: 65, stock: 12, reorderPoint: 6 },
+  { ref: "INV-0013", name: "Smart Shunt", description: "300A shunt", manufacturer: "Victron Energy", category: "Power", cost: 85, stock: 6, reorderPoint: 6 },
+  { ref: "INV-0014", name: "Smart Shunt Energy Cable", description: "VE.Direct to USB interface", manufacturer: "Victron Energy", category: "Power", cost: 35, stock: 10, reorderPoint: 7 },
+  { ref: "INV-0015", name: "AC Charger", description: "AC charging adapter", manufacturer: "Amazon", category: "Power", cost: 25, stock: 16, reorderPoint: 8 },
+  { ref: "INV-0016", name: "Power Junction Box", description: "Field wiring enclosure", manufacturer: "Field supply", category: "Power", cost: 45, stock: 9, reorderPoint: 5 },
+  { ref: "INV-0017", name: "LED Light", description: "Optional additional lighting", manufacturer: "Amazon", category: "Lighting", cost: 145, stock: 4, reorderPoint: 3 },
+  { ref: "INV-0018", name: "Pole for LED Light", description: "16ft pole for LED light", manufacturer: "Field supply", category: "Lighting", cost: 175, stock: 2, reorderPoint: 2 },
+  { ref: "INV-0019", name: "32in Display", description: "Screen technology TBD", manufacturer: "TBD", category: "Display", cost: 3000, stock: 1, reorderPoint: 1 },
 ];
 
 const packageOptions: PackageOption[] = [
@@ -315,6 +317,7 @@ const blankSow: ScopeOfWork = {
 };
 
 const emeraldQueenImportedProject: ProjectSite = {
+  ref: "PRJ-2026-0004",
   name: "Emerald Queen Tacoma - New Garage",
   client: "Emerald Queen Casino & Hotel",
   type: "Parking Garage",
@@ -356,6 +359,7 @@ const emeraldQueenImportedProject: ProjectSite = {
 
 const projects: ProjectSite[] = [
   {
+    ref: "PRJ-2026-0001",
     name: "NNSB 37th Street",
     client: "Newport News Shipbuilding",
     type: "Parking Garage",
@@ -382,6 +386,7 @@ const projects: ProjectSite[] = [
     ],
   },
   {
+    ref: "PRJ-2026-0002",
     name: "Straub Medical HI",
     client: "Straub Medical",
     type: "Parking Garage",
@@ -408,6 +413,7 @@ const projects: ProjectSite[] = [
     ],
   },
   {
+    ref: "PRJ-2026-0003",
     name: "East Central Garage",
     client: "East Central",
     type: "Parking Garage",
@@ -434,6 +440,7 @@ const projects: ProjectSite[] = [
     ],
   },
   {
+    ref: "PRJ-2026-0005",
     name: "Lakeside Gate",
     client: "Demo Client",
     type: "Surface Lot",
@@ -793,11 +800,12 @@ function Inventory({ lowStock }: { lowStock: Part[] }) {
         <PanelHeader title="Parts Inventory" label={`${parts.length} BOM items`} />
         <table>
           <thead>
-            <tr><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th></tr>
+            <tr><th>Ref</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th></tr>
           </thead>
           <tbody>
             {parts.map((part) => (
               <tr key={part.name}>
+                <td><strong>{part.ref}</strong></td>
                 <td><strong>{part.name}</strong><small>{part.description}</small></td>
                 <td>{part.category}</td>
                 <td>{part.manufacturer}</td>
@@ -830,6 +838,15 @@ function Projects() {
   const totalProjectValue = projectSites.reduce((sum, project) => sum + project.allocated, 0);
   const purchasingProjects = projectSites.filter((project) => project.status === "Purchasing").length;
   const draftProjects = projectSites.filter((project) => project.status === "Draft" || project.status === "Planning").length;
+
+  function nextProjectRef() {
+    const maxRef = projectSites.reduce((currentMax, project) => {
+      const match = project.ref.match(/^PRJ-2026-(\d+)$/);
+      return match ? Math.max(currentMax, Number(match[1])) : currentMax;
+    }, 0);
+
+    return `PRJ-2026-${String(maxRef + 1).padStart(4, "0")}`;
+  }
 
   useEffect(() => {
     window.history.replaceState({ ergonProjectMode: "list" }, "", "#projects");
@@ -869,6 +886,7 @@ function Projects() {
   function addDraftProject() {
     const draftName = `New Parking Site ${projectSites.length + 1}`;
     const draftProject: ProjectSite = {
+      ref: nextProjectRef(),
       name: draftName,
       client: "New client",
       type: "Parking Garage",
@@ -916,29 +934,37 @@ function Projects() {
       return;
     }
 
+    handleSalesQuoteFile(file);
+    event.target.value = "";
+  }
+
+  function handleSalesQuoteDrop(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      handleSalesQuoteFile(file);
+    }
+  }
+
+  function handleSalesQuoteFile(file: File) {
     if (file.name.toLowerCase().includes("emerald queen")) {
-      buildSalesBomAndScope(file.name);
-      event.target.value = "";
+      applySalesQuoteToCurrentProject(file.name);
       return;
     }
 
     updateProjectField("salesQuoteFile", file.name);
-    setActionStatus(`${file.name} attached to ${selectedProject.name}. Automated extraction will be wired to the backend next.`);
-    event.target.value = "";
+    setActionStatus(`${file.name} attached to ${selectedProject.ref}. AI extraction will read and map this quote once the backend parser is connected.`);
   }
 
-  function buildSalesBomAndScope(sourceFile = emeraldQueenImportedProject.salesQuoteFile) {
-    const importedProject = { ...emeraldQueenImportedProject, salesQuoteFile: sourceFile };
-    const exists = projectSites.some((project) => project.name === importedProject.name);
-    if (exists) {
-      setProjectSites((current) => current.map((project) => (project.name === importedProject.name ? importedProject : project)));
-    } else {
-      setProjectSites((current) => [importedProject, ...current]);
-    }
+  function applySalesQuoteToCurrentProject(sourceFile = emeraldQueenImportedProject.salesQuoteFile) {
+    const importedProject = {
+      ...emeraldQueenImportedProject,
+      ref: selectedProject.ref,
+      salesQuoteFile: sourceFile,
+    };
+    setProjectSites((current) => current.map((project) => (project.name === selectedProject.name ? importedProject : project)));
     setSelectedProjectName(importedProject.name);
-    setProjectMode("detail");
-    pushProjectHistory("detail", importedProject.name);
-    setActionStatus(`${importedProject.name} was built from the sales quote with SOW and BOM fields populated.`);
+    setActionStatus(`${selectedProject.ref} was filled from ${sourceFile}. Review and edit the project details, SOW, and BOM before purchasing.`);
   }
 
   function openProject(projectName: string) {
@@ -978,7 +1004,7 @@ function Projects() {
           <PanelHeader title="Project List" label="Open a project to edit site info, SOW, and BOM" />
           <table>
             <thead>
-              <tr><th>Project</th><th>Client</th><th>Status</th><th>Completion</th><th>Open BOM</th><th>Target</th><th>Allocated</th><th></th></tr>
+              <tr><th>Ref</th><th>Project</th><th>Client</th><th>Status</th><th>Completion</th><th>Open BOM</th><th>Target</th><th>Allocated</th><th></th></tr>
             </thead>
             <tbody>
               {projectSites.map((project) => {
@@ -986,6 +1012,7 @@ function Projects() {
                 const openLines = project.bom.filter((line) => line.status === "Need Quote" || line.status === "Not started").length;
                 return (
                   <tr key={project.name}>
+                    <td><strong>{project.ref}</strong></td>
                     <td><strong>{project.name}</strong><small>{project.type} - {project.package}</small></td>
                     <td>{project.client}</td>
                     <td><span className={`status ${project.status === "Purchasing" ? "warn" : project.status === "Install Ready" ? "ok" : ""}`}>{project.status}</span></td>
@@ -1013,15 +1040,26 @@ function Projects() {
           <PanelHeader title={selectedProject.name} label="Project workspace: site information, SOW, and BOM" />
           <div className="action-row">
             <button className="secondary-action" type="button" onClick={backToProjectList}>Back to Projects</button>
-            <button className="primary-action" type="button" onClick={() => buildSalesBomAndScope()}><FileText size={17} /> Build Sales BOM and Scope</button>
           </div>
         </div>
         <div className="action-status">{actionStatus}</div>
       </section>
 
       <section className="panel full">
+        <PanelHeader title="Build Sales BOM and Scope" label="Upload a sales quote PDF to fill this project" />
+        <label className="sales-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
+          <Upload size={26} />
+          <strong>Drag sales quote PDF here</strong>
+          <span>or choose a file to queue it for AI extraction into Project Details, SOW, and BOM.</span>
+          <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} />
+        </label>
+        {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
+      </section>
+
+      <section className="panel full">
         <PanelHeader title="Project Details" label="Editable site intake for this parking garage or lot" />
         <div className="form-grid">
+          <label>Internal project ref<input value={selectedProject.ref} onChange={(event) => updateProjectField("ref", event.target.value)} /></label>
           <label>Project name<input value={selectedProject.name} onChange={(event) => updateProjectField("name", event.target.value)} /></label>
           <label>Client / property<input value={selectedProject.client} onChange={(event) => updateProjectField("client", event.target.value)} /></label>
           <label>Site type<select value={selectedProject.type} onChange={(event) => updateProjectField("type", event.target.value as ProjectSite["type"])}><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
@@ -1029,11 +1067,9 @@ function Projects() {
           <label className="span-2">Client location / shipping address<input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} /></label>
           <label>Status<select value={selectedProject.status} onChange={(event) => updateProjectField("status", event.target.value as ProjectSite["status"])}><option>Draft</option><option>Planning</option><option>Purchasing</option><option>Staging</option><option>Install Ready</option></select></label>
           <label>Target date<input value={selectedProject.due} onChange={(event) => updateProjectField("due", event.target.value)} /></label>
-          <label className="span-2">Sales quote PDF<input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} /></label>
           <label className="span-2">Solution / package<input value={selectedProject.package} onChange={(event) => updateProjectField("package", event.target.value)} /></label>
           <label className="span-2">Site notes<textarea value={selectedProject.siteNotes} onChange={(event) => updateProjectField("siteNotes", event.target.value)} /></label>
         </div>
-        {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
       </section>
 
       <section className="panel">

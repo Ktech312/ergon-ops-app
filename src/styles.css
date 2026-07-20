@@ -591,6 +591,45 @@ td small {
   grid-column: 1 / -1;
 }
 
+.sales-dropzone {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px dashed #b8ad9b;
+  border-radius: 8px;
+  color: #174c43;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-height: 160px;
+  padding: 24px;
+  position: relative;
+  text-align: center;
+}
+
+.sales-dropzone:hover {
+  background: #f3efe7;
+  border-color: #174c43;
+}
+
+.sales-dropzone strong {
+  color: #174c43;
+  font-size: 17px;
+}
+
+.sales-dropzone span {
+  color: #756d62;
+  font-size: 13px;
+  max-width: 520px;
+}
+
+.sales-dropzone input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+
 .source-file {
   align-items: center;
   background: #f8f5ef;
