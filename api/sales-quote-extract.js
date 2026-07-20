@@ -9,6 +9,7 @@ export const config = {
 };
 
 const MAX_PREVIEW_LENGTH = 1200;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 function firstMatch(text, patterns, fallback = "") {
   for (const pattern of patterns) {
@@ -192,6 +193,133 @@ export function extractQuoteData(text, sourceFile, projectRef = "") {
   };
 }
 
+const extractionSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    confidence: { type: "string", enum: ["draft", "medium", "high"] },
+    project: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string" },
+        client: { type: "string" },
+        type: { type: "string", enum: ["Parking Garage", "Surface Lot", "Campus Parking", "Mixed Parking"] },
+        address: { type: "string" },
+        owner: { type: "string" },
+        status: { type: "string", enum: ["Draft", "Planning", "Purchasing", "Staging", "Install Ready"] },
+        due: { type: "string" },
+        package: { type: "string" },
+        cameras: { type: "number" },
+        allocated: { type: "number" },
+        siteNotes: { type: "string" },
+        sow: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string" },
+            preparation: { type: "string" },
+            infrastructure: { type: "string" },
+            installation: { type: "string" },
+            commissioning: { type: "string" },
+            fineTuning: { type: "string" },
+            assumptions: { type: "string" },
+            exclusions: { type: "string" },
+          },
+          required: ["summary", "preparation", "infrastructure", "installation", "commissioning", "fineTuning", "assumptions", "exclusions"],
+        },
+        bom: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              item: { type: "string" },
+              qty: { type: "number" },
+              status: { type: "string", enum: ["Need Quote", "Not started", "Ordered", "Completed", "From Inventory", "Delivered to Office", "Delivered to Client"] },
+              requestSpeed: { type: "string", enum: ["ASAP", "Standard", "Future"] },
+              po: { type: "string" },
+              notes: { type: "string" },
+            },
+            required: ["item", "qty", "status", "requestSpeed", "po", "notes"],
+          },
+        },
+        reviewWarnings: {
+          type: "array",
+          items: { type: "string" },
+        },
+      },
+      required: ["name", "client", "type", "address", "owner", "status", "due", "package", "cameras", "allocated", "siteNotes", "sow", "bom", "reviewWarnings"],
+    },
+  },
+  required: ["confidence", "project"],
+};
+
+function extractOutputText(responseJson) {
+  if (responseJson.output_text) {
+    return responseJson.output_text;
+  }
+
+  const message = responseJson.output?.find((item) => item.type === "message");
+  const textPart = message?.content?.find((part) => part.type === "output_text");
+  return textPart?.text || "";
+}
+
+async function extractQuoteDataWithAi(text, sourceFile, projectRef = "") {
+  if (!process.env.OPENAI_API_KEY) {
+    return null;
+  }
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      input: [
+        {
+          role: "system",
+          content:
+            "You extract parking garage and parking lot sales quote PDFs for an operations app. Return editable project details, scope of work, BOM lines, totals, assumptions, exclusions, and warnings. Do not invent quantities or costs; use reviewWarnings when uncertain.",
+        },
+        {
+          role: "user",
+          content: `Project ref: ${projectRef}\nSource file: ${sourceFile}\n\nExtract this quote text:\n${text.slice(0, 70000)}`,
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "sales_quote_extraction",
+          strict: true,
+          schema: extractionSchema,
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI extraction failed with status ${response.status}: ${await response.text()}`);
+  }
+
+  const responseJson = await response.json();
+  const outputText = extractOutputText(responseJson);
+  const aiResult = JSON.parse(outputText);
+
+  return {
+    confidence: aiResult.confidence,
+    mode: `openai:${OPENAI_MODEL}`,
+    project: {
+      ...aiResult.project,
+      ref: projectRef,
+      salesQuoteFile: sourceFile,
+    },
+    extractedTextPreview: clean(text.slice(0, MAX_PREVIEW_LENGTH)),
+  };
+}
+
 async function parseForm(req) {
   const form = formidable({
     keepExtensions: true,
@@ -240,7 +368,9 @@ export default async function handler(req, res) {
         return;
       }
 
-      const extraction = extractQuoteData(body.text, body.sourceFile || "sales-quote.pdf", body.projectRef || "");
+      const extraction =
+        (await extractQuoteDataWithAi(body.text, body.sourceFile || "sales-quote.pdf", body.projectRef || "")) ||
+        extractQuoteData(body.text, body.sourceFile || "sales-quote.pdf", body.projectRef || "");
       res.status(200).json(extraction);
       return;
     }
@@ -258,7 +388,7 @@ export default async function handler(req, res) {
 
     const sourceFile = upload.originalFilename || "sales-quote.pdf";
     const projectRef = single(fields.projectRef) || "";
-    const extraction = extractQuoteData(parsed.text, sourceFile, projectRef);
+    const extraction = (await extractQuoteDataWithAi(parsed.text, sourceFile, projectRef)) || extractQuoteData(parsed.text, sourceFile, projectRef);
 
     res.status(200).json(extraction);
   } catch (error) {
