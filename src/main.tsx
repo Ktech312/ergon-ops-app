@@ -111,6 +111,8 @@ type ProjectSite = {
   bom: BomLine[];
 };
 
+type BomMaterialAction = "pull" | "order";
+
 type SalesQuoteExtractResponse = {
   confidence: "high" | "draft";
   mode: string;
@@ -503,9 +505,16 @@ function sumBy<T extends string>(items: PurchaseOrder[], key: (order: PurchaseOr
 
 function App() {
   const [view, setView] = useState<View>("dashboard");
-  const lowStock = parts.filter((part) => part.stock <= part.reorderPoint);
-  const inventoryValue = parts.reduce((sum, part) => sum + part.stock * part.cost, 0);
+  const [inventoryItems, setInventoryItems] = useState(parts);
+  const lowStock = inventoryItems.filter((part) => part.stock <= part.reorderPoint);
+  const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
+
+  function pullFromInventory(itemName: string, qty: number) {
+    setInventoryItems((current) =>
+      current.map((part) => (part.name === itemName ? { ...part, stock: Math.max(0, part.stock - qty) } : part)),
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -540,8 +549,8 @@ function App() {
 
         {view === "dashboard" && <Dashboard lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
         {view === "purchasing" && <Purchasing />}
-        {view === "inventory" && <Inventory lowStock={lowStock} />}
-        {view === "projects" && <Projects />}
+        {view === "inventory" && <Inventory inventoryItems={inventoryItems} lowStock={lowStock} />}
+        {view === "projects" && <Projects inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
         {view === "reports" && <Reports inventoryValue={inventoryValue} openPoValue={openPoValue} />}
       </main>
     </div>
@@ -800,17 +809,17 @@ function Purchasing() {
   );
 }
 
-function Inventory({ lowStock }: { lowStock: Part[] }) {
+function Inventory({ inventoryItems, lowStock }: { inventoryItems: Part[]; lowStock: Part[] }) {
   return (
     <div className="content-grid">
       <section className="panel wide">
-        <PanelHeader title="Parts Inventory" label={`${parts.length} BOM items`} />
+        <PanelHeader title="Parts Inventory" label={`${inventoryItems.length} BOM items`} />
         <table>
           <thead>
             <tr><th>Ref</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th></tr>
           </thead>
           <tbody>
-            {parts.map((part) => (
+            {inventoryItems.map((part) => (
               <tr key={part.name}>
                 <td><strong>{part.ref}</strong></td>
                 <td><strong>{part.name}</strong><small>{part.description}</small></td>
@@ -834,18 +843,41 @@ function Inventory({ lowStock }: { lowStock: Part[] }) {
   );
 }
 
-function Projects() {
+function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[]; onInventoryPull: (itemName: string, qty: number) => void }) {
   const [projectSites, setProjectSites] = useState(projects);
   const [selectedProjectName, setSelectedProjectName] = useState(projects[0].name);
   const [projectMode, setProjectMode] = useState<"list" | "detail">("list");
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
   const [isExtractingQuote, setIsExtractingQuote] = useState(false);
+  const [showBomModal, setShowBomModal] = useState(false);
+  const [bomDraft, setBomDraft] = useState({
+    item: parts[0].name,
+    qty: 1,
+    action: "pull" as BomMaterialAction,
+    requestSpeed: "Standard" as BomLine["requestSpeed"],
+    notes: "",
+  });
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
   const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
   const totalProjectValue = projectSites.reduce((sum, project) => sum + project.allocated, 0);
   const purchasingProjects = projectSites.filter((project) => project.status === "Purchasing").length;
   const draftProjects = projectSites.filter((project) => project.status === "Draft" || project.status === "Planning").length;
+  const bomItemSuggestions = [
+    ...inventoryItems.map((part) => part.name),
+    "Single Space Sensor",
+    "Outdoor PoE Box",
+    "UPS Unit",
+    "VMS Sign",
+    "Sign Controller",
+    "CAT6 Cable",
+    "Conduit",
+    "Pole Mount",
+    "Server Rack",
+    "LTE Modem",
+    "Solar Kit",
+  ];
+  const selectedInventoryItem = inventoryItems.find((part) => part.name === bomDraft.item);
 
   function nextProjectRef() {
     const maxRef = projectSites.reduce((currentMax, project) => {
@@ -934,6 +966,42 @@ function Projects() {
 
   function updateSowField<K extends keyof ScopeOfWork>(field: K, value: ScopeOfWork[K]) {
     updateSelectedProject((project) => ({ ...project, sow: { ...project.sow, [field]: value } }));
+  }
+
+  function updateBomDraft<K extends keyof typeof bomDraft>(field: K, value: (typeof bomDraft)[K]) {
+    setBomDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function addBomLine() {
+    const item = bomDraft.item.trim();
+    const qty = Math.max(1, Math.round(Number(bomDraft.qty) || 1));
+    if (!item) {
+      setActionStatus("Add a material item before saving the BOM line.");
+      return;
+    }
+
+    const pullingFromInventory = bomDraft.action === "pull" && selectedInventoryItem && selectedInventoryItem.stock >= qty;
+    const line: BomLine = {
+      item,
+      qty,
+      status: pullingFromInventory ? "From Inventory" : "Need Quote",
+      requestSpeed: bomDraft.requestSpeed,
+      notes: bomDraft.notes || (pullingFromInventory ? `Pulled from inventory. ${selectedInventoryItem.stock - qty} remaining.` : "Requested for Purchasing to order."),
+    };
+
+    updateSelectedProject((project) => ({ ...project, bom: [...project.bom, line] }));
+
+    if (pullingFromInventory) {
+      onInventoryPull(item, qty);
+      setActionStatus(`${qty} ${item} added to ${selectedProject.ref} and pulled from inventory.`);
+    } else if (bomDraft.action === "pull" && selectedInventoryItem) {
+      setActionStatus(`${item} was added as Need Quote because only ${selectedInventoryItem.stock} are available in inventory.`);
+    } else {
+      setActionStatus(`${qty} ${item} added to ${selectedProject.ref} as a purchasing request.`);
+    }
+
+    setBomDraft({ item: parts[0].name, qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
+    setShowBomModal(false);
   }
 
   function handleSalesQuoteSelect(event: React.ChangeEvent<HTMLInputElement>) {
@@ -1134,9 +1202,17 @@ function Projects() {
       </section>
 
       <section className="panel full">
-        <PanelHeader title="Project Details" label="Editable site intake for this parking garage or lot" />
+        <div className="panel-title-row">
+          <div>
+            <h2>Project Details</h2>
+            <p>Editable site intake for this parking garage or lot</p>
+          </div>
+          <div className="locked-ref">
+            <span>Internal project ref</span>
+            <strong>{selectedProject.ref}</strong>
+          </div>
+        </div>
         <div className="form-grid">
-          <label>Internal project ref<input value={selectedProject.ref} onChange={(event) => updateProjectField("ref", event.target.value)} /></label>
           <label>Project name<input value={selectedProject.name} onChange={(event) => updateProjectField("name", event.target.value)} /></label>
           <label>Client / property<input value={selectedProject.client} onChange={(event) => updateProjectField("client", event.target.value)} /></label>
           <label>Site type<select value={selectedProject.type} onChange={(event) => updateProjectField("type", event.target.value as ProjectSite["type"])}><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
@@ -1184,14 +1260,20 @@ function Projects() {
       </section>
 
       <section className="panel full">
-        <PanelHeader title="BOM - Bill of Material" label="PM hardware request before Purchasing orders it" />
+        <div className="panel-title-row">
+          <div>
+            <h2>BOM - Bill of Material</h2>
+            <p>PM hardware request before Purchasing orders it</p>
+          </div>
+          <button className="primary-action" type="button" onClick={() => setShowBomModal(true)}><Plus size={17} /> Add Material</button>
+        </div>
         <table>
           <thead>
             <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th></tr>
           </thead>
           <tbody>
-            {selectedProject.bom.map((line) => (
-              <tr key={`${selectedProject.name}-${line.item}`}>
+            {selectedProject.bom.map((line, index) => (
+              <tr key={`${selectedProject.name}-${line.item}-${index}`}>
                 <td><strong>{line.item}</strong></td>
                 <td>{line.qty}</td>
                 <td><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span></td>
@@ -1203,6 +1285,58 @@ function Projects() {
           </tbody>
         </table>
       </section>
+
+      {showBomModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="bom-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="bom-modal-title">Add BOM Material</h2>
+                <p>Add a project material line, then pull from stock or request an order.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowBomModal(false)} aria-label="Close BOM modal">x</button>
+            </div>
+
+            <div className="bom-modal-grid">
+              <label className="span-2">Item
+                <input list="bom-item-options" value={bomDraft.item} onChange={(event) => updateBomDraft("item", event.target.value)} />
+                <datalist id="bom-item-options">
+                  {bomItemSuggestions.map((item) => <option value={item} key={item} />)}
+                </datalist>
+              </label>
+              <label>Number of items
+                <input type="number" min="1" value={bomDraft.qty} onChange={(event) => updateBomDraft("qty", Number(event.target.value))} />
+              </label>
+              <label>Request speed
+                <select value={bomDraft.requestSpeed} onChange={(event) => updateBomDraft("requestSpeed", event.target.value as BomLine["requestSpeed"])}>
+                  <option>Standard</option>
+                  <option>ASAP</option>
+                  <option>Future</option>
+                </select>
+              </label>
+              <fieldset className="span-2 material-action-group">
+                <legend>Material action</legend>
+                <label>
+                  <input type="radio" name="bom-action" checked={bomDraft.action === "pull"} onChange={() => updateBomDraft("action", "pull")} />
+                  <span><strong>Pull from inventory</strong><small>{selectedInventoryItem ? `${selectedInventoryItem.stock} available now` : "Not in inventory yet"}</small></span>
+                </label>
+                <label>
+                  <input type="radio" name="bom-action" checked={bomDraft.action === "order"} onChange={() => updateBomDraft("action", "order")} />
+                  <span><strong>Request to order</strong><small>Send this line to Purchasing as Need Quote</small></span>
+                </label>
+              </fieldset>
+              <label className="span-2">Notes
+                <textarea value={bomDraft.notes} onChange={(event) => updateBomDraft("notes", event.target.value)} placeholder="Install location, substitution notes, mounting details, or urgency." />
+              </label>
+            </div>
+
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowBomModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={addBomLine}>Add Line Item</button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <section className="panel full">
         <PanelHeader title="Project Transfers" label="Inventory allocated by project" />
