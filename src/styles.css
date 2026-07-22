@@ -528,6 +528,12 @@ td small {
   padding: 0 12px;
 }
 
+.secondary-table-action {
+  background: #fffdf9;
+  border-color: #ded7cb;
+  color: #174c43;
+}
+
 .progress-cell {
   display: grid;
   gap: 6px;

@@ -850,6 +850,7 @@ function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[];
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
   const [isExtractingQuote, setIsExtractingQuote] = useState(false);
   const [showBomModal, setShowBomModal] = useState(false);
+  const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
     item: parts[0].name,
     qty: 1,
@@ -972,6 +973,29 @@ function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[];
     setBomDraft((current) => ({ ...current, [field]: value }));
   }
 
+  function openAddBomModal() {
+    setEditingBomIndex(null);
+    setBomDraft({ item: parts[0].name, qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
+    setShowBomModal(true);
+  }
+
+  function openEditBomModal(line: BomLine, index: number) {
+    setEditingBomIndex(index);
+    setBomDraft({
+      item: line.item,
+      qty: line.qty,
+      action: line.status === "From Inventory" ? "pull" : "order",
+      requestSpeed: line.requestSpeed,
+      notes: line.notes ?? "",
+    });
+    setShowBomModal(true);
+  }
+
+  function closeBomModal() {
+    setShowBomModal(false);
+    setEditingBomIndex(null);
+  }
+
   function addBomLine() {
     const item = bomDraft.item.trim();
     const qty = Math.max(1, Math.round(Number(bomDraft.qty) || 1));
@@ -989,9 +1013,17 @@ function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[];
       notes: bomDraft.notes || (pullingFromInventory ? `Pulled from inventory. ${selectedInventoryItem.stock - qty} remaining.` : "Requested for Purchasing to order."),
     };
 
-    updateSelectedProject((project) => ({ ...project, bom: [...project.bom, line] }));
+    updateSelectedProject((project) => ({
+      ...project,
+      bom:
+        editingBomIndex === null
+          ? [...project.bom, line]
+          : project.bom.map((existingLine, index) => (index === editingBomIndex ? line : existingLine)),
+    }));
 
-    if (pullingFromInventory) {
+    if (editingBomIndex !== null) {
+      setActionStatus(`${item} was updated in ${selectedProject.ref}.`);
+    } else if (pullingFromInventory) {
       onInventoryPull(item, qty);
       setActionStatus(`${qty} ${item} added to ${selectedProject.ref} and pulled from inventory.`);
     } else if (bomDraft.action === "pull" && selectedInventoryItem) {
@@ -1001,7 +1033,7 @@ function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[];
     }
 
     setBomDraft({ item: parts[0].name, qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
-    setShowBomModal(false);
+    closeBomModal();
   }
 
   function handleSalesQuoteSelect(event: React.ChangeEvent<HTMLInputElement>) {
@@ -1263,13 +1295,13 @@ function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[];
         <div className="panel-title-row">
           <div>
             <h2>BOM - Bill of Material</h2>
-            <p>PM hardware request before Purchasing orders it</p>
+            <p>Add, edit, pull from inventory, or request Purchasing orders.</p>
           </div>
-          <button className="primary-action" type="button" onClick={() => setShowBomModal(true)}><Plus size={17} /> Add Material</button>
+          <button className="primary-action" type="button" onClick={openAddBomModal}><Plus size={17} /> Add Material</button>
         </div>
         <table>
           <thead>
-            <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th></tr>
+            <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th><th></th></tr>
           </thead>
           <tbody>
             {selectedProject.bom.map((line, index) => (
@@ -1280,6 +1312,7 @@ function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[];
                 <td>{line.requestSpeed}</td>
                 <td>{line.po ?? "TBD"}</td>
                 <td>{line.notes ?? "Ready for PM details"}</td>
+                <td><button className="table-action secondary-table-action" type="button" onClick={() => openEditBomModal(line, index)}>Edit</button></td>
               </tr>
             ))}
           </tbody>
@@ -1291,10 +1324,10 @@ function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[];
           <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="bom-modal-title">
             <div className="modal-header">
               <div>
-                <h2 id="bom-modal-title">Add BOM Material</h2>
-                <p>Add a project material line, then pull from stock or request an order.</p>
+                <h2 id="bom-modal-title">{editingBomIndex === null ? "Add BOM Material" : "Edit BOM Material"}</h2>
+                <p>{editingBomIndex === null ? "Add a project material line, then pull from stock or request an order." : "Update this material line. Inventory pulls only happen when adding a new line."}</p>
               </div>
-              <button className="icon-button" type="button" onClick={() => setShowBomModal(false)} aria-label="Close BOM modal">x</button>
+              <button className="icon-button" type="button" onClick={closeBomModal} aria-label="Close BOM modal">x</button>
             </div>
 
             <div className="bom-modal-grid">
@@ -1331,8 +1364,8 @@ function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[];
             </div>
 
             <div className="modal-actions">
-              <button className="secondary-action" type="button" onClick={() => setShowBomModal(false)}>Cancel</button>
-              <button className="primary-action" type="button" onClick={addBomLine}>Add Line Item</button>
+              <button className="secondary-action" type="button" onClick={closeBomModal}>Cancel</button>
+              <button className="primary-action" type="button" onClick={addBomLine}>{editingBomIndex === null ? "Add Line Item" : "Save Line Item"}</button>
             </div>
           </section>
         </div>
