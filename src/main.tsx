@@ -39,6 +39,8 @@ type PriceHistoryEntry = {
   notes: string;
 };
 
+const inventoryTags = ["VPU Part", "Edge Box Part", "Solar Part", "Server Part", "Network Part", "Power Part", "Field Hardware"];
+
 type Part = {
   ref: string;
   name: string;
@@ -52,6 +54,7 @@ type Part = {
   imageUrl?: string;
   purchaseUrls?: PurchaseUrl[];
   priceHistory?: PriceHistoryEntry[];
+  tags?: string[];
 };
 
 type BuildComponent = {
@@ -162,6 +165,7 @@ const parts: Part[] = [
     cost: 295,
     stock: 14,
     reorderPoint: 6,
+    tags: ["VPU Part", "Edge Box Part", "Server Part"],
     purchaseUrls: [{ id: 1, label: "FriendlyElec", url: "https://www.friendlyelec.com/" }],
     priceHistory: [
       { id: 1, date: "2026-02-14", vendor: "FriendlyElec", unitCost: 285, notes: "Initial BOM baseline" },
@@ -177,6 +181,7 @@ const parts: Part[] = [
     cost: 500,
     stock: 18,
     reorderPoint: 8,
+    tags: ["Field Hardware"],
     purchaseUrls: [
       { id: 1, label: "Preferred distributor", url: "" },
       { id: 2, label: "Backup source", url: "" },
@@ -195,6 +200,7 @@ const parts: Part[] = [
     cost: 255,
     stock: 9,
     reorderPoint: 4,
+    tags: ["Edge Box Part", "Field Hardware"],
     purchaseUrls: [{ id: 1, label: "Amazon", url: "" }],
     priceHistory: [
       { id: 1, date: "2026-06-04", vendor: "Amazon", unitCost: 245, notes: "Previous enclosure order" },
@@ -210,6 +216,7 @@ const parts: Part[] = [
     cost: 65,
     stock: 7,
     reorderPoint: 5,
+    tags: ["VPU Part", "Edge Box Part", "Network Part"],
     purchaseUrls: [{ id: 1, label: "SixFab", url: "" }],
     priceHistory: [
       { id: 1, date: "2026-04-10", vendor: "SixFab", unitCost: 62, notes: "Early kit estimate" },
@@ -225,26 +232,27 @@ const parts: Part[] = [
     cost: 30,
     stock: 11,
     reorderPoint: 8,
+    tags: ["Edge Box Part", "Network Part"],
     purchaseUrls: [{ id: 1, label: "Amazon", url: "" }],
     priceHistory: [
       { id: 1, date: "2026-05-22", vendor: "Amazon", unitCost: 28, notes: "Planning estimate" },
       { id: 2, date: "2026-07-13", vendor: "Amazon", unitCost: 30, notes: "Recent order baseline" },
     ],
   },
-  { ref: "INV-0006", name: "External Cell Modem", description: "Industrial mobile router", manufacturer: "Ubiquiti", category: "Communications", cost: 225, stock: 5, reorderPoint: 3 },
-  { ref: "INV-0007", name: "Network Switch", description: "Industrial PoE network switch", manufacturer: "LinoVision", category: "Communications", cost: 110, stock: 6, reorderPoint: 6 },
-  { ref: "INV-0008", name: "Solar Panel", description: "12V 100W minimum, geography dependent", manufacturer: "Renogy", category: "Power", cost: 85, stock: 10, reorderPoint: 6 },
-  { ref: "INV-0009", name: "Solar Charger", description: "MPPT 75 charger", manufacturer: "Victron Energy", category: "Power", cost: 75, stock: 8, reorderPoint: 5 },
-  { ref: "INV-0010", name: "Solar Panel Mount Hardware", description: "Panel mounting hardware", manufacturer: "Renogy", category: "Power", cost: 66, stock: 13, reorderPoint: 6 },
-  { ref: "INV-0011", name: "Solar Panel to MPPT Connection Cable", description: "12/2 outdoor AWG connection cable", manufacturer: "Field supply", category: "Power", cost: 25, stock: 15, reorderPoint: 10 },
-  { ref: "INV-0012", name: "Battery", description: "LiFEPO4 12VDC at 300Wh", manufacturer: "GreenOE", category: "Power", cost: 65, stock: 12, reorderPoint: 6 },
-  { ref: "INV-0013", name: "Smart Shunt", description: "300A shunt", manufacturer: "Victron Energy", category: "Power", cost: 85, stock: 6, reorderPoint: 6 },
-  { ref: "INV-0014", name: "Smart Shunt Energy Cable", description: "VE.Direct to USB interface", manufacturer: "Victron Energy", category: "Power", cost: 35, stock: 10, reorderPoint: 7 },
-  { ref: "INV-0015", name: "AC Charger", description: "AC charging adapter", manufacturer: "Amazon", category: "Power", cost: 25, stock: 16, reorderPoint: 8 },
-  { ref: "INV-0016", name: "Power Junction Box", description: "Field wiring enclosure", manufacturer: "Field supply", category: "Power", cost: 45, stock: 9, reorderPoint: 5 },
-  { ref: "INV-0017", name: "LED Light", description: "Optional additional lighting", manufacturer: "Amazon", category: "Lighting", cost: 145, stock: 4, reorderPoint: 3 },
-  { ref: "INV-0018", name: "Pole for LED Light", description: "16ft pole for LED light", manufacturer: "Field supply", category: "Lighting", cost: 175, stock: 2, reorderPoint: 2 },
-  { ref: "INV-0019", name: "32in Display", description: "Screen technology TBD", manufacturer: "TBD", category: "Display", cost: 3000, stock: 1, reorderPoint: 1 },
+  { ref: "INV-0006", name: "External Cell Modem", description: "Industrial mobile router", manufacturer: "Ubiquiti", category: "Communications", cost: 225, stock: 5, reorderPoint: 3, tags: ["Network Part", "Edge Box Part"] },
+  { ref: "INV-0007", name: "Network Switch", description: "Industrial PoE network switch", manufacturer: "LinoVision", category: "Communications", cost: 110, stock: 6, reorderPoint: 6, tags: ["Network Part", "Edge Box Part", "Server Part"] },
+  { ref: "INV-0008", name: "Solar Panel", description: "12V 100W minimum, geography dependent", manufacturer: "Renogy", category: "Power", cost: 85, stock: 10, reorderPoint: 6, tags: ["Solar Part", "Power Part"] },
+  { ref: "INV-0009", name: "Solar Charger", description: "MPPT 75 charger", manufacturer: "Victron Energy", category: "Power", cost: 75, stock: 8, reorderPoint: 5, tags: ["Solar Part", "Power Part"] },
+  { ref: "INV-0010", name: "Solar Panel Mount Hardware", description: "Panel mounting hardware", manufacturer: "Renogy", category: "Power", cost: 66, stock: 13, reorderPoint: 6, tags: ["Solar Part", "Field Hardware"] },
+  { ref: "INV-0011", name: "Solar Panel to MPPT Connection Cable", description: "12/2 outdoor AWG connection cable", manufacturer: "Field supply", category: "Power", cost: 25, stock: 15, reorderPoint: 10, tags: ["Solar Part", "Power Part", "Field Hardware"] },
+  { ref: "INV-0012", name: "Battery", description: "LiFEPO4 12VDC at 300Wh", manufacturer: "GreenOE", category: "Power", cost: 65, stock: 12, reorderPoint: 6, tags: ["Solar Part", "Power Part", "Edge Box Part"] },
+  { ref: "INV-0013", name: "Smart Shunt", description: "300A shunt", manufacturer: "Victron Energy", category: "Power", cost: 85, stock: 6, reorderPoint: 6, tags: ["Solar Part", "Power Part"] },
+  { ref: "INV-0014", name: "Smart Shunt Energy Cable", description: "VE.Direct to USB interface", manufacturer: "Victron Energy", category: "Power", cost: 35, stock: 10, reorderPoint: 7, tags: ["Solar Part", "Power Part"] },
+  { ref: "INV-0015", name: "AC Charger", description: "AC charging adapter", manufacturer: "Amazon", category: "Power", cost: 25, stock: 16, reorderPoint: 8, tags: ["Power Part", "Edge Box Part", "Server Part"] },
+  { ref: "INV-0016", name: "Power Junction Box", description: "Field wiring enclosure", manufacturer: "Field supply", category: "Power", cost: 45, stock: 9, reorderPoint: 5, tags: ["Power Part", "Edge Box Part", "Field Hardware"] },
+  { ref: "INV-0017", name: "LED Light", description: "Optional additional lighting", manufacturer: "Amazon", category: "Lighting", cost: 145, stock: 4, reorderPoint: 3, tags: ["Field Hardware"] },
+  { ref: "INV-0018", name: "Pole for LED Light", description: "16ft pole for LED light", manufacturer: "Field supply", category: "Lighting", cost: 175, stock: 2, reorderPoint: 2, tags: ["Field Hardware"] },
+  { ref: "INV-0019", name: "32in Display", description: "Screen technology TBD", manufacturer: "TBD", category: "Display", cost: 3000, stock: 1, reorderPoint: 1, tags: ["Field Hardware"] },
 ];
 
 const buildRecipes: BuildRecipe[] = [
@@ -760,6 +768,7 @@ function App() {
           reorderPoint: 1,
           imageUrl: "",
           purchaseUrls: [],
+          tags: ["VPU Part"],
           priceHistory: [
             {
               id: Date.now(),
@@ -1097,6 +1106,7 @@ function Inventory({
     imageUrl: "",
     purchaseUrls: [],
     priceHistory: [],
+    tags: [],
   };
   const [showItemModal, setShowItemModal] = useState(false);
   const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
@@ -1104,7 +1114,9 @@ function Inventory({
   const [previewItem, setPreviewItem] = useState<Part | null>(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
+  const [deviceRecipes, setDeviceRecipes] = useState(buildRecipes);
   const [buildDraft, setBuildDraft] = useState({ recipeName: buildRecipes[0].name, qty: 1 });
+  const [builderPicker, setBuilderPicker] = useState({ tag: "VPU Part", itemName: parts[0].name, qty: 1 });
   const [transferDraft, setTransferDraft] = useState({
     partRef: inventoryItems[0]?.ref ?? "",
     projectName: projectSites[0]?.name ?? "",
@@ -1113,7 +1125,9 @@ function Inventory({
   });
   const transferItem = inventoryItems.find((part) => part.ref === transferDraft.partRef);
   const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
-  const selectedBuildRecipe = buildRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? buildRecipes[0];
+  const selectedBuildRecipe = deviceRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? deviceRecipes[0];
+  const taggedPickerItems = inventoryItems.filter((part) => (part.tags ?? []).includes(builderPicker.tag));
+  const pickerItemOptions = taggedPickerItems.length > 0 ? taggedPickerItems : inventoryItems;
   const buildComponentRows = selectedBuildRecipe.components.map((component) => {
     const part = inventoryItems.find((item) => item.name === component.itemName);
     const required = component.qty * Math.max(1, Math.round(Number(buildDraft.qty) || 1));
@@ -1145,8 +1159,19 @@ function Inventory({
       imageUrl: part.imageUrl ?? "",
       purchaseUrls: [...(part.purchaseUrls ?? [])],
       priceHistory: [...(part.priceHistory ?? [])],
+      tags: [...(part.tags ?? [])],
     });
     setShowItemModal(true);
+  }
+
+  function toggleItemTag(tag: string) {
+    setItemDraft((current) => {
+      const currentTags = current.tags ?? [];
+      return {
+        ...current,
+        tags: currentTags.includes(tag) ? currentTags.filter((itemTag) => itemTag !== tag) : [...currentTags, tag],
+      };
+    });
   }
 
   function addPurchaseUrl() {
@@ -1219,6 +1244,7 @@ function Inventory({
         }))
         .filter((entry) => entry.vendor || entry.unitCost > 0)
         .sort((a, b) => a.date.localeCompare(b.date)),
+      tags: [...new Set(itemDraft.tags ?? [])],
     };
 
     if (editingItemRef) {
@@ -1256,6 +1282,41 @@ function Inventory({
     }
 
     onBuildInventoryUnit(selectedBuildRecipe, Math.max(1, Math.round(Number(buildDraft.qty) || 1)));
+  }
+
+  function addComponentToDevice() {
+    const qty = Math.max(1, Math.round(Number(builderPicker.qty) || 1));
+    setDeviceRecipes((current) =>
+      current.map((recipe) => {
+        if (recipe.name !== selectedBuildRecipe.name) {
+          return recipe;
+        }
+
+        const existing = recipe.components.find((component) => component.itemName === builderPicker.itemName);
+        return {
+          ...recipe,
+          components: existing
+            ? recipe.components.map((component) => (component.itemName === builderPicker.itemName ? { ...component, qty: component.qty + qty } : component))
+            : [...recipe.components, { itemName: builderPicker.itemName, qty }],
+        };
+      }),
+    );
+  }
+
+  function updateDeviceComponent(itemName: string, qty: number) {
+    setDeviceRecipes((current) =>
+      current.map((recipe) =>
+        recipe.name === selectedBuildRecipe.name
+          ? { ...recipe, components: recipe.components.map((component) => (component.itemName === itemName ? { ...component, qty: Math.max(1, Math.round(Number(qty) || 1)) } : component)) }
+          : recipe,
+      ),
+    );
+  }
+
+  function removeDeviceComponent(itemName: string) {
+    setDeviceRecipes((current) =>
+      current.map((recipe) => (recipe.name === selectedBuildRecipe.name ? { ...recipe, components: recipe.components.filter((component) => component.itemName !== itemName) } : recipe)),
+    );
   }
 
   return (
@@ -1308,7 +1369,11 @@ function Inventory({
                   </button>
                 </td>
                 <td><strong>{part.ref}</strong></td>
-                <td><strong>{part.name}</strong><small>{part.description}</small></td>
+                <td>
+                  <strong>{part.name}</strong>
+                  <small>{part.description}</small>
+                  {(part.tags ?? []).length > 0 && <div className="tag-chip-row">{(part.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
+                </td>
                 <td>{part.category}</td>
                 <td>{part.manufacturer}</td>
                 <td>{part.stock}</td>
@@ -1328,17 +1393,31 @@ function Inventory({
       <section className="panel wide">
         <div className="panel-title-row">
           <div>
-            <h2>Build Inventory Unit</h2>
-            <p>Consume parts into an internal VPU or Edge Box build, then add the finished unit back to inventory.</p>
+            <h2>Device Builder</h2>
+            <p>Edit device recipes, check live inventory availability, then build finished VPU units into inventory.</p>
           </div>
-          <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Unit</button>
+          <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Device &amp; Consume Parts</button>
         </div>
         <div className="build-planner">
-          <label>Build type<select value={buildDraft.recipeName} onChange={(event) => setBuildDraft((current) => ({ ...current, recipeName: event.target.value }))}>{buildRecipes.map((recipe) => <option key={recipe.name}>{recipe.name}</option>)}</select></label>
+          <label>Device type<select value={buildDraft.recipeName} onChange={(event) => setBuildDraft((current) => ({ ...current, recipeName: event.target.value }))}>{deviceRecipes.map((recipe) => <option key={recipe.name}>{recipe.name}</option>)}</select></label>
           <label>Quantity<input type="number" min="1" value={buildDraft.qty} onChange={(event) => setBuildDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
           <div className="build-summary">
             <strong>{selectedBuildRecipe.outputName}</strong>
             <span>{selectedBuildRecipe.description}</span>
+          </div>
+        </div>
+        <div className="device-editor">
+          <div className="device-editor-header">
+            <div>
+              <strong>Edit Device Parts</strong>
+              <span>Add live inventory items by tag, then set how many go inside one finished unit.</span>
+            </div>
+          </div>
+          <div className="device-add-row">
+            <label>Tagged for<select value={builderPicker.tag} onChange={(event) => setBuilderPicker((current) => ({ ...current, tag: event.target.value, itemName: (inventoryItems.find((part) => (part.tags ?? []).includes(event.target.value)) ?? inventoryItems[0])?.name ?? "" }))}>{inventoryTags.map((tag) => <option key={tag}>{tag}</option>)}</select></label>
+            <label>Inventory item<select value={builderPicker.itemName} onChange={(event) => setBuilderPicker((current) => ({ ...current, itemName: event.target.value }))}>{pickerItemOptions.map((part) => <option key={part.ref} value={part.name}>{part.ref} - {part.name}</option>)}</select></label>
+            <label>Qty per unit<input type="number" min="1" value={builderPicker.qty} onChange={(event) => setBuilderPicker((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
+            <button className="secondary-action" type="button" onClick={addComponentToDevice}><Plus size={15} /> Add To Device</button>
           </div>
         </div>
         <div className="build-component-list">
@@ -1348,7 +1427,11 @@ function Inventory({
                 <strong>{component.itemName}</strong>
                 <span>{component.part?.ref ?? "No inventory item"} - need {component.required}, have {component.available}</span>
               </div>
-              {component.shortage > 0 ? <span className="status warn">Purchase {component.shortage}</span> : <span className="status ok">Available</span>}
+              <div className="component-controls">
+                <input type="number" min="1" value={component.qty} onChange={(event) => updateDeviceComponent(component.itemName, Number(event.target.value))} aria-label={`Quantity per ${component.itemName}`} />
+                {component.shortage > 0 ? <span className="status warn">Purchase {component.shortage}</span> : <span className="status ok">Available</span>}
+                <button className="icon-button compact-remove" type="button" onClick={() => removeDeviceComponent(component.itemName)} aria-label={`Remove ${component.itemName}`}><Trash2 size={15} /></button>
+              </div>
             </div>
           ))}
         </div>
@@ -1395,6 +1478,22 @@ function Inventory({
               <label>Unit cost<input type="number" min="0" value={itemDraft.cost} onChange={(event) => setItemDraft((current) => ({ ...current, cost: Number(event.target.value) }))} /></label>
               <label>Current stock<input type="number" min="0" value={itemDraft.stock} onChange={(event) => setItemDraft((current) => ({ ...current, stock: Number(event.target.value) }))} /></label>
               <label>Reorder point<input type="number" min="0" value={itemDraft.reorderPoint} onChange={(event) => setItemDraft((current) => ({ ...current, reorderPoint: Number(event.target.value) }))} /></label>
+            </div>
+            <div className="compact-edit-section">
+              <div className="compact-section-header">
+                <div>
+                  <h3>Inventory Tags</h3>
+                  <p>Tags control where this item appears inside Device Builder.</p>
+                </div>
+              </div>
+              <div className="tag-picker-grid">
+                {inventoryTags.map((tag) => (
+                  <label className={(itemDraft.tags ?? []).includes(tag) ? "tag-toggle selected" : "tag-toggle"} key={tag}>
+                    <input type="checkbox" checked={(itemDraft.tags ?? []).includes(tag)} onChange={() => toggleItemTag(tag)} />
+                    <span>{tag}</span>
+                  </label>
+                ))}
+              </div>
             </div>
             <div className="compact-edit-section">
               <div className="compact-section-header">
