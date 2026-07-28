@@ -679,13 +679,79 @@ function nextBuildRef(items: Part[]) {
   return `BLD-${String(maxRef + 1).padStart(4, "0")}`;
 }
 
+function projectSlug(projectName: string) {
+  return projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function viewFromHash(hash = window.location.hash): View {
+  const viewKey = hash.replace(/^#/, "").split("/")[0];
+  return ["dashboard", "purchasing", "inventory", "projects", "reports"].includes(viewKey) ? (viewKey as View) : "dashboard";
+}
+
+function savedView() {
+  const savedHash = window.localStorage.getItem("ergon:lastHash");
+  return savedHash ? viewFromHash(savedHash) : "dashboard";
+}
+
+function scrollKey(hash = window.location.hash) {
+  return `ergon:scroll:${hash || "#dashboard"}`;
+}
+
 function App() {
-  const [view, setView] = useState<View>("dashboard");
+  const [view, setView] = useState<View>(() => (window.location.hash ? viewFromHash() : savedView()));
+  const [locationHash, setLocationHash] = useState(window.location.hash || window.localStorage.getItem("ergon:lastHash") || "#dashboard");
   const [inventoryItems, setInventoryItems] = useState(parts);
   const [projectSites, setProjectSites] = useState(projects);
   const lowStock = inventoryItems.filter((part) => part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
+
+  useEffect(() => {
+    if (!window.location.hash) {
+      const savedHash = window.localStorage.getItem("ergon:lastHash") ?? "#dashboard";
+      window.history.replaceState({ ergonView: viewFromHash(savedHash) }, "", savedHash);
+      setView(viewFromHash(savedHash));
+      setLocationHash(savedHash);
+    }
+
+    function handleHashChange() {
+      setView(viewFromHash());
+      setLocationHash(window.location.hash || "#dashboard");
+    }
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  useEffect(() => {
+    const activeHash = locationHash || `#${view}`;
+    const key = scrollKey(activeHash);
+    const savedScroll = Number(window.localStorage.getItem(key) ?? 0);
+    window.localStorage.setItem("ergon:lastHash", activeHash);
+    const restoreTimer = window.setTimeout(() => window.scrollTo({ top: savedScroll, left: 0, behavior: "auto" }), 80);
+
+    function saveScroll() {
+      window.localStorage.setItem(scrollKey(activeHash), String(window.scrollY));
+      window.localStorage.setItem("ergon:lastHash", activeHash);
+    }
+
+    window.addEventListener("scroll", saveScroll, { passive: true });
+    window.addEventListener("beforeunload", saveScroll);
+    document.addEventListener("visibilitychange", saveScroll);
+
+    return () => {
+      window.clearTimeout(restoreTimer);
+      saveScroll();
+      window.removeEventListener("scroll", saveScroll);
+      window.removeEventListener("beforeunload", saveScroll);
+      document.removeEventListener("visibilitychange", saveScroll);
+    };
+  }, [view, locationHash]);
+
+  function navigateToView(nextView: View) {
+    window.localStorage.setItem(scrollKey(), String(window.scrollY));
+    window.location.hash = nextView;
+  }
 
   function pullFromInventory(itemName: string, qty: number) {
     setInventoryItems((current) =>
@@ -795,11 +861,11 @@ function App() {
           </div>
         </div>
         <nav className="nav-list">
-          <NavButton icon={<LayoutDashboard size={18} />} label="Dashboard" active={view === "dashboard"} onClick={() => setView("dashboard")} />
-          <NavButton icon={<ShoppingCart size={18} />} label="Purchasing" active={view === "purchasing"} onClick={() => setView("purchasing")} />
-          <NavButton icon={<Boxes size={18} />} label="Inventory" active={view === "inventory"} onClick={() => setView("inventory")} />
-          <NavButton icon={<ClipboardList size={18} />} label="Projects" active={view === "projects"} onClick={() => setView("projects")} />
-          <NavButton icon={<BarChart3 size={18} />} label="Reports" active={view === "reports"} onClick={() => setView("reports")} />
+          <NavButton icon={<LayoutDashboard size={18} />} label="Dashboard" active={view === "dashboard"} onClick={() => navigateToView("dashboard")} />
+          <NavButton icon={<ShoppingCart size={18} />} label="Purchasing" active={view === "purchasing"} onClick={() => navigateToView("purchasing")} />
+          <NavButton icon={<Boxes size={18} />} label="Inventory" active={view === "inventory"} onClick={() => navigateToView("inventory")} />
+          <NavButton icon={<ClipboardList size={18} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />
+          <NavButton icon={<BarChart3 size={18} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />
         </nav>
       </aside>
 
@@ -1577,8 +1643,10 @@ function Inventory({
 }
 
 function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPull }: { projectSites: ProjectSite[]; setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>; inventoryItems: Part[]; onInventoryPull: (itemName: string, qty: number) => void }) {
-  const [selectedProjectName, setSelectedProjectName] = useState(projects[0].name);
-  const [projectMode, setProjectMode] = useState<"list" | "detail">("list");
+  const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
+  const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
+  const [selectedProjectName, setSelectedProjectName] = useState(initialProject?.name ?? projects[0].name);
+  const [projectMode, setProjectMode] = useState<"list" | "detail">(initialProject ? "detail" : "list");
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
   const [isExtractingQuote, setIsExtractingQuote] = useState(false);
   const [showBomModal, setShowBomModal] = useState(false);
@@ -1622,15 +1690,19 @@ function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPu
   }
 
   useEffect(() => {
-    window.history.replaceState({ ergonProjectMode: "list" }, "", "#projects");
+    function handleProjectRoute() {
+      const hash = window.location.hash;
+      if (!hash.startsWith("#projects")) {
+        return;
+      }
 
-    function handlePopState(event: PopStateEvent) {
-      const state = event.state as { ergonProjectMode?: "list" | "detail"; projectName?: string } | null;
+      const routeSlug = hash.split("/")[1] ?? "";
+      const routeProject = projectSites.find((project) => projectSlug(project.name) === routeSlug);
 
-      if (state?.ergonProjectMode === "detail" && state.projectName) {
-        setSelectedProjectName(state.projectName);
+      if (routeProject) {
+        setSelectedProjectName(routeProject.name);
         setProjectMode("detail");
-        setActionStatus(`${state.projectName} opened.`);
+        setActionStatus(`${routeProject.name} opened.`);
         return;
       }
 
@@ -1638,13 +1710,14 @@ function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPu
       setActionStatus("Back to project list.");
     }
 
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+    handleProjectRoute();
+    window.addEventListener("hashchange", handleProjectRoute);
+    return () => window.removeEventListener("hashchange", handleProjectRoute);
+  }, [projectSites]);
 
   function pushProjectHistory(mode: "list" | "detail", projectName?: string) {
-    const slug = projectName ? projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") : "";
-    window.history.pushState({ ergonProjectMode: mode, projectName }, "", mode === "detail" ? `#projects/${slug}` : "#projects");
+    const slug = projectName ? projectSlug(projectName) : "";
+    window.location.hash = mode === "detail" ? `projects/${slug}` : "projects";
   }
 
   function projectCompletion(project: ProjectSite) {
@@ -1885,7 +1958,7 @@ function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPu
 
   function backToProjectList() {
     setProjectMode("list");
-    window.history.replaceState({ ergonProjectMode: "list" }, "", "#projects");
+    window.location.hash = "projects";
     setActionStatus("Back to project list.");
   }
 
