@@ -528,6 +528,13 @@ td small {
   padding: 0 12px;
 }
 
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .secondary-table-action {
   background: #fffdf9;
   border-color: #ded7cb;

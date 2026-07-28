@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BarChart3,
@@ -503,9 +503,19 @@ function sumBy<T extends string>(items: PurchaseOrder[], key: (order: PurchaseOr
   }, {} as Record<T, number>);
 }
 
+function nextInventoryRef(items: Part[]) {
+  const maxRef = items.reduce((currentMax, item) => {
+    const match = item.ref.match(/^INV-(\d+)$/);
+    return match ? Math.max(currentMax, Number(match[1])) : currentMax;
+  }, 0);
+
+  return `INV-${String(maxRef + 1).padStart(4, "0")}`;
+}
+
 function App() {
   const [view, setView] = useState<View>("dashboard");
   const [inventoryItems, setInventoryItems] = useState(parts);
+  const [projectSites, setProjectSites] = useState(projects);
   const lowStock = inventoryItems.filter((part) => part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -513,6 +523,43 @@ function App() {
   function pullFromInventory(itemName: string, qty: number) {
     setInventoryItems((current) =>
       current.map((part) => (part.name === itemName ? { ...part, stock: Math.max(0, part.stock - qty) } : part)),
+    );
+  }
+
+  function addInventoryItem(part: Part) {
+    setInventoryItems((current) => [part, ...current]);
+  }
+
+  function updateInventoryItem(ref: string, nextPart: Part) {
+    setInventoryItems((current) => current.map((part) => (part.ref === ref ? nextPart : part)));
+  }
+
+  function transferInventoryToProject(partRef: string, projectName: string, qty: number, notes: string) {
+    const part = inventoryItems.find((item) => item.ref === partRef);
+    if (!part || part.stock <= 0) {
+      return;
+    }
+
+    const transferQty = Math.min(Math.max(1, qty), part.stock);
+    setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: item.stock - transferQty } : item)));
+    setProjectSites((current) =>
+      current.map((project) =>
+        project.name === projectName
+          ? {
+              ...project,
+              bom: [
+                ...project.bom,
+                {
+                  item: part.name,
+                  qty: transferQty,
+                  status: "From Inventory",
+                  requestSpeed: "Standard",
+                  notes: notes || `Transferred from inventory item ${part.ref}.`,
+                },
+              ],
+            }
+          : project,
+      ),
     );
   }
 
@@ -547,10 +594,10 @@ function App() {
           </div>
         </header>
 
-        {view === "dashboard" && <Dashboard lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
-        {view === "purchasing" && <Purchasing />}
-        {view === "inventory" && <Inventory inventoryItems={inventoryItems} lowStock={lowStock} />}
-        {view === "projects" && <Projects inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
+        {view === "dashboard" && <Dashboard projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
+        {view === "purchasing" && <Purchasing projectSites={projectSites} />}
+        {view === "inventory" && <Inventory inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onTransferToProject={transferInventoryToProject} />}
+        {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
         {view === "reports" && <Reports inventoryValue={inventoryValue} openPoValue={openPoValue} />}
       </main>
     </div>
@@ -577,7 +624,7 @@ function pageTitle(view: View) {
   return titles[view];
 }
 
-function Dashboard({ lowStock, inventoryValue, openPoValue }: { lowStock: Part[]; inventoryValue: number; openPoValue: number }) {
+function Dashboard({ projectSites, lowStock, inventoryValue, openPoValue }: { projectSites: ProjectSite[]; lowStock: Part[]; inventoryValue: number; openPoValue: number }) {
   const importedLines = purchaseOrders.reduce((sum, order) => sum + order.lines.length, 0);
   const heldOrders = purchaseOrders.filter((order) => order.status === "On Hold");
 
@@ -587,7 +634,7 @@ function Dashboard({ lowStock, inventoryValue, openPoValue }: { lowStock: Part[]
         <Metric icon={<Boxes size={20} />} label="Inventory Value" value={money(inventoryValue)} />
         <Metric icon={<ShoppingCart size={20} />} label="Recent Order Spend" value={money(openPoValue)} />
         <Metric icon={<FileText size={20} />} label="Imported Line Items" value={String(importedLines)} />
-        <Metric icon={<Truck size={20} />} label="Active Projects" value={String(projects.length)} />
+        <Metric icon={<Truck size={20} />} label="Active Projects" value={String(projectSites.length)} />
       </section>
 
       <section className="panel wide">
@@ -631,7 +678,7 @@ function Dashboard({ lowStock, inventoryValue, openPoValue }: { lowStock: Part[]
       <section className="panel">
         <PanelHeader title="Upcoming Projects" label="Transfers" />
         <div className="stack">
-          {projects.map((project) => (
+          {projectSites.map((project) => (
             <div className="row-card" key={project.name}>
               <div>
                 <strong>{project.name}</strong>
@@ -646,14 +693,14 @@ function Dashboard({ lowStock, inventoryValue, openPoValue }: { lowStock: Part[]
   );
 }
 
-function Purchasing() {
+function Purchasing({ projectSites }: { projectSites: ProjectSite[] }) {
   const [selectedProject, setSelectedProject] = useState("Straud Medical");
   const [uploadedDocs, setUploadedDocs] = useState<UploadedDoc[]>([]);
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
   const totalTax = purchaseOrders.reduce((sum, order) => sum + order.tax, 0);
   const openOrders = purchaseOrders.filter((order) => order.status !== "Imported").length;
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
-  const documentProjects = Array.from(new Set([...purchaseOrders.map((order) => order.projectRef), ...projects.map((project) => project.name)]));
+  const documentProjects = Array.from(new Set([...purchaseOrders.map((order) => order.projectRef), ...projectSites.map((project) => project.name)]));
 
   function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
@@ -809,18 +856,113 @@ function Purchasing() {
   );
 }
 
-function Inventory({ inventoryItems, lowStock }: { inventoryItems: Part[]; lowStock: Part[] }) {
+function Inventory({
+  inventoryItems,
+  lowStock,
+  projectSites,
+  onAddItem,
+  onUpdateItem,
+  onTransferToProject,
+}: {
+  inventoryItems: Part[];
+  lowStock: Part[];
+  projectSites: ProjectSite[];
+  onAddItem: (part: Part) => void;
+  onUpdateItem: (ref: string, part: Part) => void;
+  onTransferToProject: (partRef: string, projectName: string, qty: number, notes: string) => void;
+}) {
+  const emptyItemDraft: Part = {
+    ref: nextInventoryRef(inventoryItems),
+    name: "",
+    description: "",
+    manufacturer: "",
+    category: "Base",
+    cost: 0,
+    stock: 0,
+    reorderPoint: 0,
+  };
+  const [showItemModal, setShowItemModal] = useState(false);
+  const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
+  const [itemDraft, setItemDraft] = useState<Part>(emptyItemDraft);
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferDraft, setTransferDraft] = useState({
+    partRef: inventoryItems[0]?.ref ?? "",
+    projectName: projectSites[0]?.name ?? "",
+    qty: 1,
+    notes: "",
+  });
+  const transferItem = inventoryItems.find((part) => part.ref === transferDraft.partRef);
+
+  function openAddItemModal() {
+    setEditingItemRef(null);
+    setItemDraft({ ...emptyItemDraft, ref: nextInventoryRef(inventoryItems) });
+    setShowItemModal(true);
+  }
+
+  function openEditItemModal(part: Part) {
+    setEditingItemRef(part.ref);
+    setItemDraft(part);
+    setShowItemModal(true);
+  }
+
+  function saveItem() {
+    const normalized: Part = {
+      ...itemDraft,
+      ref: itemDraft.ref.trim() || nextInventoryRef(inventoryItems),
+      name: itemDraft.name.trim() || "New Inventory Item",
+      description: itemDraft.description.trim(),
+      manufacturer: itemDraft.manufacturer.trim() || "TBD",
+      cost: Math.max(0, Number(itemDraft.cost) || 0),
+      stock: Math.max(0, Math.round(Number(itemDraft.stock) || 0)),
+      reorderPoint: Math.max(0, Math.round(Number(itemDraft.reorderPoint) || 0)),
+    };
+
+    if (editingItemRef) {
+      onUpdateItem(editingItemRef, normalized);
+    } else {
+      onAddItem(normalized);
+    }
+
+    setShowItemModal(false);
+  }
+
+  function openTransferModal(part: Part) {
+    setTransferDraft({
+      partRef: part.ref,
+      projectName: projectSites[0]?.name ?? "",
+      qty: 1,
+      notes: "",
+    });
+    setShowTransferModal(true);
+  }
+
+  function saveTransfer() {
+    const part = inventoryItems.find((item) => item.ref === transferDraft.partRef);
+    if (!part || !transferDraft.projectName || part.stock <= 0) {
+      return;
+    }
+
+    onTransferToProject(part.ref, transferDraft.projectName, Math.max(1, Math.round(Number(transferDraft.qty) || 1)), transferDraft.notes);
+    setShowTransferModal(false);
+  }
+
   return (
     <div className="content-grid">
       <section className="panel wide">
-        <PanelHeader title="Parts Inventory" label={`${inventoryItems.length} BOM items`} />
+        <div className="panel-title-row">
+          <div>
+            <h2>Parts Inventory</h2>
+            <p>{inventoryItems.length} BOM items</p>
+          </div>
+          <button className="primary-action" type="button" onClick={openAddItemModal}><Plus size={17} /> Add New Item</button>
+        </div>
         <table>
           <thead>
-            <tr><th>Ref</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th></tr>
+            <tr><th>Ref</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th><th></th></tr>
           </thead>
           <tbody>
             {inventoryItems.map((part) => (
-              <tr key={part.name}>
+              <tr key={part.ref}>
                 <td><strong>{part.ref}</strong></td>
                 <td><strong>{part.name}</strong><small>{part.description}</small></td>
                 <td>{part.category}</td>
@@ -828,6 +970,12 @@ function Inventory({ inventoryItems, lowStock }: { inventoryItems: Part[]; lowSt
                 <td>{part.stock}</td>
                 <td>{money(part.cost)}</td>
                 <td>{part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
+                <td>
+                  <div className="table-actions">
+                    <button className="table-action secondary-table-action" type="button" onClick={() => openEditItemModal(part)}>Edit</button>
+                    <button className="table-action" type="button" onClick={() => openTransferModal(part)}>Transfer</button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -839,12 +987,62 @@ function Inventory({ inventoryItems, lowStock }: { inventoryItems: Part[]; lowSt
           {lowStock.map((part) => <div className="row-card" key={part.name}><strong>{part.name}</strong><b>{part.stock}/{part.reorderPoint}</b></div>)}
         </div>
       </section>
+      {showItemModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-item-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="inventory-item-modal-title">{editingItemRef ? "Edit Inventory Item" : "Add Inventory Item"}</h2>
+                <p>Manage the internal item record used by purchasing, BOMs, and transfers.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowItemModal(false)} aria-label="Close inventory item modal">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label>Internal ref<input value={itemDraft.ref} onChange={(event) => setItemDraft((current) => ({ ...current, ref: event.target.value }))} /></label>
+              <label>Category<select value={itemDraft.category} onChange={(event) => setItemDraft((current) => ({ ...current, category: event.target.value as Part["category"] }))}><option>Base</option><option>Communications</option><option>Power</option><option>Lighting</option><option>Display</option></select></label>
+              <label className="span-2">Item name<input value={itemDraft.name} onChange={(event) => setItemDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+              <label className="span-2">Description<input value={itemDraft.description} onChange={(event) => setItemDraft((current) => ({ ...current, description: event.target.value }))} /></label>
+              <label>Manufacturer<input value={itemDraft.manufacturer} onChange={(event) => setItemDraft((current) => ({ ...current, manufacturer: event.target.value }))} /></label>
+              <label>Unit cost<input type="number" min="0" value={itemDraft.cost} onChange={(event) => setItemDraft((current) => ({ ...current, cost: Number(event.target.value) }))} /></label>
+              <label>Current stock<input type="number" min="0" value={itemDraft.stock} onChange={(event) => setItemDraft((current) => ({ ...current, stock: Number(event.target.value) }))} /></label>
+              <label>Reorder point<input type="number" min="0" value={itemDraft.reorderPoint} onChange={(event) => setItemDraft((current) => ({ ...current, reorderPoint: Number(event.target.value) }))} /></label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowItemModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={saveItem}>{editingItemRef ? "Save Item" : "Add Item"}</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {showTransferModal && transferItem && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-transfer-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="inventory-transfer-modal-title">Transfer Inventory To Project</h2>
+                <p>Move stock out of inventory and add it to the selected project BOM.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowTransferModal(false)} aria-label="Close transfer modal">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">Item<select value={transferDraft.partRef} onChange={(event) => setTransferDraft((current) => ({ ...current, partRef: event.target.value }))}>{inventoryItems.map((part) => <option key={part.ref} value={part.ref}>{part.ref} - {part.name} ({part.stock} available)</option>)}</select></label>
+              <label>Project<select value={transferDraft.projectName} onChange={(event) => setTransferDraft((current) => ({ ...current, projectName: event.target.value }))}>{projectSites.map((project) => <option key={project.name} value={project.name}>{project.ref} - {project.name}</option>)}</select></label>
+              <label>Quantity<input type="number" min="1" max={transferItem.stock} value={transferDraft.qty} onChange={(event) => setTransferDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
+              <label className="span-2">Notes<textarea value={transferDraft.notes} onChange={(event) => setTransferDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Install phase, location, reason, or approval note." /></label>
+            </div>
+            <div className="source-file"><Boxes size={16} /><span>{transferItem.stock} available. Transfer will leave {Math.max(0, transferItem.stock - Math.max(1, Math.round(Number(transferDraft.qty) || 1)))} in inventory.</span></div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowTransferModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={saveTransfer}>Transfer To Project</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
 
-function Projects({ inventoryItems, onInventoryPull }: { inventoryItems: Part[]; onInventoryPull: (itemName: string, qty: number) => void }) {
-  const [projectSites, setProjectSites] = useState(projects);
+function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPull }: { projectSites: ProjectSite[]; setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>; inventoryItems: Part[]; onInventoryPull: (itemName: string, qty: number) => void }) {
   const [selectedProjectName, setSelectedProjectName] = useState(projects[0].name);
   const [projectMode, setProjectMode] = useState<"list" | "detail">("list");
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
