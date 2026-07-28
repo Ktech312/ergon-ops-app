@@ -1305,6 +1305,18 @@ function Inventory({
     }));
   }
 
+  function uploadItemImage(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setItemDraft((current) => ({ ...current, imageUrl: String(reader.result ?? "") }));
+    };
+    reader.readAsDataURL(file);
+  }
+
   function saveItem() {
     const normalized: Part = {
       ...itemDraft,
@@ -1440,66 +1452,72 @@ function Inventory({
           </div>
           <button className="primary-action" type="button" onClick={openAddItemModal}><Plus size={17} /> Add New Item</button>
         </div>
-        <table>
-          <thead>
-            <tr><th>Image</th><th>Ref</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th><th></th></tr>
-            <tr className="filter-row">
-              <th></th>
-              <th><input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter ref" /></th>
-              <th><input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" /></th>
-              <th>
-                <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
-                  <option>All</option>
-                  <option>Base</option>
-                  <option>Communications</option>
-                  <option>Power</option>
-                  <option>Lighting</option>
-                  <option>Display</option>
-                  <option>Build</option>
-                </select>
-              </th>
-              <th><input value={filters.manufacturer} onChange={(event) => setFilters((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Filter vendor" /></th>
-              <th></th>
-              <th></th>
-              <th>
-                <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
-                  <option>All</option>
-                  <option>Healthy</option>
-                  <option>Reorder</option>
-                </select>
-              </th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredInventoryItems.map((part) => (
-              <tr key={part.ref}>
-                <td>
-                  <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(part)} aria-label={`Open image for ${part.name}`}>
-                    {part.imageUrl ? <img src={part.imageUrl} alt="" /> : <Image size={18} />}
-                  </button>
-                </td>
-                <td><strong>{part.ref}</strong></td>
-                <td>
-                  <strong>{part.name}</strong>
-                  <small>{part.description}</small>
-                  {(part.tags ?? []).length > 0 && <div className="tag-chip-row">{(part.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
-                </td>
-                <td>{part.category}</td>
-                <td>{part.manufacturer}</td>
-                <td>{part.stock}</td>
-                <td>{money(part.cost)}</td>
-                <td>{part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
-                <td>
-                  <div className="table-actions">
-                    <button className="table-action secondary-table-action" type="button" onClick={() => openEditItemModal(part)}>Edit</button>
-                    <button className="table-action" type="button" onClick={() => openTransferModal(part)}>Transfer</button>
-                  </div>
-                </td>
+        <div className="inventory-table-scroll">
+          <table className="inventory-table">
+            <thead>
+              <tr><th>Image</th><th>Ref</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th><th></th></tr>
+              <tr className="filter-row">
+                <th></th>
+                <th><input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter ref" /></th>
+                <th><input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" /></th>
+                <th>
+                  <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
+                    <option>All</option>
+                    <option>Base</option>
+                    <option>Communications</option>
+                    <option>Power</option>
+                    <option>Lighting</option>
+                    <option>Display</option>
+                    <option>Build</option>
+                  </select>
+                </th>
+                <th><input value={filters.manufacturer} onChange={(event) => setFilters((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Filter vendor" /></th>
+                <th></th>
+                <th></th>
+                <th>
+                  <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
+                    <option>All</option>
+                    <option>Healthy</option>
+                    <option>Reorder</option>
+                  </select>
+                </th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filteredInventoryItems.map((part) => (
+                <tr key={part.ref}>
+                  <td>
+                    <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(part)} aria-label={`Open image for ${part.name}`}>
+                      {part.imageUrl ? <img src={part.imageUrl} alt="" /> : <Image size={18} />}
+                    </button>
+                  </td>
+                  <td><strong>{part.ref}</strong></td>
+                  <td>
+                    <div className="part-cell-layout">
+                      <div>
+                        <strong>{part.name}</strong>
+                        <small>{part.description}</small>
+                      </div>
+                      {(part.tags ?? []).length > 0 && <div className="tag-chip-row">{(part.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
+                    </div>
+                  </td>
+                  <td>{part.category}</td>
+                  <td>{part.manufacturer}</td>
+                  <td>{part.stock}</td>
+                  <td>{money(part.cost)}</td>
+                  <td>{part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
+                  <td>
+                    <div className="table-actions">
+                      <button className="table-action secondary-table-action" type="button" onClick={() => openEditItemModal(part)}>Edit</button>
+                      <button className="table-action" type="button" onClick={() => openTransferModal(part)}>Transfer</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
       <section className="panel wide">
         <div className="panel-title-row">
@@ -1577,7 +1595,7 @@ function Inventory({
               <button className="icon-button" type="button" onClick={() => setPreviewItem(null)} aria-label="Close image preview">x</button>
             </div>
             <div className="large-image-preview">
-              {previewItem.imageUrl ? <img src={previewItem.imageUrl} alt={previewItem.name} /> : <><Image size={42} /><span>No image added yet. Use Edit to paste an image URL.</span></>}
+              {previewItem.imageUrl ? <img src={previewItem.imageUrl} alt={previewItem.name} /> : <><Image size={42} /><span>No image added yet. Use Edit to upload an image.</span></>}
             </div>
           </section>
         </div>
@@ -1592,11 +1610,19 @@ function Inventory({
               </div>
               <button className="icon-button" type="button" onClick={() => setShowItemModal(false)} aria-label="Close inventory item modal">x</button>
             </div>
+            <div className="inventory-editor-hero">
+              <label className="item-image-upload">
+                {itemDraft.imageUrl ? <img src={itemDraft.imageUrl} alt={`${itemDraft.name || "Inventory item"} preview`} /> : <><Image size={28} /><span>Upload Image</span></>}
+                <input type="file" accept="image/*" onChange={(event) => uploadItemImage(event.target.files?.[0])} />
+              </label>
+              <div className="item-identity-fields">
+                <label>Internal ref<input value={itemDraft.ref} onChange={(event) => setItemDraft((current) => ({ ...current, ref: event.target.value }))} /></label>
+                <label>Item name<input value={itemDraft.name} onChange={(event) => setItemDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+                <label>Description<input value={itemDraft.description} onChange={(event) => setItemDraft((current) => ({ ...current, description: event.target.value }))} /></label>
+              </div>
+            </div>
             <div className="bom-modal-grid">
-              <label>Internal ref<input value={itemDraft.ref} onChange={(event) => setItemDraft((current) => ({ ...current, ref: event.target.value }))} /></label>
               <label>Category<select value={itemDraft.category} onChange={(event) => setItemDraft((current) => ({ ...current, category: event.target.value as Part["category"] }))}><option>Base</option><option>Communications</option><option>Power</option><option>Lighting</option><option>Display</option><option>Build</option></select></label>
-              <label className="span-2">Item name<input value={itemDraft.name} onChange={(event) => setItemDraft((current) => ({ ...current, name: event.target.value }))} /></label>
-              <label className="span-2">Description<input value={itemDraft.description} onChange={(event) => setItemDraft((current) => ({ ...current, description: event.target.value }))} /></label>
               <label>Manufacturer<input value={itemDraft.manufacturer} onChange={(event) => setItemDraft((current) => ({ ...current, manufacturer: event.target.value }))} /></label>
               <label>Unit cost<input type="number" min="0" value={itemDraft.cost} onChange={(event) => setItemDraft((current) => ({ ...current, cost: Number(event.target.value) }))} /></label>
               <label>Current stock<input type="number" min="0" value={itemDraft.stock} onChange={(event) => setItemDraft((current) => ({ ...current, stock: Number(event.target.value) }))} /></label>
@@ -1621,16 +1647,10 @@ function Inventory({
             <div className="compact-edit-section">
               <div className="compact-section-header">
                 <div>
-                  <h3>Image and Purchase Sources</h3>
-                  <p>Keep the item photo and preferred buying links with the inventory record.</p>
+                  <h3>Purchase Sources</h3>
+                  <p>Keep preferred buying links with the inventory record.</p>
                 </div>
                 <button className="secondary-action mini-action" type="button" onClick={addPurchaseUrl}><Plus size={14} /> Add URL</button>
-              </div>
-              <div className="item-media-row">
-                <label className="image-url-field">Image URL<input value={itemDraft.imageUrl ?? ""} onChange={(event) => setItemDraft((current) => ({ ...current, imageUrl: event.target.value }))} placeholder="Paste image URL for this item" /></label>
-                <div className="image-preview-box">
-                  {itemDraft.imageUrl ? <img src={itemDraft.imageUrl} alt={`${itemDraft.name || "Inventory item"} preview`} /> : <><Image size={20} /><span>Image</span></>}
-                </div>
               </div>
               <div className="source-url-list">
                 {(itemDraft.purchaseUrls ?? []).map((source) => (

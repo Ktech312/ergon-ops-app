@@ -89,6 +89,7 @@ button {
 }
 
 .main {
+  min-width: 0;
   padding: 28px;
 }
 
@@ -169,6 +170,7 @@ td small {
 }
 
 .panel {
+  min-width: 0;
   padding: 18px;
 }
 
@@ -268,18 +270,53 @@ table {
   width: 100%;
 }
 
+.inventory-table-scroll {
+  border: 1px solid #eee7dc;
+  border-radius: 8px;
+  max-height: 690px;
+  max-width: 100%;
+  overflow: auto;
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+.inventory-table {
+  min-width: 1180px;
+}
+
 th,
 td {
   border-bottom: 1px solid #eee7dc;
-  padding: 12px 10px;
+  padding: 10px 10px;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 th {
+  background: #fffdf9;
   color: #756d62;
   font-size: 12px;
+  position: sticky;
+  top: 0;
   text-transform: uppercase;
+  z-index: 2;
+}
+
+.filter-row th {
+  top: 38px;
+}
+
+.inventory-table th:last-child,
+.inventory-table td:last-child {
+  background: #fffdf9;
+  box-shadow: -8px 0 12px rgba(255, 253, 249, 0.88);
+  position: sticky;
+  right: 0;
+  z-index: 3;
+}
+
+.inventory-table .filter-row th:last-child {
+  background: #fbf8f2;
 }
 
 td small {
@@ -287,11 +324,19 @@ td small {
   margin-top: 3px;
 }
 
+.part-cell-layout {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(190px, 1fr) minmax(96px, 150px);
+}
+
 .tag-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 7px;
+  align-content: start;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  justify-content: start;
 }
 
 .tag-chip-row span {
@@ -299,9 +344,11 @@ td small {
   border: 1px solid #e8e1d5;
   border-radius: 999px;
   color: #514b43;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
-  padding: 3px 7px;
+  line-height: 1;
+  padding: 3px 6px;
+  white-space: nowrap;
 }
 
 .filter-row th {
@@ -331,10 +378,10 @@ td small {
   color: #174c43;
   cursor: pointer;
   display: inline-flex;
-  height: 42px;
+  height: 36px;
   justify-content: center;
   overflow: hidden;
-  width: 42px;
+  width: 36px;
 }
 
 .thumbnail-button img {
@@ -896,21 +943,63 @@ td small {
   white-space: nowrap;
 }
 
-.item-media-row {
+.inventory-editor-hero {
+  border-bottom: 1px solid #e8e1d5;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(0, 1fr) 92px;
+  grid-template-columns: 132px minmax(0, 1fr);
+  margin-bottom: 14px;
+  padding-bottom: 14px;
 }
 
-.image-url-field {
+.item-image-upload {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px dashed #b8ad9b;
+  border-radius: 8px;
+  color: #174c43;
+  cursor: pointer;
+  display: grid;
+  gap: 7px;
+  justify-items: center;
+  min-height: 132px;
+  overflow: hidden;
+  padding: 10px;
+  text-align: center;
+}
+
+.item-image-upload span {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.item-image-upload img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.item-image-upload input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+
+.item-identity-fields {
+  display: grid;
+  gap: 7px;
+}
+
+.item-identity-fields label {
   color: #514b43;
   display: grid;
   font-size: 13px;
   font-weight: 800;
-  gap: 7px;
+  gap: 6px;
 }
 
-.image-url-field input,
+.item-identity-fields input,
 .source-url-row input,
 .price-history-row input {
   background: #fffdf9;
@@ -920,26 +1009,6 @@ td small {
   font: inherit;
   min-height: 38px;
   padding: 8px 10px;
-}
-
-.image-preview-box {
-  align-items: center;
-  background: #f8f5ef;
-  border: 1px solid #ded7cb;
-  border-radius: 8px;
-  color: #756d62;
-  display: grid;
-  font-size: 12px;
-  font-weight: 800;
-  justify-items: center;
-  min-height: 66px;
-  overflow: hidden;
-}
-
-.image-preview-box img {
-  height: 100%;
-  object-fit: cover;
-  width: 100%;
 }
 
 .source-url-list,
@@ -1639,7 +1708,7 @@ td small {
   .sow-grid,
   .bom-modal-grid,
   .snapshot-grid,
-  .item-media-row,
+  .inventory-editor-hero,
   .source-url-row,
   .price-history-row,
   .build-planner,
@@ -1677,5 +1746,22 @@ td small {
 
   .bar-row {
     grid-template-columns: 1fr;
+  }
+
+  .inventory-table-scroll {
+    max-height: 560px;
+  }
+
+  .part-cell-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .tag-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .item-image-upload {
+    min-height: 180px;
   }
 }
