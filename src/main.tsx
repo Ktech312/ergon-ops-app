@@ -44,7 +44,7 @@ type Part = {
   name: string;
   description: string;
   manufacturer: string;
-  category: "Base" | "Communications" | "Power" | "Lighting" | "Display";
+  category: "Base" | "Communications" | "Power" | "Lighting" | "Display" | "Build";
   cost: number;
   stock: number;
   reorderPoint: number;
@@ -52,6 +52,18 @@ type Part = {
   imageUrl?: string;
   purchaseUrls?: PurchaseUrl[];
   priceHistory?: PriceHistoryEntry[];
+};
+
+type BuildComponent = {
+  itemName: string;
+  qty: number;
+};
+
+type BuildRecipe = {
+  name: string;
+  outputName: string;
+  description: string;
+  components: BuildComponent[];
 };
 
 type PackageOption = {
@@ -233,6 +245,51 @@ const parts: Part[] = [
   { ref: "INV-0017", name: "LED Light", description: "Optional additional lighting", manufacturer: "Amazon", category: "Lighting", cost: 145, stock: 4, reorderPoint: 3 },
   { ref: "INV-0018", name: "Pole for LED Light", description: "16ft pole for LED light", manufacturer: "Field supply", category: "Lighting", cost: 175, stock: 2, reorderPoint: 2 },
   { ref: "INV-0019", name: "32in Display", description: "Screen technology TBD", manufacturer: "TBD", category: "Display", cost: 3000, stock: 1, reorderPoint: 1 },
+];
+
+const buildRecipes: BuildRecipe[] = [
+  {
+    name: "Enterprise VPU Server",
+    outputName: "Enterprise VPU Server",
+    description: "Internal server build assembled from purchased compute, storage, power, rack, and hardware components.",
+    components: [
+      { itemName: "FLI Edge VPI", qty: 1 },
+      { itemName: "Network Switch", qty: 1 },
+      { itemName: "Power Junction Box", qty: 1 },
+      { itemName: "AC Charger", qty: 1 },
+    ],
+  },
+  {
+    name: "VPU Edge Box",
+    outputName: "VPU Edge Box",
+    description: "Standard edge enclosure for powered parking garage or lot locations.",
+    components: [
+      { itemName: "FLI Edge VPI", qty: 1 },
+      { itemName: "VPU case", qty: 1 },
+      { itemName: "Network Switch", qty: 1 },
+      { itemName: "Power Junction Box", qty: 1 },
+      { itemName: "AC Charger", qty: 1 },
+    ],
+  },
+  {
+    name: "VPU Edge Box with Solar",
+    outputName: "VPU Edge Box with Solar",
+    description: "Edge enclosure plus solar power package for locations with no reliable site power.",
+    components: [
+      { itemName: "FLI Edge VPI", qty: 1 },
+      { itemName: "VPU case", qty: 1 },
+      { itemName: "Cellular Data Connection", qty: 1 },
+      { itemName: "External Antenna", qty: 1 },
+      { itemName: "Network Switch", qty: 1 },
+      { itemName: "Solar Panel", qty: 1 },
+      { itemName: "Solar Charger", qty: 1 },
+      { itemName: "Solar Panel Mount Hardware", qty: 1 },
+      { itemName: "Solar Panel to MPPT Connection Cable", qty: 1 },
+      { itemName: "Battery", qty: 1 },
+      { itemName: "Smart Shunt", qty: 1 },
+      { itemName: "Power Junction Box", qty: 1 },
+    ],
+  },
 ];
 
 const packageOptions: PackageOption[] = [
@@ -605,6 +662,15 @@ function nextInventoryRef(items: Part[]) {
   return `INV-${String(maxRef + 1).padStart(4, "0")}`;
 }
 
+function nextBuildRef(items: Part[]) {
+  const maxRef = items.reduce((currentMax, item) => {
+    const match = item.ref.match(/^BLD-(\d+)$/);
+    return match ? Math.max(currentMax, Number(match[1])) : currentMax;
+  }, 0);
+
+  return `BLD-${String(maxRef + 1).padStart(4, "0")}`;
+}
+
 function App() {
   const [view, setView] = useState<View>("dashboard");
   const [inventoryItems, setInventoryItems] = useState(parts);
@@ -656,6 +722,59 @@ function App() {
     );
   }
 
+  function buildInventoryUnit(recipe: BuildRecipe, qty: number) {
+    const buildQty = Math.max(1, Math.round(Number(qty) || 1));
+    const hasShortage = recipe.components.some((component) => {
+      const part = inventoryItems.find((item) => item.name === component.itemName);
+      return !part || part.stock < component.qty * buildQty;
+    });
+
+    if (hasShortage) {
+      return;
+    }
+
+    setInventoryItems((current) => {
+      const consumed = current.map((part) => {
+        const component = recipe.components.find((item) => item.itemName === part.name);
+        return component ? { ...part, stock: Math.max(0, part.stock - component.qty * buildQty) } : part;
+      });
+      const existingBuild = consumed.find((part) => part.name === recipe.outputName);
+      const buildCost = recipe.components.reduce((sum, component) => {
+        const part = current.find((item) => item.name === component.itemName);
+        return sum + (part?.cost ?? 0) * component.qty;
+      }, 0);
+
+      if (existingBuild) {
+        return consumed.map((part) => (part.ref === existingBuild.ref ? { ...part, stock: part.stock + buildQty, cost: buildCost } : part));
+      }
+
+      return [
+        {
+          ref: nextBuildRef(consumed),
+          name: recipe.outputName,
+          description: recipe.description,
+          manufacturer: "Internal Build",
+          category: "Build",
+          cost: buildCost,
+          stock: buildQty,
+          reorderPoint: 1,
+          imageUrl: "",
+          purchaseUrls: [],
+          priceHistory: [
+            {
+              id: Date.now(),
+              date: new Date().toISOString().slice(0, 10),
+              vendor: "Internal Build",
+              unitCost: buildCost,
+              notes: `Built from ${recipe.components.length} component lines.`,
+            },
+          ],
+        },
+        ...consumed,
+      ];
+    });
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -689,7 +808,7 @@ function App() {
 
         {view === "dashboard" && <Dashboard projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} />}
-        {view === "inventory" && <Inventory inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onTransferToProject={transferInventoryToProject} />}
+        {view === "inventory" && <Inventory inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onTransferToProject={transferInventoryToProject} onBuildInventoryUnit={buildInventoryUnit} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
         {view === "reports" && <Reports inventoryItems={inventoryItems} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
       </main>
@@ -956,6 +1075,7 @@ function Inventory({
   onAddItem,
   onUpdateItem,
   onTransferToProject,
+  onBuildInventoryUnit,
 }: {
   inventoryItems: Part[];
   lowStock: Part[];
@@ -963,6 +1083,7 @@ function Inventory({
   onAddItem: (part: Part) => void;
   onUpdateItem: (ref: string, part: Part) => void;
   onTransferToProject: (partRef: string, projectName: string, qty: number, notes: string) => void;
+  onBuildInventoryUnit: (recipe: BuildRecipe, qty: number) => void;
 }) {
   const emptyItemDraft: Part = {
     ref: nextInventoryRef(inventoryItems),
@@ -980,7 +1101,10 @@ function Inventory({
   const [showItemModal, setShowItemModal] = useState(false);
   const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
   const [itemDraft, setItemDraft] = useState<Part>(emptyItemDraft);
+  const [previewItem, setPreviewItem] = useState<Part | null>(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
+  const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
+  const [buildDraft, setBuildDraft] = useState({ recipeName: buildRecipes[0].name, qty: 1 });
   const [transferDraft, setTransferDraft] = useState({
     partRef: inventoryItems[0]?.ref ?? "",
     projectName: projectSites[0]?.name ?? "",
@@ -989,6 +1113,24 @@ function Inventory({
   });
   const transferItem = inventoryItems.find((part) => part.ref === transferDraft.partRef);
   const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
+  const selectedBuildRecipe = buildRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? buildRecipes[0];
+  const buildComponentRows = selectedBuildRecipe.components.map((component) => {
+    const part = inventoryItems.find((item) => item.name === component.itemName);
+    const required = component.qty * Math.max(1, Math.round(Number(buildDraft.qty) || 1));
+    const available = part?.stock ?? 0;
+    return { ...component, part, required, available, shortage: Math.max(0, required - available) };
+  });
+  const buildHasShortage = buildComponentRows.some((component) => component.shortage > 0);
+  const filteredInventoryItems = inventoryItems.filter((part) => {
+    const status = part.stock <= part.reorderPoint ? "Reorder" : "Healthy";
+    return (
+      part.ref.toLowerCase().includes(filters.ref.toLowerCase()) &&
+      `${part.name} ${part.description}`.toLowerCase().includes(filters.part.toLowerCase()) &&
+      (filters.category === "All" || part.category === filters.category) &&
+      part.manufacturer.toLowerCase().includes(filters.manufacturer.toLowerCase()) &&
+      (filters.status === "All" || status === filters.status)
+    );
+  });
 
   function openAddItemModal() {
     setEditingItemRef(null);
@@ -1108,6 +1250,14 @@ function Inventory({
     setShowTransferModal(false);
   }
 
+  function runBuild() {
+    if (buildHasShortage) {
+      return;
+    }
+
+    onBuildInventoryUnit(selectedBuildRecipe, Math.max(1, Math.round(Number(buildDraft.qty) || 1)));
+  }
+
   return (
     <div className="content-grid">
       <section className="panel wide">
@@ -1120,11 +1270,43 @@ function Inventory({
         </div>
         <table>
           <thead>
-            <tr><th>Ref</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th><th></th></tr>
+            <tr><th>Image</th><th>Ref</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th><th></th></tr>
+            <tr className="filter-row">
+              <th></th>
+              <th><input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter ref" /></th>
+              <th><input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" /></th>
+              <th>
+                <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
+                  <option>All</option>
+                  <option>Base</option>
+                  <option>Communications</option>
+                  <option>Power</option>
+                  <option>Lighting</option>
+                  <option>Display</option>
+                  <option>Build</option>
+                </select>
+              </th>
+              <th><input value={filters.manufacturer} onChange={(event) => setFilters((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Filter vendor" /></th>
+              <th></th>
+              <th></th>
+              <th>
+                <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
+                  <option>All</option>
+                  <option>Healthy</option>
+                  <option>Reorder</option>
+                </select>
+              </th>
+              <th></th>
+            </tr>
           </thead>
           <tbody>
-            {inventoryItems.map((part) => (
+            {filteredInventoryItems.map((part) => (
               <tr key={part.ref}>
+                <td>
+                  <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(part)} aria-label={`Open image for ${part.name}`}>
+                    {part.imageUrl ? <img src={part.imageUrl} alt="" /> : <Image size={18} />}
+                  </button>
+                </td>
                 <td><strong>{part.ref}</strong></td>
                 <td><strong>{part.name}</strong><small>{part.description}</small></td>
                 <td>{part.category}</td>
@@ -1143,12 +1325,57 @@ function Inventory({
           </tbody>
         </table>
       </section>
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <div>
+            <h2>Build Inventory Unit</h2>
+            <p>Consume parts into an internal VPU or Edge Box build, then add the finished unit back to inventory.</p>
+          </div>
+          <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Unit</button>
+        </div>
+        <div className="build-planner">
+          <label>Build type<select value={buildDraft.recipeName} onChange={(event) => setBuildDraft((current) => ({ ...current, recipeName: event.target.value }))}>{buildRecipes.map((recipe) => <option key={recipe.name}>{recipe.name}</option>)}</select></label>
+          <label>Quantity<input type="number" min="1" value={buildDraft.qty} onChange={(event) => setBuildDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
+          <div className="build-summary">
+            <strong>{selectedBuildRecipe.outputName}</strong>
+            <span>{selectedBuildRecipe.description}</span>
+          </div>
+        </div>
+        <div className="build-component-list">
+          {buildComponentRows.map((component) => (
+            <div className="build-component-row" key={component.itemName}>
+              <div>
+                <strong>{component.itemName}</strong>
+                <span>{component.part?.ref ?? "No inventory item"} - need {component.required}, have {component.available}</span>
+              </div>
+              {component.shortage > 0 ? <span className="status warn">Purchase {component.shortage}</span> : <span className="status ok">Available</span>}
+            </div>
+          ))}
+        </div>
+        {buildHasShortage && <div className="source-file"><ShoppingCart size={16} /><span>Some build parts are short. Those lines are flagged above so Purchasing knows what needs to be ordered before this build can be completed.</span></div>}
+      </section>
       <section className="panel">
         <PanelHeader title="Reorder List" label="At or below point" />
         <div className="stack">
           {lowStock.map((part) => <div className="row-card" key={part.name}><strong>{part.name}</strong><b>{part.stock}/{part.reorderPoint}</b></div>)}
         </div>
       </section>
+      {previewItem && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel image-modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-image-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="inventory-image-modal-title">{previewItem.name}</h2>
+                <p>{previewItem.ref} - {previewItem.manufacturer}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setPreviewItem(null)} aria-label="Close image preview">x</button>
+            </div>
+            <div className="large-image-preview">
+              {previewItem.imageUrl ? <img src={previewItem.imageUrl} alt={previewItem.name} /> : <><Image size={42} /><span>No image added yet. Use Edit to paste an image URL.</span></>}
+            </div>
+          </section>
+        </div>
+      )}
       {showItemModal && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-item-modal-title">
@@ -1161,7 +1388,7 @@ function Inventory({
             </div>
             <div className="bom-modal-grid">
               <label>Internal ref<input value={itemDraft.ref} onChange={(event) => setItemDraft((current) => ({ ...current, ref: event.target.value }))} /></label>
-              <label>Category<select value={itemDraft.category} onChange={(event) => setItemDraft((current) => ({ ...current, category: event.target.value as Part["category"] }))}><option>Base</option><option>Communications</option><option>Power</option><option>Lighting</option><option>Display</option></select></label>
+              <label>Category<select value={itemDraft.category} onChange={(event) => setItemDraft((current) => ({ ...current, category: event.target.value as Part["category"] }))}><option>Base</option><option>Communications</option><option>Power</option><option>Lighting</option><option>Display</option><option>Build</option></select></label>
               <label className="span-2">Item name<input value={itemDraft.name} onChange={(event) => setItemDraft((current) => ({ ...current, name: event.target.value }))} /></label>
               <label className="span-2">Description<input value={itemDraft.description} onChange={(event) => setItemDraft((current) => ({ ...current, description: event.target.value }))} /></label>
               <label>Manufacturer<input value={itemDraft.manufacturer} onChange={(event) => setItemDraft((current) => ({ ...current, manufacturer: event.target.value }))} /></label>
