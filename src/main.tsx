@@ -1179,10 +1179,10 @@ function Inventory({
   const [itemDraft, setItemDraft] = useState<Part>(emptyItemDraft);
   const [previewItem, setPreviewItem] = useState<Part | null>(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
   const [deviceRecipes, setDeviceRecipes] = useState(buildRecipes);
   const [buildDraft, setBuildDraft] = useState({ recipeName: buildRecipes[0].name, qty: 1 });
-  const [builderPicker, setBuilderPicker] = useState({ tag: "VPU Part", itemName: parts[0].name, qty: 1 });
   const [transferDraft, setTransferDraft] = useState({
     partRef: inventoryItems[0]?.ref ?? "",
     projectName: projectSites[0]?.name ?? "",
@@ -1192,8 +1192,6 @@ function Inventory({
   const transferItem = inventoryItems.find((part) => part.ref === transferDraft.partRef);
   const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
   const selectedBuildRecipe = deviceRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? deviceRecipes[0];
-  const taggedPickerItems = inventoryItems.filter((part) => (part.tags ?? []).includes(builderPicker.tag));
-  const pickerItemOptions = taggedPickerItems.length > 0 ? taggedPickerItems : inventoryItems;
   const buildComponentRows = selectedBuildRecipe.components.map((component) => {
     const part = inventoryItems.find((item) => item.name === component.itemName);
     const required = component.qty * Math.max(1, Math.round(Number(buildDraft.qty) || 1));
@@ -1351,20 +1349,45 @@ function Inventory({
   }
 
   function addComponentToDevice() {
-    const qty = Math.max(1, Math.round(Number(builderPicker.qty) || 1));
+    const nextItem = inventoryItems.find((part) => !selectedBuildRecipe.components.some((component) => component.itemName === part.name)) ?? inventoryItems[0];
+    if (!nextItem) {
+      return;
+    }
+
     setDeviceRecipes((current) =>
       current.map((recipe) => {
         if (recipe.name !== selectedBuildRecipe.name) {
           return recipe;
         }
 
-        const existing = recipe.components.find((component) => component.itemName === builderPicker.itemName);
         return {
           ...recipe,
-          components: existing
-            ? recipe.components.map((component) => (component.itemName === builderPicker.itemName ? { ...component, qty: component.qty + qty } : component))
-            : [...recipe.components, { itemName: builderPicker.itemName, qty }],
+          components: [...recipe.components, { itemName: nextItem.name, qty: 1 }],
         };
+      }),
+    );
+  }
+
+  function updateDeviceComponentItem(currentItemName: string, nextItemName: string) {
+    setDeviceRecipes((current) =>
+      current.map((recipe) => {
+        if (recipe.name !== selectedBuildRecipe.name || currentItemName === nextItemName) {
+          return recipe;
+        }
+
+        const currentComponent = recipe.components.find((component) => component.itemName === currentItemName);
+        const existingComponent = recipe.components.find((component) => component.itemName === nextItemName);
+
+        if (currentComponent && existingComponent) {
+          return {
+            ...recipe,
+            components: recipe.components
+              .filter((component) => component.itemName !== currentItemName)
+              .map((component) => (component.itemName === nextItemName ? { ...component, qty: component.qty + currentComponent.qty } : component)),
+          };
+        }
+
+        return { ...recipe, components: recipe.components.map((component) => (component.itemName === currentItemName ? { ...component, itemName: nextItemName } : component)) };
       }),
     );
   }
@@ -1460,46 +1483,20 @@ function Inventory({
         <div className="panel-title-row">
           <div>
             <h2>Device Builder</h2>
-            <p>Edit device recipes, check live inventory availability, then build finished VPU units into inventory.</p>
+            <p>Select a device, edit its parts in a pop-up, then build finished units into inventory.</p>
           </div>
-          <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Device &amp; Consume Parts</button>
+          <div className="action-row">
+            <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(true)}><Plus size={15} /> Edit Device</button>
+            <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Device &amp; Consume Parts</button>
+          </div>
         </div>
         <div className="build-planner">
           <label>Device type<select value={buildDraft.recipeName} onChange={(event) => setBuildDraft((current) => ({ ...current, recipeName: event.target.value }))}>{deviceRecipes.map((recipe) => <option key={recipe.name}>{recipe.name}</option>)}</select></label>
           <label>Quantity<input type="number" min="1" value={buildDraft.qty} onChange={(event) => setBuildDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
           <div className="build-summary">
             <strong>{selectedBuildRecipe.outputName}</strong>
-            <span>{selectedBuildRecipe.description}</span>
+            <span>{selectedBuildRecipe.components.length} line items. {buildHasShortage ? "Some parts need purchasing before this can be built." : "All current parts are available for this quantity."}</span>
           </div>
-        </div>
-        <div className="device-editor">
-          <div className="device-editor-header">
-            <div>
-              <strong>Edit Device Parts</strong>
-              <span>Add live inventory items by tag, then set how many go inside one finished unit.</span>
-            </div>
-          </div>
-          <div className="device-add-row">
-            <label>Tagged for<select value={builderPicker.tag} onChange={(event) => setBuilderPicker((current) => ({ ...current, tag: event.target.value, itemName: (inventoryItems.find((part) => (part.tags ?? []).includes(event.target.value)) ?? inventoryItems[0])?.name ?? "" }))}>{inventoryTags.map((tag) => <option key={tag}>{tag}</option>)}</select></label>
-            <label>Inventory item<select value={builderPicker.itemName} onChange={(event) => setBuilderPicker((current) => ({ ...current, itemName: event.target.value }))}>{pickerItemOptions.map((part) => <option key={part.ref} value={part.name}>{part.ref} - {part.name}</option>)}</select></label>
-            <label>Qty per unit<input type="number" min="1" value={builderPicker.qty} onChange={(event) => setBuilderPicker((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
-            <button className="secondary-action" type="button" onClick={addComponentToDevice}><Plus size={15} /> Add To Device</button>
-          </div>
-        </div>
-        <div className="build-component-list">
-          {buildComponentRows.map((component) => (
-            <div className="build-component-row" key={component.itemName}>
-              <div>
-                <strong>{component.itemName}</strong>
-                <span>{component.part?.ref ?? "No inventory item"} - need {component.required}, have {component.available}</span>
-              </div>
-              <div className="component-controls">
-                <input type="number" min="1" value={component.qty} onChange={(event) => updateDeviceComponent(component.itemName, Number(event.target.value))} aria-label={`Quantity per ${component.itemName}`} />
-                {component.shortage > 0 ? <span className="status warn">Purchase {component.shortage}</span> : <span className="status ok">Available</span>}
-                <button className="icon-button compact-remove" type="button" onClick={() => removeDeviceComponent(component.itemName)} aria-label={`Remove ${component.itemName}`}><Trash2 size={15} /></button>
-              </div>
-            </div>
-          ))}
         </div>
         {buildHasShortage && <div className="source-file"><ShoppingCart size={16} /><span>Some build parts are short. Those lines are flagged above so Purchasing knows what needs to be ordered before this build can be completed.</span></div>}
       </section>
@@ -1509,6 +1506,44 @@ function Inventory({
           {lowStock.map((part) => <div className="row-card" key={part.name}><strong>{part.name}</strong><b>{part.stock}/{part.reorderPoint}</b></div>)}
         </div>
       </section>
+      {showDeviceModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel device-modal-panel" role="dialog" aria-modal="true" aria-labelledby="device-builder-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="device-builder-modal-title">{selectedBuildRecipe.outputName}</h2>
+                <p>Add inventory line items and set the quantity needed inside one finished device.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowDeviceModal(false)} aria-label="Close device builder">x</button>
+            </div>
+            <div className="device-modal-toolbar">
+              <div>
+                <span>Title of Device</span>
+                <strong>{selectedBuildRecipe.outputName}</strong>
+              </div>
+              <button className="secondary-action" type="button" onClick={addComponentToDevice}><Plus size={15} /> Add Item</button>
+            </div>
+            <div className="device-line-list">
+              {buildComponentRows.map((component) => (
+                <div className="device-line-row" key={component.itemName}>
+                  <label>Inventory item<select value={component.itemName} onChange={(event) => updateDeviceComponentItem(component.itemName, event.target.value)}>{inventoryItems.map((part) => <option key={part.ref} value={part.name}>{part.ref} - {part.name}</option>)}</select></label>
+                  <label>Qty<input type="number" min="1" value={component.qty} onChange={(event) => updateDeviceComponent(component.itemName, Number(event.target.value))} /></label>
+                  <div className="device-line-status">
+                    <span>{component.part?.ref ?? "No inventory match"} - need {component.required}, have {component.available}</span>
+                    {component.shortage > 0 ? <span className="status warn">Purchase {component.shortage}</span> : <span className="status ok">Available</span>}
+                  </div>
+                  <button className="icon-button compact-remove" type="button" onClick={() => removeDeviceComponent(component.itemName)} aria-label={`Remove ${component.itemName}`}><Trash2 size={15} /></button>
+                </div>
+              ))}
+              {buildComponentRows.length === 0 && <div className="empty-compact-state">No items added yet. Use Add Item to create the first device line.</div>}
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(false)}>Done</button>
+              <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Device &amp; Consume Parts</button>
+            </div>
+          </section>
+        </div>
+      )}
       {previewItem && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-panel image-modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-image-modal-title">
