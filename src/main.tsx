@@ -7,13 +7,16 @@ import {
   CalendarDays,
   ClipboardList,
   DollarSign,
+  ExternalLink,
   FileText,
   FolderOpen,
+  Image,
   LayoutDashboard,
   MapPin,
   Plus,
   Search,
   ShoppingCart,
+  Trash2,
   Truck,
   Upload,
   User,
@@ -21,6 +24,20 @@ import {
 import "./styles.css";
 
 type View = "dashboard" | "purchasing" | "inventory" | "projects" | "reports";
+
+type PurchaseUrl = {
+  id: number;
+  label: string;
+  url: string;
+};
+
+type PriceHistoryEntry = {
+  id: number;
+  date: string;
+  vendor: string;
+  unitCost: number;
+  notes: string;
+};
 
 type Part = {
   ref: string;
@@ -32,6 +49,9 @@ type Part = {
   stock: number;
   reorderPoint: number;
   vendorUrl?: string;
+  imageUrl?: string;
+  purchaseUrls?: PurchaseUrl[];
+  priceHistory?: PriceHistoryEntry[];
 };
 
 type PackageOption = {
@@ -121,11 +141,84 @@ type SalesQuoteExtractResponse = {
 };
 
 const parts: Part[] = [
-  { ref: "INV-0001", name: "FLI Edge VPI", description: "NanoPC T6 compute unit", manufacturer: "FriendlyElec", category: "Base", cost: 295, stock: 14, reorderPoint: 6 },
-  { ref: "INV-0002", name: "Camera", description: "Camera, limit of 4. Prefer Axis", manufacturer: "Axis", category: "Base", cost: 500, stock: 18, reorderPoint: 8 },
-  { ref: "INV-0003", name: "VPU case", description: "White steel junction box", manufacturer: "Joinfworld", category: "Base", cost: 255, stock: 9, reorderPoint: 4 },
-  { ref: "INV-0004", name: "Cellular Data Connection", description: "Internal LTE in Nano", manufacturer: "SixFab / Telit", category: "Communications", cost: 65, stock: 7, reorderPoint: 5 },
-  { ref: "INV-0005", name: "External Antenna", description: "External LTE antenna", manufacturer: "Bingfu / Dixingtech", category: "Communications", cost: 30, stock: 11, reorderPoint: 8 },
+  {
+    ref: "INV-0001",
+    name: "FLI Edge VPI",
+    description: "NanoPC T6 compute unit",
+    manufacturer: "FriendlyElec",
+    category: "Base",
+    cost: 295,
+    stock: 14,
+    reorderPoint: 6,
+    purchaseUrls: [{ id: 1, label: "FriendlyElec", url: "https://www.friendlyelec.com/" }],
+    priceHistory: [
+      { id: 1, date: "2026-02-14", vendor: "FriendlyElec", unitCost: 285, notes: "Initial BOM baseline" },
+      { id: 2, date: "2026-07-15", vendor: "FriendlyElec", unitCost: 295, notes: "Current purchasing estimate" },
+    ],
+  },
+  {
+    ref: "INV-0002",
+    name: "Camera",
+    description: "Camera, limit of 4. Prefer Axis",
+    manufacturer: "Axis",
+    category: "Base",
+    cost: 500,
+    stock: 18,
+    reorderPoint: 8,
+    purchaseUrls: [
+      { id: 1, label: "Preferred distributor", url: "" },
+      { id: 2, label: "Backup source", url: "" },
+    ],
+    priceHistory: [
+      { id: 1, date: "2026-03-04", vendor: "Distributor quote", unitCost: 475, notes: "Planning estimate" },
+      { id: 2, date: "2026-07-12", vendor: "Axis channel", unitCost: 500, notes: "Current camera budget" },
+    ],
+  },
+  {
+    ref: "INV-0003",
+    name: "VPU case",
+    description: "White steel junction box",
+    manufacturer: "Joinfworld",
+    category: "Base",
+    cost: 255,
+    stock: 9,
+    reorderPoint: 4,
+    purchaseUrls: [{ id: 1, label: "Amazon", url: "" }],
+    priceHistory: [
+      { id: 1, date: "2026-06-04", vendor: "Amazon", unitCost: 245, notes: "Previous enclosure order" },
+      { id: 2, date: "2026-07-13", vendor: "Amazon", unitCost: 255, notes: "Recent order baseline" },
+    ],
+  },
+  {
+    ref: "INV-0004",
+    name: "Cellular Data Connection",
+    description: "Internal LTE in Nano",
+    manufacturer: "SixFab / Telit",
+    category: "Communications",
+    cost: 65,
+    stock: 7,
+    reorderPoint: 5,
+    purchaseUrls: [{ id: 1, label: "SixFab", url: "" }],
+    priceHistory: [
+      { id: 1, date: "2026-04-10", vendor: "SixFab", unitCost: 62, notes: "Early kit estimate" },
+      { id: 2, date: "2026-07-15", vendor: "SixFab / Telit", unitCost: 65, notes: "Current planning cost" },
+    ],
+  },
+  {
+    ref: "INV-0005",
+    name: "External Antenna",
+    description: "External LTE antenna",
+    manufacturer: "Bingfu / Dixingtech",
+    category: "Communications",
+    cost: 30,
+    stock: 11,
+    reorderPoint: 8,
+    purchaseUrls: [{ id: 1, label: "Amazon", url: "" }],
+    priceHistory: [
+      { id: 1, date: "2026-05-22", vendor: "Amazon", unitCost: 28, notes: "Planning estimate" },
+      { id: 2, date: "2026-07-13", vendor: "Amazon", unitCost: 30, notes: "Recent order baseline" },
+    ],
+  },
   { ref: "INV-0006", name: "External Cell Modem", description: "Industrial mobile router", manufacturer: "Ubiquiti", category: "Communications", cost: 225, stock: 5, reorderPoint: 3 },
   { ref: "INV-0007", name: "Network Switch", description: "Industrial PoE network switch", manufacturer: "LinoVision", category: "Communications", cost: 110, stock: 6, reorderPoint: 6 },
   { ref: "INV-0008", name: "Solar Panel", description: "12V 100W minimum, geography dependent", manufacturer: "Renogy", category: "Power", cost: 85, stock: 10, reorderPoint: 6 },
@@ -598,7 +691,7 @@ function App() {
         {view === "purchasing" && <Purchasing projectSites={projectSites} />}
         {view === "inventory" && <Inventory inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onTransferToProject={transferInventoryToProject} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
-        {view === "reports" && <Reports inventoryValue={inventoryValue} openPoValue={openPoValue} />}
+        {view === "reports" && <Reports inventoryItems={inventoryItems} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
       </main>
     </div>
   );
@@ -880,6 +973,9 @@ function Inventory({
     cost: 0,
     stock: 0,
     reorderPoint: 0,
+    imageUrl: "",
+    purchaseUrls: [],
+    priceHistory: [],
   };
   const [showItemModal, setShowItemModal] = useState(false);
   const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
@@ -892,6 +988,7 @@ function Inventory({
     notes: "",
   });
   const transferItem = inventoryItems.find((part) => part.ref === transferDraft.partRef);
+  const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
 
   function openAddItemModal() {
     setEditingItemRef(null);
@@ -901,8 +998,58 @@ function Inventory({
 
   function openEditItemModal(part: Part) {
     setEditingItemRef(part.ref);
-    setItemDraft(part);
+    setItemDraft({
+      ...part,
+      imageUrl: part.imageUrl ?? "",
+      purchaseUrls: [...(part.purchaseUrls ?? [])],
+      priceHistory: [...(part.priceHistory ?? [])],
+    });
     setShowItemModal(true);
+  }
+
+  function addPurchaseUrl() {
+    setItemDraft((current) => ({
+      ...current,
+      purchaseUrls: [...(current.purchaseUrls ?? []), { id: Date.now(), label: "", url: "" }],
+    }));
+  }
+
+  function updatePurchaseUrl(id: number, field: keyof PurchaseUrl, value: string) {
+    setItemDraft((current) => ({
+      ...current,
+      purchaseUrls: (current.purchaseUrls ?? []).map((source) => (source.id === id ? { ...source, [field]: value } : source)),
+    }));
+  }
+
+  function removePurchaseUrl(id: number) {
+    setItemDraft((current) => ({
+      ...current,
+      purchaseUrls: (current.purchaseUrls ?? []).filter((source) => source.id !== id),
+    }));
+  }
+
+  function addPriceHistory() {
+    setItemDraft((current) => ({
+      ...current,
+      priceHistory: [
+        ...(current.priceHistory ?? []),
+        { id: Date.now(), date: new Date().toISOString().slice(0, 10), vendor: current.manufacturer || "TBD", unitCost: Number(current.cost) || 0, notes: "" },
+      ],
+    }));
+  }
+
+  function updatePriceHistory(id: number, field: keyof PriceHistoryEntry, value: string | number) {
+    setItemDraft((current) => ({
+      ...current,
+      priceHistory: (current.priceHistory ?? []).map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry)),
+    }));
+  }
+
+  function removePriceHistory(id: number) {
+    setItemDraft((current) => ({
+      ...current,
+      priceHistory: (current.priceHistory ?? []).filter((entry) => entry.id !== id),
+    }));
   }
 
   function saveItem() {
@@ -915,6 +1062,21 @@ function Inventory({
       cost: Math.max(0, Number(itemDraft.cost) || 0),
       stock: Math.max(0, Math.round(Number(itemDraft.stock) || 0)),
       reorderPoint: Math.max(0, Math.round(Number(itemDraft.reorderPoint) || 0)),
+      imageUrl: itemDraft.imageUrl?.trim() ?? "",
+      purchaseUrls: (itemDraft.purchaseUrls ?? [])
+        .map((source) => ({ ...source, label: source.label.trim(), url: source.url.trim() }))
+        .filter((source) => source.label || source.url)
+        .map((source) => ({ ...source, label: source.label || "Purchase source" })),
+      priceHistory: (itemDraft.priceHistory ?? [])
+        .map((entry) => ({
+          ...entry,
+          date: entry.date || new Date().toISOString().slice(0, 10),
+          vendor: entry.vendor.trim() || "TBD",
+          unitCost: Math.max(0, Number(entry.unitCost) || 0),
+          notes: entry.notes.trim(),
+        }))
+        .filter((entry) => entry.vendor || entry.unitCost > 0)
+        .sort((a, b) => a.date.localeCompare(b.date)),
     };
 
     if (editingItemRef) {
@@ -1006,6 +1168,52 @@ function Inventory({
               <label>Unit cost<input type="number" min="0" value={itemDraft.cost} onChange={(event) => setItemDraft((current) => ({ ...current, cost: Number(event.target.value) }))} /></label>
               <label>Current stock<input type="number" min="0" value={itemDraft.stock} onChange={(event) => setItemDraft((current) => ({ ...current, stock: Number(event.target.value) }))} /></label>
               <label>Reorder point<input type="number" min="0" value={itemDraft.reorderPoint} onChange={(event) => setItemDraft((current) => ({ ...current, reorderPoint: Number(event.target.value) }))} /></label>
+            </div>
+            <div className="compact-edit-section">
+              <div className="compact-section-header">
+                <div>
+                  <h3>Image and Purchase Sources</h3>
+                  <p>Keep the item photo and preferred buying links with the inventory record.</p>
+                </div>
+                <button className="secondary-action mini-action" type="button" onClick={addPurchaseUrl}><Plus size={14} /> Add URL</button>
+              </div>
+              <div className="item-media-row">
+                <label className="image-url-field">Image URL<input value={itemDraft.imageUrl ?? ""} onChange={(event) => setItemDraft((current) => ({ ...current, imageUrl: event.target.value }))} placeholder="Paste image URL for this item" /></label>
+                <div className="image-preview-box">
+                  {itemDraft.imageUrl ? <img src={itemDraft.imageUrl} alt={`${itemDraft.name || "Inventory item"} preview`} /> : <><Image size={20} /><span>Image</span></>}
+                </div>
+              </div>
+              <div className="source-url-list">
+                {(itemDraft.purchaseUrls ?? []).map((source) => (
+                  <div className="source-url-row" key={source.id}>
+                    <input value={source.label} onChange={(event) => updatePurchaseUrl(source.id, "label", event.target.value)} placeholder="Vendor or source" />
+                    <input value={source.url} onChange={(event) => updatePurchaseUrl(source.id, "url", event.target.value)} placeholder="Purchase URL" />
+                    <button className="icon-button compact-remove" type="button" onClick={() => removePurchaseUrl(source.id)} aria-label="Remove purchase URL"><Trash2 size={15} /></button>
+                  </div>
+                ))}
+                {(itemDraft.purchaseUrls ?? []).length === 0 && <div className="empty-compact-state">No purchase links yet. Add vendor URLs here.</div>}
+              </div>
+            </div>
+            <div className="compact-edit-section">
+              <div className="compact-section-header">
+                <div>
+                  <h3>Purchase Price History</h3>
+                  <p>Track what it cost, who sold it, and why it changed.</p>
+                </div>
+                <button className="secondary-action mini-action" type="button" onClick={addPriceHistory}><Plus size={14} /> Add Price</button>
+              </div>
+              <div className="price-history-list">
+                {sortedDraftHistory.map((entry) => (
+                  <div className="price-history-row" key={entry.id}>
+                    <input type="date" value={entry.date} onChange={(event) => updatePriceHistory(entry.id, "date", event.target.value)} aria-label="Purchase date" />
+                    <input value={entry.vendor} onChange={(event) => updatePriceHistory(entry.id, "vendor", event.target.value)} placeholder="Vendor" aria-label="Vendor" />
+                    <input type="number" min="0" value={entry.unitCost} onChange={(event) => updatePriceHistory(entry.id, "unitCost", Number(event.target.value))} placeholder="Unit cost" aria-label="Unit cost" />
+                    <input value={entry.notes} onChange={(event) => updatePriceHistory(entry.id, "notes", event.target.value)} placeholder="Notes" aria-label="Price notes" />
+                    <button className="icon-button compact-remove" type="button" onClick={() => removePriceHistory(entry.id)} aria-label="Remove price history"><Trash2 size={15} /></button>
+                  </div>
+                ))}
+                {sortedDraftHistory.length === 0 && <div className="empty-compact-state">No price records yet. Add the first vendor cost to start tracking trend.</div>}
+              </div>
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowItemModal(false)}>Cancel</button>
@@ -1592,7 +1800,22 @@ function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPu
   );
 }
 
-function Reports({ inventoryValue, openPoValue }: { inventoryValue: number; openPoValue: number }) {
+function priceTrend(part: Part) {
+  const history = [...(part.priceHistory ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+  const latest = history[history.length - 1];
+  const previous = history[history.length - 2];
+
+  if (!latest) {
+    return null;
+  }
+
+  const change = previous ? latest.unitCost - previous.unitCost : 0;
+  const percent = previous && previous.unitCost > 0 ? (change / previous.unitCost) * 100 : 0;
+
+  return { latest, previous, change, percent };
+}
+
+function Reports({ inventoryItems, inventoryValue, openPoValue }: { inventoryItems: Part[]; inventoryValue: number; openPoValue: number }) {
   const vendorSpend = Object.entries(sumBy(purchaseOrders, (order) => order.vendor)).sort((a, b) => b[1] - a[1]);
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
   const categorySpend = purchaseOrders
@@ -1603,6 +1826,12 @@ function Reports({ inventoryValue, openPoValue }: { inventoryValue: number; open
     }, {} as Record<PurchaseLine["category"], number>);
   const categoryRows = Object.entries(categorySpend).sort((a, b) => b[1] - a[1]);
   const largestCategory = Math.max(...categoryRows.map(([, total]) => total));
+  const costHistoryRows = inventoryItems
+    .map((part) => ({ part, trend: priceTrend(part) }))
+    .filter((row): row is { part: Part; trend: NonNullable<ReturnType<typeof priceTrend>> } => Boolean(row.trend))
+    .sort((a, b) => Math.abs(b.trend.change) - Math.abs(a.trend.change))
+    .slice(0, 8);
+  const sourceRows = inventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
 
   return (
     <div className="content-grid">
@@ -1627,6 +1856,43 @@ function Reports({ inventoryValue, openPoValue }: { inventoryValue: number; open
               <div><i style={{ width: `${(total / largestCategory) * 100}%` }} /></div>
               <b>{moneyExact(total)}</b>
             </div>
+          ))}
+        </div>
+      </section>
+      <section className="panel wide">
+        <PanelHeader title="Inventory Cost History" label="Latest purchase price movement by item" />
+        <div className="report-table compact-report-table">
+          <div className="report-table-head"><span>Item</span><span>Latest</span><span>Previous</span><span>Change</span><span>Vendor</span></div>
+          {costHistoryRows.map(({ part, trend }) => (
+            <div className="report-table-row" key={part.ref}>
+              <span><strong>{part.name}</strong><small>{part.ref}</small></span>
+              <span>{moneyExact(trend.latest.unitCost)}</span>
+              <span>{trend.previous ? moneyExact(trend.previous.unitCost) : "No prior"}</span>
+              <span className={trend.change > 0 ? "cost-up" : trend.change < 0 ? "cost-down" : ""}>{trend.change === 0 ? "Flat" : `${trend.change > 0 ? "+" : ""}${moneyExact(trend.change)} (${trend.percent.toFixed(1)}%)`}</span>
+              <span>{trend.latest.vendor}<small>{trend.latest.date}</small></span>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="panel wide">
+        <PanelHeader title="Purchase Sources" label="Compact vendor link reference by inventory item" />
+        <div className="source-report-grid">
+          {sourceRows.map((part) => (
+            <article className="source-report-card" key={part.ref}>
+              <div>
+                <strong>{part.name}</strong>
+                <small>{part.ref} - {part.manufacturer}</small>
+              </div>
+              <div className="source-chip-list">
+                {(part.purchaseUrls ?? []).map((source) =>
+                  source.url ? (
+                    <a href={source.url} target="_blank" rel="noreferrer" key={source.id}><ExternalLink size={13} /> {source.label || "Source"}</a>
+                  ) : (
+                    <span key={source.id}>{source.label || "Source pending"}</span>
+                  ),
+                )}
+              </div>
+            </article>
           ))}
         </div>
       </section>

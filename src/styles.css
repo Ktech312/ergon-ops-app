@@ -729,9 +729,11 @@ td small {
   border: 1px solid #ded7cb;
   border-radius: 8px;
   box-shadow: 0 22px 60px rgba(27, 26, 24, 0.22);
-  max-width: 760px;
+  max-height: calc(100vh - 48px);
+  max-width: 900px;
+  overflow: auto;
   padding: 20px;
-  width: min(100%, 760px);
+  width: min(100%, 900px);
 }
 
 .modal-header {
@@ -798,6 +800,116 @@ td small {
 .bom-modal-grid textarea {
   min-height: 84px;
   resize: vertical;
+}
+
+.compact-edit-section {
+  border-top: 1px solid #e8e1d5;
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.compact-section-header {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.compact-section-header h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.compact-section-header p {
+  color: #756d62;
+  font-size: 12px;
+  margin: 3px 0 0;
+}
+
+.mini-action {
+  min-height: 34px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.item-media-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 92px;
+}
+
+.image-url-field {
+  color: #514b43;
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 7px;
+}
+
+.image-url-field input,
+.source-url-row input,
+.price-history-row input {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  color: #1b1a18;
+  font: inherit;
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.image-preview-box {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  color: #756d62;
+  display: grid;
+  font-size: 12px;
+  font-weight: 800;
+  justify-items: center;
+  min-height: 66px;
+  overflow: hidden;
+}
+
+.image-preview-box img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.source-url-list,
+.price-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.source-url-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 150px minmax(0, 1fr) 34px;
+}
+
+.price-history-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 140px 150px 110px minmax(0, 1fr) 34px;
+}
+
+.compact-remove {
+  height: 38px;
+  width: 34px;
+}
+
+.empty-compact-state {
+  background: #f8f5ef;
+  border: 1px dashed #ded7cb;
+  border-radius: 8px;
+  color: #756d62;
+  font-size: 13px;
+  padding: 10px 12px;
 }
 
 .material-action-group {
@@ -1039,6 +1151,103 @@ td small {
   height: 100%;
 }
 
+.report-table {
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.report-table-head,
+.report-table-row {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(170px, 1.5fr) 110px 110px 150px minmax(130px, 1fr);
+  padding: 10px 12px;
+}
+
+.report-table-head {
+  background: #f8f5ef;
+  color: #756d62;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.report-table-row {
+  border-top: 1px solid #e8e1d5;
+  font-size: 13px;
+}
+
+.report-table-row span {
+  min-width: 0;
+}
+
+.report-table-row strong,
+.report-table-row small {
+  display: block;
+}
+
+.report-table-row small {
+  color: #756d62;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.cost-up {
+  color: #9b4b12;
+  font-weight: 900;
+}
+
+.cost-down {
+  color: #174c43;
+  font-weight: 900;
+}
+
+.source-report-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.source-report-card {
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.source-report-card small {
+  color: #756d62;
+  display: block;
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.source-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.source-chip-list a,
+.source-chip-list span {
+  align-items: center;
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 999px;
+  color: #174c43;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 10px;
+  text-decoration: none;
+}
+
 @media (max-width: 1100px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1059,7 +1268,8 @@ td small {
   .project-grid,
   .project-selector-grid,
   .order-grid,
-  .upload-layout {
+  .upload-layout,
+  .source-report-grid {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -1088,13 +1298,20 @@ td small {
   .form-grid,
   .sow-grid,
   .bom-modal-grid,
-  .snapshot-grid {
+  .snapshot-grid,
+  .item-media-row,
+  .source-url-row,
+  .price-history-row,
+  .report-table-head,
+  .report-table-row,
+  .source-report-grid {
     grid-template-columns: 1fr;
   }
 
   .panel-title-row,
   .modal-header,
-  .modal-actions {
+  .modal-actions,
+  .compact-section-header {
     display: grid;
   }
 
