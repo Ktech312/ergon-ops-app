@@ -1415,12 +1415,29 @@ function App() {
       });
   }
 
+  function queueManualPurchaseRequest(partRef: string, quantity: number, notes: string) {
+    const part = inventoryItems.find((item) => item.ref === partRef);
+    if (!part) {
+      return;
+    }
+    queuePurchaseRequest(part, quantity, "Manual", notes.trim() || "Manual purchasing request.");
+  }
+
   function updatePurchaseRequestStatus(requestId: string, status: PurchaseRequest["status"]) {
     setPurchaseRequests((current) => current.map((request) => (request.id === requestId ? { ...request, status } : request)));
   }
 
   function cancelPurchaseRequest(requestId: string) {
     updatePurchaseRequestStatus(requestId, "Cancelled");
+  }
+
+  function receivePurchaseRequest(requestId: string) {
+    const request = purchaseRequests.find((item) => item.id === requestId);
+    if (!request || request.status === "Received" || request.status === "Cancelled") {
+      return;
+    }
+    receiveInventoryStock(request.sku, request.quantity, request.estimatedUnitCost, request.requestNumber, request.notes || "Received from purchase request.");
+    updatePurchaseRequestStatus(request.id, "Received");
   }
 
   function currentPersistedState(): PersistedAppState {
@@ -1512,7 +1529,7 @@ function App() {
         </header>
 
         {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} />}
-        {view === "purchasing" && <Purchasing projectSites={projectSites} purchaseRequests={purchaseRequests} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} />}
+        {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
         {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
@@ -1683,25 +1700,34 @@ function Dashboard({
 
 function Purchasing({
   projectSites,
+  inventoryItems,
   purchaseRequests,
   lowStock,
   buildTransactions,
   onQueueReorderRequests,
   onQueuePlannedBuildShortageRequests,
+  onQueueManualPurchaseRequest,
   onUpdatePurchaseRequestStatus,
   onCancelPurchaseRequest,
+  onReceivePurchaseRequest,
 }: {
   projectSites: ProjectSite[];
+  inventoryItems: Part[];
   purchaseRequests: PurchaseRequest[];
   lowStock: Part[];
   buildTransactions: BuildTransaction[];
   onQueueReorderRequests: () => void;
   onQueuePlannedBuildShortageRequests: () => void;
+  onQueueManualPurchaseRequest: (partRef: string, quantity: number, notes: string) => void;
   onUpdatePurchaseRequestStatus: (requestId: string, status: PurchaseRequest["status"]) => void;
   onCancelPurchaseRequest: (requestId: string) => void;
+  onReceivePurchaseRequest: (requestId: string) => void;
 }) {
   const [selectedProject, setSelectedProject] = useState("Straud Medical");
   const [uploadedDocs, setUploadedDocs] = useState<UploadedDoc[]>([]);
+  const [manualRequestPartRef, setManualRequestPartRef] = useState(() => inventoryItems.find((item) => !item.retired)?.ref ?? "");
+  const [manualRequestQty, setManualRequestQty] = useState(1);
+  const [manualRequestNotes, setManualRequestNotes] = useState("");
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
   const totalTax = purchaseOrders.reduce((sum, order) => sum + order.tax, 0);
   const openOrders = purchaseOrders.filter((order) => order.status !== "Imported").length;
@@ -1721,6 +1747,15 @@ function Purchasing({
     }));
     setUploadedDocs((current) => [...newDocs, ...current]);
     event.target.value = "";
+  }
+
+  function submitManualRequest() {
+    if (!manualRequestPartRef) {
+      return;
+    }
+    onQueueManualPurchaseRequest(manualRequestPartRef, manualRequestQty, manualRequestNotes);
+    setManualRequestQty(1);
+    setManualRequestNotes("");
   }
 
   return (
@@ -1744,6 +1779,23 @@ function Purchasing({
           </div>
         </div>
         <div className="request-queue">
+          <div className="manual-request-row">
+            <label>
+              Manual request
+              <select value={manualRequestPartRef} onChange={(event) => setManualRequestPartRef(event.target.value)}>
+                {inventoryItems.filter((item) => !item.retired).map((item) => <option key={item.ref} value={item.ref}>{item.ref} - {item.name}</option>)}
+              </select>
+            </label>
+            <label>
+              Qty
+              <input type="number" min={1} value={manualRequestQty} onChange={(event) => setManualRequestQty(Number(event.target.value))} />
+            </label>
+            <label>
+              Notes
+              <input value={manualRequestNotes} onChange={(event) => setManualRequestNotes(event.target.value)} placeholder="Reason, vendor note, project, or quote detail" />
+            </label>
+            <button className="secondary-action" type="button" onClick={submitManualRequest}><Plus size={16} /> Add Request</button>
+          </div>
           <div className="request-queue-head"><span>Request</span><span>Need</span><span>Reason</span><span>Est.</span><span>Status</span><span></span></div>
           {purchaseRequests.slice(0, 14).map((request) => (
             <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
@@ -1757,11 +1809,12 @@ function Purchasing({
                   <option>Need Quote</option>
                   <option>Ready to Order</option>
                   <option>Ordered</option>
-                  <option>Received</option>
+                  {request.status === "Received" && <option>Received</option>}
                   <option>Cancelled</option>
                 </select>
               </span>
               <span className="table-actions">
+                <button className="table-action" type="button" onClick={() => onReceivePurchaseRequest(request.id)} disabled={request.status === "Cancelled" || request.status === "Received"}>Receive</button>
                 <button className="table-action secondary-table-action" type="button" onClick={() => onCancelPurchaseRequest(request.id)} disabled={request.status === "Cancelled" || request.status === "Received"}>Cancel</button>
               </span>
             </div>
