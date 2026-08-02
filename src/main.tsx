@@ -1312,6 +1312,53 @@ function App() {
     );
   }
 
+  function currentPersistedState(): PersistedAppState {
+    return {
+      inventoryItems,
+      projectSites,
+      deviceRecipes,
+      inventoryMovements,
+      buildTransactions,
+      projectAllocations,
+      roleMode,
+    };
+  }
+
+  function exportBackup() {
+    const blob = new Blob([JSON.stringify(currentPersistedState(), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ergon-ops-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importBackup(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const importedState = JSON.parse(String(reader.result ?? "{}")) as Partial<PersistedAppState>;
+        setInventoryItems(isArray<Part>(importedState.inventoryItems, inventoryItems));
+        setProjectSites(isArray<ProjectSite>(importedState.projectSites, projectSites));
+        setDeviceRecipes(isArray<BuildRecipe>(importedState.deviceRecipes, deviceRecipes));
+        setInventoryMovements(isArray<InventoryMovement>(importedState.inventoryMovements, inventoryMovements));
+        setBuildTransactions(isArray<BuildTransaction>(importedState.buildTransactions, buildTransactions));
+        setProjectAllocations(isArray<ProjectAllocationHistory>(importedState.projectAllocations, projectAllocations));
+        if (["warehouse", "purchasing", "pm", "manager"].includes(String(importedState.roleMode))) {
+          setRoleMode(importedState.roleMode as RoleMode);
+        }
+      } catch {
+        setSyncStatus("error");
+      }
+    };
+    reader.readAsText(file);
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -1340,6 +1387,10 @@ function App() {
           <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}><option value="warehouse">Warehouse</option><option value="purchasing">Purchasing</option><option value="pm">PM</option><option value="manager">Manager</option></select></label>
           <div className={`sync-status ${syncStatus}`}>
             <span>{syncStatus === "local" ? "Local only" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
+          </div>
+          <div className="backup-actions">
+            <button className="secondary-action mini-action" type="button" onClick={exportBackup}>Backup</button>
+            <label className="secondary-action mini-action">Restore<input type="file" accept="application/json,.json" onChange={(event) => { importBackup(event.target.files?.[0]); event.target.value = ""; }} /></label>
           </div>
           <div className="search-box">
             <Search size={16} />
