@@ -1203,6 +1203,82 @@ td small {
   padding: 0 8px;
 }
 
+.work-order-panel {
+  max-width: 980px;
+}
+
+.work-order-summary {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) 90px 160px minmax(120px, 0.7fr);
+  margin-bottom: 14px;
+}
+
+.work-order-summary div,
+.work-order-summary label {
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  color: #514b43;
+  display: grid;
+  font-size: 12px;
+  font-weight: 900;
+  gap: 5px;
+  padding: 10px;
+}
+
+.work-order-summary strong {
+  color: #1b1a18;
+  font-size: 15px;
+}
+
+.work-order-summary select {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 7px;
+  color: #174c43;
+  font: inherit;
+  min-height: 34px;
+  padding: 0 8px;
+}
+
+.work-order-lines {
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.work-order-line {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(240px, 1fr) 76px 76px 120px;
+  padding: 10px 12px;
+}
+
+.work-order-line + .work-order-line {
+  border-top: 1px solid #e8e1d5;
+}
+
+.work-order-line.head {
+  background: #f8f5ef;
+  color: #756d62;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.work-order-line strong,
+.work-order-line small {
+  display: block;
+}
+
+.work-order-line small {
+  color: #756d62;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 .retired-row {
   color: #756d62;
   opacity: 0.72;
@@ -2328,6 +2404,8 @@ td small {
   .equipment-identity-card,
   .device-line-row,
   .device-add-bom-row,
+  .work-order-summary,
+  .work-order-line,
   .report-table-head,
   .report-table-row,
   .manual-request-row,

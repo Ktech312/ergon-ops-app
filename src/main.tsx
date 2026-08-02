@@ -2032,6 +2032,7 @@ function Inventory({
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showBuildConfirm, setShowBuildConfirm] = useState(false);
+  const [workOrderBuildId, setWorkOrderBuildId] = useState<string | null>(null);
   const [inventoryTab, setInventoryTab] = useState<"parts" | "finished">("parts");
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
   const [skuScan, setSkuScan] = useState("");
@@ -2068,6 +2069,17 @@ function Inventory({
     return { ...component, part, required, available, shortage: Math.max(0, required - available) };
   });
   const buildHasShortage = buildComponentRows.some((component) => component.shortage > 0);
+  const workOrderBuild = buildTransactions.find((build) => build.id === workOrderBuildId) ?? null;
+  const workOrderRecipe = workOrderBuild ? deviceRecipes.find((recipe) => recipe.outputName === workOrderBuild.equipmentName || recipe.name === workOrderBuild.equipmentName) : undefined;
+  const workOrderRows = workOrderBuild && workOrderRecipe
+    ? workOrderRecipe.components.map((component) => {
+        const part = inventoryItems.find((item) => item.name === component.itemName);
+        const required = component.qty * workOrderBuild.quantityBuilt;
+        const available = part && !part.retired ? part.stock : 0;
+        return { component, part, required, available, shortage: Math.max(0, required - available) };
+      })
+    : [];
+  const workOrderHasShortage = workOrderRows.some((row) => row.shortage > 0);
   const equipmentOptions = deviceRecipes.filter((recipe) => !recipe.retired || recipe.name === selectedBuildRecipe.name);
   const manufacturedEquipmentRows = deviceRecipes.map((recipe) => {
     const finishedPart = inventoryItems.find((part) => part.name === recipe.outputName && part.category === "Build");
@@ -2639,6 +2651,7 @@ function Inventory({
                 {build.status === "planned" ? (
                   <>
                     <span className={buildReadinessForTransaction(build).hasShortage ? "status warn" : "status ok"}>{buildReadinessForTransaction(build).message}</span>
+                    <button className="table-action secondary-table-action" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
                     <select value={build.stage ?? "planned"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
                       <option value="planned">Planned</option>
                       <option value="kitting">Kitting</option>
@@ -2655,6 +2668,7 @@ function Inventory({
                   </>
                 ) : build.status === "posted" ? (
                   <>
+                    <button className="table-action secondary-table-action" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
                     <select value={build.stage ?? "complete"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
                       <option value="planned">Planned</option>
                       <option value="kitting">Kitting</option>
@@ -2739,6 +2753,68 @@ function Inventory({
               <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(false)}>Done</button>
               <button className="secondary-action" type="button" onClick={planBuild} disabled={selectedBuildRecipe.retired || buildComponentRows.length === 0}><CalendarDays size={15} /> Plan Build</button>
               <button className="primary-action" type="button" onClick={requestBuild} disabled={selectedBuildRecipe.retired || buildHasShortage || buildComponentRows.length === 0}>Review &amp; Build Equipment</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {workOrderBuild && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel work-order-panel" role="dialog" aria-modal="true" aria-labelledby="work-order-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="work-order-title">{workOrderBuild.buildNumber}</h2>
+                <p>{workOrderBuild.quantityBuilt} x {workOrderBuild.equipmentName} - {workOrderBuild.status}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setWorkOrderBuildId(null)} aria-label="Close work order">x</button>
+            </div>
+            <div className="work-order-summary">
+              <div>
+                <span>Equipment</span>
+                <strong>{workOrderBuild.equipmentName}</strong>
+              </div>
+              <div>
+                <span>Quantity</span>
+                <strong>{workOrderBuild.quantityBuilt}</strong>
+              </div>
+              <label>
+                Stage
+                <select value={workOrderBuild.stage ?? (workOrderBuild.status === "planned" ? "planned" : "complete")} onChange={(event) => onUpdateBuildStage(workOrderBuild.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
+                  <option value="planned">Planned</option>
+                  <option value="kitting">Kitting</option>
+                  <option value="assembled">Assembled</option>
+                  <option value="tested">Tested</option>
+                  <option value="complete">Complete</option>
+                </select>
+              </label>
+              <div>
+                <span>Readiness</span>
+                <strong>{!workOrderRecipe ? "Recipe missing" : workOrderHasShortage ? "Parts short" : "Ready"}</strong>
+              </div>
+            </div>
+            {!workOrderRecipe && <div className="empty-compact-state">No equipment recipe was found for this work order.</div>}
+            {workOrderRecipe && (
+              <div className="work-order-lines">
+                <div className="work-order-line head"><span>Part</span><span>Need</span><span>Have</span><span>Status</span></div>
+                {workOrderRows.map((row) => (
+                  <div className="work-order-line" key={row.component.itemName}>
+                    <span><strong>{row.component.itemName}</strong><small>{row.part?.ref ?? "No SKU"} - {row.part?.manufacturer ?? "No matched inventory item"}</small></span>
+                    <span>{row.required}</span>
+                    <span>{row.available}</span>
+                    <span>{row.shortage > 0 ? <b className="status warn">Short {row.shortage}</b> : <b className="status ok">Available</b>}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="source-file"><ClipboardList size={16} /><span>Use this as the build traveler for picking parts, kitting, assembly, and test before posting completion.</span></div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => window.print()}>Print</button>
+              <button className="secondary-action" type="button" onClick={() => setWorkOrderBuildId(null)}>Close</button>
+              {workOrderBuild.status === "planned" && workOrderRecipe && (
+                <button className="primary-action" type="button" disabled={workOrderHasShortage} onClick={() => {
+                  onBuildInventoryUnit(workOrderRecipe, workOrderBuild.quantityBuilt, workOrderBuild.id);
+                  setWorkOrderBuildId(null);
+                }}>Complete Build</button>
+              )}
             </div>
           </section>
         </div>
