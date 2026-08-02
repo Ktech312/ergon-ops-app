@@ -958,6 +958,36 @@ td small {
   opacity: 0.58;
 }
 
+.receive-request-panel {
+  max-width: 720px;
+}
+
+.receive-request-summary {
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px;
+}
+
+.receive-request-summary span,
+.receive-request-summary strong {
+  background: white;
+  border: 1px solid #e8e1d5;
+  border-radius: 6px;
+  color: #514b43;
+  font-size: 13px;
+  min-height: 30px;
+  padding: 6px 9px;
+}
+
+.receive-request-summary strong {
+  color: #174c43;
+}
+
 .danger-action {
   color: #9a2f20;
 }

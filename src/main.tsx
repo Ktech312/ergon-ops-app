@@ -161,6 +161,7 @@ type PurchaseRequest = {
   projectName?: string;
   preferredVendor?: string;
   estimatedUnitCost: number;
+  receivedQuantity?: number;
   status: "Draft" | "Need Quote" | "Ready to Order" | "Ordered" | "Received" | "Cancelled";
   createdAt: string;
   notes: string;
@@ -1431,13 +1432,32 @@ function App() {
     updatePurchaseRequestStatus(requestId, "Cancelled");
   }
 
-  function receivePurchaseRequest(requestId: string) {
+  function receivePurchaseRequest(requestId: string, quantityReceived: number, unitCost: number, notes: string) {
     const request = purchaseRequests.find((item) => item.id === requestId);
     if (!request || request.status === "Received" || request.status === "Cancelled") {
       return;
     }
-    receiveInventoryStock(request.sku, request.quantity, request.estimatedUnitCost, request.requestNumber, request.notes || "Received from purchase request.");
-    updatePurchaseRequestStatus(request.id, "Received");
+    const alreadyReceived = request.receivedQuantity ?? 0;
+    const remaining = Math.max(0, request.quantity - alreadyReceived);
+    const receiveQty = Math.min(remaining, Math.max(1, Math.round(Number(quantityReceived) || 1)));
+    if (receiveQty <= 0) {
+      return;
+    }
+
+    receiveInventoryStock(request.sku, receiveQty, Math.max(0, Number(unitCost) || request.estimatedUnitCost), request.requestNumber, notes || request.notes || "Received from purchase request.");
+    const nextReceived = alreadyReceived + receiveQty;
+    setPurchaseRequests((current) =>
+      current.map((item) =>
+        item.id === request.id
+          ? {
+              ...item,
+              receivedQuantity: nextReceived,
+              estimatedUnitCost: Math.max(0, Number(unitCost) || item.estimatedUnitCost),
+              status: nextReceived >= item.quantity ? "Received" : "Ordered",
+            }
+          : item,
+      ),
+    );
   }
 
   function currentPersistedState(): PersistedAppState {
@@ -1734,13 +1754,15 @@ function Purchasing({
   onQueueManualPurchaseRequest: (partRef: string, quantity: number, notes: string) => void;
   onUpdatePurchaseRequestStatus: (requestId: string, status: PurchaseRequest["status"]) => void;
   onCancelPurchaseRequest: (requestId: string) => void;
-  onReceivePurchaseRequest: (requestId: string) => void;
+  onReceivePurchaseRequest: (requestId: string, quantityReceived: number, unitCost: number, notes: string) => void;
 }) {
   const [selectedProject, setSelectedProject] = useState("Straud Medical");
   const [uploadedDocs, setUploadedDocs] = useState<UploadedDoc[]>([]);
   const [manualRequestPartRef, setManualRequestPartRef] = useState(() => inventoryItems.find((item) => !item.retired)?.ref ?? "");
   const [manualRequestQty, setManualRequestQty] = useState(1);
   const [manualRequestNotes, setManualRequestNotes] = useState("");
+  const [receivingRequestId, setReceivingRequestId] = useState<string | null>(null);
+  const [requestReceiveDraft, setRequestReceiveDraft] = useState({ qty: 1, unitCost: 0, notes: "" });
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
   const totalTax = purchaseOrders.reduce((sum, order) => sum + order.tax, 0);
   const openOrders = purchaseOrders.filter((order) => order.status !== "Imported").length;
@@ -1748,6 +1770,8 @@ function Purchasing({
   const documentProjects = Array.from(new Set([...purchaseOrders.map((order) => order.projectRef), ...projectSites.map((project) => project.name)]));
   const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
+  const receivingRequest = purchaseRequests.find((request) => request.id === receivingRequestId) ?? null;
+  const receivingRemaining = receivingRequest ? Math.max(0, receivingRequest.quantity - (receivingRequest.receivedQuantity ?? 0)) : 0;
 
   function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
@@ -1769,6 +1793,20 @@ function Purchasing({
     onQueueManualPurchaseRequest(manualRequestPartRef, manualRequestQty, manualRequestNotes);
     setManualRequestQty(1);
     setManualRequestNotes("");
+  }
+
+  function openRequestReceiveModal(request: PurchaseRequest) {
+    const remaining = Math.max(1, request.quantity - (request.receivedQuantity ?? 0));
+    setReceivingRequestId(request.id);
+    setRequestReceiveDraft({ qty: remaining, unitCost: request.estimatedUnitCost, notes: request.notes });
+  }
+
+  function submitRequestReceive() {
+    if (!receivingRequest) {
+      return;
+    }
+    onReceivePurchaseRequest(receivingRequest.id, requestReceiveDraft.qty, requestReceiveDraft.unitCost, requestReceiveDraft.notes);
+    setReceivingRequestId(null);
   }
 
   return (
@@ -1813,9 +1851,9 @@ function Purchasing({
           {purchaseRequests.slice(0, 14).map((request) => (
             <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
               <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
-              <span>{request.quantity}</span>
+              <span>{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
               <span>{request.reason}<small>{request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
-              <span>{moneyExact(request.quantity * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
+              <span>{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
               <span>
                 <select value={request.status} onChange={(event) => onUpdatePurchaseRequestStatus(request.id, event.target.value as PurchaseRequest["status"])}>
                   <option>Draft</option>
@@ -1827,7 +1865,7 @@ function Purchasing({
                 </select>
               </span>
               <span className="table-actions">
-                <button className="table-action" type="button" onClick={() => onReceivePurchaseRequest(request.id)} disabled={request.status === "Cancelled" || request.status === "Received"}>Receive</button>
+                <button className="table-action" type="button" onClick={() => openRequestReceiveModal(request)} disabled={request.status === "Cancelled" || request.status === "Received"}>Receive</button>
                 <button className="table-action secondary-table-action" type="button" onClick={() => onCancelPurchaseRequest(request.id)} disabled={request.status === "Cancelled" || request.status === "Received"}>Cancel</button>
               </span>
             </div>
@@ -1835,6 +1873,34 @@ function Purchasing({
           {purchaseRequests.length === 0 && <div className="empty-compact-state">No purchase requests yet. Queue reorder or build shortages to start the buying list.</div>}
         </div>
       </section>
+      {receivingRequest && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel receive-request-panel" role="dialog" aria-modal="true" aria-labelledby="receive-request-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="receive-request-title">Receive Purchase Request</h2>
+                <p>{receivingRequest.requestNumber} - {receivingRequest.itemName}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setReceivingRequestId(null)} aria-label="Close receive request">x</button>
+            </div>
+            <div className="receive-request-summary">
+              <span>Ordered {receivingRequest.quantity}</span>
+              <span>Received {receivingRequest.receivedQuantity ?? 0}</span>
+              <strong>Remaining {receivingRemaining}</strong>
+            </div>
+            <div className="bom-modal-grid">
+              <label>Quantity received<input type="number" min={1} max={receivingRemaining || 1} value={requestReceiveDraft.qty} onChange={(event) => setRequestReceiveDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
+              <label>Unit cost<input type="number" min={0} step="0.01" value={requestReceiveDraft.unitCost} onChange={(event) => setRequestReceiveDraft((current) => ({ ...current, unitCost: Number(event.target.value) }))} /></label>
+              <label className="span-2">Receiving notes<input value={requestReceiveDraft.notes} onChange={(event) => setRequestReceiveDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Packing slip, shipment note, exception, or receiving detail" /></label>
+            </div>
+            <div className="source-file"><Truck size={16} /><span>Posting this receipt updates inventory stock and logs a receive movement against the request number.</span></div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setReceivingRequestId(null)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={submitRequestReceive} disabled={receivingRemaining <= 0}>Post Receipt</button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <section className="panel wide">
         <PanelHeader title="Upload Purchasing Document" label="Assign a PDF or receipt to a project before review" />
@@ -3649,7 +3715,7 @@ function Reports({
   const sourceRows = inventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
   const reorderRows = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint).sort((a, b) => a.stock - b.stock).slice(0, 12);
   const openPurchaseRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
-  const purchaseRequestExposure = openPurchaseRequests.reduce((sum, request) => sum + request.quantity * request.estimatedUnitCost, 0);
+  const purchaseRequestExposure = openPurchaseRequests.reduce((sum, request) => sum + Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost, 0);
   const plannedBuildShortages = buildTransactions
     .filter((build) => build.status === "planned")
     .flatMap((build) => {
@@ -3736,10 +3802,10 @@ function Reports({
             {openPurchaseRequests.slice(0, 12).map((request) => (
               <div className="report-table-row" key={request.id}>
                 <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
-                <span>{request.quantity}</span>
+                <span>{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
                 <span>{request.reason}<small>{request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
                 <span className="status warn">{request.status}</span>
-                <span>{moneyExact(request.quantity * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
+                <span>{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
               </div>
             ))}
             {openPurchaseRequests.length === 0 && <div className="empty-compact-state">No open purchase requests currently queued.</div>}
