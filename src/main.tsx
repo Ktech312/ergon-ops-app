@@ -1320,7 +1320,7 @@ function App() {
           </div>
         </header>
 
-        {view === "dashboard" && <Dashboard projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
+        {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
@@ -1350,9 +1350,67 @@ function pageTitle(view: View) {
   return titles[view];
 }
 
-function Dashboard({ projectSites, lowStock, inventoryValue, openPoValue }: { projectSites: ProjectSite[]; lowStock: Part[]; inventoryValue: number; openPoValue: number }) {
+function Dashboard({
+  roleMode,
+  projectSites,
+  lowStock,
+  inventoryValue,
+  openPoValue,
+  buildTransactions,
+  inventoryMovements,
+}: {
+  roleMode: RoleMode;
+  projectSites: ProjectSite[];
+  lowStock: Part[];
+  inventoryValue: number;
+  openPoValue: number;
+  buildTransactions: BuildTransaction[];
+  inventoryMovements: InventoryMovement[];
+}) {
   const importedLines = purchaseOrders.reduce((sum, order) => sum + order.lines.length, 0);
   const heldOrders = purchaseOrders.filter((order) => order.status === "On Hold");
+  const plannedBuilds = buildTransactions.filter((build) => build.status === "planned");
+  const recentReceipts = inventoryMovements.filter((movement) => movement.type === "receive").slice(0, 3);
+  const recentTransfers = inventoryMovements.filter((movement) => movement.type === "transfer").slice(0, 3);
+  const roleFocus = {
+    warehouse: {
+      title: "Warehouse Focus",
+      label: "Today: receive, count, transfer, and build readiness",
+      cards: [
+        { label: "Low stock SKUs", value: String(lowStock.length), note: "Use Inventory > Receive or Adjust" },
+        { label: "Recent receipts", value: String(recentReceipts.length), note: recentReceipts[0]?.itemName ?? "No receipts logged yet" },
+        { label: "Planned builds", value: String(plannedBuilds.length), note: plannedBuilds[0]?.equipmentName ?? "No planned builds" },
+      ],
+    },
+    purchasing: {
+      title: "Purchasing Focus",
+      label: "Today: shortages, held orders, and vendor cost changes",
+      cards: [
+        { label: "Orders needing follow-up", value: String(heldOrders.length), note: heldOrders[0]?.paymentNote ?? "No held orders" },
+        { label: "Reorder SKUs", value: String(lowStock.length), note: lowStock[0]?.name ?? "Inventory is above reorder points" },
+        { label: "Captured spend", value: money(openPoValue), note: "From imported purchasing data" },
+      ],
+    },
+    pm: {
+      title: "PM Focus",
+      label: "Today: project readiness and allocation movement",
+      cards: [
+        { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
+        { label: "Recent transfers", value: String(recentTransfers.length), note: recentTransfers[0]?.projectName ?? "No project transfers yet" },
+        { label: "Purchasing projects", value: String(projectSites.filter((project) => project.status === "Purchasing").length), note: "Need BOM/order follow-through" },
+      ],
+    },
+    manager: {
+      title: "Manager Focus",
+      label: "Today: inventory value, purchasing exposure, and manufacturing flow",
+      cards: [
+        { label: "Inventory value", value: money(inventoryValue), note: "Current stock value" },
+        { label: "Purchasing exposure", value: money(openPoValue), note: "Recent captured order spend" },
+        { label: "Build transactions", value: String(buildTransactions.length), note: `${plannedBuilds.length} planned` },
+      ],
+    },
+  } satisfies Record<RoleMode, { title: string; label: string; cards: { label: string; value: string; note: string }[] }>;
+  const activeFocus = roleFocus[roleMode];
 
   return (
     <div className="content-grid">
@@ -1361,6 +1419,19 @@ function Dashboard({ projectSites, lowStock, inventoryValue, openPoValue }: { pr
         <Metric icon={<ShoppingCart size={20} />} label="Recent Order Spend" value={money(openPoValue)} />
         <Metric icon={<FileText size={20} />} label="Imported Line Items" value={String(importedLines)} />
         <Metric icon={<Truck size={20} />} label="Active Projects" value={String(projectSites.length)} />
+      </section>
+
+      <section className="panel wide">
+        <PanelHeader title={activeFocus.title} label={activeFocus.label} />
+        <div className="role-focus-grid">
+          {activeFocus.cards.map((card) => (
+            <article className="role-focus-card" key={card.label}>
+              <span>{card.label}</span>
+              <strong>{card.value}</strong>
+              <small>{card.note}</small>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="panel wide">

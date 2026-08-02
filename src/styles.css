@@ -390,6 +390,34 @@ td small {
   font-size: 12px;
 }
 
+.role-focus-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.role-focus-card {
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  min-height: 92px;
+  padding: 12px;
+}
+
+.role-focus-card span,
+.role-focus-card small {
+  color: #756d62;
+  font-size: 12px;
+}
+
+.role-focus-card strong {
+  color: #1b1a18;
+  font-size: 24px;
+  line-height: 1;
+}
+
 .sku-scan-row {
   display: grid;
   gap: 8px;
@@ -2103,6 +2131,7 @@ td small {
   .order-grid,
   .upload-layout,
   .role-workbench,
+  .role-focus-grid,
   .build-planner,
   .device-add-row,
   .device-line-row,
@@ -2136,6 +2165,7 @@ td small {
   .sow-grid,
   .bom-modal-grid,
   .role-workbench,
+  .role-focus-grid,
   .sku-scan-row,
   .snapshot-grid,
   .inventory-editor-hero,
