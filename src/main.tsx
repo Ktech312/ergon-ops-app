@@ -157,7 +157,7 @@ type SalesQuoteExtractResponse = {
 
 const parts: Part[] = [
   {
-    ref: "INV-0001",
+    ref: "SKU-0001",
     name: "FLI Edge VPI",
     description: "NanoPC T6 compute unit",
     manufacturer: "FriendlyElec",
@@ -173,7 +173,7 @@ const parts: Part[] = [
     ],
   },
   {
-    ref: "INV-0002",
+    ref: "SKU-0002",
     name: "Camera",
     description: "Camera, limit of 4. Prefer Axis",
     manufacturer: "Axis",
@@ -192,7 +192,7 @@ const parts: Part[] = [
     ],
   },
   {
-    ref: "INV-0003",
+    ref: "SKU-0003",
     name: "VPU case",
     description: "White steel junction box",
     manufacturer: "Joinfworld",
@@ -208,7 +208,7 @@ const parts: Part[] = [
     ],
   },
   {
-    ref: "INV-0004",
+    ref: "SKU-0004",
     name: "Cellular Data Connection",
     description: "Internal LTE in Nano",
     manufacturer: "SixFab / Telit",
@@ -224,7 +224,7 @@ const parts: Part[] = [
     ],
   },
   {
-    ref: "INV-0005",
+    ref: "SKU-0005",
     name: "External Antenna",
     description: "External LTE antenna",
     manufacturer: "Bingfu / Dixingtech",
@@ -239,33 +239,33 @@ const parts: Part[] = [
       { id: 2, date: "2026-07-13", vendor: "Amazon", unitCost: 30, notes: "Recent order baseline" },
     ],
   },
-  { ref: "INV-0006", name: "External Cell Modem", description: "Industrial mobile router", manufacturer: "Ubiquiti", category: "Communications", cost: 225, stock: 5, reorderPoint: 3, tags: ["Network Part", "Edge Box Part"] },
-  { ref: "INV-0007", name: "Network Switch", description: "Industrial PoE network switch", manufacturer: "LinoVision", category: "Communications", cost: 110, stock: 6, reorderPoint: 6, tags: ["Network Part", "Edge Box Part", "Server Part"] },
-  { ref: "INV-0008", name: "Solar Panel", description: "12V 100W minimum, geography dependent", manufacturer: "Renogy", category: "Power", cost: 85, stock: 10, reorderPoint: 6, tags: ["Solar Part", "Power Part"] },
-  { ref: "INV-0009", name: "Solar Charger", description: "MPPT 75 charger", manufacturer: "Victron Energy", category: "Power", cost: 75, stock: 8, reorderPoint: 5, tags: ["Solar Part", "Power Part"] },
-  { ref: "INV-0010", name: "Solar Panel Mount Hardware", description: "Panel mounting hardware", manufacturer: "Renogy", category: "Power", cost: 66, stock: 13, reorderPoint: 6, tags: ["Solar Part", "Field Hardware"] },
-  { ref: "INV-0011", name: "Solar Panel to MPPT Connection Cable", description: "12/2 outdoor AWG connection cable", manufacturer: "Field supply", category: "Power", cost: 25, stock: 15, reorderPoint: 10, tags: ["Solar Part", "Power Part", "Field Hardware"] },
-  { ref: "INV-0012", name: "Battery", description: "LiFEPO4 12VDC at 300Wh", manufacturer: "GreenOE", category: "Power", cost: 65, stock: 12, reorderPoint: 6, tags: ["Solar Part", "Power Part", "Edge Box Part"] },
-  { ref: "INV-0013", name: "Smart Shunt", description: "300A shunt", manufacturer: "Victron Energy", category: "Power", cost: 85, stock: 6, reorderPoint: 6, tags: ["Solar Part", "Power Part"] },
-  { ref: "INV-0014", name: "Smart Shunt Energy Cable", description: "VE.Direct to USB interface", manufacturer: "Victron Energy", category: "Power", cost: 35, stock: 10, reorderPoint: 7, tags: ["Solar Part", "Power Part"] },
-  { ref: "INV-0015", name: "AC Charger", description: "AC charging adapter", manufacturer: "Amazon", category: "Power", cost: 25, stock: 16, reorderPoint: 8, tags: ["Power Part", "Edge Box Part", "Server Part"] },
-  { ref: "INV-0016", name: "Power Junction Box", description: "Field wiring enclosure", manufacturer: "Field supply", category: "Power", cost: 45, stock: 9, reorderPoint: 5, tags: ["Power Part", "Edge Box Part", "Field Hardware"] },
-  { ref: "INV-0017", name: "LED Light", description: "Optional additional lighting", manufacturer: "Amazon", category: "Lighting", cost: 145, stock: 4, reorderPoint: 3, tags: ["Field Hardware"] },
-  { ref: "INV-0018", name: "Pole for LED Light", description: "16ft pole for LED light", manufacturer: "Field supply", category: "Lighting", cost: 175, stock: 2, reorderPoint: 2, tags: ["Field Hardware"] },
-  { ref: "INV-0019", name: "32in Display", description: "Screen technology TBD", manufacturer: "TBD", category: "Display", cost: 3000, stock: 1, reorderPoint: 1, tags: ["Field Hardware"] },
-  { ref: "INV-0020", name: "2U Server Chassis", description: "Rosewill RSV-Z2006", manufacturer: "Rosewill", category: "Build", cost: 149.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 149.99, notes: "Required Enterprise VPU server chassis." }] },
-  { ref: "INV-0021", name: "Z890 Motherboard", description: "ASRock Z890 Taichi", manufacturer: "ASRock", category: "Build", cost: 199.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 199.99, notes: "Required Enterprise VPU motherboard." }] },
-  { ref: "INV-0022", name: "Intel Core Ultra 7 CPU", description: "Intel BX80768265KF", manufacturer: "Intel", category: "Build", cost: 298.98, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 298.98, notes: "Required Enterprise VPU CPU." }] },
-  { ref: "INV-0023", name: "Memory/RAM", description: "Crucial Pro CP2K16G64C38U5B", manufacturer: "Crucial Pro", category: "Build", cost: 468.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }, { id: 2, label: "Amazon alternate", url: "https://www.amazon.com/CORSAIR-Vengeance-6400MHz-CL36-48-48-104-Computer/dp/B0DJW4PKY3/ref=sr_1_2?crid=DYVWKIR6I6PT&dib=eyJ2IjoiMSJ9.PW1mQBTeYY8Plmhfj2dd76_7AoW9L8Xt17JhC7JZePpRCUxGwoj_YHmRQBgWZtRJq6wBc4EAPb__KA-6qkDlKvF_wsPgmWFr3Yx-4_ITRkyhP5nVnap7D0Xg3kh-uzAxr4HWyQJH4d_GWkpqVTMS-5rPVJ12ZfmsNHb9xk_5yZCv702NS0Nc4BXjd9r44DGBencOGLMVus1zx0fs_nm9XMuG1AG5DedCaSKwKuZCHKs.iaNJ7wUe6CoY7Ft3xNMAFN8BWfu0g9W4LaA5BOsUZT4&dib_tag=se&keywords=crucial+ddr5+6400+32gb&qid=1782751978&sprefix=crucial+ddr5+6400+32gb%2Caps%2C193&sr=8-2&ufe=app_do%3Aamzn1.fos.1740e8b9-be2d-46a4-a376-9d8efb903409" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 468.99, notes: "Can be substituted for any dual DDR5 6400 memory modules." }] },
-  { ref: "INV-0024", name: "Nvidia RTX5070 GPU", description: "Gigabyte N5070WF3OC-12GD", manufacturer: "Gigabyte", category: "Build", cost: 635.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 635.99, notes: "Can be substituted for any RTX5070 GPU with minimum 12GB RAM." }] },
-  { ref: "INV-0025", name: "Samsung 990 Pro SSD", description: "Samsung MZ-V9P1T0B/AM", manufacturer: "Samsung", category: "Build", cost: 219.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 219.99, notes: "Required Enterprise VPU SSD." }] },
-  { ref: "INV-0026", name: "Seagate 3.5in Drive", description: "Seagate ST2000DM001", manufacturer: "Seagate", category: "Build", cost: 85, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 85, notes: "Required Enterprise VPU storage drive." }] },
-  { ref: "INV-0027", name: "Corsair RMx Series Power", description: "Corsair RM1000x", manufacturer: "Corsair", category: "Build", cost: 209.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part", "Power Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 209.99, notes: "Required Enterprise VPU power supply." }] },
-  { ref: "INV-0028", name: "CPU Cooler", description: "SilverStone XE02-1700S", manufacturer: "SilverStone", category: "Build", cost: 72.2, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }, { id: 2, label: "Amazon alternate", url: "https://www.amazon.com/SilverStone-Technology-XE02-1700S-Workstation-SST-XE02-1700S/dp/B0D9MYWPQH/ref=sr_1_3?crid=9B8TQAPEVDPR&dib=eyJ2IjoiMSJ9.LYg9js1OGlXg7viJ6l-fzBgzXofSXiLCojlFaOQCvRnHDrXBG8tELkpD1cVjH7sfKuDz0cPBHYOa3ODBO3z05ihbi4-L1kI1WXjfW6CYvmKc7yHs32LKS4Xgb0t6NCEw7Z6h_zfuq4Gp_yFHD2m3k8_lr7aHcsS92HAKoZUiMUktSiecLJU-Fo9Qg5TzkQHMAIOITF2njfD8Ebvv7V_kPoT_mVYtz01uA521bvBbjjU.qLUNcEZbydxBkPw2jd5OCXIJVg0Yqdh8rQ_cz3okdMk&dib_tag=se&keywords=silverstone%2B2u%2Bcpu%2Bcooler&qid=1782752073&sprefix=silverstone%2B2u%2Bcpu%2Bcoole%2Caps%2C176&sr=8-3&th=1" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 72.2, notes: "Can be substituted for any 2U CPU cooler for LGA1700/LGA1851." }] },
-  { ref: "INV-0029", name: "PCIe Ribbon Cable", description: "LinkUP PCIe riser/ribbon cable", manufacturer: "LinkUP", category: "Build", cost: 65.96, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "Amazon", url: "https://www.amazon.com/dp/B0FLGRQQ8W?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "Amazon", unitCost: 65.96, notes: "Required Enterprise VPU PCIe ribbon cable." }] },
-  { ref: "INV-0030", name: "Fan Extension Cable", description: "Cable Matters fan extension cable", manufacturer: "Cable Matters", category: "Build", cost: 8.88, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "Amazon", url: "https://www.amazon.com/dp/B07PXLHNZ6?ref=ppx_yo2ov_dt_b_fed_asin_title" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "Amazon", unitCost: 8.88, notes: "Required Enterprise VPU fan extension cable." }] },
-  { ref: "INV-0031", name: "PiKVM Mini V4", description: "PiKVM Mini V4", manufacturer: "PiKVM", category: "Build", cost: 279.95, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "Amazon", url: "https://www.amazon.com/dp/B0CV93FNLF?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "Amazon", unitCost: 279.95, notes: "Required Enterprise VPU remote KVM." }] },
-  { ref: "INV-0032", name: "HDMI for PiKVM", description: "HDMI cable for PiKVM", manufacturer: "TBD", category: "Build", cost: 10.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "Amazon", url: "https://www.amazon.com/dp/B0G255DYLS?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "Amazon", unitCost: 10.99, notes: "Required Enterprise VPU PiKVM HDMI cable." }] },
+  { ref: "SKU-0006", name: "External Cell Modem", description: "Industrial mobile router", manufacturer: "Ubiquiti", category: "Communications", cost: 225, stock: 5, reorderPoint: 3, tags: ["Network Part", "Edge Box Part"] },
+  { ref: "SKU-0007", name: "Network Switch", description: "Industrial PoE network switch", manufacturer: "LinoVision", category: "Communications", cost: 110, stock: 6, reorderPoint: 6, tags: ["Network Part", "Edge Box Part", "Server Part"] },
+  { ref: "SKU-0008", name: "Solar Panel", description: "12V 100W minimum, geography dependent", manufacturer: "Renogy", category: "Power", cost: 85, stock: 10, reorderPoint: 6, tags: ["Solar Part", "Power Part"] },
+  { ref: "SKU-0009", name: "Solar Charger", description: "MPPT 75 charger", manufacturer: "Victron Energy", category: "Power", cost: 75, stock: 8, reorderPoint: 5, tags: ["Solar Part", "Power Part"] },
+  { ref: "SKU-0010", name: "Solar Panel Mount Hardware", description: "Panel mounting hardware", manufacturer: "Renogy", category: "Power", cost: 66, stock: 13, reorderPoint: 6, tags: ["Solar Part", "Field Hardware"] },
+  { ref: "SKU-0011", name: "Solar Panel to MPPT Connection Cable", description: "12/2 outdoor AWG connection cable", manufacturer: "Field supply", category: "Power", cost: 25, stock: 15, reorderPoint: 10, tags: ["Solar Part", "Power Part", "Field Hardware"] },
+  { ref: "SKU-0012", name: "Battery", description: "LiFEPO4 12VDC at 300Wh", manufacturer: "GreenOE", category: "Power", cost: 65, stock: 12, reorderPoint: 6, tags: ["Solar Part", "Power Part", "Edge Box Part"] },
+  { ref: "SKU-0013", name: "Smart Shunt", description: "300A shunt", manufacturer: "Victron Energy", category: "Power", cost: 85, stock: 6, reorderPoint: 6, tags: ["Solar Part", "Power Part"] },
+  { ref: "SKU-0014", name: "Smart Shunt Energy Cable", description: "VE.Direct to USB interface", manufacturer: "Victron Energy", category: "Power", cost: 35, stock: 10, reorderPoint: 7, tags: ["Solar Part", "Power Part"] },
+  { ref: "SKU-0015", name: "AC Charger", description: "AC charging adapter", manufacturer: "Amazon", category: "Power", cost: 25, stock: 16, reorderPoint: 8, tags: ["Power Part", "Edge Box Part", "Server Part"] },
+  { ref: "SKU-0016", name: "Power Junction Box", description: "Field wiring enclosure", manufacturer: "Field supply", category: "Power", cost: 45, stock: 9, reorderPoint: 5, tags: ["Power Part", "Edge Box Part", "Field Hardware"] },
+  { ref: "SKU-0017", name: "LED Light", description: "Optional additional lighting", manufacturer: "Amazon", category: "Lighting", cost: 145, stock: 4, reorderPoint: 3, tags: ["Field Hardware"] },
+  { ref: "SKU-0018", name: "Pole for LED Light", description: "16ft pole for LED light", manufacturer: "Field supply", category: "Lighting", cost: 175, stock: 2, reorderPoint: 2, tags: ["Field Hardware"] },
+  { ref: "SKU-0019", name: "32in Display", description: "Screen technology TBD", manufacturer: "TBD", category: "Display", cost: 3000, stock: 1, reorderPoint: 1, tags: ["Field Hardware"] },
+  { ref: "SKU-0020", name: "2U Server Chassis", description: "Rosewill RSV-Z2006", manufacturer: "Rosewill", category: "Build", cost: 149.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 149.99, notes: "Required Enterprise VPU server chassis." }] },
+  { ref: "SKU-0021", name: "Z890 Motherboard", description: "ASRock Z890 Taichi", manufacturer: "ASRock", category: "Build", cost: 199.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 199.99, notes: "Required Enterprise VPU motherboard." }] },
+  { ref: "SKU-0022", name: "Intel Core Ultra 7 CPU", description: "Intel BX80768265KF", manufacturer: "Intel", category: "Build", cost: 298.98, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 298.98, notes: "Required Enterprise VPU CPU." }] },
+  { ref: "SKU-0023", name: "Memory/RAM", description: "Crucial Pro CP2K16G64C38U5B", manufacturer: "Crucial Pro", category: "Build", cost: 468.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }, { id: 2, label: "Amazon alternate", url: "https://www.amazon.com/CORSAIR-Vengeance-6400MHz-CL36-48-48-104-Computer/dp/B0DJW4PKY3/ref=sr_1_2?crid=DYVWKIR6I6PT&dib=eyJ2IjoiMSJ9.PW1mQBTeYY8Plmhfj2dd76_7AoW9L8Xt17JhC7JZePpRCUxGwoj_YHmRQBgWZtRJq6wBc4EAPb__KA-6qkDlKvF_wsPgmWFr3Yx-4_ITRkyhP5nVnap7D0Xg3kh-uzAxr4HWyQJH4d_GWkpqVTMS-5rPVJ12ZfmsNHb9xk_5yZCv702NS0Nc4BXjd9r44DGBencOGLMVus1zx0fs_nm9XMuG1AG5DedCaSKwKuZCHKs.iaNJ7wUe6CoY7Ft3xNMAFN8BWfu0g9W4LaA5BOsUZT4&dib_tag=se&keywords=crucial+ddr5+6400+32gb&qid=1782751978&sprefix=crucial+ddr5+6400+32gb%2Caps%2C193&sr=8-2&ufe=app_do%3Aamzn1.fos.1740e8b9-be2d-46a4-a376-9d8efb903409" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 468.99, notes: "Can be substituted for any dual DDR5 6400 memory modules." }] },
+  { ref: "SKU-0024", name: "Nvidia RTX5070 GPU", description: "Gigabyte N5070WF3OC-12GD", manufacturer: "Gigabyte", category: "Build", cost: 635.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 635.99, notes: "Can be substituted for any RTX5070 GPU with minimum 12GB RAM." }] },
+  { ref: "SKU-0025", name: "Samsung 990 Pro SSD", description: "Samsung MZ-V9P1T0B/AM", manufacturer: "Samsung", category: "Build", cost: 219.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 219.99, notes: "Required Enterprise VPU SSD." }] },
+  { ref: "SKU-0026", name: "Seagate 3.5in Drive", description: "Seagate ST2000DM001", manufacturer: "Seagate", category: "Build", cost: 85, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 85, notes: "Required Enterprise VPU storage drive." }] },
+  { ref: "SKU-0027", name: "Corsair RMx Series Power", description: "Corsair RM1000x", manufacturer: "Corsair", category: "Build", cost: 209.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part", "Power Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 209.99, notes: "Required Enterprise VPU power supply." }] },
+  { ref: "SKU-0028", name: "CPU Cooler", description: "SilverStone XE02-1700S", manufacturer: "SilverStone", category: "Build", cost: 72.2, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "NewEgg", url: "" }, { id: 2, label: "Amazon alternate", url: "https://www.amazon.com/SilverStone-Technology-XE02-1700S-Workstation-SST-XE02-1700S/dp/B0D9MYWPQH/ref=sr_1_3?crid=9B8TQAPEVDPR&dib=eyJ2IjoiMSJ9.LYg9js1OGlXg7viJ6l-fzBgzXofSXiLCojlFaOQCvRnHDrXBG8tELkpD1cVjH7sfKuDz0cPBHYOa3ODBO3z05ihbi4-L1kI1WXjfW6CYvmKc7yHs32LKS4Xgb0t6NCEw7Z6h_zfuq4Gp_yFHD2m3k8_lr7aHcsS92HAKoZUiMUktSiecLJU-Fo9Qg5TzkQHMAIOITF2njfD8Ebvv7V_kPoT_mVYtz01uA521bvBbjjU.qLUNcEZbydxBkPw2jd5OCXIJVg0Yqdh8rQ_cz3okdMk&dib_tag=se&keywords=silverstone%2B2u%2Bcpu%2Bcooler&qid=1782752073&sprefix=silverstone%2B2u%2Bcpu%2Bcoole%2Caps%2C176&sr=8-3&th=1" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "NewEgg", unitCost: 72.2, notes: "Can be substituted for any 2U CPU cooler for LGA1700/LGA1851." }] },
+  { ref: "SKU-0029", name: "PCIe Ribbon Cable", description: "LinkUP PCIe riser/ribbon cable", manufacturer: "LinkUP", category: "Build", cost: 65.96, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "Amazon", url: "https://www.amazon.com/dp/B0FLGRQQ8W?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "Amazon", unitCost: 65.96, notes: "Required Enterprise VPU PCIe ribbon cable." }] },
+  { ref: "SKU-0030", name: "Fan Extension Cable", description: "Cable Matters fan extension cable", manufacturer: "Cable Matters", category: "Build", cost: 8.88, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "Amazon", url: "https://www.amazon.com/dp/B07PXLHNZ6?ref=ppx_yo2ov_dt_b_fed_asin_title" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "Amazon", unitCost: 8.88, notes: "Required Enterprise VPU fan extension cable." }] },
+  { ref: "SKU-0031", name: "PiKVM Mini V4", description: "PiKVM Mini V4", manufacturer: "PiKVM", category: "Build", cost: 279.95, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "Amazon", url: "https://www.amazon.com/dp/B0CV93FNLF?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "Amazon", unitCost: 279.95, notes: "Required Enterprise VPU remote KVM." }] },
+  { ref: "SKU-0032", name: "HDMI for PiKVM", description: "HDMI cable for PiKVM", manufacturer: "TBD", category: "Build", cost: 10.99, stock: 0, reorderPoint: 2, tags: ["VPU Part", "Server Part"], purchaseUrls: [{ id: 1, label: "Amazon", url: "https://www.amazon.com/dp/B0G255DYLS?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1" }], priceHistory: [{ id: 1, date: "2026-07-27", vendor: "Amazon", unitCost: 10.99, notes: "Required Enterprise VPU PiKVM HDMI cable." }] },
 ];
 
 const buildRecipes: BuildRecipe[] = [
@@ -683,13 +683,13 @@ function sumBy<T extends string>(items: PurchaseOrder[], key: (order: PurchaseOr
   }, {} as Record<T, number>);
 }
 
-function nextInventoryRef(items: Part[]) {
+function nextSkuRef(items: Part[]) {
   const maxRef = items.reduce((currentMax, item) => {
-    const match = item.ref.match(/^INV-(\d+)$/);
+    const match = item.ref.match(/^SKU-(\d+)$/);
     return match ? Math.max(currentMax, Number(match[1])) : currentMax;
   }, 0);
 
-  return `INV-${String(maxRef + 1).padStart(4, "0")}`;
+  return `SKU-${String(maxRef + 1).padStart(4, "0")}`;
 }
 
 function nextBuildRef(items: Part[]) {
@@ -809,7 +809,7 @@ function App() {
                   qty: transferQty,
                   status: "From Inventory",
                   requestSpeed: "Standard",
-                  notes: notes || `Transferred from inventory item ${part.ref}.`,
+                  notes: notes || `Transferred from SKU ${part.ref}.`,
                 },
               ],
             }
@@ -1183,7 +1183,7 @@ function Inventory({
   onBuildInventoryUnit: (recipe: BuildRecipe, qty: number) => void;
 }) {
   const emptyItemDraft: Part = {
-    ref: nextInventoryRef(inventoryItems),
+    ref: nextSkuRef(inventoryItems),
     name: "",
     description: "",
     manufacturer: "",
@@ -1234,7 +1234,7 @@ function Inventory({
 
   function openAddItemModal() {
     setEditingItemRef(null);
-    setItemDraft({ ...emptyItemDraft, ref: nextInventoryRef(inventoryItems) });
+    setItemDraft({ ...emptyItemDraft, ref: nextSkuRef(inventoryItems) });
     setShowItemModal(true);
   }
 
@@ -1320,7 +1320,7 @@ function Inventory({
   function saveItem() {
     const normalized: Part = {
       ...itemDraft,
-      ref: itemDraft.ref.trim() || nextInventoryRef(inventoryItems),
+      ref: itemDraft.ref.trim() || nextSkuRef(inventoryItems),
       name: itemDraft.name.trim() || "New Inventory Item",
       description: itemDraft.description.trim(),
       manufacturer: itemDraft.manufacturer.trim() || "TBD",
@@ -1455,10 +1455,10 @@ function Inventory({
         <div className="inventory-table-scroll">
           <table className="inventory-table">
             <thead>
-              <tr><th>Image</th><th>Ref</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th><th></th></tr>
+              <tr><th>Image</th><th>SKU</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th><th></th></tr>
               <tr className="filter-row">
                 <th></th>
-                <th><input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter ref" /></th>
+                <th><input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter SKU" /></th>
                 <th><input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" /></th>
                 <th>
                   <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
@@ -1569,7 +1569,7 @@ function Inventory({
                   <label>Inventory item<select value={component.itemName} onChange={(event) => updateDeviceComponentItem(component.itemName, event.target.value)}>{inventoryItems.map((part) => <option key={part.ref} value={part.name}>{part.ref} - {part.name}</option>)}</select></label>
                   <label>Qty<input type="number" min="1" value={component.qty} onChange={(event) => updateDeviceComponent(component.itemName, Number(event.target.value))} /></label>
                   <div className="device-line-status">
-                    <span>{component.part?.ref ?? "No inventory match"} - need {component.required}, have {component.available}</span>
+                    <span>{component.part?.ref ?? "No SKU match"} - need {component.required}, have {component.available}</span>
                     {component.shortage > 0 ? <span className="status warn">Purchase {component.shortage}</span> : <span className="status ok">Available</span>}
                   </div>
                   <button className="icon-button compact-remove" type="button" onClick={() => removeDeviceComponent(component.itemName)} aria-label={`Remove ${component.itemName}`}><Trash2 size={15} /></button>
@@ -1616,7 +1616,7 @@ function Inventory({
                 <input type="file" accept="image/*" onChange={(event) => uploadItemImage(event.target.files?.[0])} />
               </label>
               <div className="item-identity-fields">
-                <label>Internal ref<input value={itemDraft.ref} onChange={(event) => setItemDraft((current) => ({ ...current, ref: event.target.value }))} /></label>
+                <label>SKU<input value={itemDraft.ref} onChange={(event) => setItemDraft((current) => ({ ...current, ref: event.target.value }))} /></label>
                 <label>Item name<input value={itemDraft.name} onChange={(event) => setItemDraft((current) => ({ ...current, name: event.target.value }))} /></label>
                 <label>Description<input value={itemDraft.description} onChange={(event) => setItemDraft((current) => ({ ...current, description: event.target.value }))} /></label>
               </div>
@@ -2394,3 +2394,4 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </StrictMode>
 );
+
