@@ -21,7 +21,7 @@ import {
   Upload,
   User,
 } from "lucide-react";
-import { loadLocalAppState, loadRemoteAppState, saveLocalAppState, saveRemoteAppState, type PersistedAppState } from "./persistence";
+import { isRemotePersistenceConfigured, loadLocalAppState, loadRemoteAppState, saveLocalAppState, saveRemoteAppState, type PersistedAppState } from "./persistence";
 import "./styles.css";
 
 type View = "dashboard" | "purchasing" | "inventory" | "projects" | "reports";
@@ -75,6 +75,7 @@ type BuildRecipe = {
 };
 
 type RoleMode = "warehouse" | "purchasing" | "pm" | "manager";
+type SyncStatus = "local" | "loading" | "saving" | "synced" | "error";
 
 type InventoryMovement = {
   id: string;
@@ -795,15 +796,27 @@ function App() {
   const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>(() => isArray<BuildTransaction>(localState?.buildTransactions, []));
   const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>(() => isArray<ProjectAllocationHistory>(localState?.projectAllocations, []));
   const [roleMode, setRoleMode] = useState<RoleMode>(() => ((localState?.roleMode as RoleMode | undefined) ?? "manager"));
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => (isRemotePersistenceConfigured() ? "loading" : "local"));
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
 
   useEffect(() => {
     let cancelled = false;
+    if (!isRemotePersistenceConfigured()) {
+      setSyncStatus("local");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setSyncStatus("loading");
     loadRemoteAppState()
       .then((remoteState) => {
         if (!remoteState || cancelled) {
+          if (!cancelled) {
+            setSyncStatus("synced");
+          }
           return;
         }
         setInventoryItems(isArray<Part>(remoteState.inventoryItems, parts));
@@ -813,9 +826,11 @@ function App() {
         setBuildTransactions(isArray<BuildTransaction>(remoteState.buildTransactions, []));
         setProjectAllocations(isArray<ProjectAllocationHistory>(remoteState.projectAllocations, []));
         setRoleMode((remoteState.roleMode as RoleMode | undefined) ?? "manager");
+        setSyncStatus("synced");
       })
       .catch(() => {
         // Local persistence remains active when Supabase is not configured yet.
+        setSyncStatus("error");
       });
     return () => {
       cancelled = true;
@@ -833,10 +848,18 @@ function App() {
       roleMode,
     };
     saveLocalAppState(state);
+    if (!isRemotePersistenceConfigured()) {
+      setSyncStatus("local");
+      return;
+    }
+    setSyncStatus("saving");
     const syncTimer = window.setTimeout(() => {
-      saveRemoteAppState(state).catch(() => {
-        // Keep the UI usable offline or before Supabase keys are installed.
-      });
+      saveRemoteAppState(state)
+        .then(() => setSyncStatus("synced"))
+        .catch(() => {
+          // Keep the UI usable offline or before Supabase keys are installed.
+          setSyncStatus("error");
+        });
     }, 650);
     return () => window.clearTimeout(syncTimer);
   }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, roleMode]);
@@ -1315,6 +1338,9 @@ function App() {
             <p>Purchasing, inventory, project transfers, and reports for field packages.</p>
           </div>
           <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}><option value="warehouse">Warehouse</option><option value="purchasing">Purchasing</option><option value="pm">PM</option><option value="manager">Manager</option></select></label>
+          <div className={`sync-status ${syncStatus}`}>
+            <span>{syncStatus === "local" ? "Local only" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
+          </div>
           <div className="search-box">
             <Search size={16} />
             <span>Search parts, POs, projects</span>

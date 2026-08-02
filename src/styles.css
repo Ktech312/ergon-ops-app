@@ -143,6 +143,47 @@ button {
   padding: 0 10px;
 }
 
+.sync-status {
+  align-items: center;
+  align-self: center;
+  background: #f8f5ef;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  color: #514b43;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 900;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.sync-status::before {
+  background: currentColor;
+  border-radius: 999px;
+  content: "";
+  height: 7px;
+  margin-right: 7px;
+  width: 7px;
+}
+
+.sync-status.synced {
+  background: #dff1ea;
+  color: #174c43;
+}
+
+.sync-status.error {
+  background: #fff1d6;
+  color: #906313;
+}
+
+.sync-status.loading,
+.sync-status.saving {
+  background: #eef2f0;
+  color: #345d55;
+}
+
 .content-grid {
   display: grid;
   gap: 18px;

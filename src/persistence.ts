@@ -16,6 +16,10 @@ function envValue(key: "VITE_SUPABASE_URL" | "VITE_SUPABASE_ANON_KEY") {
   return env?.[key] ?? "";
 }
 
+export function isRemotePersistenceConfigured() {
+  return Boolean(envValue("VITE_SUPABASE_URL") && envValue("VITE_SUPABASE_ANON_KEY"));
+}
+
 function supabaseHeaders() {
   const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
   return {
@@ -43,7 +47,7 @@ export function saveLocalAppState(state: PersistedAppState) {
 }
 
 export async function loadRemoteAppState(): Promise<PersistedAppState | null> {
-  if (!envValue("VITE_SUPABASE_URL") || !envValue("VITE_SUPABASE_ANON_KEY")) {
+  if (!isRemotePersistenceConfigured()) {
     return null;
   }
 
@@ -60,7 +64,7 @@ export async function loadRemoteAppState(): Promise<PersistedAppState | null> {
 }
 
 export async function saveRemoteAppState(state: PersistedAppState) {
-  if (!envValue("VITE_SUPABASE_URL") || !envValue("VITE_SUPABASE_ANON_KEY")) {
+  if (!isRemotePersistenceConfigured()) {
     return;
   }
 
