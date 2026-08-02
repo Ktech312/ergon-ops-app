@@ -97,8 +97,8 @@ type BuildTransaction = {
   equipmentName: string;
   quantityBuilt: number;
   componentMovements: InventoryMovement[];
-  completionMovement: InventoryMovement;
-  status: "posted" | "undone";
+  completionMovement?: InventoryMovement;
+  status: "planned" | "posted" | "undone" | "cancelled";
   stage?: "planned" | "kitting" | "assembled" | "tested" | "complete";
   createdAt: string;
   undoneAt?: string;
@@ -1082,8 +1082,29 @@ function App() {
     );
   }
 
-  function buildInventoryUnit(recipe: BuildRecipe, qty: number) {
+  function planBuildTransaction(recipe: BuildRecipe, qty: number) {
     const buildQty = Math.max(1, Math.round(Number(qty) || 1));
+    if (recipe.retired || recipe.components.length === 0) {
+      return;
+    }
+
+    const plannedAt = new Date().toISOString();
+    const transaction: BuildTransaction = {
+      id: makeId("build"),
+      buildNumber: buildNumber(buildTransactions.length),
+      equipmentName: recipe.outputName,
+      quantityBuilt: buildQty,
+      componentMovements: [],
+      status: "planned",
+      stage: "planned",
+      createdAt: plannedAt,
+    };
+    setBuildTransactions((current) => [transaction, ...current]);
+  }
+
+  function buildInventoryUnit(recipe: BuildRecipe, qty: number, plannedBuildId?: string) {
+    const buildQty = Math.max(1, Math.round(Number(qty) || 1));
+    const plannedBuild = plannedBuildId ? buildTransactions.find((build) => build.id === plannedBuildId && build.status === "planned") : undefined;
     const hasShortage = recipe.components.some((component) => {
       const part = inventoryItems.find((item) => item.name === component.itemName);
       return !part || part.stock < component.qty * buildQty;
@@ -1094,7 +1115,7 @@ function App() {
     }
 
     const postedAt = new Date().toISOString();
-    const nextBuildNumber = buildNumber(buildTransactions.length);
+    const nextBuildNumber = plannedBuild?.buildNumber ?? buildNumber(buildTransactions.length);
     const componentMovements = recipe.components.map((component) => {
       const part = inventoryItems.find((item) => item.name === component.itemName);
       const usedQty = component.qty * buildQty;
@@ -1188,7 +1209,7 @@ function App() {
         return;
       }
       const transaction: BuildTransaction = {
-        id: makeId("build"),
+        id: plannedBuild?.id ?? makeId("build"),
         buildNumber: nextBuildNumber,
         equipmentName: recipe.outputName,
         quantityBuilt: buildQty,
@@ -1199,16 +1220,17 @@ function App() {
         createdAt: postedAt,
       };
       setInventoryMovements((current) => [completionMovement as InventoryMovement, ...componentMovements, ...current]);
-      setBuildTransactions((current) => [transaction, ...current]);
+      setBuildTransactions((current) => (plannedBuild ? current.map((build) => (build.id === plannedBuild.id ? transaction : build)) : [transaction, ...current]));
     }, 0);
   }
 
   function undoBuildTransaction(buildId: string) {
     const transaction = buildTransactions.find((build) => build.id === buildId);
-    if (!transaction || transaction.status === "undone") {
+    if (!transaction || transaction.status !== "posted" || !transaction.completionMovement) {
       return;
     }
 
+    const completionMovement = transaction.completionMovement;
     const undoneAt = new Date().toISOString();
     setInventoryItems((current) =>
       current.map((part) => {
@@ -1216,8 +1238,8 @@ function App() {
         if (consumed) {
           return { ...part, stock: part.stock + consumed.quantity };
         }
-        if (part.ref === transaction.completionMovement.sku || part.name === transaction.completionMovement.itemName) {
-          return { ...part, stock: Math.max(0, part.stock - transaction.completionMovement.quantity) };
+        if (part.ref === completionMovement.sku || part.name === completionMovement.itemName) {
+          return { ...part, stock: Math.max(0, part.stock - completionMovement.quantity) };
         }
         return part;
       }),
@@ -1225,11 +1247,11 @@ function App() {
 
     const undoMovements: InventoryMovement[] = [
       {
-        ...transaction.completionMovement,
+        ...completionMovement,
         id: makeId("txn"),
         type: "undo",
-        quantityBefore: transaction.completionMovement.quantityAfter,
-        quantityAfter: transaction.completionMovement.quantityBefore,
+        quantityBefore: completionMovement.quantityAfter,
+        quantityAfter: completionMovement.quantityBefore,
         notes: `Undo build completion for ${transaction.buildNumber}.`,
         createdAt: undoneAt,
       },
@@ -1249,6 +1271,21 @@ function App() {
 
   function updateBuildStage(buildId: string, stage: NonNullable<BuildTransaction["stage"]>) {
     setBuildTransactions((current) => current.map((build) => (build.id === buildId ? { ...build, stage } : build)));
+  }
+
+  function cancelPlannedBuild(buildId: string) {
+    setBuildTransactions((current) =>
+      current.map((build) =>
+        build.id === buildId && build.status === "planned"
+          ? {
+              ...build,
+              status: "cancelled",
+              stage: "planned",
+              undoneAt: new Date().toISOString(),
+            }
+          : build,
+      ),
+    );
   }
 
   return (
@@ -1285,7 +1322,7 @@ function App() {
 
         {view === "dashboard" && <Dashboard projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} />}
-        {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} />}
+        {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
         {view === "reports" && <Reports inventoryItems={inventoryItems} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} />}
       </main>
@@ -1559,9 +1596,11 @@ function Inventory({
   onReceiveStock,
   onAdjustStock,
   onTransferToProject,
+  onPlanBuild,
   onBuildInventoryUnit,
   onUndoBuildTransaction,
   onUpdateBuildStage,
+  onCancelPlannedBuild,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
@@ -1576,9 +1615,11 @@ function Inventory({
   onReceiveStock: (partRef: string, qty: number, unitCost: number, poNumber: string, notes: string) => void;
   onAdjustStock: (partRef: string, nextQty: number, notes: string) => void;
   onTransferToProject: (partRef: string, projectName: string, qty: number, notes: string) => void;
-  onBuildInventoryUnit: (recipe: BuildRecipe, qty: number) => void;
+  onPlanBuild: (recipe: BuildRecipe, qty: number) => void;
+  onBuildInventoryUnit: (recipe: BuildRecipe, qty: number, plannedBuildId?: string) => void;
   onUndoBuildTransaction: (buildId: string) => void;
   onUpdateBuildStage: (buildId: string, stage: NonNullable<BuildTransaction["stage"]>) => void;
+  onCancelPlannedBuild: (buildId: string) => void;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -1889,9 +1930,34 @@ function Inventory({
     setShowBuildConfirm(true);
   }
 
+  function planBuild() {
+    if (selectedBuildRecipe.retired || buildComponentRows.length === 0) {
+      return;
+    }
+
+    onPlanBuild(selectedBuildRecipe, Math.max(1, Math.round(Number(buildDraft.qty) || 1)));
+  }
+
   function confirmBuild() {
     onBuildInventoryUnit(selectedBuildRecipe, Math.max(1, Math.round(Number(buildDraft.qty) || 1)));
     setShowBuildConfirm(false);
+  }
+
+  function buildReadinessForTransaction(build: BuildTransaction) {
+    const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
+    if (!recipe) {
+      return { recipe: undefined, hasShortage: true, message: "Equipment recipe not found." };
+    }
+
+    const hasShortage = recipe.components.some((component) => {
+      const part = inventoryItems.find((item) => item.name === component.itemName);
+      return !part || part.retired || part.stock < component.qty * build.quantityBuilt;
+    });
+    return {
+      recipe,
+      hasShortage,
+      message: hasShortage ? "Parts short" : "Ready",
+    };
   }
 
   function selectBuildRecipe(recipeName: string) {
@@ -2160,6 +2226,10 @@ function Inventory({
             </div>
           ))}
         </div>
+        <div className="manufacturing-actions-row">
+          <button className="secondary-action" type="button" onClick={planBuild} disabled={selectedBuildRecipe.retired || buildComponentRows.length === 0}><CalendarDays size={15} /> Plan Build</button>
+          <button className="primary-action" type="button" onClick={requestBuild} disabled={selectedBuildRecipe.retired || buildHasShortage || buildComponentRows.length === 0}>Review &amp; Build Now</button>
+        </div>
       </section>
       <section className="panel">
         <PanelHeader title="Reorder List" label="At or below point" />
@@ -2177,7 +2247,24 @@ function Inventory({
                 <span>{build.quantityBuilt} x {build.equipmentName}</span>
               </div>
               <div className="build-history-actions">
-                {build.status === "posted" ? (
+                {build.status === "planned" ? (
+                  <>
+                    <span className={buildReadinessForTransaction(build).hasShortage ? "status warn" : "status ok"}>{buildReadinessForTransaction(build).message}</span>
+                    <select value={build.stage ?? "planned"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
+                      <option value="planned">Planned</option>
+                      <option value="kitting">Kitting</option>
+                      <option value="assembled">Assembled</option>
+                      <option value="tested">Tested</option>
+                    </select>
+                    <button className="table-action" type="button" disabled={buildReadinessForTransaction(build).hasShortage} onClick={() => {
+                      const ready = buildReadinessForTransaction(build);
+                      if (ready.recipe) {
+                        onBuildInventoryUnit(ready.recipe, build.quantityBuilt, build.id);
+                      }
+                    }}>Complete</button>
+                    <button className="table-action secondary-table-action" type="button" onClick={() => onCancelPlannedBuild(build.id)}>Cancel</button>
+                  </>
+                ) : build.status === "posted" ? (
                   <>
                     <select value={build.stage ?? "complete"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
                       <option value="planned">Planned</option>
@@ -2188,7 +2275,7 @@ function Inventory({
                     </select>
                     <button className="table-action secondary-table-action" type="button" onClick={() => onUndoBuildTransaction(build.id)}>Undo</button>
                   </>
-                ) : <span className="status retired">Undone</span>}
+                ) : <span className="status retired">{build.status === "cancelled" ? "Cancelled" : "Undone"}</span>}
               </div>
             </div>
           ))}
@@ -2261,6 +2348,7 @@ function Inventory({
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(false)}>Done</button>
+              <button className="secondary-action" type="button" onClick={planBuild} disabled={selectedBuildRecipe.retired || buildComponentRows.length === 0}><CalendarDays size={15} /> Plan Build</button>
               <button className="primary-action" type="button" onClick={requestBuild} disabled={selectedBuildRecipe.retired || buildHasShortage || buildComponentRows.length === 0}>Review &amp; Build Equipment</button>
             </div>
           </section>

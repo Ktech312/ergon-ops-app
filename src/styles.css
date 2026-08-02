@@ -1002,6 +1002,14 @@ td small {
   text-align: center;
 }
 
+.manufacturing-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .build-history-actions {
   align-items: center;
   display: flex;
