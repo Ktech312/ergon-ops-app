@@ -2333,7 +2333,7 @@ function Inventory({
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
   const [skuScan, setSkuScan] = useState("");
   const [scanStatus, setScanStatus] = useState("Scan or enter a SKU to pull up the item.");
-  const [buildDraft, setBuildDraft] = useState({ recipeName: buildRecipes[0].name, qty: 1 });
+  const [buildDraft, setBuildDraft] = useState({ recipeName: deviceRecipes.find((recipe) => !recipe.retired)?.name ?? deviceRecipes[0]?.name ?? "", qty: 1 });
   const [newComponentDraft, setNewComponentDraft] = useState({ itemName: "", qty: 1 });
   const [receiveDraft, setReceiveDraft] = useState({
     partRef: inventoryItems[0]?.ref ?? "",
@@ -2965,7 +2965,7 @@ function Inventory({
         </div>
         <div className="manufacturing-actions-row">
           <button className="secondary-action" type="button" onClick={planBuild} disabled={selectedBuildRecipe.retired || buildComponentRows.length === 0}><CalendarDays size={15} /> Plan Build</button>
-          <button className="primary-action" type="button" onClick={requestBuild} disabled={selectedBuildRecipe.retired || buildHasShortage || buildComponentRows.length === 0}>Review &amp; Build Now</button>
+          <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(true)} disabled={selectedBuildRecipe.retired || buildComponentRows.length === 0}>Review Build</button>
         </div>
       </section>
       <section className="panel">
@@ -3177,11 +3177,25 @@ function Inventory({
               <strong>{selectedBuildRecipe.outputName}</strong>
               <span>Quantity to build: {Math.max(1, Math.round(Number(buildDraft.qty) || 1))}</span>
             </div>
+            <div className="build-confirm-audit">
+              <div>
+                <span>Finished stock now</span>
+                <strong>{inventoryItems.find((part) => part.name === selectedBuildRecipe.outputName && part.category === "Build")?.stock ?? 0}</strong>
+              </div>
+              <div>
+                <span>Finished stock after</span>
+                <strong>{(inventoryItems.find((part) => part.name === selectedBuildRecipe.outputName && part.category === "Build")?.stock ?? 0) + Math.max(1, Math.round(Number(buildDraft.qty) || 1))}</strong>
+              </div>
+              <div>
+                <span>Component lines</span>
+                <strong>{buildComponentRows.length}</strong>
+              </div>
+            </div>
             <div className="build-confirm-list">
               {buildComponentRows.map((component) => (
                 <div key={component.itemName}>
                   <span>{component.part?.ref ?? "No SKU"} - {component.itemName}</span>
-                  <b>{component.required} used</b>
+                  <b>{component.available} to {component.available - component.required}</b>
                 </div>
               ))}
             </div>
