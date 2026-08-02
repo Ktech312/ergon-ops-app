@@ -790,6 +790,27 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function csvValue(value: string | number | undefined | null) {
+  const normalized = String(value ?? "");
+  return /[",\n\r]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
+}
+
+function exportCsv(filename: string, rows: Array<Record<string, string | number | undefined | null>>) {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const headers = Object.keys(rows[0]);
+  const csv = [headers.join(","), ...rows.map((row) => headers.map((header) => csvValue(row[header])).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function movementNumber(index: number) {
   return `TXN-${String(index + 1).padStart(5, "0")}`;
 }
@@ -1828,6 +1849,26 @@ function Purchasing({
     setReceivingRequestId(null);
   }
 
+  function exportPurchaseRequestQueue() {
+    exportCsv(
+      `ergon-purchase-requests-${new Date().toISOString().slice(0, 10)}.csv`,
+      filteredPurchaseRequests.map((request) => ({
+        request: request.requestNumber,
+        sku: request.sku,
+        item: request.itemName,
+        quantity_ordered: request.quantity,
+        quantity_received: request.receivedQuantity ?? 0,
+        quantity_remaining: Math.max(0, request.quantity - (request.receivedQuantity ?? 0)),
+        reason: request.reason,
+        source: request.sourceRef ?? "",
+        vendor: request.preferredVendor ?? "",
+        unit_cost: request.estimatedUnitCost,
+        status: request.status,
+        notes: request.notes,
+      })),
+    );
+  }
+
   return (
     <div className="content-grid purchasing-layout">
       <section className="metric-grid">
@@ -1844,6 +1885,7 @@ function Purchasing({
             <p>Buying work created from low stock, planned builds, and future manual requests.</p>
           </div>
           <div className="action-row">
+            <button className="secondary-action" type="button" onClick={exportPurchaseRequestQueue} disabled={filteredPurchaseRequests.length === 0}><FileText size={16} /> Export CSV</button>
             <button className="secondary-action" type="button" onClick={onQueueReorderRequests} disabled={lowStock.length === 0}><Plus size={16} /> Queue Reorders</button>
             <button className="primary-action" type="button" onClick={onQueuePlannedBuildShortageRequests} disabled={plannedBuilds === 0}><ShoppingCart size={16} /> Queue Build Shortages</button>
           </div>
@@ -2354,6 +2396,45 @@ function Inventory({
     setShowItemModal(false);
   }
 
+  function exportVisibleInventory() {
+    exportCsv(
+      `ergon-inventory-${inventoryTab}-${new Date().toISOString().slice(0, 10)}.csv`,
+      filteredInventoryItems.map((part) => ({
+        sku: part.ref,
+        name: part.name,
+        description: part.description,
+        category: part.category,
+        manufacturer: part.manufacturer,
+        stock: part.stock,
+        reorder_point: part.reorderPoint,
+        unit_cost: part.cost,
+        status: part.retired ? "Retired" : part.stock <= part.reorderPoint ? "Reorder" : "Healthy",
+        tags: (part.tags ?? []).join("; "),
+        barcode: part.barcode ?? "",
+      })),
+    );
+  }
+
+  function exportMovementLedger() {
+    exportCsv(
+      `ergon-inventory-movements-${new Date().toISOString().slice(0, 10)}.csv`,
+      inventoryMovements.map((movement) => ({
+        date: movement.createdAt,
+        type: movement.type,
+        sku: movement.sku,
+        item: movement.itemName,
+        quantity: movement.quantity,
+        before: movement.quantityBefore,
+        after: movement.quantityAfter,
+        project: movement.projectName ?? "",
+        po: movement.poNumber ?? "",
+        build: movement.buildNumber ?? "",
+        source: movement.source,
+        notes: movement.notes,
+      })),
+    );
+  }
+
   function toggleItemRetired() {
     setItemDraft((current) => ({ ...current, retired: !current.retired }));
   }
@@ -2620,6 +2701,7 @@ function Inventory({
             <p>{inventoryTab === "finished" ? "Finished manufactured equipment ready for projects" : "Purchasing parts, components, and field hardware"}</p>
           </div>
           <div className="action-row">
+            <button className="secondary-action" type="button" onClick={exportVisibleInventory} disabled={filteredInventoryItems.length === 0}><FileText size={16} /> Export CSV</button>
             <button className="secondary-action" type="button" onClick={() => openReceiveModal()}><Truck size={16} /> Receive Stock</button>
             <button className="secondary-action" type="button" onClick={() => openAdjustModal()}><ClipboardList size={16} /> Adjust Count</button>
             <button className="primary-action" type="button" onClick={openAddItemModal}><Plus size={17} /> Add New Item</button>
@@ -2803,7 +2885,13 @@ function Inventory({
         </div>
       </section>
       <section className="panel wide">
-        <PanelHeader title="Inventory Movement Ledger" label="Receive, transfer, build, adjust, retire, undo" />
+        <div className="panel-title-row">
+          <div>
+            <h2>Inventory Movement Ledger</h2>
+            <p>Receive, transfer, build, adjust, retire, undo</p>
+          </div>
+          <button className="secondary-action" type="button" onClick={exportMovementLedger} disabled={inventoryMovements.length === 0}><FileText size={16} /> Export CSV</button>
+        </div>
         <div className="report-table compact-report-table">
           <div className="report-table-head"><span>Type</span><span>SKU</span><span>Qty</span><span>Before / After</span><span>Reference</span></div>
           {inventoryMovements.slice(0, 10).map((movement) => (
@@ -3802,6 +3890,75 @@ function Reports({
     .slice(0, 14);
   const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects">("purchasing");
 
+  function exportActiveReport() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (reportTab === "purchasing") {
+      exportCsv(
+        `ergon-report-purchasing-${today}.csv`,
+        openPurchaseRequests.map((request) => ({
+          request: request.requestNumber,
+          sku: request.sku,
+          item: request.itemName,
+          remaining: Math.max(0, request.quantity - (request.receivedQuantity ?? 0)),
+          ordered: request.quantity,
+          received: request.receivedQuantity ?? 0,
+          reason: request.reason,
+          status: request.status,
+          source: request.sourceRef ?? "",
+          vendor: request.preferredVendor ?? "",
+          estimated_cost: Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost,
+        })),
+      );
+      return;
+    }
+
+    if (reportTab === "inventory") {
+      exportCsv(
+        `ergon-report-inventory-${today}.csv`,
+        reorderRows.map((part) => ({
+          sku: part.ref,
+          item: part.name,
+          stock: part.stock,
+          reorder_point: part.reorderPoint,
+          category: part.category,
+          manufacturer: part.manufacturer,
+          unit_cost: part.cost,
+        })),
+      );
+      return;
+    }
+
+    if (reportTab === "manufacturing") {
+      exportCsv(
+        `ergon-report-manufacturing-${today}.csv`,
+        buildTransactions.map((build) => ({
+          build: build.buildNumber,
+          equipment: build.equipmentName,
+          quantity: build.quantityBuilt,
+          stage: build.stage ?? "",
+          status: build.status,
+          created: build.createdAt,
+          component_lines: build.componentMovements.length,
+        })),
+      );
+      return;
+    }
+
+    exportCsv(
+      `ergon-report-project-allocations-${today}.csv`,
+      projectAllocations.map((allocation) => ({
+        project: allocation.projectName,
+        project_ref: allocation.projectRef ?? "",
+        sku: allocation.sku,
+        item: allocation.itemName,
+        quantity: allocation.quantity,
+        action: allocation.action,
+        notes: allocation.notes,
+        created: allocation.createdAt,
+      })),
+    );
+  }
+
   return (
     <div className="content-grid">
       <section className="panel wide">
@@ -3810,6 +3967,7 @@ function Reports({
             <h2>Reports</h2>
             <p>Purchasing, inventory, manufacturing, and project movement views.</p>
           </div>
+          <button className="secondary-action" type="button" onClick={exportActiveReport}><FileText size={16} /> Export CSV</button>
         </div>
         <div className="segmented-tabs report-tabs">
           <button className={reportTab === "purchasing" ? "active" : ""} type="button" onClick={() => setReportTab("purchasing")}>Purchasing</button>
