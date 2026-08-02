@@ -1401,19 +1401,28 @@ function App() {
     buildTransactions
       .filter((build) => build.status === "planned")
       .forEach((build) => {
-        const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
-        recipe?.components.forEach((component) => {
-          const part = inventoryItems.find((item) => item.name === component.itemName);
-          if (!part || part.retired) {
-            return;
-          }
-          const required = component.qty * build.quantityBuilt;
-          const shortage = Math.max(0, required - part.stock);
-          if (shortage > 0) {
-            queuePurchaseRequest(part, shortage, "Planned Build Shortage", `${build.buildNumber} needs ${required}; inventory has ${part.stock}.`, build.buildNumber);
-          }
-        });
+        queueBuildShortageRequests(build.id);
       });
+  }
+
+  function queueBuildShortageRequests(buildId: string) {
+    const build = buildTransactions.find((item) => item.id === buildId);
+    if (!build || build.status !== "planned") {
+      return;
+    }
+
+    const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
+    recipe?.components.forEach((component) => {
+      const part = inventoryItems.find((item) => item.name === component.itemName);
+      if (!part || part.retired) {
+        return;
+      }
+      const required = component.qty * build.quantityBuilt;
+      const shortage = Math.max(0, required - part.stock);
+      if (shortage > 0) {
+        queuePurchaseRequest(part, shortage, "Planned Build Shortage", `${build.buildNumber} needs ${required}; inventory has ${part.stock}.`, build.buildNumber);
+      }
+    });
   }
 
   function queueManualPurchaseRequest(partRef: string, quantity: number, notes: string) {
@@ -1550,7 +1559,7 @@ function App() {
 
         {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} purchaseRequests={purchaseRequests} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
-        {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} />}
+        {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
         {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
       </main>
@@ -2053,6 +2062,7 @@ function Inventory({
   onUndoBuildTransaction,
   onUpdateBuildStage,
   onCancelPlannedBuild,
+  onQueueBuildShortageRequests,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
@@ -2072,6 +2082,7 @@ function Inventory({
   onUndoBuildTransaction: (buildId: string) => void;
   onUpdateBuildStage: (buildId: string, stage: NonNullable<BuildTransaction["stage"]>) => void;
   onCancelPlannedBuild: (buildId: string) => void;
+  onQueueBuildShortageRequests: (buildId: string) => void;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -2718,6 +2729,7 @@ function Inventory({
                   <>
                     <span className={buildReadinessForTransaction(build).hasShortage ? "status warn" : "status ok"}>{buildReadinessForTransaction(build).message}</span>
                     <button className="table-action secondary-table-action" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
+                    {buildReadinessForTransaction(build).hasShortage && <button className="table-action secondary-table-action" type="button" onClick={() => onQueueBuildShortageRequests(build.id)}>Request Parts</button>}
                     <select value={build.stage ?? "planned"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
                       <option value="planned">Planned</option>
                       <option value="kitting">Kitting</option>
@@ -2874,6 +2886,7 @@ function Inventory({
             <div className="source-file"><ClipboardList size={16} /><span>Use this as the build traveler for picking parts, kitting, assembly, and test before posting completion.</span></div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => window.print()}>Print</button>
+              {workOrderBuild.status === "planned" && workOrderHasShortage && <button className="secondary-action" type="button" onClick={() => onQueueBuildShortageRequests(workOrderBuild.id)}><ShoppingCart size={15} /> Queue Shortages</button>}
               <button className="secondary-action" type="button" onClick={() => setWorkOrderBuildId(null)}>Close</button>
               {workOrderBuild.status === "planned" && workOrderRecipe && (
                 <button className="primary-action" type="button" disabled={workOrderHasShortage} onClick={() => {
