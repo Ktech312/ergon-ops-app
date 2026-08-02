@@ -1528,7 +1528,7 @@ function App() {
           </div>
         </header>
 
-        {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} />}
+        {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} purchaseRequests={purchaseRequests} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
@@ -1566,6 +1566,7 @@ function Dashboard({
   openPoValue,
   buildTransactions,
   inventoryMovements,
+  purchaseRequests,
 }: {
   roleMode: RoleMode;
   projectSites: ProjectSite[];
@@ -1574,10 +1575,13 @@ function Dashboard({
   openPoValue: number;
   buildTransactions: BuildTransaction[];
   inventoryMovements: InventoryMovement[];
+  purchaseRequests: PurchaseRequest[];
 }) {
   const importedLines = purchaseOrders.reduce((sum, order) => sum + order.lines.length, 0);
   const heldOrders = purchaseOrders.filter((order) => order.status === "On Hold");
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned");
+  const activePurchaseRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
+  const requestExposure = activePurchaseRequests.reduce((sum, request) => sum + request.quantity * request.estimatedUnitCost, 0);
   const recentReceipts = inventoryMovements.filter((movement) => movement.type === "receive").slice(0, 3);
   const recentTransfers = inventoryMovements.filter((movement) => movement.type === "transfer").slice(0, 3);
   const roleFocus = {
@@ -1594,7 +1598,7 @@ function Dashboard({
       title: "Purchasing Focus",
       label: "Today: shortages, held orders, and vendor cost changes",
       cards: [
-        { label: "Orders needing follow-up", value: String(heldOrders.length), note: heldOrders[0]?.paymentNote ?? "No held orders" },
+        { label: "Open requests", value: String(activePurchaseRequests.length), note: activePurchaseRequests[0]?.itemName ?? "No queued purchase requests" },
         { label: "Reorder SKUs", value: String(lowStock.length), note: lowStock[0]?.name ?? "Inventory is above reorder points" },
         { label: "Captured spend", value: money(openPoValue), note: "From imported purchasing data" },
       ],
@@ -1613,7 +1617,7 @@ function Dashboard({
       label: "Today: inventory value, purchasing exposure, and manufacturing flow",
       cards: [
         { label: "Inventory value", value: money(inventoryValue), note: "Current stock value" },
-        { label: "Purchasing exposure", value: money(openPoValue), note: "Recent captured order spend" },
+        { label: "Request exposure", value: money(requestExposure), note: "Open purchase request estimate" },
         { label: "Build transactions", value: String(buildTransactions.length), note: `${plannedBuilds.length} planned` },
       ],
     },
@@ -1675,6 +1679,15 @@ function Dashboard({
                 <span>{part.category} reorder watch</span>
               </div>
               <b>{part.stock} left</b>
+            </div>
+          ))}
+          {activePurchaseRequests.slice(0, 3).map((request) => (
+            <div className="row-card" key={request.id}>
+              <div>
+                <strong>{request.itemName}</strong>
+                <span>{request.requestNumber} - {request.reason}</span>
+              </div>
+              <b>{request.quantity} needed</b>
             </div>
           ))}
         </div>
