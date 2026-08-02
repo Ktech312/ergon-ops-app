@@ -1578,7 +1578,7 @@ function App() {
           </div>
         </header>
 
-        {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} purchaseRequests={purchaseRequests} />}
+        {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
@@ -1616,6 +1616,7 @@ function Dashboard({
   openPoValue,
   buildTransactions,
   inventoryMovements,
+  projectAllocations,
   purchaseRequests,
 }: {
   roleMode: RoleMode;
@@ -1625,6 +1626,7 @@ function Dashboard({
   openPoValue: number;
   buildTransactions: BuildTransaction[];
   inventoryMovements: InventoryMovement[];
+  projectAllocations: ProjectAllocationHistory[];
   purchaseRequests: PurchaseRequest[];
 }) {
   const importedLines = purchaseOrders.reduce((sum, order) => sum + order.lines.length, 0);
@@ -1634,6 +1636,36 @@ function Dashboard({
   const requestExposure = activePurchaseRequests.reduce((sum, request) => sum + request.quantity * request.estimatedUnitCost, 0);
   const recentReceipts = inventoryMovements.filter((movement) => movement.type === "receive").slice(0, 3);
   const recentTransfers = inventoryMovements.filter((movement) => movement.type === "transfer").slice(0, 3);
+  const activityFeed = [
+    ...purchaseRequests.map((request) => ({
+      id: request.id,
+      date: request.createdAt,
+      kind: "Purchase",
+      title: `${request.requestNumber} - ${request.itemName}`,
+      detail: `${request.status} - ${Math.max(0, request.quantity - (request.receivedQuantity ?? 0))} remaining`,
+    })),
+    ...inventoryMovements.map((movement) => ({
+      id: movement.id,
+      date: movement.createdAt,
+      kind: "Inventory",
+      title: `${movement.type.replace("_", " ")} - ${movement.itemName}`,
+      detail: `${movement.quantityBefore} to ${movement.quantityAfter}${movement.projectName ? ` - ${movement.projectName}` : ""}`,
+    })),
+    ...buildTransactions.map((build) => ({
+      id: build.id,
+      date: build.createdAt,
+      kind: "Build",
+      title: `${build.buildNumber} - ${build.equipmentName}`,
+      detail: `${build.quantityBuilt} unit${build.quantityBuilt === 1 ? "" : "s"} - ${build.stage ?? build.status}`,
+    })),
+    ...projectAllocations.map((allocation) => ({
+      id: allocation.id,
+      date: allocation.createdAt,
+      kind: "Project",
+      title: `${allocation.projectName} - ${allocation.itemName}`,
+      detail: `${allocation.action} ${allocation.quantity} from ${allocation.sku}`,
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
   const roleFocus = {
     warehouse: {
       title: "Warehouse Focus",
@@ -1693,6 +1725,23 @@ function Dashboard({
               <small>{card.note}</small>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="panel wide">
+        <PanelHeader title="Recent Activity" label="Combined purchasing, inventory, build, and project movement timeline" />
+        <div className="activity-feed">
+          {activityFeed.map((activity) => (
+            <div className="activity-row" key={`${activity.kind}-${activity.id}`}>
+              <span>{activity.kind}</span>
+              <div>
+                <strong>{activity.title}</strong>
+                <small>{activity.detail}</small>
+              </div>
+              <time>{new Date(activity.date).toLocaleString()}</time>
+            </div>
+          ))}
+          {activityFeed.length === 0 && <div className="empty-compact-state">No saved activity yet. Receiving, transfers, builds, and purchase requests will appear here.</div>}
         </div>
       </section>
 
