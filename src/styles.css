@@ -927,7 +927,7 @@ td small {
   align-items: center;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(190px, 1.4fr) 62px minmax(160px, 1fr) minmax(130px, 0.8fr) 150px 176px;
+  grid-template-columns: minmax(190px, 1.4fr) 62px minmax(160px, 1fr) minmax(130px, 0.8fr) 150px 248px;
   padding: 10px 12px;
 }
 
@@ -1038,7 +1038,12 @@ td small {
   max-width: 720px;
 }
 
-.receive-request-summary {
+.purchase-request-edit-panel {
+  max-width: 820px;
+}
+
+.receive-request-summary,
+.request-edit-summary {
   background: #f8f5ef;
   border: 1px solid #e8e1d5;
   border-radius: 8px;
@@ -1050,7 +1055,9 @@ td small {
 }
 
 .receive-request-summary span,
-.receive-request-summary strong {
+.receive-request-summary strong,
+.request-edit-summary span,
+.request-edit-summary strong {
   background: white;
   border: 1px solid #e8e1d5;
   border-radius: 6px;
@@ -1060,7 +1067,8 @@ td small {
   padding: 6px 9px;
 }
 
-.receive-request-summary strong {
+.receive-request-summary strong,
+.request-edit-summary strong {
   color: #174c43;
 }
 

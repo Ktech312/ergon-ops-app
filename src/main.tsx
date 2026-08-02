@@ -160,6 +160,8 @@ type PurchaseRequest = {
   sourceRef?: string;
   projectName?: string;
   preferredVendor?: string;
+  poNumber?: string;
+  expectedDate?: string;
   estimatedUnitCost: number;
   receivedQuantity?: number;
   status: "Draft" | "Need Quote" | "Ready to Order" | "Ordered" | "Received" | "Cancelled";
@@ -1458,6 +1460,25 @@ function App() {
     setPurchaseRequests((current) => current.map((request) => (request.id === requestId ? { ...request, status } : request)));
   }
 
+  function updatePurchaseRequest(requestId: string, updates: Partial<Pick<PurchaseRequest, "quantity" | "preferredVendor" | "poNumber" | "expectedDate" | "estimatedUnitCost" | "status" | "notes">>) {
+    setPurchaseRequests((current) =>
+      current.map((request) =>
+        request.id === requestId
+          ? {
+              ...request,
+              ...updates,
+              quantity: updates.quantity !== undefined ? Math.max(request.receivedQuantity ?? 0, Math.max(1, Math.round(Number(updates.quantity) || 1))) : request.quantity,
+              preferredVendor: updates.preferredVendor?.trim() || request.preferredVendor,
+              poNumber: updates.poNumber?.trim() ?? request.poNumber,
+              expectedDate: updates.expectedDate ?? request.expectedDate,
+              estimatedUnitCost: updates.estimatedUnitCost !== undefined ? Math.max(0, Number(updates.estimatedUnitCost) || 0) : request.estimatedUnitCost,
+              notes: updates.notes !== undefined ? updates.notes.trim() : request.notes,
+            }
+          : request,
+      ),
+    );
+  }
+
   function cancelPurchaseRequest(requestId: string) {
     updatePurchaseRequestStatus(requestId, "Cancelled");
   }
@@ -1579,7 +1600,7 @@ function App() {
         </header>
 
         {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
-        {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
+        {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
         {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
@@ -1819,6 +1840,7 @@ function Purchasing({
   onQueueReorderRequests,
   onQueuePlannedBuildShortageRequests,
   onQueueManualPurchaseRequest,
+  onUpdatePurchaseRequest,
   onUpdatePurchaseRequestStatus,
   onCancelPurchaseRequest,
   onReceivePurchaseRequest,
@@ -1831,6 +1853,7 @@ function Purchasing({
   onQueueReorderRequests: () => void;
   onQueuePlannedBuildShortageRequests: () => void;
   onQueueManualPurchaseRequest: (partRef: string, quantity: number, notes: string) => void;
+  onUpdatePurchaseRequest: (requestId: string, updates: Partial<Pick<PurchaseRequest, "quantity" | "preferredVendor" | "poNumber" | "expectedDate" | "estimatedUnitCost" | "status" | "notes">>) => void;
   onUpdatePurchaseRequestStatus: (requestId: string, status: PurchaseRequest["status"]) => void;
   onCancelPurchaseRequest: (requestId: string) => void;
   onReceivePurchaseRequest: (requestId: string, quantityReceived: number, unitCost: number, notes: string) => void;
@@ -1841,6 +1864,16 @@ function Purchasing({
   const [manualRequestQty, setManualRequestQty] = useState(1);
   const [manualRequestNotes, setManualRequestNotes] = useState("");
   const [requestFilters, setRequestFilters] = useState({ text: "", status: "Open", reason: "All" });
+  const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
+  const [requestEditDraft, setRequestEditDraft] = useState({
+    quantity: 1,
+    preferredVendor: "",
+    poNumber: "",
+    expectedDate: "",
+    estimatedUnitCost: 0,
+    status: "Draft" as PurchaseRequest["status"],
+    notes: "",
+  });
   const [receivingRequestId, setReceivingRequestId] = useState<string | null>(null);
   const [requestReceiveDraft, setRequestReceiveDraft] = useState({ qty: 1, unitCost: 0, notes: "" });
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
@@ -1851,6 +1884,7 @@ function Purchasing({
   const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
   const receivingRequest = purchaseRequests.find((request) => request.id === receivingRequestId) ?? null;
+  const editingRequest = purchaseRequests.find((request) => request.id === editingRequestId) ?? null;
   const receivingRemaining = receivingRequest ? Math.max(0, receivingRequest.quantity - (receivingRequest.receivedQuantity ?? 0)) : 0;
   const filteredPurchaseRequests = purchaseRequests.filter((request) => {
     const haystack = `${request.requestNumber} ${request.sku} ${request.itemName} ${request.preferredVendor ?? ""} ${request.sourceRef ?? ""}`.toLowerCase();
@@ -1898,6 +1932,27 @@ function Purchasing({
     setReceivingRequestId(null);
   }
 
+  function openRequestEditModal(request: PurchaseRequest) {
+    setEditingRequestId(request.id);
+    setRequestEditDraft({
+      quantity: request.quantity,
+      preferredVendor: request.preferredVendor ?? "",
+      poNumber: request.poNumber ?? "",
+      expectedDate: request.expectedDate ?? "",
+      estimatedUnitCost: request.estimatedUnitCost,
+      status: request.status,
+      notes: request.notes,
+    });
+  }
+
+  function submitRequestEdit() {
+    if (!editingRequest) {
+      return;
+    }
+    onUpdatePurchaseRequest(editingRequest.id, requestEditDraft);
+    setEditingRequestId(null);
+  }
+
   function exportPurchaseRequestQueue() {
     exportCsv(
       `ergon-purchase-requests-${new Date().toISOString().slice(0, 10)}.csv`,
@@ -1911,6 +1966,8 @@ function Purchasing({
         reason: request.reason,
         source: request.sourceRef ?? "",
         vendor: request.preferredVendor ?? "",
+        po_number: request.poNumber ?? "",
+        expected_date: request.expectedDate ?? "",
         unit_cost: request.estimatedUnitCost,
         status: request.status,
         notes: request.notes,
@@ -2003,6 +2060,7 @@ function Purchasing({
                 </select>
               </span>
               <span className="table-actions">
+                <button className="table-action secondary-table-action" type="button" onClick={() => openRequestEditModal(request)}>Edit</button>
                 <button className="table-action" type="button" onClick={() => openRequestReceiveModal(request)} disabled={request.status === "Cancelled" || request.status === "Received"}>Receive</button>
                 <button className="table-action secondary-table-action" type="button" onClick={() => onCancelPurchaseRequest(request.id)} disabled={request.status === "Cancelled" || request.status === "Received"}>Cancel</button>
               </span>
@@ -2036,6 +2094,37 @@ function Purchasing({
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setReceivingRequestId(null)}>Cancel</button>
               <button className="primary-action" type="button" onClick={submitRequestReceive} disabled={receivingRemaining <= 0}>Post Receipt</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {editingRequest && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel purchase-request-edit-panel" role="dialog" aria-modal="true" aria-labelledby="edit-request-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="edit-request-title">Edit Purchase Request</h2>
+                <p>{editingRequest.requestNumber} - {editingRequest.sku} - {editingRequest.itemName}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setEditingRequestId(null)} aria-label="Close purchase request editor">x</button>
+            </div>
+            <div className="request-edit-summary">
+              <span>{editingRequest.reason}</span>
+              <span>{editingRequest.sourceRef ?? "No build/project source"}</span>
+              <strong>{Math.max(0, editingRequest.quantity - (editingRequest.receivedQuantity ?? 0))} remaining</strong>
+            </div>
+            <div className="bom-modal-grid">
+              <label>Quantity ordered<input type="number" min={editingRequest.receivedQuantity ?? 0} value={requestEditDraft.quantity} onChange={(event) => setRequestEditDraft((current) => ({ ...current, quantity: Number(event.target.value) }))} /></label>
+              <label>Status<select value={requestEditDraft.status} onChange={(event) => setRequestEditDraft((current) => ({ ...current, status: event.target.value as PurchaseRequest["status"] }))}><option>Draft</option><option>Need Quote</option><option>Ready to Order</option><option>Ordered</option><option>Received</option><option>Cancelled</option></select></label>
+              <label>Vendor<input value={requestEditDraft.preferredVendor} onChange={(event) => setRequestEditDraft((current) => ({ ...current, preferredVendor: event.target.value }))} placeholder="Vendor or source" /></label>
+              <label>Unit cost<input type="number" min={0} step="0.01" value={requestEditDraft.estimatedUnitCost} onChange={(event) => setRequestEditDraft((current) => ({ ...current, estimatedUnitCost: Number(event.target.value) }))} /></label>
+              <label>PO number<input value={requestEditDraft.poNumber} onChange={(event) => setRequestEditDraft((current) => ({ ...current, poNumber: event.target.value }))} placeholder="PO, quote, or order number" /></label>
+              <label>Expected date<input type="date" value={requestEditDraft.expectedDate} onChange={(event) => setRequestEditDraft((current) => ({ ...current, expectedDate: event.target.value }))} /></label>
+              <label className="span-2">Notes<textarea value={requestEditDraft.notes} onChange={(event) => setRequestEditDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Vendor response, substitutions, purchasing notes, delivery details." /></label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setEditingRequestId(null)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={submitRequestEdit}>Save Request</button>
             </div>
           </section>
         </div>

@@ -26,7 +26,8 @@ Apply Supabase migrations in `backend/supabase/migrations`, including
 `003_manufacturing_inventory_controls.sql` and
 `004_planned_builds_and_scan_fields.sql`, and
 `005_purchase_requests.sql`, and
-`006_purchase_request_receipts.sql`, before enabling cloud sync.
+`006_purchase_request_receipts.sql`, and
+`007_purchase_request_order_fields.sql`, before enabling cloud sync.
 
 The current Supabase bridge uses `app_state_snapshots` while the UI is being
 moved toward fully normalized table writes.
