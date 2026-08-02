@@ -523,6 +523,11 @@ td small {
   color: #174c43;
 }
 
+.status.retired {
+  background: #e6e1d8;
+  color: #756d62;
+}
+
 .project-top {
   align-items: flex-start;
   display: flex;
@@ -663,6 +668,13 @@ td small {
   padding: 0 12px;
 }
 
+.table-action:disabled {
+  background: #d8d0c4;
+  border-color: #d8d0c4;
+  color: #756d62;
+  cursor: not-allowed;
+}
+
 .table-actions {
   display: flex;
   flex-wrap: wrap;
@@ -674,6 +686,10 @@ td small {
   background: #fffdf9;
   border-color: #ded7cb;
   color: #174c43;
+}
+
+.danger-action {
+  color: #9a2f20;
 }
 
 .progress-cell {
@@ -846,6 +862,53 @@ td small {
 
 .source-file span {
   font-size: 12px;
+}
+
+.manufactured-inventory-list {
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: grid;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.manufactured-inventory-head,
+.manufactured-inventory-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) 88px 88px;
+  padding: 8px 10px;
+}
+
+.manufactured-inventory-head {
+  background: #f8f5ef;
+  color: #756d62;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.manufactured-inventory-row + .manufactured-inventory-row {
+  border-top: 1px solid #e8e1d5;
+}
+
+.manufactured-inventory-row strong {
+  font-size: 13px;
+}
+
+.manufactured-inventory-row b {
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 6px;
+  min-height: 28px;
+  padding: 5px 8px;
+  text-align: center;
+}
+
+.retired-row {
+  color: #756d62;
+  opacity: 0.72;
 }
 
 .modal-backdrop {
@@ -1296,6 +1359,15 @@ td small {
   line-height: 1.35;
   min-height: 72px;
   resize: vertical;
+}
+
+.equipment-record-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin: -2px 0 12px;
 }
 
 .device-line-list {
@@ -1980,6 +2052,11 @@ td small {
 
   .bar-row {
     grid-template-columns: 1fr;
+  }
+
+  .manufactured-inventory-head,
+  .manufactured-inventory-row {
+    grid-template-columns: minmax(0, 1fr) 72px 72px;
   }
 
   .inventory-table-scroll {

@@ -55,6 +55,7 @@ type Part = {
   purchaseUrls?: PurchaseUrl[];
   priceHistory?: PriceHistoryEntry[];
   tags?: string[];
+  retired?: boolean;
 };
 
 type BuildComponent = {
@@ -68,6 +69,7 @@ type BuildRecipe = {
   description: string;
   imageUrl?: string;
   components: BuildComponent[];
+  retired?: boolean;
 };
 
 type PackageOption = {
@@ -725,7 +727,7 @@ function App() {
   const [locationHash, setLocationHash] = useState(window.location.hash || window.localStorage.getItem("ergon:lastHash") || "#dashboard");
   const [inventoryItems, setInventoryItems] = useState(parts);
   const [projectSites, setProjectSites] = useState(projects);
-  const lowStock = inventoryItems.filter((part) => part.stock <= part.reorderPoint);
+  const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
 
@@ -1196,6 +1198,7 @@ function Inventory({
     purchaseUrls: [],
     priceHistory: [],
     tags: [],
+    retired: false,
   };
   const [showItemModal, setShowItemModal] = useState(false);
   const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
@@ -1216,16 +1219,30 @@ function Inventory({
   });
   const transferItem = inventoryItems.find((part) => part.ref === transferDraft.partRef);
   const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
-  const selectedBuildRecipe = deviceRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? deviceRecipes[0];
+  const selectedBuildRecipe = deviceRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? deviceRecipes.find((recipe) => !recipe.retired) ?? deviceRecipes[0];
   const buildComponentRows = selectedBuildRecipe.components.map((component) => {
     const part = inventoryItems.find((item) => item.name === component.itemName);
     const required = component.qty * Math.max(1, Math.round(Number(buildDraft.qty) || 1));
-    const available = part?.stock ?? 0;
+    const available = part?.retired ? 0 : part?.stock ?? 0;
     return { ...component, part, required, available, shortage: Math.max(0, required - available) };
   });
   const buildHasShortage = buildComponentRows.some((component) => component.shortage > 0);
+  const equipmentOptions = deviceRecipes.filter((recipe) => !recipe.retired || recipe.name === selectedBuildRecipe.name);
+  const manufacturedEquipmentRows = deviceRecipes.map((recipe) => {
+    const finishedPart = inventoryItems.find((part) => part.name === recipe.outputName && part.category === "Build");
+    const finished = finishedPart?.stock ?? 0;
+    const buildable = recipe.components.length
+      ? Math.min(
+          ...recipe.components.map((component) => {
+            const part = inventoryItems.find((item) => item.name === component.itemName);
+            return part && !part.retired ? Math.floor(part.stock / component.qty) : 0;
+          }),
+        )
+      : 0;
+    return { recipe, finished, buildable };
+  });
   const filteredInventoryItems = inventoryItems.filter((part) => {
-    const status = part.stock <= part.reorderPoint ? "Reorder" : "Healthy";
+    const status = part.retired ? "Retired" : part.stock <= part.reorderPoint ? "Reorder" : "Healthy";
     return (
       part.ref.toLowerCase().includes(filters.ref.toLowerCase()) &&
       `${part.name} ${part.description}`.toLowerCase().includes(filters.part.toLowerCase()) &&
@@ -1346,6 +1363,7 @@ function Inventory({
         .filter((entry) => entry.vendor || entry.unitCost > 0)
         .sort((a, b) => a.date.localeCompare(b.date)),
       tags: [...new Set(itemDraft.tags ?? [])],
+      retired: itemDraft.retired ?? false,
     };
 
     if (editingItemRef) {
@@ -1355,6 +1373,10 @@ function Inventory({
     }
 
     setShowItemModal(false);
+  }
+
+  function toggleItemRetired() {
+    setItemDraft((current) => ({ ...current, retired: !current.retired }));
   }
 
   function openTransferModal(part: Part) {
@@ -1369,7 +1391,7 @@ function Inventory({
 
   function saveTransfer() {
     const part = inventoryItems.find((item) => item.ref === transferDraft.partRef);
-    if (!part || !transferDraft.projectName || part.stock <= 0) {
+    if (!part || part.retired || !transferDraft.projectName || part.stock <= 0) {
       return;
     }
 
@@ -1378,7 +1400,7 @@ function Inventory({
   }
 
   function requestBuild() {
-    if (buildHasShortage || buildComponentRows.length === 0) {
+    if (selectedBuildRecipe.retired || buildHasShortage || buildComponentRows.length === 0) {
       return;
     }
 
@@ -1402,6 +1424,7 @@ function Inventory({
           description: "",
           imageUrl: "",
           components: [],
+          retired: false,
         },
       ]);
       setBuildDraft((current) => ({ ...current, recipeName: nextName }));
@@ -1423,6 +1446,22 @@ function Inventory({
           : recipe,
       ),
     );
+  }
+
+  function toggleSelectedRecipeRetired() {
+    setDeviceRecipes((current) =>
+      current.map((recipe) => (recipe.name === selectedBuildRecipe.name ? { ...recipe, retired: !recipe.retired } : recipe)),
+    );
+  }
+
+  function deleteSelectedRecipe() {
+    if (deviceRecipes.length <= 1 || !window.confirm(`Delete ${selectedBuildRecipe.outputName}? Use retire if you need to keep this equipment type for history.`)) {
+      return;
+    }
+
+    const remaining = deviceRecipes.filter((recipe) => recipe.name !== selectedBuildRecipe.name);
+    setDeviceRecipes(remaining);
+    setBuildDraft((current) => ({ ...current, recipeName: remaining.find((recipe) => !recipe.retired)?.name ?? remaining[0]?.name ?? "" }));
   }
 
   function uploadEquipmentImage(file: File | undefined) {
@@ -1544,6 +1583,7 @@ function Inventory({
                     <option>All</option>
                     <option>Healthy</option>
                     <option>Reorder</option>
+                    <option>Retired</option>
                   </select>
                 </th>
                 <th></th>
@@ -1571,11 +1611,11 @@ function Inventory({
                   <td>{part.manufacturer}</td>
                   <td>{part.stock}</td>
                   <td>{money(part.cost)}</td>
-                  <td>{part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
+                  <td>{part.retired ? <span className="status retired">Retired</span> : part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
                   <td>
                     <div className="table-actions">
                       <button className="table-action secondary-table-action" type="button" onClick={() => openEditItemModal(part)}>Edit</button>
-                      <button className="table-action" type="button" onClick={() => openTransferModal(part)}>Transfer</button>
+                      <button className="table-action" type="button" onClick={() => openTransferModal(part)} disabled={part.retired}>Transfer</button>
                     </div>
                   </td>
                 </tr>
@@ -1587,7 +1627,7 @@ function Inventory({
       <section className="panel wide">
         <div className="panel-title-row">
           <div>
-            <h2>Equipment Builder</h2>
+            <h2>Manufactured Equipment</h2>
             <p>Select equipment, edit its parts in a pop-up, then build finished units into inventory.</p>
           </div>
           <div className="action-row">
@@ -1595,14 +1635,28 @@ function Inventory({
           </div>
         </div>
         <div className="build-planner">
-          <label>Equipment type<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{deviceRecipes.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}</option>)}<option value="__create_new_device">Create new device</option></select></label>
+          <label>Equipment type<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{equipmentOptions.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}{recipe.retired ? " (Retired)" : ""}</option>)}<option value="__create_new_device">Create new device</option></select></label>
           <label>Quantity<input type="number" min="1" value={buildDraft.qty} onChange={(event) => setBuildDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
           <div className="build-summary">
             <strong>{selectedBuildRecipe.outputName}</strong>
-            <span>{selectedBuildRecipe.components.length} line items. {buildHasShortage ? "Some parts need purchasing before this can be built." : "All current parts are available for this quantity."}</span>
+            <span>{selectedBuildRecipe.components.length} line items. {selectedBuildRecipe.retired ? "This equipment type is retired." : buildHasShortage ? "Some parts need purchasing before this can be built." : "All current parts are available for this quantity."}</span>
           </div>
         </div>
         {buildHasShortage && <div className="source-file"><ShoppingCart size={16} /><span>Some build parts are short. Those lines are flagged above so Purchasing knows what needs to be ordered before this build can be completed.</span></div>}
+        <div className="manufactured-inventory-list">
+          <div className="manufactured-inventory-head">
+            <span>Manufactured inventory</span>
+            <span>Complete</span>
+            <span>Can build</span>
+          </div>
+          {manufacturedEquipmentRows.map(({ recipe, finished, buildable }) => (
+            <div className={recipe.retired ? "manufactured-inventory-row retired-row" : "manufactured-inventory-row"} key={recipe.name}>
+              <strong>{recipe.outputName}</strong>
+              <b>{finished}</b>
+              <b>{recipe.retired ? "Retired" : buildable}</b>
+            </div>
+          ))}
+        </div>
       </section>
       <section className="panel">
         <PanelHeader title="Reorder List" label="At or below point" />
@@ -1621,7 +1675,7 @@ function Inventory({
               <button className="icon-button" type="button" onClick={() => setShowDeviceModal(false)} aria-label="Close equipment builder">x</button>
             </div>
             <div className="device-modal-toolbar">
-              <label>Title of Device<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{deviceRecipes.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}</option>)}<option value="__create_new_device">Create new device</option></select></label>
+              <label>Title of Device<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{equipmentOptions.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}{recipe.retired ? " (Retired)" : ""}</option>)}<option value="__create_new_device">Create new device</option></select></label>
             </div>
             <div className="equipment-identity-card">
               <label className="equipment-image-upload">
@@ -1632,6 +1686,10 @@ function Inventory({
                 <label>Equipment title<input value={selectedBuildRecipe.outputName} onChange={(event) => updateSelectedRecipe({ outputName: event.target.value })} /></label>
                 <label>Description<textarea value={selectedBuildRecipe.description} onChange={(event) => updateSelectedRecipe({ description: event.target.value })} placeholder="Describe what this equipment build is used for..." /></label>
               </div>
+            </div>
+            <div className="equipment-record-actions">
+              <button className="secondary-action" type="button" onClick={toggleSelectedRecipeRetired}>{selectedBuildRecipe.retired ? "Reactivate Equipment Type" : "Retire Equipment Type"}</button>
+              <button className="secondary-action danger-action" type="button" onClick={deleteSelectedRecipe} disabled={deviceRecipes.length <= 1}>Delete Equipment Type</button>
             </div>
             <div className="device-line-list">
               {buildComponentRows.map((component) => (
@@ -1657,7 +1715,7 @@ function Inventory({
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(false)}>Done</button>
-              <button className="primary-action" type="button" onClick={requestBuild} disabled={buildHasShortage || buildComponentRows.length === 0}>Review &amp; Build Equipment</button>
+              <button className="primary-action" type="button" onClick={requestBuild} disabled={selectedBuildRecipe.retired || buildHasShortage || buildComponentRows.length === 0}>Review &amp; Build Equipment</button>
             </div>
           </section>
         </div>
@@ -1794,6 +1852,7 @@ function Inventory({
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowItemModal(false)}>Cancel</button>
+              {editingItemRef && <button className="secondary-action danger-action" type="button" onClick={toggleItemRetired}>{itemDraft.retired ? "Reactivate Item" : "Retire Item"}</button>}
               <button className="primary-action" type="button" onClick={saveItem}>{editingItemRef ? "Save Item" : "Add Item"}</button>
             </div>
           </section>
