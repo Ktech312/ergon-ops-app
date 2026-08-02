@@ -150,6 +150,22 @@ type PurchaseOrder = {
   lines: PurchaseLine[];
 };
 
+type PurchaseRequest = {
+  id: string;
+  requestNumber: string;
+  sku: string;
+  itemName: string;
+  quantity: number;
+  reason: "Reorder Point" | "Planned Build Shortage" | "Manual";
+  sourceRef?: string;
+  projectName?: string;
+  preferredVendor?: string;
+  estimatedUnitCost: number;
+  status: "Draft" | "Need Quote" | "Ready to Order" | "Ordered" | "Received" | "Cancelled";
+  createdAt: string;
+  notes: string;
+};
+
 type UploadedDoc = {
   id: number;
   name: string;
@@ -781,6 +797,10 @@ function buildNumber(index: number) {
   return `BUILD-${String(index + 1).padStart(4, "0")}`;
 }
 
+function purchaseRequestNumber(index: number) {
+  return `REQ-${String(index + 1).padStart(5, "0")}`;
+}
+
 function isArray<T>(value: unknown, fallback: T[]) {
   return Array.isArray(value) ? (value as T[]) : fallback;
 }
@@ -795,6 +815,7 @@ function App() {
   const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>(() => isArray<InventoryMovement>(localState?.inventoryMovements, []));
   const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>(() => isArray<BuildTransaction>(localState?.buildTransactions, []));
   const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>(() => isArray<ProjectAllocationHistory>(localState?.projectAllocations, []));
+  const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(() => isArray<PurchaseRequest>(localState?.purchaseRequests, []));
   const [roleMode, setRoleMode] = useState<RoleMode>(() => ((localState?.roleMode as RoleMode | undefined) ?? "manager"));
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => (isRemotePersistenceConfigured() ? "loading" : "local"));
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
@@ -825,6 +846,7 @@ function App() {
         setInventoryMovements(isArray<InventoryMovement>(remoteState.inventoryMovements, []));
         setBuildTransactions(isArray<BuildTransaction>(remoteState.buildTransactions, []));
         setProjectAllocations(isArray<ProjectAllocationHistory>(remoteState.projectAllocations, []));
+        setPurchaseRequests(isArray<PurchaseRequest>(remoteState.purchaseRequests, []));
         setRoleMode((remoteState.roleMode as RoleMode | undefined) ?? "manager");
         setSyncStatus("synced");
       })
@@ -845,6 +867,7 @@ function App() {
       inventoryMovements,
       buildTransactions,
       projectAllocations,
+      purchaseRequests,
       roleMode,
     };
     saveLocalAppState(state);
@@ -862,7 +885,7 @@ function App() {
         });
     }, 650);
     return () => window.clearTimeout(syncTimer);
-  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, roleMode]);
+  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, purchaseRequests, roleMode]);
 
   useEffect(() => {
     if (!window.location.hash) {
@@ -1312,6 +1335,94 @@ function App() {
     );
   }
 
+  function queuePurchaseRequest(
+    part: Part,
+    quantity: number,
+    reason: PurchaseRequest["reason"],
+    notes: string,
+    sourceRef?: string,
+    projectName?: string,
+  ) {
+    if (part.retired) {
+      return;
+    }
+
+    const requestQty = Math.max(1, Math.round(Number(quantity) || 1));
+    setPurchaseRequests((current) => {
+      const openStatuses: PurchaseRequest["status"][] = ["Draft", "Need Quote", "Ready to Order", "Ordered"];
+      const matchingOpen = current.find(
+        (request) =>
+          request.sku === part.ref &&
+          request.reason === reason &&
+          request.sourceRef === sourceRef &&
+          openStatuses.includes(request.status),
+      );
+
+      if (matchingOpen) {
+        return current.map((request) =>
+          request.id === matchingOpen.id
+            ? {
+                ...request,
+                quantity: Math.max(request.quantity, requestQty),
+                notes: notes || request.notes,
+              }
+            : request,
+        );
+      }
+
+      const request: PurchaseRequest = {
+        id: makeId("req"),
+        requestNumber: purchaseRequestNumber(current.length),
+        sku: part.ref,
+        itemName: part.name,
+        quantity: requestQty,
+        reason,
+        sourceRef,
+        projectName,
+        preferredVendor: (part.purchaseUrls ?? [])[0]?.label || part.manufacturer,
+        estimatedUnitCost: part.cost,
+        status: reason === "Manual" ? "Draft" : "Need Quote",
+        createdAt: new Date().toISOString(),
+        notes,
+      };
+      return [request, ...current];
+    });
+  }
+
+  function queueReorderRequests() {
+    lowStock.forEach((part) => {
+      const qty = Math.max(1, part.reorderPoint - part.stock);
+      queuePurchaseRequest(part, qty, "Reorder Point", `Stock is ${part.stock}; reorder point is ${part.reorderPoint}.`);
+    });
+  }
+
+  function queuePlannedBuildShortageRequests() {
+    buildTransactions
+      .filter((build) => build.status === "planned")
+      .forEach((build) => {
+        const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
+        recipe?.components.forEach((component) => {
+          const part = inventoryItems.find((item) => item.name === component.itemName);
+          if (!part || part.retired) {
+            return;
+          }
+          const required = component.qty * build.quantityBuilt;
+          const shortage = Math.max(0, required - part.stock);
+          if (shortage > 0) {
+            queuePurchaseRequest(part, shortage, "Planned Build Shortage", `${build.buildNumber} needs ${required}; inventory has ${part.stock}.`, build.buildNumber);
+          }
+        });
+      });
+  }
+
+  function updatePurchaseRequestStatus(requestId: string, status: PurchaseRequest["status"]) {
+    setPurchaseRequests((current) => current.map((request) => (request.id === requestId ? { ...request, status } : request)));
+  }
+
+  function cancelPurchaseRequest(requestId: string) {
+    updatePurchaseRequestStatus(requestId, "Cancelled");
+  }
+
   function currentPersistedState(): PersistedAppState {
     return {
       inventoryItems,
@@ -1320,6 +1431,7 @@ function App() {
       inventoryMovements,
       buildTransactions,
       projectAllocations,
+      purchaseRequests,
       roleMode,
     };
   }
@@ -1349,6 +1461,7 @@ function App() {
         setInventoryMovements(isArray<InventoryMovement>(importedState.inventoryMovements, inventoryMovements));
         setBuildTransactions(isArray<BuildTransaction>(importedState.buildTransactions, buildTransactions));
         setProjectAllocations(isArray<ProjectAllocationHistory>(importedState.projectAllocations, projectAllocations));
+        setPurchaseRequests(isArray<PurchaseRequest>(importedState.purchaseRequests, purchaseRequests));
         if (["warehouse", "purchasing", "pm", "manager"].includes(String(importedState.roleMode))) {
           setRoleMode(importedState.roleMode as RoleMode);
         }
@@ -1399,10 +1512,10 @@ function App() {
         </header>
 
         {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} />}
-        {view === "purchasing" && <Purchasing projectSites={projectSites} />}
+        {view === "purchasing" && <Purchasing projectSites={projectSites} purchaseRequests={purchaseRequests} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
-        {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} />}
+        {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
       </main>
     </div>
   );
@@ -1568,7 +1681,25 @@ function Dashboard({
   );
 }
 
-function Purchasing({ projectSites }: { projectSites: ProjectSite[] }) {
+function Purchasing({
+  projectSites,
+  purchaseRequests,
+  lowStock,
+  buildTransactions,
+  onQueueReorderRequests,
+  onQueuePlannedBuildShortageRequests,
+  onUpdatePurchaseRequestStatus,
+  onCancelPurchaseRequest,
+}: {
+  projectSites: ProjectSite[];
+  purchaseRequests: PurchaseRequest[];
+  lowStock: Part[];
+  buildTransactions: BuildTransaction[];
+  onQueueReorderRequests: () => void;
+  onQueuePlannedBuildShortageRequests: () => void;
+  onUpdatePurchaseRequestStatus: (requestId: string, status: PurchaseRequest["status"]) => void;
+  onCancelPurchaseRequest: (requestId: string) => void;
+}) {
   const [selectedProject, setSelectedProject] = useState("Straud Medical");
   const [uploadedDocs, setUploadedDocs] = useState<UploadedDoc[]>([]);
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
@@ -1576,6 +1707,8 @@ function Purchasing({ projectSites }: { projectSites: ProjectSite[] }) {
   const openOrders = purchaseOrders.filter((order) => order.status !== "Imported").length;
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
   const documentProjects = Array.from(new Set([...purchaseOrders.map((order) => order.projectRef), ...projectSites.map((project) => project.name)]));
+  const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
+  const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
 
   function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
@@ -1596,7 +1729,45 @@ function Purchasing({ projectSites }: { projectSites: ProjectSite[] }) {
         <Metric icon={<ShoppingCart size={20} />} label="Recent Orders" value={String(purchaseOrders.length)} />
         <Metric icon={<DollarSign size={20} />} label="Captured Spend" value={money(totalSpend)} />
         <Metric icon={<FileText size={20} />} label="Sales Tax" value={money(totalTax)} />
-        <Metric icon={<ClipboardList size={20} />} label="Open Follow-ups" value={String(openOrders)} />
+        <Metric icon={<ClipboardList size={20} />} label="Open Requests" value={String(activeRequests.length + openOrders)} />
+      </section>
+
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <div>
+            <h2>Purchase Request Queue</h2>
+            <p>Buying work created from low stock, planned builds, and future manual requests.</p>
+          </div>
+          <div className="action-row">
+            <button className="secondary-action" type="button" onClick={onQueueReorderRequests} disabled={lowStock.length === 0}><Plus size={16} /> Queue Reorders</button>
+            <button className="primary-action" type="button" onClick={onQueuePlannedBuildShortageRequests} disabled={plannedBuilds === 0}><ShoppingCart size={16} /> Queue Build Shortages</button>
+          </div>
+        </div>
+        <div className="request-queue">
+          <div className="request-queue-head"><span>Request</span><span>Need</span><span>Reason</span><span>Est.</span><span>Status</span><span></span></div>
+          {purchaseRequests.slice(0, 14).map((request) => (
+            <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
+              <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
+              <span>{request.quantity}</span>
+              <span>{request.reason}<small>{request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
+              <span>{moneyExact(request.quantity * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
+              <span>
+                <select value={request.status} onChange={(event) => onUpdatePurchaseRequestStatus(request.id, event.target.value as PurchaseRequest["status"])}>
+                  <option>Draft</option>
+                  <option>Need Quote</option>
+                  <option>Ready to Order</option>
+                  <option>Ordered</option>
+                  <option>Received</option>
+                  <option>Cancelled</option>
+                </select>
+              </span>
+              <span className="table-actions">
+                <button className="table-action secondary-table-action" type="button" onClick={() => onCancelPurchaseRequest(request.id)} disabled={request.status === "Cancelled" || request.status === "Received"}>Cancel</button>
+              </span>
+            </div>
+          ))}
+          {purchaseRequests.length === 0 && <div className="empty-compact-state">No purchase requests yet. Queue reorder or build shortages to start the buying list.</div>}
+        </div>
       </section>
 
       <section className="panel wide">
@@ -3307,6 +3478,7 @@ function Reports({
   inventoryMovements,
   buildTransactions,
   projectAllocations,
+  purchaseRequests,
 }: {
   inventoryItems: Part[];
   deviceRecipes: BuildRecipe[];
@@ -3315,6 +3487,7 @@ function Reports({
   inventoryMovements: InventoryMovement[];
   buildTransactions: BuildTransaction[];
   projectAllocations: ProjectAllocationHistory[];
+  purchaseRequests: PurchaseRequest[];
 }) {
   const vendorSpend = Object.entries(sumBy(purchaseOrders, (order) => order.vendor)).sort((a, b) => b[1] - a[1]);
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
@@ -3333,6 +3506,8 @@ function Reports({
     .slice(0, 8);
   const sourceRows = inventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
   const reorderRows = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint).sort((a, b) => a.stock - b.stock).slice(0, 12);
+  const openPurchaseRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
+  const purchaseRequestExposure = openPurchaseRequests.reduce((sum, request) => sum + request.quantity * request.estimatedUnitCost, 0);
   const plannedBuildShortages = buildTransactions
     .filter((build) => build.status === "planned")
     .flatMap((build) => {
@@ -3406,6 +3581,26 @@ function Reports({
                 <b>{moneyExact(total)}</b>
               </div>
             ))}
+          </div>
+        </section>
+        <section className="panel wide">
+          <PanelHeader title="Open Purchase Requests" label="Reorder and manufacturing needs waiting on buying action" />
+          <div className="snapshot-grid">
+            <Metric icon={<ClipboardList size={20} />} label="Open Requests" value={String(openPurchaseRequests.length)} />
+            <Metric icon={<DollarSign size={20} />} label="Estimated Exposure" value={moneyExact(purchaseRequestExposure)} />
+          </div>
+          <div className="report-table compact-report-table">
+            <div className="report-table-head"><span>Request</span><span>Qty</span><span>Reason</span><span>Status</span><span>Est. Cost</span></div>
+            {openPurchaseRequests.slice(0, 12).map((request) => (
+              <div className="report-table-row" key={request.id}>
+                <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
+                <span>{request.quantity}</span>
+                <span>{request.reason}<small>{request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
+                <span className="status warn">{request.status}</span>
+                <span>{moneyExact(request.quantity * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
+              </div>
+            ))}
+            {openPurchaseRequests.length === 0 && <div className="empty-compact-state">No open purchase requests currently queued.</div>}
           </div>
         </section>
       </>}

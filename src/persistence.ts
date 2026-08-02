@@ -5,6 +5,7 @@ export type PersistedAppState = {
   inventoryMovements: unknown[];
   buildTransactions: unknown[];
   projectAllocations: unknown[];
+  purchaseRequests: unknown[];
   roleMode: string;
 };
 
