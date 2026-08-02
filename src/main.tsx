@@ -1205,6 +1205,7 @@ function Inventory({
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
   const [deviceRecipes, setDeviceRecipes] = useState(buildRecipes);
   const [buildDraft, setBuildDraft] = useState({ recipeName: buildRecipes[0].name, qty: 1 });
+  const [newComponentDraft, setNewComponentDraft] = useState({ itemName: "", qty: 1 });
   const [transferDraft, setTransferDraft] = useState({
     partRef: inventoryItems[0]?.ref ?? "",
     projectName: projectSites[0]?.name ?? "",
@@ -1382,24 +1383,54 @@ function Inventory({
     onBuildInventoryUnit(selectedBuildRecipe, Math.max(1, Math.round(Number(buildDraft.qty) || 1)));
   }
 
-  function addComponentToDevice() {
-    const nextItem = inventoryItems.find((part) => !selectedBuildRecipe.components.some((component) => component.itemName === part.name)) ?? inventoryItems[0];
-    if (!nextItem) {
+  function selectBuildRecipe(recipeName: string) {
+    if (recipeName === "__create_new_device") {
+      const nextIndex = deviceRecipes.filter((recipe) => recipe.name.startsWith("New Equipment")).length + 1;
+      const nextName = `New Equipment ${nextIndex}`;
+      setDeviceRecipes((current) => [
+        ...current,
+        {
+          name: nextName,
+          outputName: nextName,
+          description: "Custom equipment build.",
+          components: [],
+        },
+      ]);
+      setBuildDraft((current) => ({ ...current, recipeName: nextName }));
       return;
     }
 
+    setBuildDraft((current) => ({ ...current, recipeName }));
+  }
+
+  function addComponentToDevice() {
+    const selectedItem = inventoryItems.find((part) => part.name === newComponentDraft.itemName);
+    if (!selectedItem) {
+      return;
+    }
+
+    const addQty = Math.max(1, Math.round(Number(newComponentDraft.qty) || 1));
     setDeviceRecipes((current) =>
       current.map((recipe) => {
         if (recipe.name !== selectedBuildRecipe.name) {
           return recipe;
         }
 
+        const existingComponent = recipe.components.find((component) => component.itemName === selectedItem.name);
+        if (existingComponent) {
+          return {
+            ...recipe,
+            components: recipe.components.map((component) => (component.itemName === selectedItem.name ? { ...component, qty: component.qty + addQty } : component)),
+          };
+        }
+
         return {
           ...recipe,
-          components: [...recipe.components, { itemName: nextItem.name, qty: 1 }],
+          components: [...recipe.components, { itemName: selectedItem.name, qty: addQty }],
         };
       }),
     );
+    setNewComponentDraft({ itemName: "", qty: 1 });
   }
 
   function updateDeviceComponentItem(currentItemName: string, nextItemName: string) {
@@ -1522,16 +1553,16 @@ function Inventory({
       <section className="panel wide">
         <div className="panel-title-row">
           <div>
-            <h2>Device Builder</h2>
-            <p>Select a device, edit its parts in a pop-up, then build finished units into inventory.</p>
+            <h2>Equipment Builder</h2>
+            <p>Select equipment, edit its parts in a pop-up, then build finished units into inventory.</p>
           </div>
           <div className="action-row">
-            <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(true)}><Plus size={15} /> Edit Device</button>
-            <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Device &amp; Consume Parts</button>
+            <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(true)}><Plus size={15} /> Edit Equipment</button>
+            <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Equipment &amp; Consume Parts</button>
           </div>
         </div>
         <div className="build-planner">
-          <label>Device type<select value={buildDraft.recipeName} onChange={(event) => setBuildDraft((current) => ({ ...current, recipeName: event.target.value }))}>{deviceRecipes.map((recipe) => <option key={recipe.name}>{recipe.name}</option>)}</select></label>
+          <label>Equipment type<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{deviceRecipes.map((recipe) => <option key={recipe.name}>{recipe.name}</option>)}<option value="__create_new_device">Create new device</option></select></label>
           <label>Quantity<input type="number" min="1" value={buildDraft.qty} onChange={(event) => setBuildDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
           <div className="build-summary">
             <strong>{selectedBuildRecipe.outputName}</strong>
@@ -1554,18 +1585,17 @@ function Inventory({
                 <h2 id="device-builder-modal-title">{selectedBuildRecipe.outputName}</h2>
                 <p>Add inventory line items and set the quantity needed inside one finished device.</p>
               </div>
-              <button className="icon-button" type="button" onClick={() => setShowDeviceModal(false)} aria-label="Close device builder">x</button>
+              <button className="icon-button" type="button" onClick={() => setShowDeviceModal(false)} aria-label="Close equipment builder">x</button>
             </div>
             <div className="device-modal-toolbar">
-              <div>
-                <span>Title of Device</span>
-                <strong>{selectedBuildRecipe.outputName}</strong>
-              </div>
-              <button className="secondary-action" type="button" onClick={addComponentToDevice}><Plus size={15} /> Add Item</button>
+              <label>Title of Device<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{deviceRecipes.map((recipe) => <option key={recipe.name}>{recipe.name}</option>)}<option value="__create_new_device">Create new device</option></select></label>
             </div>
             <div className="device-line-list">
               {buildComponentRows.map((component) => (
                 <div className="device-line-row" key={component.itemName}>
+                  <button className="thumbnail-button" type="button" onClick={() => component.part && setPreviewItem(component.part)} aria-label={`Open image for ${component.part?.name ?? component.itemName}`}>
+                    {component.part?.imageUrl ? <img src={component.part.imageUrl} alt="" /> : <Image size={16} />}
+                  </button>
                   <label>Inventory item<select value={component.itemName} onChange={(event) => updateDeviceComponentItem(component.itemName, event.target.value)}>{inventoryItems.map((part) => <option key={part.ref} value={part.name}>{part.ref} - {part.name}</option>)}</select></label>
                   <label>Qty<input type="number" min="1" value={component.qty} onChange={(event) => updateDeviceComponent(component.itemName, Number(event.target.value))} /></label>
                   <div className="device-line-status">
@@ -1575,11 +1605,16 @@ function Inventory({
                   <button className="icon-button compact-remove" type="button" onClick={() => removeDeviceComponent(component.itemName)} aria-label={`Remove ${component.itemName}`}><Trash2 size={15} /></button>
                 </div>
               ))}
-              {buildComponentRows.length === 0 && <div className="empty-compact-state">No items added yet. Use Add Item to create the first device line.</div>}
+            </div>
+            {buildComponentRows.length === 0 && <div className="empty-compact-state">No parts added yet. Use the add line below to create the first BOM part.</div>}
+            <div className="device-add-bom-row">
+              <label>Add new part to BOM<select value={newComponentDraft.itemName} onChange={(event) => setNewComponentDraft((current) => ({ ...current, itemName: event.target.value }))}><option value="">Select inventory item</option>{inventoryItems.map((part) => <option key={part.ref} value={part.name}>{part.ref} - {part.name}</option>)}</select></label>
+              <label>Qty<input type="number" min="1" value={newComponentDraft.qty} onChange={(event) => setNewComponentDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
+              <button className="secondary-action" type="button" onClick={addComponentToDevice} disabled={!newComponentDraft.itemName}><Plus size={15} /> Add new part to BOM</button>
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(false)}>Done</button>
-              <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Device &amp; Consume Parts</button>
+              <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Equipment &amp; Consume Parts</button>
             </div>
           </section>
         </div>
@@ -1632,7 +1667,7 @@ function Inventory({
               <div className="compact-section-header">
                 <div>
                   <h3>Inventory Tags</h3>
-                  <p>Tags control where this item appears inside Device Builder.</p>
+                  <p>Tags control where this item appears inside Equipment Builder.</p>
                 </div>
               </div>
               <div className="tag-picker-grid">

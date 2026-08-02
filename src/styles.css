@@ -586,6 +586,12 @@ td small {
   padding: 0 14px;
 }
 
+.secondary-action:disabled {
+  color: #9c9283;
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .action-status {
   background: #f8f5ef;
   border: 1px solid #e8e1d5;
@@ -1176,45 +1182,50 @@ td small {
 }
 
 .device-modal-toolbar {
-  align-items: center;
+  align-items: end;
   background: #f8f5ef;
   border: 1px solid #e8e1d5;
   border-radius: 8px;
-  display: flex;
+  display: grid;
   gap: 12px;
-  justify-content: space-between;
+  grid-template-columns: max-content;
+  justify-content: start;
   margin-bottom: 12px;
   padding: 10px 12px;
 }
 
-.device-modal-toolbar div {
+.device-modal-toolbar label {
+  color: #514b43;
   display: grid;
-  gap: 3px;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 5px;
 }
 
-.device-modal-toolbar span {
-  color: #756d62;
-  font-size: 11px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.device-modal-toolbar strong {
-  font-size: 16px;
+.device-modal-toolbar select {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 6px;
+  color: #1b1a18;
+  font: inherit;
+  min-height: 32px;
+  padding: 0 10px;
+  width: 34ch;
 }
 
 .device-line-list {
   border: 1px solid #e8e1d5;
   border-radius: 8px;
   display: grid;
-  overflow: hidden;
+  max-height: 497px;
+  overflow-y: auto;
 }
 
 .device-line-row {
   align-items: end;
   display: grid;
   gap: 8px;
-  grid-template-columns: max-content 70px max-content 34px;
+  grid-template-columns: 36px max-content 70px max-content 34px;
   justify-content: start;
   padding: 9px 12px;
 }
@@ -1269,6 +1280,48 @@ td small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.device-add-bom-row {
+  align-items: end;
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: max-content 70px max-content;
+  justify-content: start;
+  margin-top: 10px;
+  padding: 10px 12px;
+}
+
+.device-add-bom-row label {
+  color: #514b43;
+  display: grid;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 5px;
+}
+
+.device-add-bom-row input,
+.device-add-bom-row select {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 6px;
+  color: #1b1a18;
+  font: inherit;
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.device-add-bom-row select {
+  max-width: 360px;
+  min-width: 260px;
+  width: 32ch;
+}
+
+.device-add-bom-row input {
+  width: 58px;
 }
 
 .build-planner label {
@@ -1760,6 +1813,7 @@ td small {
   .build-planner,
   .device-add-row,
   .device-line-row,
+  .device-add-bom-row,
   .report-table-head,
   .report-table-row,
   .source-report-grid {
@@ -1819,8 +1873,11 @@ td small {
 
   .build-planner select,
   .build-planner input,
+  .device-modal-toolbar select,
   .device-line-row select,
   .device-line-row input,
+  .device-add-bom-row select,
+  .device-add-bom-row input,
   .build-summary {
     max-width: 100%;
     min-width: 0;
