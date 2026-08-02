@@ -73,12 +73,46 @@ Stores current quantity by item and location.
 Append-only inventory ledger. Every receipt, adjustment, reservation, transfer,
 project issue, or return should create a row here.
 
+`inventory_transactions`
+
+Groups related ledger rows into one business event such as a receiving event,
+project transfer, manufactured build, stock adjustment, retirement, or undo.
+
+`equipment_types`
+
+Stores manufactured equipment definitions such as Enterprise VPU Server, VPU
+Edge Box, and VPU Edge Box with Solar. Equipment types can be retired so past
+build history remains intact without showing them as active choices.
+
+`equipment_bom_components`
+
+Stores the bill of materials for each manufactured equipment type.
+
+`build_transactions`
+
+Tracks finished equipment builds. A build consumes component SKU rows and creates
+a finished manufactured equipment SKU. Build transactions can be marked undone
+with reversal ledger rows.
+
+`app_state_snapshots`
+
+Temporary MVP bridge used by the current frontend while the UI is being moved
+from in-memory records to normalized Supabase tables. The app saves local browser
+state immediately and syncs this snapshot table when Supabase environment
+variables are configured.
+
 ## Transfers To Project
 
 `project_inventory_allocations`
 
 Tracks inventory moved or allocated to a specific project. This supports reports
 like "what materials went to Project A?" and "what projects used this item?"
+
+`project_allocation_history`
+
+Append-only history of project material actions. It stores SKU, item name,
+project, movement, and action snapshots so reports remain readable even if
+master records change later.
 
 ## Reporting Views
 

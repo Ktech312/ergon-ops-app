@@ -21,6 +21,7 @@ import {
   Upload,
   User,
 } from "lucide-react";
+import { loadLocalAppState, loadRemoteAppState, saveLocalAppState, saveRemoteAppState, type PersistedAppState } from "./persistence";
 import "./styles.css";
 
 type View = "dashboard" | "purchasing" | "inventory" | "projects" | "reports";
@@ -70,6 +71,49 @@ type BuildRecipe = {
   imageUrl?: string;
   components: BuildComponent[];
   retired?: boolean;
+};
+
+type RoleMode = "warehouse" | "purchasing" | "pm" | "manager";
+
+type InventoryMovement = {
+  id: string;
+  type: "receive" | "transfer" | "build_consume" | "build_complete" | "adjust" | "retire" | "reactivate" | "undo";
+  sku: string;
+  itemName: string;
+  quantity: number;
+  quantityBefore: number;
+  quantityAfter: number;
+  projectName?: string;
+  poNumber?: string;
+  buildNumber?: string;
+  source: "inventory" | "project" | "purchasing" | "equipment";
+  notes: string;
+  createdAt: string;
+};
+
+type BuildTransaction = {
+  id: string;
+  buildNumber: string;
+  equipmentName: string;
+  quantityBuilt: number;
+  componentMovements: InventoryMovement[];
+  completionMovement: InventoryMovement;
+  status: "posted" | "undone";
+  createdAt: string;
+  undoneAt?: string;
+};
+
+type ProjectAllocationHistory = {
+  id: string;
+  projectName: string;
+  projectRef?: string;
+  sku: string;
+  itemName: string;
+  quantity: number;
+  movementId: string;
+  action: "allocated" | "returned" | "adjusted" | "undone";
+  notes: string;
+  createdAt: string;
 };
 
 type PackageOption = {
@@ -722,14 +766,78 @@ function scrollKey(hash = window.location.hash) {
   return `ergon:scroll:${hash || "#dashboard"}`;
 }
 
+function makeId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function movementNumber(index: number) {
+  return `TXN-${String(index + 1).padStart(5, "0")}`;
+}
+
+function buildNumber(index: number) {
+  return `BUILD-${String(index + 1).padStart(4, "0")}`;
+}
+
+function isArray<T>(value: unknown, fallback: T[]) {
+  return Array.isArray(value) ? (value as T[]) : fallback;
+}
+
 function App() {
+  const localState = loadLocalAppState();
   const [view, setView] = useState<View>(() => (window.location.hash ? viewFromHash() : savedView()));
   const [locationHash, setLocationHash] = useState(window.location.hash || window.localStorage.getItem("ergon:lastHash") || "#dashboard");
-  const [inventoryItems, setInventoryItems] = useState(parts);
-  const [projectSites, setProjectSites] = useState(projects);
+  const [inventoryItems, setInventoryItems] = useState<Part[]>(() => isArray<Part>(localState?.inventoryItems, parts));
+  const [projectSites, setProjectSites] = useState<ProjectSite[]>(() => isArray<ProjectSite>(localState?.projectSites, projects));
+  const [deviceRecipes, setDeviceRecipes] = useState<BuildRecipe[]>(() => isArray<BuildRecipe>(localState?.deviceRecipes, buildRecipes));
+  const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>(() => isArray<InventoryMovement>(localState?.inventoryMovements, []));
+  const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>(() => isArray<BuildTransaction>(localState?.buildTransactions, []));
+  const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>(() => isArray<ProjectAllocationHistory>(localState?.projectAllocations, []));
+  const [roleMode, setRoleMode] = useState<RoleMode>(() => ((localState?.roleMode as RoleMode | undefined) ?? "manager"));
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadRemoteAppState()
+      .then((remoteState) => {
+        if (!remoteState || cancelled) {
+          return;
+        }
+        setInventoryItems(isArray<Part>(remoteState.inventoryItems, parts));
+        setProjectSites(isArray<ProjectSite>(remoteState.projectSites, projects));
+        setDeviceRecipes(isArray<BuildRecipe>(remoteState.deviceRecipes, buildRecipes));
+        setInventoryMovements(isArray<InventoryMovement>(remoteState.inventoryMovements, []));
+        setBuildTransactions(isArray<BuildTransaction>(remoteState.buildTransactions, []));
+        setProjectAllocations(isArray<ProjectAllocationHistory>(remoteState.projectAllocations, []));
+        setRoleMode((remoteState.roleMode as RoleMode | undefined) ?? "manager");
+      })
+      .catch(() => {
+        // Local persistence remains active when Supabase is not configured yet.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const state: PersistedAppState = {
+      inventoryItems,
+      projectSites,
+      deviceRecipes,
+      inventoryMovements,
+      buildTransactions,
+      projectAllocations,
+      roleMode,
+    };
+    saveLocalAppState(state);
+    const syncTimer = window.setTimeout(() => {
+      saveRemoteAppState(state).catch(() => {
+        // Keep the UI usable offline or before Supabase keys are installed.
+      });
+    }, 650);
+    return () => window.clearTimeout(syncTimer);
+  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, roleMode]);
 
   useEffect(() => {
     if (!window.location.hash) {
@@ -786,10 +894,60 @@ function App() {
 
   function addInventoryItem(part: Part) {
     setInventoryItems((current) => [part, ...current]);
+    const movement: InventoryMovement = {
+      id: makeId("txn"),
+      type: "receive",
+      sku: part.ref,
+      itemName: part.name,
+      quantity: part.stock,
+      quantityBefore: 0,
+      quantityAfter: part.stock,
+      source: "inventory",
+      notes: "New SKU created in inventory.",
+      createdAt: new Date().toISOString(),
+    };
+    setInventoryMovements((current) => [movement, ...current]);
   }
 
   function updateInventoryItem(ref: string, nextPart: Part) {
+    const previousPart = inventoryItems.find((part) => part.ref === ref);
     setInventoryItems((current) => current.map((part) => (part.ref === ref ? nextPart : part)));
+    if (!previousPart) {
+      return;
+    }
+
+    const movements: InventoryMovement[] = [];
+    if (previousPart.stock !== nextPart.stock) {
+      movements.push({
+        id: makeId("txn"),
+        type: "adjust",
+        sku: nextPart.ref,
+        itemName: nextPart.name,
+        quantity: Math.abs(nextPart.stock - previousPart.stock),
+        quantityBefore: previousPart.stock,
+        quantityAfter: nextPart.stock,
+        source: "inventory",
+        notes: "Manual stock adjustment from item edit.",
+        createdAt: new Date().toISOString(),
+      });
+    }
+    if ((previousPart.retired ?? false) !== (nextPart.retired ?? false)) {
+      movements.push({
+        id: makeId("txn"),
+        type: nextPart.retired ? "retire" : "reactivate",
+        sku: nextPart.ref,
+        itemName: nextPart.name,
+        quantity: 0,
+        quantityBefore: previousPart.stock,
+        quantityAfter: nextPart.stock,
+        source: "inventory",
+        notes: nextPart.retired ? "Inventory item retired." : "Inventory item reactivated.",
+        createdAt: new Date().toISOString(),
+      });
+    }
+    if (movements.length) {
+      setInventoryMovements((current) => [...movements, ...current]);
+    }
   }
 
   function transferInventoryToProject(partRef: string, projectName: string, qty: number, notes: string) {
@@ -799,7 +957,36 @@ function App() {
     }
 
     const transferQty = Math.min(Math.max(1, qty), part.stock);
+    const movement: InventoryMovement = {
+      id: makeId("txn"),
+      type: "transfer",
+      sku: part.ref,
+      itemName: part.name,
+      quantity: transferQty,
+      quantityBefore: part.stock,
+      quantityAfter: part.stock - transferQty,
+      projectName,
+      source: "project",
+      notes: notes || `Transferred from SKU ${part.ref}.`,
+      createdAt: new Date().toISOString(),
+    };
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: item.stock - transferQty } : item)));
+    setInventoryMovements((current) => [movement, ...current]);
+    setProjectAllocations((current) => [
+      {
+        id: makeId("alloc"),
+        projectName,
+        projectRef: projectSites.find((project) => project.name === projectName)?.ref,
+        sku: part.ref,
+        itemName: part.name,
+        quantity: transferQty,
+        movementId: movement.id,
+        action: "allocated",
+        notes: notes || "Inventory transferred to project.",
+        createdAt: movement.createdAt,
+      },
+      ...current,
+    ]);
     setProjectSites((current) =>
       current.map((project) =>
         project.name === projectName
@@ -832,6 +1019,27 @@ function App() {
       return;
     }
 
+    const postedAt = new Date().toISOString();
+    const nextBuildNumber = buildNumber(buildTransactions.length);
+    const componentMovements = recipe.components.map((component) => {
+      const part = inventoryItems.find((item) => item.name === component.itemName);
+      const usedQty = component.qty * buildQty;
+      return {
+        id: makeId("txn"),
+        type: "build_consume" as const,
+        sku: part?.ref ?? "NO-SKU",
+        itemName: component.itemName,
+        quantity: usedQty,
+        quantityBefore: part?.stock ?? 0,
+        quantityAfter: Math.max(0, (part?.stock ?? 0) - usedQty),
+        buildNumber: nextBuildNumber,
+        source: "equipment" as const,
+        notes: `Consumed for ${recipe.outputName}.`,
+        createdAt: postedAt,
+      };
+    });
+    let completionMovement: InventoryMovement | null = null;
+
     setInventoryItems((current) => {
       const consumed = current.map((part) => {
         const component = recipe.components.find((item) => item.itemName === part.name);
@@ -844,12 +1052,40 @@ function App() {
       }, 0);
 
       if (existingBuild) {
+        completionMovement = {
+          id: makeId("txn"),
+          type: "build_complete",
+          sku: existingBuild.ref,
+          itemName: recipe.outputName,
+          quantity: buildQty,
+          quantityBefore: existingBuild.stock,
+          quantityAfter: existingBuild.stock + buildQty,
+          buildNumber: nextBuildNumber,
+          source: "equipment",
+          notes: `Completed ${recipe.outputName}.`,
+          createdAt: postedAt,
+        };
         return consumed.map((part) => (part.ref === existingBuild.ref ? { ...part, stock: part.stock + buildQty, cost: buildCost } : part));
       }
 
+      const newBuildRef = nextBuildRef(consumed);
+      completionMovement = {
+        id: makeId("txn"),
+        type: "build_complete",
+        sku: newBuildRef,
+        itemName: recipe.outputName,
+        quantity: buildQty,
+        quantityBefore: 0,
+        quantityAfter: buildQty,
+        buildNumber: nextBuildNumber,
+        source: "equipment",
+        notes: `Completed ${recipe.outputName}.`,
+        createdAt: postedAt,
+      };
+
       return [
         {
-          ref: nextBuildRef(consumed),
+          ref: newBuildRef,
           name: recipe.outputName,
           description: recipe.description,
           manufacturer: "Internal Build",
@@ -873,6 +1109,67 @@ function App() {
         ...consumed,
       ];
     });
+    window.setTimeout(() => {
+      if (!completionMovement) {
+        return;
+      }
+      const transaction: BuildTransaction = {
+        id: makeId("build"),
+        buildNumber: nextBuildNumber,
+        equipmentName: recipe.outputName,
+        quantityBuilt: buildQty,
+        componentMovements,
+        completionMovement,
+        status: "posted",
+        createdAt: postedAt,
+      };
+      setInventoryMovements((current) => [completionMovement as InventoryMovement, ...componentMovements, ...current]);
+      setBuildTransactions((current) => [transaction, ...current]);
+    }, 0);
+  }
+
+  function undoBuildTransaction(buildId: string) {
+    const transaction = buildTransactions.find((build) => build.id === buildId);
+    if (!transaction || transaction.status === "undone") {
+      return;
+    }
+
+    const undoneAt = new Date().toISOString();
+    setInventoryItems((current) =>
+      current.map((part) => {
+        const consumed = transaction.componentMovements.find((movement) => movement.sku === part.ref || movement.itemName === part.name);
+        if (consumed) {
+          return { ...part, stock: part.stock + consumed.quantity };
+        }
+        if (part.ref === transaction.completionMovement.sku || part.name === transaction.completionMovement.itemName) {
+          return { ...part, stock: Math.max(0, part.stock - transaction.completionMovement.quantity) };
+        }
+        return part;
+      }),
+    );
+
+    const undoMovements: InventoryMovement[] = [
+      {
+        ...transaction.completionMovement,
+        id: makeId("txn"),
+        type: "undo",
+        quantityBefore: transaction.completionMovement.quantityAfter,
+        quantityAfter: transaction.completionMovement.quantityBefore,
+        notes: `Undo build completion for ${transaction.buildNumber}.`,
+        createdAt: undoneAt,
+      },
+      ...transaction.componentMovements.map((movement) => ({
+        ...movement,
+        id: makeId("txn"),
+        type: "undo" as const,
+        quantityBefore: movement.quantityAfter,
+        quantityAfter: movement.quantityBefore,
+        notes: `Undo component consumption for ${transaction.buildNumber}.`,
+        createdAt: undoneAt,
+      })),
+    ];
+    setInventoryMovements((current) => [...undoMovements, ...current]);
+    setBuildTransactions((current) => current.map((build) => (build.id === buildId ? { ...build, status: "undone", undoneAt } : build)));
   }
 
   return (
@@ -900,6 +1197,7 @@ function App() {
             <h1>{pageTitle(view)}</h1>
             <p>Purchasing, inventory, project transfers, and reports for field packages.</p>
           </div>
+          <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}><option value="warehouse">Warehouse</option><option value="purchasing">Purchasing</option><option value="pm">PM</option><option value="manager">Manager</option></select></label>
           <div className="search-box">
             <Search size={16} />
             <span>Search parts, POs, projects</span>
@@ -908,9 +1206,9 @@ function App() {
 
         {view === "dashboard" && <Dashboard projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} />}
-        {view === "inventory" && <Inventory inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onTransferToProject={transferInventoryToProject} onBuildInventoryUnit={buildInventoryUnit} />}
+        {view === "inventory" && <Inventory inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onTransferToProject={transferInventoryToProject} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
-        {view === "reports" && <Reports inventoryItems={inventoryItems} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
+        {view === "reports" && <Reports inventoryItems={inventoryItems} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} />}
       </main>
     </div>
   );
@@ -1172,18 +1470,28 @@ function Inventory({
   inventoryItems,
   lowStock,
   projectSites,
+  deviceRecipes,
+  setDeviceRecipes,
+  buildTransactions,
+  inventoryMovements,
   onAddItem,
   onUpdateItem,
   onTransferToProject,
   onBuildInventoryUnit,
+  onUndoBuildTransaction,
 }: {
   inventoryItems: Part[];
   lowStock: Part[];
   projectSites: ProjectSite[];
+  deviceRecipes: BuildRecipe[];
+  setDeviceRecipes: Dispatch<SetStateAction<BuildRecipe[]>>;
+  buildTransactions: BuildTransaction[];
+  inventoryMovements: InventoryMovement[];
   onAddItem: (part: Part) => void;
   onUpdateItem: (ref: string, part: Part) => void;
   onTransferToProject: (partRef: string, projectName: string, qty: number, notes: string) => void;
   onBuildInventoryUnit: (recipe: BuildRecipe, qty: number) => void;
+  onUndoBuildTransaction: (buildId: string) => void;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -1207,8 +1515,8 @@ function Inventory({
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showBuildConfirm, setShowBuildConfirm] = useState(false);
+  const [inventoryTab, setInventoryTab] = useState<"parts" | "finished">("parts");
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
-  const [deviceRecipes, setDeviceRecipes] = useState(buildRecipes);
   const [buildDraft, setBuildDraft] = useState({ recipeName: buildRecipes[0].name, qty: 1 });
   const [newComponentDraft, setNewComponentDraft] = useState({ itemName: "", qty: 1 });
   const [transferDraft, setTransferDraft] = useState({
@@ -1243,7 +1551,9 @@ function Inventory({
   });
   const filteredInventoryItems = inventoryItems.filter((part) => {
     const status = part.retired ? "Retired" : part.stock <= part.reorderPoint ? "Reorder" : "Healthy";
+    const tabMatch = inventoryTab === "finished" ? part.category === "Build" : part.category !== "Build";
     return (
+      tabMatch &&
       part.ref.toLowerCase().includes(filters.ref.toLowerCase()) &&
       `${part.name} ${part.description}`.toLowerCase().includes(filters.part.toLowerCase()) &&
       (filters.category === "All" || part.category === filters.category) &&
@@ -1552,9 +1862,13 @@ function Inventory({
         <div className="panel-title-row">
           <div>
             <h2>Parts Inventory</h2>
-            <p>{inventoryItems.length} BOM items</p>
+            <p>{inventoryTab === "finished" ? "Finished manufactured equipment ready for projects" : "Purchasing parts, components, and field hardware"}</p>
           </div>
           <button className="primary-action" type="button" onClick={openAddItemModal}><Plus size={17} /> Add New Item</button>
+        </div>
+        <div className="segmented-tabs">
+          <button className={inventoryTab === "parts" ? "active" : ""} type="button" onClick={() => setInventoryTab("parts")}>Parts Inventory</button>
+          <button className={inventoryTab === "finished" ? "active" : ""} type="button" onClick={() => setInventoryTab("finished")}>Finished Manufactured Equipment</button>
         </div>
         <div className="inventory-table-scroll">
           <table className="inventory-table">
@@ -1662,6 +1976,36 @@ function Inventory({
         <PanelHeader title="Reorder List" label="At or below point" />
         <div className="stack">
           {lowStock.map((part) => <div className="row-card" key={part.name}><strong>{part.name}</strong><b>{part.stock}/{part.reorderPoint}</b></div>)}
+        </div>
+      </section>
+      <section className="panel">
+        <PanelHeader title="Build History" label="Undo recent manufactured equipment builds" />
+        <div className="stack">
+          {buildTransactions.slice(0, 6).map((build) => (
+            <div className="row-card" key={build.id}>
+              <div>
+                <strong>{build.buildNumber}</strong>
+                <span>{build.quantityBuilt} x {build.equipmentName}</span>
+              </div>
+              {build.status === "posted" ? <button className="table-action secondary-table-action" type="button" onClick={() => onUndoBuildTransaction(build.id)}>Undo</button> : <span className="status retired">Undone</span>}
+            </div>
+          ))}
+          {buildTransactions.length === 0 && <div className="empty-compact-state">No build transactions yet.</div>}
+        </div>
+      </section>
+      <section className="panel wide">
+        <PanelHeader title="Inventory Movement Ledger" label="Receive, transfer, build, adjust, retire, undo" />
+        <div className="report-table compact-report-table">
+          <div className="report-table-head"><span>Type</span><span>SKU</span><span>Qty</span><span>Before / After</span><span>Reference</span></div>
+          {inventoryMovements.slice(0, 10).map((movement) => (
+            <div className="report-table-row" key={movement.id}>
+              <span><strong>{movement.type.replace("_", " ")}</strong><small>{new Date(movement.createdAt).toLocaleString()}</small></span>
+              <span>{movement.sku}<small>{movement.itemName}</small></span>
+              <span>{movement.quantity}</span>
+              <span>{movement.quantityBefore} / {movement.quantityAfter}</span>
+              <span>{movement.projectName ?? movement.buildNumber ?? movement.poNumber ?? movement.source}<small>{movement.notes}</small></span>
+            </div>
+          ))}
         </div>
       </section>
       {showDeviceModal && (
@@ -2458,7 +2802,21 @@ function priceTrend(part: Part) {
   return { latest, previous, change, percent };
 }
 
-function Reports({ inventoryItems, inventoryValue, openPoValue }: { inventoryItems: Part[]; inventoryValue: number; openPoValue: number }) {
+function Reports({
+  inventoryItems,
+  inventoryValue,
+  openPoValue,
+  inventoryMovements,
+  buildTransactions,
+  projectAllocations,
+}: {
+  inventoryItems: Part[];
+  inventoryValue: number;
+  openPoValue: number;
+  inventoryMovements: InventoryMovement[];
+  buildTransactions: BuildTransaction[];
+  projectAllocations: ProjectAllocationHistory[];
+}) {
   const vendorSpend = Object.entries(sumBy(purchaseOrders, (order) => order.vendor)).sort((a, b) => b[1] - a[1]);
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
   const categorySpend = purchaseOrders
@@ -2537,6 +2895,30 @@ function Reports({ inventoryItems, inventoryValue, openPoValue }: { inventoryIte
               </div>
             </article>
           ))}
+        </div>
+      </section>
+      <section className="panel wide">
+        <PanelHeader title="Project Allocation History" label="Every SKU movement tied to a project" />
+        <div className="report-table compact-report-table">
+          <div className="report-table-head"><span>Project</span><span>SKU</span><span>Qty</span><span>Action</span><span>Notes</span></div>
+          {projectAllocations.slice(0, 10).map((allocation) => (
+            <div className="report-table-row" key={allocation.id}>
+              <span><strong>{allocation.projectName}</strong><small>{allocation.projectRef ?? "No PRJ"}</small></span>
+              <span>{allocation.sku}<small>{allocation.itemName}</small></span>
+              <span>{allocation.quantity}</span>
+              <span>{allocation.action}</span>
+              <span>{allocation.notes}<small>{new Date(allocation.createdAt).toLocaleString()}</small></span>
+            </div>
+          ))}
+          {projectAllocations.length === 0 && <div className="empty-compact-state">No project allocations recorded yet.</div>}
+        </div>
+      </section>
+      <section className="panel wide">
+        <PanelHeader title="Manufacturing History" label="Recent build transactions and ledger count" />
+        <div className="snapshot-grid">
+          <Metric icon={<Building2 size={20} />} label="Build Transactions" value={String(buildTransactions.length)} />
+          <Metric icon={<ClipboardList size={20} />} label="Ledger Entries" value={String(inventoryMovements.length)} />
+          <Metric icon={<Boxes size={20} />} label="Project Allocations" value={String(projectAllocations.length)} />
         </div>
       </section>
       <section className="panel wide">

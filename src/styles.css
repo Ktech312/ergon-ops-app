@@ -124,6 +124,25 @@ button {
   padding: 12px 14px;
 }
 
+.role-mode-select {
+  color: #514b43;
+  display: grid;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 5px;
+}
+
+.role-mode-select select {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  color: #174c43;
+  font: inherit;
+  min-height: 38px;
+  min-width: 160px;
+  padding: 0 10px;
+}
+
 .content-grid {
   display: grid;
   gap: 18px;
@@ -632,6 +651,34 @@ td small {
   color: #756d62;
   font-size: 13px;
   margin: 4px 0 0;
+}
+
+.segmented-tabs {
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 4px;
+}
+
+.segmented-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #514b43;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+.segmented-tabs button.active {
+  background: #174c43;
+  color: white;
 }
 
 .locked-ref {
