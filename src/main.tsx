@@ -1770,6 +1770,7 @@ function Purchasing({
   const [manualRequestPartRef, setManualRequestPartRef] = useState(() => inventoryItems.find((item) => !item.retired)?.ref ?? "");
   const [manualRequestQty, setManualRequestQty] = useState(1);
   const [manualRequestNotes, setManualRequestNotes] = useState("");
+  const [requestFilters, setRequestFilters] = useState({ text: "", status: "Open", reason: "All" });
   const [receivingRequestId, setReceivingRequestId] = useState<string | null>(null);
   const [requestReceiveDraft, setRequestReceiveDraft] = useState({ qty: 1, unitCost: 0, notes: "" });
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
@@ -1781,6 +1782,15 @@ function Purchasing({
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
   const receivingRequest = purchaseRequests.find((request) => request.id === receivingRequestId) ?? null;
   const receivingRemaining = receivingRequest ? Math.max(0, receivingRequest.quantity - (receivingRequest.receivedQuantity ?? 0)) : 0;
+  const filteredPurchaseRequests = purchaseRequests.filter((request) => {
+    const haystack = `${request.requestNumber} ${request.sku} ${request.itemName} ${request.preferredVendor ?? ""} ${request.sourceRef ?? ""}`.toLowerCase();
+    const statusMatch =
+      requestFilters.status === "All" ||
+      (requestFilters.status === "Open" && !["Received", "Cancelled"].includes(request.status)) ||
+      request.status === requestFilters.status;
+    const reasonMatch = requestFilters.reason === "All" || request.reason === requestFilters.reason;
+    return haystack.includes(requestFilters.text.toLowerCase()) && statusMatch && reasonMatch;
+  });
 
   function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
@@ -1839,6 +1849,34 @@ function Purchasing({
           </div>
         </div>
         <div className="request-queue">
+          <div className="request-filter-row">
+            <label>
+              Search
+              <input value={requestFilters.text} onChange={(event) => setRequestFilters((current) => ({ ...current, text: event.target.value }))} placeholder="Request, SKU, part, vendor, build" />
+            </label>
+            <label>
+              Status
+              <select value={requestFilters.status} onChange={(event) => setRequestFilters((current) => ({ ...current, status: event.target.value }))}>
+                <option>Open</option>
+                <option>All</option>
+                <option>Draft</option>
+                <option>Need Quote</option>
+                <option>Ready to Order</option>
+                <option>Ordered</option>
+                <option>Received</option>
+                <option>Cancelled</option>
+              </select>
+            </label>
+            <label>
+              Reason
+              <select value={requestFilters.reason} onChange={(event) => setRequestFilters((current) => ({ ...current, reason: event.target.value }))}>
+                <option>All</option>
+                <option>Reorder Point</option>
+                <option>Planned Build Shortage</option>
+                <option>Manual</option>
+              </select>
+            </label>
+          </div>
           <div className="manual-request-row">
             <label>
               Manual request
@@ -1857,7 +1895,7 @@ function Purchasing({
             <button className="secondary-action" type="button" onClick={submitManualRequest}><Plus size={16} /> Add Request</button>
           </div>
           <div className="request-queue-head"><span>Request</span><span>Need</span><span>Reason</span><span>Est.</span><span>Status</span><span></span></div>
-          {purchaseRequests.slice(0, 14).map((request) => (
+          {filteredPurchaseRequests.slice(0, 14).map((request) => (
             <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
               <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
               <span>{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
@@ -1880,6 +1918,7 @@ function Purchasing({
             </div>
           ))}
           {purchaseRequests.length === 0 && <div className="empty-compact-state">No purchase requests yet. Queue reorder or build shortages to start the buying list.</div>}
+          {purchaseRequests.length > 0 && filteredPurchaseRequests.length === 0 && <div className="empty-compact-state">No purchase requests match the current filters.</div>}
         </div>
       </section>
       {receivingRequest && (

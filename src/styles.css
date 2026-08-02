@@ -886,6 +886,37 @@ td small {
   padding: 10px 12px;
 }
 
+.request-filter-row {
+  background: #f8f5ef;
+  border-bottom: 1px solid #e8e1d5;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(240px, 1fr) 170px 190px;
+  padding: 12px;
+}
+
+.request-filter-row label {
+  color: #514b43;
+  display: grid;
+  font-size: 12px;
+  font-weight: 900;
+  gap: 5px;
+}
+
+.request-filter-row input,
+.request-filter-row select {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 7px;
+  color: #1b1a18;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 36px;
+  padding: 0 10px;
+  width: 100%;
+}
+
 .manual-request-row {
   align-items: end;
   background: #fffdf9;
@@ -2438,6 +2469,7 @@ td small {
   .work-order-line,
   .report-table-head,
   .report-table-row,
+  .request-filter-row,
   .manual-request-row,
   .request-queue-head,
   .request-row,
