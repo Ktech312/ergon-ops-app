@@ -2096,6 +2096,11 @@ td small {
   margin-top: 2px;
 }
 
+.report-section-divider {
+  border-top: 1px solid #e8e1d5;
+  margin: 16px 0;
+}
+
 .cost-up {
   color: #9b4b12;
   font-weight: 900;

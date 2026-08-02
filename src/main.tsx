@@ -1351,7 +1351,7 @@ function App() {
         {view === "purchasing" && <Purchasing projectSites={projectSites} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
-        {view === "reports" && <Reports inventoryItems={inventoryItems} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} />}
+        {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} />}
       </main>
     </div>
   );
@@ -3250,6 +3250,7 @@ function priceTrend(part: Part) {
 
 function Reports({
   inventoryItems,
+  deviceRecipes,
   inventoryValue,
   openPoValue,
   inventoryMovements,
@@ -3257,6 +3258,7 @@ function Reports({
   projectAllocations,
 }: {
   inventoryItems: Part[];
+  deviceRecipes: BuildRecipe[];
   inventoryValue: number;
   openPoValue: number;
   inventoryMovements: InventoryMovement[];
@@ -3279,6 +3281,39 @@ function Reports({
     .sort((a, b) => Math.abs(b.trend.change) - Math.abs(a.trend.change))
     .slice(0, 8);
   const sourceRows = inventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
+  const reorderRows = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint).sort((a, b) => a.stock - b.stock).slice(0, 12);
+  const plannedBuildShortages = buildTransactions
+    .filter((build) => build.status === "planned")
+    .flatMap((build) => {
+      const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
+      if (!recipe) {
+        return [{
+          build,
+          sku: "No recipe",
+          itemName: build.equipmentName,
+          required: build.quantityBuilt,
+          available: 0,
+          shortage: build.quantityBuilt,
+        }];
+      }
+
+      return recipe.components
+        .map((component) => {
+          const part = inventoryItems.find((item) => item.name === component.itemName);
+          const required = component.qty * build.quantityBuilt;
+          const available = part && !part.retired ? part.stock : 0;
+          return {
+            build,
+            sku: part?.ref ?? "No SKU",
+            itemName: component.itemName,
+            required,
+            available,
+            shortage: Math.max(0, required - available),
+          };
+        })
+        .filter((row) => row.shortage > 0);
+    })
+    .slice(0, 14);
   const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects">("purchasing");
 
   return (
@@ -3324,6 +3359,22 @@ function Reports({
         </section>
       </>}
       {reportTab === "inventory" && <>
+        <section className="panel wide">
+          <PanelHeader title="Reorder Watch" label="Parts at or below reorder point" />
+          <div className="report-table compact-report-table">
+            <div className="report-table-head"><span>SKU</span><span>Stock</span><span>Reorder</span><span>Status</span><span>Vendor</span></div>
+            {reorderRows.map((part) => (
+              <div className="report-table-row" key={part.ref}>
+                <span><strong>{part.name}</strong><small>{part.ref}</small></span>
+                <span>{part.stock}</span>
+                <span>{part.reorderPoint}</span>
+                <span className="status warn">Reorder</span>
+                <span>{part.manufacturer}<small>{part.category}</small></span>
+              </div>
+            ))}
+            {reorderRows.length === 0 && <div className="empty-compact-state">No inventory items are currently at reorder point.</div>}
+          </div>
+        </section>
         <section className="panel wide">
           <PanelHeader title="Inventory Cost History" label="Latest purchase price movement by item" />
           <div className="report-table compact-report-table">
@@ -3379,6 +3430,21 @@ function Reports({
             </div>
           ))}
           {buildTransactions.length === 0 && <div className="empty-compact-state">No manufacturing transactions recorded yet.</div>}
+        </div>
+        <div className="report-section-divider" />
+        <PanelHeader title="Planned Build Shortages" label="Parts blocking planned manufactured equipment" />
+        <div className="report-table compact-report-table">
+          <div className="report-table-head"><span>Build</span><span>SKU</span><span>Need</span><span>Have</span><span>Short</span></div>
+          {plannedBuildShortages.map((row) => (
+            <div className="report-table-row" key={`${row.build.id}-${row.sku}-${row.itemName}`}>
+              <span><strong>{row.build.buildNumber}</strong><small>{row.build.equipmentName}</small></span>
+              <span>{row.sku}<small>{row.itemName}</small></span>
+              <span>{row.required}</span>
+              <span>{row.available}</span>
+              <span className="status warn">{row.shortage}</span>
+            </div>
+          ))}
+          {plannedBuildShortages.length === 0 && <div className="empty-compact-state">No planned build shortages currently found.</div>}
         </div>
       </section>}
       {reportTab === "projects" && <section className="panel wide">
