@@ -30,7 +30,8 @@ Apply Supabase migrations in `backend/supabase/migrations`, including
 `007_purchase_request_order_fields.sql`, and
 `008_persistence_documents_and_transaction_safety.sql`,
 `009_production_auth_records_and_rls.sql`, and
-`010_user_role_assignments.sql`, before enabling cloud sync.
+`010_user_role_assignments.sql`, and
+`011_direct_project_purchase_requests.sql`, before enabling cloud sync.
 
 Older `app_state_snapshots` rows are read only as a migration fallback. New
 production writes use authenticated `app_records` rows and audit entries in

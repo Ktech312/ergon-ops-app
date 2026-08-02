@@ -723,16 +723,35 @@ Acceptance criteria:
 
 If continuing immediately, build in this order:
 
-1. Direct-to-project purchasing workflow.
-2. Receiving proof/photo flow for purchase requests.
-3. Project document/media model cleanup.
-4. Inventory location/bin UI.
-5. Reports filters for SKU/project/vendor/date.
-6. Product catalog table and UI.
-7. Sales quote builder shell.
-8. Field photo offline queue.
-9. Taskboard data model.
-10. Basic PM task list view.
+1. [x] Direct-to-project purchasing workflow.
+   - Completed in commit after roadmap creation:
+     - Project BOM can request warehouse-stock purchase or direct-to-project
+       purchase.
+     - Purchasing manual requests can be tied to a project and marked
+       direct-to-project.
+     - Direct-to-project receipt does not increase warehouse stock.
+     - Direct-to-project receipt creates movement history and project allocation
+       history.
+     - Project BOM inventory pulls now create movement history and project
+       allocation history.
+     - Added migration
+       `backend/supabase/migrations/011_direct_project_purchase_requests.sql`.
+2. [ ] Receiving proof/photo flow for purchase requests.
+3. [ ] Project document/media model cleanup.
+4. [ ] Inventory location/bin UI.
+5. [x] Reports filters for SKU/project/vendor/date.
+   - Completed in commit after roadmap creation:
+     - Reports now have a compact filter bar for search/SKU, project, vendor,
+       from date, and to date.
+     - Purchasing, inventory, manufacturing, project allocation, and document
+       report sections use filtered datasets.
+     - CSV exports use the same filtered datasets so exported files match what
+       the user is reviewing.
+6. [ ] Product catalog table and UI.
+7. [ ] Sales quote builder shell.
+8. [ ] Field photo offline queue.
+9. [ ] Taskboard data model.
+10. [ ] Basic PM task list view.
 
 ## Developer Guardrails
 
@@ -754,7 +773,7 @@ If continuing immediately, build in this order:
 
 Before calling this production-ready for team use:
 
-- Supabase migrations `001` through `010` applied.
+- Supabase migrations `001` through `011` applied.
 - Vercel env vars configured:
   - `VITE_SUPABASE_URL`
   - `VITE_SUPABASE_ANON_KEY`
@@ -806,4 +825,3 @@ A feature is done only when:
 - It works on desktop and mobile.
 - It is pushed to GitHub.
 - Vercel production deployment is verified.
-

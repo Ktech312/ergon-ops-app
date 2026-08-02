@@ -56,6 +56,15 @@ expected date, total cost, and external document links.
 Stores each item being purchased, quantity ordered, quantity received, unit cost,
 and destination location.
 
+`purchase_requests`
+
+Stores buying work before or alongside a formal PO. Requests can come from
+reorder points, planned build shortages, manual entries, or project BOM lines.
+`procurement_track` separates normal warehouse-stock orders from
+direct-to-project orders. Direct-to-project receipts should update the purchase
+request, movement history, and project allocation history without increasing
+warehouse on-hand stock.
+
 ## Inventory
 
 `inventory_items`

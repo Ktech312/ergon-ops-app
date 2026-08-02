@@ -173,9 +173,10 @@ type PurchaseRequest = {
   sku: string;
   itemName: string;
   quantity: number;
-  reason: "Reorder Point" | "Planned Build Shortage" | "Manual";
+  reason: "Reorder Point" | "Planned Build Shortage" | "Manual" | "Project BOM";
   sourceRef?: string;
   projectName?: string;
+  procurementTrack?: "warehouse_stock" | "direct_to_project";
   preferredVendor?: string;
   poNumber?: string;
   expectedDate?: string;
@@ -235,7 +236,7 @@ type ProjectSite = {
   bom: BomLine[];
 };
 
-type BomMaterialAction = "pull" | "order";
+type BomMaterialAction = "pull" | "order" | "direct";
 
 type SalesQuoteExtractResponse = {
   confidence: "high" | "draft";
@@ -1028,10 +1029,48 @@ function App() {
     window.location.hash = nextView;
   }
 
-  function pullFromInventory(itemName: string, qty: number) {
-    setInventoryItems((current) =>
-      current.map((part) => (part.name === itemName ? { ...part, stock: Math.max(0, part.stock - qty) } : part)),
-    );
+  function pullFromInventory(itemName: string, qty: number, projectName?: string, notes?: string) {
+    const part = inventoryItems.find((item) => item.name === itemName);
+    const pullQty = Math.max(1, Math.round(Number(qty) || 1));
+    if (!part || part.retired || part.stock < pullQty) {
+      return;
+    }
+
+    const pulledAt = new Date().toISOString();
+    const movement: InventoryMovement = {
+      id: makeId("txn"),
+      type: "transfer",
+      sku: part.ref,
+      itemName: part.name,
+      quantity: pullQty,
+      quantityBefore: part.stock,
+      quantityAfter: part.stock - pullQty,
+      projectName,
+      source: "project",
+      notes: notes || `Pulled from inventory for ${projectName ?? "project BOM"}.`,
+      createdAt: pulledAt,
+    };
+
+    setInventoryItems((current) => current.map((item) => (item.ref === part.ref ? { ...item, stock: item.stock - pullQty } : item)));
+    setInventoryMovements((current) => [movement, ...current]);
+
+    if (projectName) {
+      setProjectAllocations((current) => [
+        {
+          id: makeId("alloc"),
+          projectName,
+          projectRef: projectSites.find((project) => project.name === projectName)?.ref,
+          sku: part.ref,
+          itemName: part.name,
+          quantity: pullQty,
+          movementId: movement.id,
+          action: "allocated",
+          notes: notes || "Pulled from inventory through project BOM.",
+          createdAt: pulledAt,
+        },
+        ...current,
+      ]);
+    }
   }
 
   function withProductionLock(lockType: "inventory_item" | "project" | "build" | "purchase_request", lockKey: string, action: () => void) {
@@ -1470,6 +1509,7 @@ function App() {
     notes: string,
     sourceRef?: string,
     projectName?: string,
+    procurementTrack: PurchaseRequest["procurementTrack"] = "warehouse_stock",
   ) {
     if (part.retired) {
       return;
@@ -1483,6 +1523,8 @@ function App() {
           request.sku === part.ref &&
           request.reason === reason &&
           request.sourceRef === sourceRef &&
+          request.projectName === projectName &&
+          (request.procurementTrack ?? "warehouse_stock") === procurementTrack &&
           openStatuses.includes(request.status),
       );
 
@@ -1507,6 +1549,7 @@ function App() {
         reason,
         sourceRef,
         projectName,
+        procurementTrack,
         preferredVendor: (part.purchaseUrls ?? [])[0]?.label || part.manufacturer,
         estimatedUnitCost: part.cost,
         status: reason === "Manual" ? "Draft" : "Need Quote",
@@ -1552,19 +1595,29 @@ function App() {
     });
   }
 
-  function queueManualPurchaseRequest(partRef: string, quantity: number, notes: string) {
+  function queueManualPurchaseRequest(partRef: string, quantity: number, notes: string, projectName?: string, procurementTrack: PurchaseRequest["procurementTrack"] = "warehouse_stock") {
     const part = inventoryItems.find((item) => item.ref === partRef);
     if (!part) {
       return;
     }
-    queuePurchaseRequest(part, quantity, "Manual", notes.trim() || "Manual purchasing request.");
+    queuePurchaseRequest(part, quantity, "Manual", notes.trim() || "Manual purchasing request.", projectName ? "Manual project request" : undefined, projectName, procurementTrack);
+  }
+
+  function queueProjectBomPurchaseRequest(partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) {
+    const part = inventoryItems.find((item) => item.name === partName || item.ref === partName);
+    if (!part) {
+      return false;
+    }
+    const trackNote = procurementTrack === "direct_to_project" ? "Direct-to-project purchase" : "Warehouse stock purchase request";
+    queuePurchaseRequest(part, quantity, "Project BOM", notes.trim() || `${trackNote} from ${projectRef} BOM. Request speed: ${requestSpeed}.`, projectRef, projectName, procurementTrack);
+    return true;
   }
 
   function updatePurchaseRequestStatus(requestId: string, status: PurchaseRequest["status"]) {
     setPurchaseRequests((current) => current.map((request) => (request.id === requestId ? { ...request, status } : request)));
   }
 
-  function updatePurchaseRequest(requestId: string, updates: Partial<Pick<PurchaseRequest, "quantity" | "preferredVendor" | "poNumber" | "expectedDate" | "estimatedUnitCost" | "status" | "notes">>) {
+  function updatePurchaseRequest(requestId: string, updates: Partial<Pick<PurchaseRequest, "quantity" | "preferredVendor" | "poNumber" | "expectedDate" | "estimatedUnitCost" | "status" | "notes" | "procurementTrack" | "projectName">>) {
     setPurchaseRequests((current) =>
       current.map((request) =>
         request.id === requestId
@@ -1576,6 +1629,8 @@ function App() {
               poNumber: updates.poNumber?.trim() ?? request.poNumber,
               expectedDate: updates.expectedDate ?? request.expectedDate,
               estimatedUnitCost: updates.estimatedUnitCost !== undefined ? Math.max(0, Number(updates.estimatedUnitCost) || 0) : request.estimatedUnitCost,
+              projectName: updates.projectName !== undefined ? updates.projectName || undefined : request.projectName,
+              procurementTrack: updates.procurementTrack ?? request.procurementTrack,
               notes: updates.notes !== undefined ? updates.notes.trim() : request.notes,
             }
           : request,
@@ -1599,7 +1654,42 @@ function App() {
       return;
     }
 
-    receiveInventoryStock(request.sku, receiveQty, Math.max(0, Number(unitCost) || request.estimatedUnitCost), request.requestNumber, notes || request.notes || "Received from purchase request.");
+    const effectiveUnitCost = Math.max(0, Number(unitCost) || request.estimatedUnitCost);
+    if ((request.procurementTrack ?? "warehouse_stock") === "direct_to_project" && request.projectName) {
+      const receivedAt = new Date().toISOString();
+      const movement: InventoryMovement = {
+        id: makeId("txn"),
+        type: "receive",
+        sku: request.sku,
+        itemName: request.itemName,
+        quantity: receiveQty,
+        quantityBefore: 0,
+        quantityAfter: 0,
+        projectName: request.projectName,
+        poNumber: request.poNumber || request.requestNumber,
+        source: "purchasing",
+        notes: notes || request.notes || "Direct-to-project receipt. Quantity was not added to warehouse stock.",
+        createdAt: receivedAt,
+      };
+      setInventoryMovements((current) => [movement, ...current]);
+      setProjectAllocations((current) => [
+        {
+          id: makeId("alloc"),
+          projectName: request.projectName ?? "",
+          projectRef: projectSites.find((project) => project.name === request.projectName)?.ref ?? request.sourceRef,
+          sku: request.sku,
+          itemName: request.itemName,
+          quantity: receiveQty,
+          movementId: movement.id,
+          action: "allocated",
+          notes: `Direct-to-project receipt from ${request.requestNumber}.`,
+          createdAt: receivedAt,
+        },
+        ...current,
+      ]);
+    } else {
+      receiveInventoryStock(request.sku, receiveQty, effectiveUnitCost, request.poNumber || request.requestNumber, notes || request.notes || "Received from purchase request.");
+    }
     const nextReceived = alreadyReceived + receiveQty;
     setPurchaseRequests((current) =>
       current.map((item) =>
@@ -1607,7 +1697,7 @@ function App() {
           ? {
               ...item,
               receivedQuantity: nextReceived,
-              estimatedUnitCost: Math.max(0, Number(unitCost) || item.estimatedUnitCost),
+              estimatedUnitCost: effectiveUnitCost,
               status: nextReceived >= item.quantity ? "Received" : "Ordered",
             }
           : item,
@@ -1761,7 +1851,7 @@ function App() {
         {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
-        {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} />}
+        {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} />}
         {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} />}
       </main>
     </div>
@@ -2015,8 +2105,8 @@ function Purchasing({
   buildTransactions: BuildTransaction[];
   onQueueReorderRequests: () => void;
   onQueuePlannedBuildShortageRequests: () => void;
-  onQueueManualPurchaseRequest: (partRef: string, quantity: number, notes: string) => void;
-  onUpdatePurchaseRequest: (requestId: string, updates: Partial<Pick<PurchaseRequest, "quantity" | "preferredVendor" | "poNumber" | "expectedDate" | "estimatedUnitCost" | "status" | "notes">>) => void;
+  onQueueManualPurchaseRequest: (partRef: string, quantity: number, notes: string, projectName?: string, procurementTrack?: PurchaseRequest["procurementTrack"]) => void;
+  onUpdatePurchaseRequest: (requestId: string, updates: Partial<Pick<PurchaseRequest, "quantity" | "preferredVendor" | "poNumber" | "expectedDate" | "estimatedUnitCost" | "status" | "notes" | "procurementTrack" | "projectName">>) => void;
   onUpdatePurchaseRequestStatus: (requestId: string, status: PurchaseRequest["status"]) => void;
   onCancelPurchaseRequest: (requestId: string) => void;
   onReceivePurchaseRequest: (requestId: string, quantityReceived: number, unitCost: number, notes: string) => void;
@@ -2025,6 +2115,8 @@ function Purchasing({
   const [manualRequestPartRef, setManualRequestPartRef] = useState(() => inventoryItems.find((item) => !item.retired)?.ref ?? "");
   const [manualRequestQty, setManualRequestQty] = useState(1);
   const [manualRequestNotes, setManualRequestNotes] = useState("");
+  const [manualRequestProject, setManualRequestProject] = useState("");
+  const [manualRequestTrack, setManualRequestTrack] = useState<NonNullable<PurchaseRequest["procurementTrack"]>>("warehouse_stock");
   const [requestFilters, setRequestFilters] = useState({ text: "", status: "Open", reason: "All" });
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [requestEditDraft, setRequestEditDraft] = useState({
@@ -2034,6 +2126,8 @@ function Purchasing({
     expectedDate: "",
     estimatedUnitCost: 0,
     status: "Draft" as PurchaseRequest["status"],
+    projectName: "",
+    procurementTrack: "warehouse_stock" as NonNullable<PurchaseRequest["procurementTrack"]>,
     notes: "",
   });
   const [receivingRequestId, setReceivingRequestId] = useState<string | null>(null);
@@ -2050,7 +2144,7 @@ function Purchasing({
   const editingRequest = purchaseRequests.find((request) => request.id === editingRequestId) ?? null;
   const receivingRemaining = receivingRequest ? Math.max(0, receivingRequest.quantity - (receivingRequest.receivedQuantity ?? 0)) : 0;
   const filteredPurchaseRequests = purchaseRequests.filter((request) => {
-    const haystack = `${request.requestNumber} ${request.sku} ${request.itemName} ${request.preferredVendor ?? ""} ${request.sourceRef ?? ""}`.toLowerCase();
+    const haystack = `${request.requestNumber} ${request.sku} ${request.itemName} ${request.preferredVendor ?? ""} ${request.sourceRef ?? ""} ${request.projectName ?? ""} ${request.procurementTrack ?? ""}`.toLowerCase();
     const statusMatch =
       requestFilters.status === "All" ||
       (requestFilters.status === "Open" && !["Received", "Cancelled"].includes(request.status)) ||
@@ -2083,7 +2177,8 @@ function Purchasing({
     if (!manualRequestPartRef) {
       return;
     }
-    onQueueManualPurchaseRequest(manualRequestPartRef, manualRequestQty, manualRequestNotes);
+    const targetProject = manualRequestProject || undefined;
+    onQueueManualPurchaseRequest(manualRequestPartRef, manualRequestQty, manualRequestNotes, targetProject, targetProject ? manualRequestTrack : "warehouse_stock");
     setManualRequestQty(1);
     setManualRequestNotes("");
   }
@@ -2111,6 +2206,8 @@ function Purchasing({
       expectedDate: request.expectedDate ?? "",
       estimatedUnitCost: request.estimatedUnitCost,
       status: request.status,
+      projectName: request.projectName ?? "",
+      procurementTrack: request.procurementTrack ?? "warehouse_stock",
       notes: request.notes,
     });
   }
@@ -2135,6 +2232,8 @@ function Purchasing({
         quantity_remaining: Math.max(0, request.quantity - (request.receivedQuantity ?? 0)),
         reason: request.reason,
         source: request.sourceRef ?? "",
+        project: request.projectName ?? "",
+        procurement_track: request.procurementTrack ?? "warehouse_stock",
         vendor: request.preferredVendor ?? "",
         po_number: request.poNumber ?? "",
         expected_date: request.expectedDate ?? "",
@@ -2191,6 +2290,7 @@ function Purchasing({
                 <option>All</option>
                 <option>Reorder Point</option>
                 <option>Planned Build Shortage</option>
+                <option>Project BOM</option>
                 <option>Manual</option>
               </select>
             </label>
@@ -2207,17 +2307,31 @@ function Purchasing({
               <input type="number" min={1} value={manualRequestQty} onChange={(event) => setManualRequestQty(Number(event.target.value))} />
             </label>
             <label>
+              Project
+              <select value={manualRequestProject} onChange={(event) => setManualRequestProject(event.target.value)}>
+                <option value="">Warehouse stock</option>
+                {projectSites.map((project) => <option key={project.ref} value={project.name}>{project.ref} - {project.name}</option>)}
+              </select>
+            </label>
+            <label>
+              Source path
+              <select value={manualRequestTrack} onChange={(event) => setManualRequestTrack(event.target.value as NonNullable<PurchaseRequest["procurementTrack"]>)}>
+                <option value="warehouse_stock">Receive into warehouse</option>
+                <option value="direct_to_project">Direct to project</option>
+              </select>
+            </label>
+            <label>
               Notes
               <input value={manualRequestNotes} onChange={(event) => setManualRequestNotes(event.target.value)} placeholder="Reason, vendor note, project, or quote detail" />
             </label>
             <button className="secondary-action" type="button" onClick={submitManualRequest}><Plus size={16} /> Add Request</button>
           </div>
-          <div className="request-queue-head"><span>Request</span><span>Need</span><span>Reason</span><span>Est.</span><span>Status</span><span></span></div>
+          <div className="request-queue-head"><span>Request</span><span>Need</span><span>Source</span><span>Est.</span><span>Status</span><span></span></div>
           {filteredPurchaseRequests.slice(0, 14).map((request) => (
             <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
               <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
               <span>{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
-              <span>{request.reason}<small>{request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
+              <span>{request.reason}<small>{request.projectName ? `${request.projectName} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
               <span>{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
               <span>
                 <select value={request.status} onChange={(event) => onUpdatePurchaseRequestStatus(request.id, event.target.value as PurchaseRequest["status"])}>
@@ -2260,7 +2374,7 @@ function Purchasing({
               <label>Unit cost<input type="number" min={0} step="0.01" value={requestReceiveDraft.unitCost} onChange={(event) => setRequestReceiveDraft((current) => ({ ...current, unitCost: Number(event.target.value) }))} /></label>
               <label className="span-2">Receiving notes<input value={requestReceiveDraft.notes} onChange={(event) => setRequestReceiveDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Packing slip, shipment note, exception, or receiving detail" /></label>
             </div>
-            <div className="source-file"><Truck size={16} /><span>Posting this receipt updates inventory stock and logs a receive movement against the request number.</span></div>
+            <div className="source-file"><Truck size={16} /><span>{receivingRequest.procurementTrack === "direct_to_project" ? "Posting this receipt assigns material to the project and does not increase warehouse stock." : "Posting this receipt updates inventory stock and logs a receive movement against the request number."}</span></div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setReceivingRequestId(null)}>Cancel</button>
               <button className="primary-action" type="button" onClick={submitRequestReceive} disabled={receivingRemaining <= 0}>Post Receipt</button>
@@ -2280,7 +2394,7 @@ function Purchasing({
             </div>
             <div className="request-edit-summary">
               <span>{editingRequest.reason}</span>
-              <span>{editingRequest.sourceRef ?? "No build/project source"}</span>
+              <span>{editingRequest.projectName ?? editingRequest.sourceRef ?? "No build/project source"}</span>
               <strong>{Math.max(0, editingRequest.quantity - (editingRequest.receivedQuantity ?? 0))} remaining</strong>
             </div>
             <div className="bom-modal-grid">
@@ -2288,6 +2402,8 @@ function Purchasing({
               <label>Status<select value={requestEditDraft.status} onChange={(event) => setRequestEditDraft((current) => ({ ...current, status: event.target.value as PurchaseRequest["status"] }))}><option>Draft</option><option>Need Quote</option><option>Ready to Order</option><option>Ordered</option><option>Received</option><option>Cancelled</option></select></label>
               <label>Vendor<input value={requestEditDraft.preferredVendor} onChange={(event) => setRequestEditDraft((current) => ({ ...current, preferredVendor: event.target.value }))} placeholder="Vendor or source" /></label>
               <label>Unit cost<input type="number" min={0} step="0.01" value={requestEditDraft.estimatedUnitCost} onChange={(event) => setRequestEditDraft((current) => ({ ...current, estimatedUnitCost: Number(event.target.value) }))} /></label>
+              <label>Project<select value={requestEditDraft.projectName} onChange={(event) => setRequestEditDraft((current) => ({ ...current, projectName: event.target.value }))}><option value="">Warehouse stock</option>{projectSites.map((project) => <option key={project.ref} value={project.name}>{project.ref} - {project.name}</option>)}</select></label>
+              <label>Source path<select value={requestEditDraft.procurementTrack} onChange={(event) => setRequestEditDraft((current) => ({ ...current, procurementTrack: event.target.value as NonNullable<PurchaseRequest["procurementTrack"]> }))}><option value="warehouse_stock">Receive into warehouse</option><option value="direct_to_project">Direct to project</option></select></label>
               <label>PO number<input value={requestEditDraft.poNumber} onChange={(event) => setRequestEditDraft((current) => ({ ...current, poNumber: event.target.value }))} placeholder="PO, quote, or order number" /></label>
               <label>Expected date<input type="date" value={requestEditDraft.expectedDate} onChange={(event) => setRequestEditDraft((current) => ({ ...current, expectedDate: event.target.value }))} /></label>
               <label className="span-2">Notes<textarea value={requestEditDraft.notes} onChange={(event) => setRequestEditDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Vendor response, substitutions, purchasing notes, delivery details." /></label>
@@ -3604,13 +3720,15 @@ function Projects({
   projectDocuments,
   setProjectDocuments,
   onInventoryPull,
+  onQueueProjectBomPurchaseRequest,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
   inventoryItems: Part[];
   projectDocuments: UploadedDoc[];
   setProjectDocuments: Dispatch<SetStateAction<UploadedDoc[]>>;
-  onInventoryPull: (itemName: string, qty: number) => void;
+  onInventoryPull: (itemName: string, qty: number, projectName?: string, notes?: string) => void;
+  onQueueProjectBomPurchaseRequest: (partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) => boolean;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
@@ -3780,12 +3898,13 @@ function Projects({
     }
 
     const pullingFromInventory = bomDraft.action === "pull" && selectedInventoryItem && selectedInventoryItem.stock >= qty;
+    const directToProject = bomDraft.action === "direct";
     const line: BomLine = {
       item,
       qty,
       status: pullingFromInventory ? "From Inventory" : "Need Quote",
       requestSpeed: bomDraft.requestSpeed,
-      notes: bomDraft.notes || (pullingFromInventory ? `Pulled from inventory. ${selectedInventoryItem.stock - qty} remaining.` : "Requested for Purchasing to order."),
+      notes: bomDraft.notes || (pullingFromInventory ? `Pulled from inventory. ${selectedInventoryItem.stock - qty} remaining.` : directToProject ? "Requested as direct-to-project purchase." : "Requested for Purchasing to order into warehouse stock."),
     };
 
     updateSelectedProject((project) => ({
@@ -3799,12 +3918,14 @@ function Projects({
     if (editingBomIndex !== null) {
       setActionStatus(`${item} was updated in ${selectedProject.ref}.`);
     } else if (pullingFromInventory) {
-      onInventoryPull(item, qty);
+      onInventoryPull(item, qty, selectedProject.name, bomDraft.notes || `Pulled from inventory for ${selectedProject.ref} BOM.`);
       setActionStatus(`${qty} ${item} added to ${selectedProject.ref} and pulled from inventory.`);
     } else if (bomDraft.action === "pull" && selectedInventoryItem) {
-      setActionStatus(`${item} was added as Need Quote because only ${selectedInventoryItem.stock} are available in inventory.`);
+      const queued = onQueueProjectBomPurchaseRequest(item, qty, selectedProject.name, selectedProject.ref, bomDraft.requestSpeed, bomDraft.notes, "warehouse_stock");
+      setActionStatus(queued ? `${item} was added as Need Quote because only ${selectedInventoryItem.stock} are available in inventory. Purchasing request created.` : `${item} was added as Need Quote, but no SKU match was found for Purchasing.`);
     } else {
-      setActionStatus(`${qty} ${item} added to ${selectedProject.ref} as a purchasing request.`);
+      const queued = onQueueProjectBomPurchaseRequest(item, qty, selectedProject.name, selectedProject.ref, bomDraft.requestSpeed, bomDraft.notes, directToProject ? "direct_to_project" : "warehouse_stock");
+      setActionStatus(queued ? `${qty} ${item} added to ${selectedProject.ref} as a ${directToProject ? "direct-to-project" : "warehouse stock"} purchasing request.` : `${qty} ${item} added to ${selectedProject.ref}, but Purchasing request was not created because it is not matched to a SKU.`);
     }
 
     setBomDraft({ item: parts[0].name, qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
@@ -4198,7 +4319,11 @@ function Projects({
                 </label>
                 <label>
                   <input type="radio" name="bom-action" checked={bomDraft.action === "order"} onChange={() => updateBomDraft("action", "order")} />
-                  <span><strong>Request to order</strong><small>Send this line to Purchasing as Need Quote</small></span>
+                  <span><strong>Request warehouse stock order</strong><small>Purchasing receives this into warehouse inventory</small></span>
+                </label>
+                <label>
+                  <input type="radio" name="bom-action" checked={bomDraft.action === "direct"} onChange={() => updateBomDraft("action", "direct")} />
+                  <span><strong>Request direct-to-project order</strong><small>Purchasing receives this against the project, not warehouse stock</small></span>
                 </label>
               </fieldset>
               <label className="span-2">Notes
@@ -4273,26 +4398,83 @@ function Reports({
   purchaseRequests: PurchaseRequest[];
   projectDocuments: UploadedDoc[];
 }) {
-  const vendorSpend = Object.entries(sumBy(purchaseOrders, (order) => order.vendor)).sort((a, b) => b[1] - a[1]);
-  const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
-  const categorySpend = purchaseOrders
+  const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects" | "documents">("purchasing");
+  const [reportFilters, setReportFilters] = useState({ search: "", project: "All", vendor: "All", from: "", to: "" });
+  const normalizedSearch = reportFilters.search.trim().toLowerCase();
+  const inDateRange = (dateValue?: string) => {
+    if (!dateValue) {
+      return true;
+    }
+    const date = dateValue.slice(0, 10);
+    return (!reportFilters.from || date >= reportFilters.from) && (!reportFilters.to || date <= reportFilters.to);
+  };
+  const matchesSearch = (...values: Array<string | number | undefined>) => !normalizedSearch || values.join(" ").toLowerCase().includes(normalizedSearch);
+  const projectOptions = Array.from(new Set([
+    ...purchaseOrders.map((order) => order.projectRef),
+    ...purchaseRequests.map((request) => request.projectName).filter(Boolean),
+    ...projectAllocations.map((allocation) => allocation.projectName),
+    ...projectDocuments.map((doc) => doc.project),
+  ] as string[])).sort();
+  const vendorOptions = Array.from(new Set([
+    ...purchaseOrders.map((order) => order.vendor),
+    ...purchaseRequests.map((request) => request.preferredVendor).filter(Boolean),
+    ...inventoryItems.map((part) => part.manufacturer).filter(Boolean),
+  ] as string[])).sort();
+  const filteredPurchaseOrders = purchaseOrders.filter((order) =>
+    (reportFilters.project === "All" || order.projectRef === reportFilters.project) &&
+    (reportFilters.vendor === "All" || order.vendor === reportFilters.vendor) &&
+    inDateRange(order.date) &&
+    matchesSearch(order.number, order.vendor, order.projectRef, order.sourceFile),
+  );
+  const filteredInventoryItems = inventoryItems.filter((part) =>
+    (reportFilters.vendor === "All" || part.manufacturer === reportFilters.vendor || (part.purchaseUrls ?? []).some((source) => source.label === reportFilters.vendor)) &&
+    matchesSearch(part.ref, part.name, part.description, part.manufacturer, part.category),
+  );
+  const filteredPurchaseRequests = purchaseRequests.filter((request) =>
+    (reportFilters.project === "All" || request.projectName === reportFilters.project || request.sourceRef === reportFilters.project) &&
+    (reportFilters.vendor === "All" || request.preferredVendor === reportFilters.vendor) &&
+    inDateRange(request.createdAt) &&
+    matchesSearch(request.requestNumber, request.sku, request.itemName, request.reason, request.status, request.projectName, request.preferredVendor),
+  );
+  const filteredProjectAllocations = projectAllocations.filter((allocation) =>
+    (reportFilters.project === "All" || allocation.projectName === reportFilters.project || allocation.projectRef === reportFilters.project) &&
+    inDateRange(allocation.createdAt) &&
+    matchesSearch(allocation.projectName, allocation.projectRef, allocation.sku, allocation.itemName, allocation.action, allocation.notes),
+  );
+  const filteredInventoryMovements = inventoryMovements.filter((movement) =>
+    (reportFilters.project === "All" || movement.projectName === reportFilters.project) &&
+    inDateRange(movement.createdAt) &&
+    matchesSearch(movement.sku, movement.itemName, movement.type, movement.projectName, movement.poNumber, movement.buildNumber, movement.notes),
+  );
+  const filteredProjectDocuments = projectDocuments.filter((doc) =>
+    (reportFilters.project === "All" || doc.project === reportFilters.project) &&
+    inDateRange(doc.uploadedAt) &&
+    matchesSearch(doc.name, doc.project, doc.status, doc.type, doc.storage),
+  );
+  const filteredBuildTransactions = buildTransactions.filter((build) =>
+    inDateRange(build.createdAt) &&
+    matchesSearch(build.buildNumber, build.equipmentName, build.stage, build.status),
+  );
+  const vendorSpend = Object.entries(sumBy(filteredPurchaseOrders, (order) => order.vendor)).sort((a, b) => b[1] - a[1]);
+  const projectSpend = Object.entries(sumBy(filteredPurchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
+  const categorySpend = filteredPurchaseOrders
     .flatMap((order) => order.lines)
     .reduce<Record<PurchaseLine["category"], number>>((totals, line) => {
       totals[line.category] = (totals[line.category] ?? 0) + lineTotal(line);
       return totals;
     }, {} as Record<PurchaseLine["category"], number>);
   const categoryRows = Object.entries(categorySpend).sort((a, b) => b[1] - a[1]);
-  const largestCategory = Math.max(...categoryRows.map(([, total]) => total));
-  const costHistoryRows = inventoryItems
+  const largestCategory = Math.max(1, ...categoryRows.map(([, total]) => total));
+  const costHistoryRows = filteredInventoryItems
     .map((part) => ({ part, trend: priceTrend(part) }))
     .filter((row): row is { part: Part; trend: NonNullable<ReturnType<typeof priceTrend>> } => Boolean(row.trend))
     .sort((a, b) => Math.abs(b.trend.change) - Math.abs(a.trend.change))
     .slice(0, 8);
-  const sourceRows = inventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
-  const reorderRows = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint).sort((a, b) => a.stock - b.stock).slice(0, 12);
-  const openPurchaseRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
+  const sourceRows = filteredInventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
+  const reorderRows = filteredInventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint).sort((a, b) => a.stock - b.stock).slice(0, 12);
+  const openPurchaseRequests = filteredPurchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const purchaseRequestExposure = openPurchaseRequests.reduce((sum, request) => sum + Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost, 0);
-  const plannedBuildShortages = buildTransactions
+  const plannedBuildShortages = filteredBuildTransactions
     .filter((build) => build.status === "planned")
     .flatMap((build) => {
       const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
@@ -4324,8 +4506,6 @@ function Reports({
         .filter((row) => row.shortage > 0);
     })
     .slice(0, 14);
-  const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects" | "documents">("purchasing");
-
   function exportActiveReport() {
     const today = new Date().toISOString().slice(0, 10);
     if (reportTab === "purchasing") {
@@ -4341,6 +4521,8 @@ function Reports({
           reason: request.reason,
           status: request.status,
           source: request.sourceRef ?? "",
+          project: request.projectName ?? "",
+          procurement_track: request.procurementTrack ?? "warehouse_stock",
           vendor: request.preferredVendor ?? "",
           estimated_cost: Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost,
         })),
@@ -4367,7 +4549,7 @@ function Reports({
     if (reportTab === "manufacturing") {
       exportCsv(
         `ergon-report-manufacturing-${today}.csv`,
-        buildTransactions.map((build) => ({
+        filteredBuildTransactions.map((build) => ({
           build: build.buildNumber,
           equipment: build.equipmentName,
           quantity: build.quantityBuilt,
@@ -4383,7 +4565,7 @@ function Reports({
     if (reportTab === "documents") {
       exportCsv(
         `ergon-report-documents-${today}.csv`,
-        projectDocuments.map((doc) => ({
+        filteredProjectDocuments.map((doc) => ({
           project: doc.project,
           document: doc.name,
           type: doc.type ?? "",
@@ -4398,7 +4580,7 @@ function Reports({
 
     exportCsv(
       `ergon-report-project-allocations-${today}.csv`,
-      projectAllocations.map((allocation) => ({
+        filteredProjectAllocations.map((allocation) => ({
         project: allocation.projectName,
         project_ref: allocation.projectRef ?? "",
         sku: allocation.sku,
@@ -4427,6 +4609,35 @@ function Reports({
           <button className={reportTab === "manufacturing" ? "active" : ""} type="button" onClick={() => setReportTab("manufacturing")}>Manufacturing</button>
           <button className={reportTab === "projects" ? "active" : ""} type="button" onClick={() => setReportTab("projects")}>Projects</button>
           <button className={reportTab === "documents" ? "active" : ""} type="button" onClick={() => setReportTab("documents")}>Documents</button>
+        </div>
+        <div className="request-filter-row report-filter-row">
+          <label>
+            Search / SKU
+            <input value={reportFilters.search} onChange={(event) => setReportFilters((current) => ({ ...current, search: event.target.value }))} placeholder="SKU, item, PO, project" />
+          </label>
+          <label>
+            Project
+            <select value={reportFilters.project} onChange={(event) => setReportFilters((current) => ({ ...current, project: event.target.value }))}>
+              <option>All</option>
+              {projectOptions.map((project) => <option key={project}>{project}</option>)}
+            </select>
+          </label>
+          <label>
+            Vendor
+            <select value={reportFilters.vendor} onChange={(event) => setReportFilters((current) => ({ ...current, vendor: event.target.value }))}>
+              <option>All</option>
+              {vendorOptions.map((vendor) => <option key={vendor}>{vendor}</option>)}
+            </select>
+          </label>
+          <label>
+            From
+            <input type="date" value={reportFilters.from} onChange={(event) => setReportFilters((current) => ({ ...current, from: event.target.value }))} />
+          </label>
+          <label>
+            To
+            <input type="date" value={reportFilters.to} onChange={(event) => setReportFilters((current) => ({ ...current, to: event.target.value }))} />
+          </label>
+          <button className="secondary-action mini-action" type="button" onClick={() => setReportFilters({ search: "", project: "All", vendor: "All", from: "", to: "" })}>Reset</button>
         </div>
       </section>
       {reportTab === "purchasing" && <>
@@ -4531,13 +4742,13 @@ function Reports({
       {reportTab === "manufacturing" && <section className="panel wide">
         <PanelHeader title="Manufacturing History" label="Recent build transactions and ledger count" />
         <div className="snapshot-grid">
-          <Metric icon={<Building2 size={20} />} label="Build Transactions" value={String(buildTransactions.length)} />
-          <Metric icon={<ClipboardList size={20} />} label="Ledger Entries" value={String(inventoryMovements.length)} />
-          <Metric icon={<Boxes size={20} />} label="Project Allocations" value={String(projectAllocations.length)} />
+          <Metric icon={<Building2 size={20} />} label="Build Transactions" value={String(filteredBuildTransactions.length)} />
+          <Metric icon={<ClipboardList size={20} />} label="Ledger Entries" value={String(filteredInventoryMovements.length)} />
+          <Metric icon={<Boxes size={20} />} label="Project Allocations" value={String(filteredProjectAllocations.length)} />
         </div>
         <div className="report-table compact-report-table">
           <div className="report-table-head"><span>Build</span><span>Qty</span><span>Stage</span><span>Status</span><span>Date</span></div>
-          {buildTransactions.slice(0, 12).map((build) => (
+          {filteredBuildTransactions.slice(0, 12).map((build) => (
             <div className="report-table-row" key={build.id}>
               <span><strong>{build.equipmentName}</strong><small>{build.buildNumber}</small></span>
               <span>{build.quantityBuilt}</span>
@@ -4546,7 +4757,7 @@ function Reports({
               <span>{new Date(build.createdAt).toLocaleString()}</span>
             </div>
           ))}
-          {buildTransactions.length === 0 && <div className="empty-compact-state">No manufacturing transactions recorded yet.</div>}
+          {filteredBuildTransactions.length === 0 && <div className="empty-compact-state">No manufacturing transactions match the current filters.</div>}
         </div>
         <div className="report-section-divider" />
         <PanelHeader title="Planned Build Shortages" label="Parts blocking planned manufactured equipment" />
@@ -4568,7 +4779,7 @@ function Reports({
         <PanelHeader title="Project Allocation History" label="Every SKU movement tied to a project" />
         <div className="report-table compact-report-table">
           <div className="report-table-head"><span>Project</span><span>SKU</span><span>Qty</span><span>Action</span><span>Notes</span></div>
-          {projectAllocations.slice(0, 14).map((allocation) => (
+          {filteredProjectAllocations.slice(0, 14).map((allocation) => (
             <div className="report-table-row" key={allocation.id}>
               <span><strong>{allocation.projectName}</strong><small>{allocation.projectRef ?? "No PRJ"}</small></span>
               <span>{allocation.sku}<small>{allocation.itemName}</small></span>
@@ -4577,7 +4788,7 @@ function Reports({
               <span>{allocation.notes}<small>{new Date(allocation.createdAt).toLocaleString()}</small></span>
             </div>
           ))}
-          {projectAllocations.length === 0 && <div className="empty-compact-state">No project allocations recorded yet.</div>}
+          {filteredProjectAllocations.length === 0 && <div className="empty-compact-state">No project allocations match the current filters.</div>}
         </div>
       </section>}
       {reportTab === "documents" && <section className="panel wide">
@@ -4589,7 +4800,7 @@ function Reports({
         </div>
         <div className="report-table compact-report-table">
           <div className="report-table-head"><span>Project</span><span>Document</span><span>Type</span><span>Status</span><span>Storage</span></div>
-          {projectDocuments.slice(0, 16).map((doc) => (
+          {filteredProjectDocuments.slice(0, 16).map((doc) => (
             <div className="report-table-row" key={`${doc.id}-${doc.name}`}>
               <span>{doc.project}</span>
               <span><strong>{doc.name}</strong><small>{doc.size ? formatBytes(doc.size) : "No file size saved"}</small></span>
@@ -4598,7 +4809,7 @@ function Reports({
               <span>{doc.storage ?? "Browser"}<small>{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : ""}</small></span>
             </div>
           ))}
-          {projectDocuments.length === 0 && <div className="empty-compact-state">No project documents have been uploaded yet.</div>}
+          {filteredProjectDocuments.length === 0 && <div className="empty-compact-state">No project documents match the current filters.</div>}
         </div>
       </section>}
     </div>
