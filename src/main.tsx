@@ -66,6 +66,7 @@ type BuildRecipe = {
   name: string;
   outputName: string;
   description: string;
+  imageUrl?: string;
   components: BuildComponent[];
 };
 
@@ -854,7 +855,7 @@ function App() {
           cost: buildCost,
           stock: buildQty,
           reorderPoint: 1,
-          imageUrl: "",
+          imageUrl: recipe.imageUrl ?? "",
           purchaseUrls: [],
           tags: ["VPU Part"],
           priceHistory: [
@@ -1202,6 +1203,7 @@ function Inventory({
   const [previewItem, setPreviewItem] = useState<Part | null>(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
+  const [showBuildConfirm, setShowBuildConfirm] = useState(false);
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
   const [deviceRecipes, setDeviceRecipes] = useState(buildRecipes);
   const [buildDraft, setBuildDraft] = useState({ recipeName: buildRecipes[0].name, qty: 1 });
@@ -1375,12 +1377,17 @@ function Inventory({
     setShowTransferModal(false);
   }
 
-  function runBuild() {
-    if (buildHasShortage) {
+  function requestBuild() {
+    if (buildHasShortage || buildComponentRows.length === 0) {
       return;
     }
 
+    setShowBuildConfirm(true);
+  }
+
+  function confirmBuild() {
     onBuildInventoryUnit(selectedBuildRecipe, Math.max(1, Math.round(Number(buildDraft.qty) || 1)));
+    setShowBuildConfirm(false);
   }
 
   function selectBuildRecipe(recipeName: string) {
@@ -1392,7 +1399,8 @@ function Inventory({
         {
           name: nextName,
           outputName: nextName,
-          description: "Custom equipment build.",
+          description: "",
+          imageUrl: "",
           components: [],
         },
       ]);
@@ -1401,6 +1409,32 @@ function Inventory({
     }
 
     setBuildDraft((current) => ({ ...current, recipeName }));
+  }
+
+  function updateSelectedRecipe(fields: Partial<Pick<BuildRecipe, "outputName" | "description" | "imageUrl">>) {
+    setDeviceRecipes((current) =>
+      current.map((recipe) =>
+        recipe.name === selectedBuildRecipe.name
+          ? {
+              ...recipe,
+              ...fields,
+              outputName: fields.outputName !== undefined ? fields.outputName : recipe.outputName,
+            }
+          : recipe,
+      ),
+    );
+  }
+
+  function uploadEquipmentImage(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      updateSelectedRecipe({ imageUrl: String(reader.result ?? "") });
+    };
+    reader.readAsDataURL(file);
   }
 
   function addComponentToDevice() {
@@ -1557,12 +1591,11 @@ function Inventory({
             <p>Select equipment, edit its parts in a pop-up, then build finished units into inventory.</p>
           </div>
           <div className="action-row">
-            <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(true)}><Plus size={15} /> Edit Equipment</button>
-            <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Equipment &amp; Consume Parts</button>
+            <button className="primary-action" type="button" onClick={() => setShowDeviceModal(true)}><Plus size={15} /> Open Equipment Builder</button>
           </div>
         </div>
         <div className="build-planner">
-          <label>Equipment type<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{deviceRecipes.map((recipe) => <option key={recipe.name}>{recipe.name}</option>)}<option value="__create_new_device">Create new device</option></select></label>
+          <label>Equipment type<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{deviceRecipes.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}</option>)}<option value="__create_new_device">Create new device</option></select></label>
           <label>Quantity<input type="number" min="1" value={buildDraft.qty} onChange={(event) => setBuildDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
           <div className="build-summary">
             <strong>{selectedBuildRecipe.outputName}</strong>
@@ -1583,12 +1616,22 @@ function Inventory({
             <div className="modal-header">
               <div>
                 <h2 id="device-builder-modal-title">{selectedBuildRecipe.outputName}</h2>
-                <p>Add inventory line items and set the quantity needed inside one finished device.</p>
+                <p>Manage the equipment record, BOM parts, and controlled stock consumption.</p>
               </div>
               <button className="icon-button" type="button" onClick={() => setShowDeviceModal(false)} aria-label="Close equipment builder">x</button>
             </div>
             <div className="device-modal-toolbar">
-              <label>Title of Device<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{deviceRecipes.map((recipe) => <option key={recipe.name}>{recipe.name}</option>)}<option value="__create_new_device">Create new device</option></select></label>
+              <label>Title of Device<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{deviceRecipes.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}</option>)}<option value="__create_new_device">Create new device</option></select></label>
+            </div>
+            <div className="equipment-identity-card">
+              <label className="equipment-image-upload">
+                {selectedBuildRecipe.imageUrl ? <img src={selectedBuildRecipe.imageUrl} alt={`${selectedBuildRecipe.outputName} preview`} /> : <><Image size={24} /><span>Equipment Image</span></>}
+                <input type="file" accept="image/*" onChange={(event) => uploadEquipmentImage(event.target.files?.[0])} />
+              </label>
+              <div className="equipment-identity-fields">
+                <label>Equipment title<input value={selectedBuildRecipe.outputName} onChange={(event) => updateSelectedRecipe({ outputName: event.target.value })} /></label>
+                <label>Description<textarea value={selectedBuildRecipe.description} onChange={(event) => updateSelectedRecipe({ description: event.target.value })} placeholder="Describe what this equipment build is used for..." /></label>
+              </div>
             </div>
             <div className="device-line-list">
               {buildComponentRows.map((component) => (
@@ -1614,7 +1657,37 @@ function Inventory({
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(false)}>Done</button>
-              <button className="primary-action" type="button" onClick={runBuild} disabled={buildHasShortage}>Build Equipment &amp; Consume Parts</button>
+              <button className="primary-action" type="button" onClick={requestBuild} disabled={buildHasShortage || buildComponentRows.length === 0}>Review &amp; Build Equipment</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {showBuildConfirm && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel build-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="build-confirm-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="build-confirm-title">Confirm Equipment Build</h2>
+                <p>This will consume inventory parts and add finished equipment to stock.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowBuildConfirm(false)} aria-label="Close build confirmation">x</button>
+            </div>
+            <div className="build-confirm-summary">
+              <strong>{selectedBuildRecipe.outputName}</strong>
+              <span>Quantity to build: {Math.max(1, Math.round(Number(buildDraft.qty) || 1))}</span>
+            </div>
+            <div className="build-confirm-list">
+              {buildComponentRows.map((component) => (
+                <div key={component.itemName}>
+                  <span>{component.part?.ref ?? "No SKU"} - {component.itemName}</span>
+                  <b>{component.required} used</b>
+                </div>
+              ))}
+            </div>
+            <div className="source-file"><ShoppingCart size={16} /><span>This cannot be reversed from this screen yet. Review the quantity and BOM before confirming.</span></div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowBuildConfirm(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={confirmBuild}>Confirm Build</button>
             </div>
           </section>
         </div>
