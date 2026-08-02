@@ -362,6 +362,50 @@ td small {
   width: max-content;
 }
 
+.role-workbench {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(240px, 1fr) minmax(260px, 0.7fr) minmax(180px, 0.6fr);
+  margin: 12px 0;
+  padding: 10px 12px;
+}
+
+.role-workbench div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.role-workbench strong {
+  color: #174c43;
+  font-size: 14px;
+}
+
+.role-workbench span,
+.role-workbench small {
+  color: #756d62;
+  font-size: 12px;
+}
+
+.sku-scan-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(140px, 1fr) max-content;
+}
+
+.sku-scan-row input {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  color: #1b1a18;
+  font: inherit;
+  min-height: 36px;
+  padding: 0 10px;
+}
+
 .tag-chip-row span {
   background: #f5f1e9;
   border: 1px solid #ded7cb;
@@ -681,6 +725,10 @@ td small {
   color: white;
 }
 
+.report-tabs {
+  margin-top: 12px;
+}
+
 .locked-ref {
   background: #f8f5ef;
   border: 1px solid #ded7cb;
@@ -725,8 +773,9 @@ td small {
 .table-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   justify-content: flex-end;
+  min-width: 170px;
 }
 
 .secondary-table-action {
@@ -951,6 +1000,25 @@ td small {
   min-height: 28px;
   padding: 5px 8px;
   text-align: center;
+}
+
+.build-history-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.build-history-actions select {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 6px;
+  color: #1b1a18;
+  font: inherit;
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 8px;
 }
 
 .retired-row {
@@ -2026,6 +2094,7 @@ td small {
   .project-selector-grid,
   .order-grid,
   .upload-layout,
+  .role-workbench,
   .build-planner,
   .device-add-row,
   .device-line-row,
@@ -2058,6 +2127,8 @@ td small {
   .form-grid,
   .sow-grid,
   .bom-modal-grid,
+  .role-workbench,
+  .sku-scan-row,
   .snapshot-grid,
   .inventory-editor-hero,
   .source-url-row,

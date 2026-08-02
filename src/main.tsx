@@ -99,6 +99,7 @@ type BuildTransaction = {
   componentMovements: InventoryMovement[];
   completionMovement: InventoryMovement;
   status: "posted" | "undone";
+  stage?: "planned" | "kitting" | "assembled" | "tested" | "complete";
   createdAt: string;
   undoneAt?: string;
 };
@@ -950,6 +951,79 @@ function App() {
     }
   }
 
+  function receiveInventoryStock(partRef: string, qty: number, unitCost: number, poNumber: string, notes: string) {
+    const part = inventoryItems.find((item) => item.ref === partRef);
+    const receiveQty = Math.max(1, Math.round(Number(qty) || 1));
+    if (!part || part.retired) {
+      return;
+    }
+
+    const receivedAt = new Date().toISOString();
+    const nextCost = unitCost > 0 ? unitCost : part.cost;
+    const movement: InventoryMovement = {
+      id: makeId("txn"),
+      type: "receive",
+      sku: part.ref,
+      itemName: part.name,
+      quantity: receiveQty,
+      quantityBefore: part.stock,
+      quantityAfter: part.stock + receiveQty,
+      poNumber: poNumber.trim() || undefined,
+      source: "purchasing",
+      notes: notes.trim() || "Received stock into inventory.",
+      createdAt: receivedAt,
+    };
+
+    setInventoryItems((current) =>
+      current.map((item) =>
+        item.ref === partRef
+          ? {
+              ...item,
+              cost: nextCost,
+              stock: item.stock + receiveQty,
+              priceHistory:
+                unitCost > 0
+                  ? [
+                      ...(item.priceHistory ?? []),
+                      {
+                        id: Date.now(),
+                        date: receivedAt.slice(0, 10),
+                        vendor: poNumber.trim() || "Received stock",
+                        unitCost: nextCost,
+                        notes: notes.trim() || "Stock receipt.",
+                      },
+                    ]
+                  : item.priceHistory,
+            }
+          : item,
+      ),
+    );
+    setInventoryMovements((current) => [movement, ...current]);
+  }
+
+  function adjustInventoryStock(partRef: string, nextQty: number, notes: string) {
+    const part = inventoryItems.find((item) => item.ref === partRef);
+    const adjustedQty = Math.max(0, Math.round(Number(nextQty) || 0));
+    if (!part || part.retired || adjustedQty === part.stock) {
+      return;
+    }
+
+    const movement: InventoryMovement = {
+      id: makeId("txn"),
+      type: "adjust",
+      sku: part.ref,
+      itemName: part.name,
+      quantity: Math.abs(adjustedQty - part.stock),
+      quantityBefore: part.stock,
+      quantityAfter: adjustedQty,
+      source: "inventory",
+      notes: notes.trim() || "Cycle count adjustment.",
+      createdAt: new Date().toISOString(),
+    };
+    setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: adjustedQty } : item)));
+    setInventoryMovements((current) => [movement, ...current]);
+  }
+
   function transferInventoryToProject(partRef: string, projectName: string, qty: number, notes: string) {
     const part = inventoryItems.find((item) => item.ref === partRef);
     if (!part || part.stock <= 0) {
@@ -1121,6 +1195,7 @@ function App() {
         componentMovements,
         completionMovement,
         status: "posted",
+        stage: "complete",
         createdAt: postedAt,
       };
       setInventoryMovements((current) => [completionMovement as InventoryMovement, ...componentMovements, ...current]);
@@ -1172,6 +1247,10 @@ function App() {
     setBuildTransactions((current) => current.map((build) => (build.id === buildId ? { ...build, status: "undone", undoneAt } : build)));
   }
 
+  function updateBuildStage(buildId: string, stage: NonNullable<BuildTransaction["stage"]>) {
+    setBuildTransactions((current) => current.map((build) => (build.id === buildId ? { ...build, stage } : build)));
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -1206,7 +1285,7 @@ function App() {
 
         {view === "dashboard" && <Dashboard projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} />}
-        {view === "inventory" && <Inventory inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onTransferToProject={transferInventoryToProject} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} />}
+        {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
         {view === "reports" && <Reports inventoryItems={inventoryItems} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} />}
       </main>
@@ -1467,6 +1546,7 @@ function Purchasing({ projectSites }: { projectSites: ProjectSite[] }) {
 }
 
 function Inventory({
+  roleMode,
   inventoryItems,
   lowStock,
   projectSites,
@@ -1476,10 +1556,14 @@ function Inventory({
   inventoryMovements,
   onAddItem,
   onUpdateItem,
+  onReceiveStock,
+  onAdjustStock,
   onTransferToProject,
   onBuildInventoryUnit,
   onUndoBuildTransaction,
+  onUpdateBuildStage,
 }: {
+  roleMode: RoleMode;
   inventoryItems: Part[];
   lowStock: Part[];
   projectSites: ProjectSite[];
@@ -1489,9 +1573,12 @@ function Inventory({
   inventoryMovements: InventoryMovement[];
   onAddItem: (part: Part) => void;
   onUpdateItem: (ref: string, part: Part) => void;
+  onReceiveStock: (partRef: string, qty: number, unitCost: number, poNumber: string, notes: string) => void;
+  onAdjustStock: (partRef: string, nextQty: number, notes: string) => void;
   onTransferToProject: (partRef: string, projectName: string, qty: number, notes: string) => void;
   onBuildInventoryUnit: (recipe: BuildRecipe, qty: number) => void;
   onUndoBuildTransaction: (buildId: string) => void;
+  onUpdateBuildStage: (buildId: string, stage: NonNullable<BuildTransaction["stage"]>) => void;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -1513,12 +1600,28 @@ function Inventory({
   const [itemDraft, setItemDraft] = useState<Part>(emptyItemDraft);
   const [previewItem, setPreviewItem] = useState<Part | null>(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showReceiveModal, setShowReceiveModal] = useState(false);
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showBuildConfirm, setShowBuildConfirm] = useState(false);
   const [inventoryTab, setInventoryTab] = useState<"parts" | "finished">("parts");
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
+  const [skuScan, setSkuScan] = useState("");
+  const [scanStatus, setScanStatus] = useState("Scan or enter a SKU to pull up the item.");
   const [buildDraft, setBuildDraft] = useState({ recipeName: buildRecipes[0].name, qty: 1 });
   const [newComponentDraft, setNewComponentDraft] = useState({ itemName: "", qty: 1 });
+  const [receiveDraft, setReceiveDraft] = useState({
+    partRef: inventoryItems[0]?.ref ?? "",
+    qty: 1,
+    unitCost: 0,
+    poNumber: "",
+    notes: "",
+  });
+  const [adjustDraft, setAdjustDraft] = useState({
+    partRef: inventoryItems[0]?.ref ?? "",
+    nextQty: inventoryItems[0]?.stock ?? 0,
+    notes: "",
+  });
   const [transferDraft, setTransferDraft] = useState({
     partRef: inventoryItems[0]?.ref ?? "",
     projectName: projectSites[0]?.name ?? "",
@@ -1526,6 +1629,8 @@ function Inventory({
     notes: "",
   });
   const transferItem = inventoryItems.find((part) => part.ref === transferDraft.partRef);
+  const receiveItem = inventoryItems.find((part) => part.ref === receiveDraft.partRef);
+  const adjustItem = inventoryItems.find((part) => part.ref === adjustDraft.partRef);
   const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
   const selectedBuildRecipe = deviceRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? deviceRecipes.find((recipe) => !recipe.retired) ?? deviceRecipes[0];
   const buildComponentRows = selectedBuildRecipe.components.map((component) => {
@@ -1549,6 +1654,12 @@ function Inventory({
       : 0;
     return { recipe, finished, buildable };
   });
+  const roleCopy: Record<RoleMode, { title: string; body: string }> = {
+    warehouse: { title: "Warehouse workbench", body: "Scan SKUs, receive stock, adjust cycle counts, and transfer parts to projects." },
+    purchasing: { title: "Purchasing workbench", body: "Watch reorder items, receive against POs, and keep vendor costs current." },
+    pm: { title: "PM workbench", body: "Transfer stock to projects and review project allocation history from the ledger." },
+    manager: { title: "Manager workbench", body: "Review inventory value, build readiness, shortages, and recent transactions." },
+  };
   const filteredInventoryItems = inventoryItems.filter((part) => {
     const status = part.retired ? "Retired" : part.stock <= part.reorderPoint ? "Reorder" : "Healthy";
     const tabMatch = inventoryTab === "finished" ? part.category === "Build" : part.category !== "Build";
@@ -1697,6 +1808,67 @@ function Inventory({
       notes: "",
     });
     setShowTransferModal(true);
+  }
+
+  function openReceiveModal(part?: Part) {
+    const target = part ?? inventoryItems.find((item) => !item.retired) ?? inventoryItems[0];
+    if (!target) {
+      return;
+    }
+    setReceiveDraft({
+      partRef: target.ref,
+      qty: 1,
+      unitCost: target.cost,
+      poNumber: "",
+      notes: "",
+    });
+    setShowReceiveModal(true);
+  }
+
+  function saveReceive() {
+    const part = inventoryItems.find((item) => item.ref === receiveDraft.partRef);
+    if (!part || part.retired) {
+      return;
+    }
+
+    onReceiveStock(part.ref, receiveDraft.qty, Number(receiveDraft.unitCost) || 0, receiveDraft.poNumber, receiveDraft.notes);
+    setShowReceiveModal(false);
+  }
+
+  function openAdjustModal(part?: Part) {
+    const target = part ?? inventoryItems.find((item) => !item.retired) ?? inventoryItems[0];
+    if (!target) {
+      return;
+    }
+    setAdjustDraft({
+      partRef: target.ref,
+      nextQty: target.stock,
+      notes: "",
+    });
+    setShowAdjustModal(true);
+  }
+
+  function saveAdjust() {
+    const part = inventoryItems.find((item) => item.ref === adjustDraft.partRef);
+    if (!part || part.retired) {
+      return;
+    }
+
+    onAdjustStock(part.ref, adjustDraft.nextQty, adjustDraft.notes);
+    setShowAdjustModal(false);
+  }
+
+  function handleSkuScan() {
+    const query = skuScan.trim().toLowerCase();
+    const matched = inventoryItems.find((part) => part.ref.toLowerCase() === query || part.name.toLowerCase().includes(query));
+    if (!matched) {
+      setScanStatus("No matching SKU or item name found.");
+      return;
+    }
+
+    setInventoryTab(matched.category === "Build" ? "finished" : "parts");
+    setFilters((current) => ({ ...current, ref: matched.ref, part: "", category: "All", manufacturer: "", status: "All" }));
+    setScanStatus(`${matched.ref} loaded: ${matched.name}.`);
   }
 
   function saveTransfer() {
@@ -1864,7 +2036,22 @@ function Inventory({
             <h2>Parts Inventory</h2>
             <p>{inventoryTab === "finished" ? "Finished manufactured equipment ready for projects" : "Purchasing parts, components, and field hardware"}</p>
           </div>
-          <button className="primary-action" type="button" onClick={openAddItemModal}><Plus size={17} /> Add New Item</button>
+          <div className="action-row">
+            <button className="secondary-action" type="button" onClick={() => openReceiveModal()}><Truck size={16} /> Receive Stock</button>
+            <button className="secondary-action" type="button" onClick={() => openAdjustModal()}><ClipboardList size={16} /> Adjust Count</button>
+            <button className="primary-action" type="button" onClick={openAddItemModal}><Plus size={17} /> Add New Item</button>
+          </div>
+        </div>
+        <div className={`role-workbench ${roleMode}`}>
+          <div>
+            <strong>{roleCopy[roleMode].title}</strong>
+            <span>{roleCopy[roleMode].body}</span>
+          </div>
+          <div className="sku-scan-row">
+            <input value={skuScan} onChange={(event) => setSkuScan(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") handleSkuScan(); }} placeholder="Scan or enter SKU" />
+            <button className="secondary-action mini-action" type="button" onClick={handleSkuScan}><Search size={14} /> Find</button>
+          </div>
+          <small>{scanStatus}</small>
         </div>
         <div className="segmented-tabs">
           <button className={inventoryTab === "parts" ? "active" : ""} type="button" onClick={() => setInventoryTab("parts")}>Parts Inventory</button>
@@ -1928,6 +2115,8 @@ function Inventory({
                   <td>{part.retired ? <span className="status retired">Retired</span> : part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
                   <td>
                     <div className="table-actions">
+                      <button className="table-action secondary-table-action" type="button" onClick={() => openReceiveModal(part)} disabled={part.retired}>Receive</button>
+                      <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
                       <button className="table-action secondary-table-action" type="button" onClick={() => openEditItemModal(part)}>Edit</button>
                       <button className="table-action" type="button" onClick={() => openTransferModal(part)} disabled={part.retired}>Transfer</button>
                     </div>
@@ -1987,7 +2176,20 @@ function Inventory({
                 <strong>{build.buildNumber}</strong>
                 <span>{build.quantityBuilt} x {build.equipmentName}</span>
               </div>
-              {build.status === "posted" ? <button className="table-action secondary-table-action" type="button" onClick={() => onUndoBuildTransaction(build.id)}>Undo</button> : <span className="status retired">Undone</span>}
+              <div className="build-history-actions">
+                {build.status === "posted" ? (
+                  <>
+                    <select value={build.stage ?? "complete"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
+                      <option value="planned">Planned</option>
+                      <option value="kitting">Kitting</option>
+                      <option value="assembled">Assembled</option>
+                      <option value="tested">Tested</option>
+                      <option value="complete">Complete</option>
+                    </select>
+                    <button className="table-action secondary-table-action" type="button" onClick={() => onUndoBuildTransaction(build.id)}>Undo</button>
+                  </>
+                ) : <span className="status retired">Undone</span>}
+              </div>
             </div>
           ))}
           {buildTransactions.length === 0 && <div className="empty-compact-state">No build transactions yet.</div>}
@@ -2086,7 +2288,7 @@ function Inventory({
                 </div>
               ))}
             </div>
-            <div className="source-file"><ShoppingCart size={16} /><span>This cannot be reversed from this screen yet. Review the quantity and BOM before confirming.</span></div>
+            <div className="source-file"><ShoppingCart size={16} /><span>This will post a build transaction. Use Build History to undo it if the build was entered by mistake.</span></div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowBuildConfirm(false)}>Cancel</button>
               <button className="primary-action" type="button" onClick={confirmBuild}>Confirm Build</button>
@@ -2222,6 +2424,60 @@ function Inventory({
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowTransferModal(false)}>Cancel</button>
               <button className="primary-action" type="button" onClick={saveTransfer}>Transfer To Project</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {showReceiveModal && receiveItem && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-receive-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="inventory-receive-modal-title">Receive Stock</h2>
+                <p>Add arrived parts to inventory and record the PO or vendor reference.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowReceiveModal(false)} aria-label="Close receive modal">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">Item<select value={receiveDraft.partRef} onChange={(event) => {
+                const next = inventoryItems.find((part) => part.ref === event.target.value);
+                setReceiveDraft((current) => ({ ...current, partRef: event.target.value, unitCost: next?.cost ?? current.unitCost }));
+              }}>{inventoryItems.filter((part) => !part.retired).map((part) => <option key={part.ref} value={part.ref}>{part.ref} - {part.name} ({part.stock} on hand)</option>)}</select></label>
+              <label>Quantity received<input type="number" min="1" value={receiveDraft.qty} onChange={(event) => setReceiveDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
+              <label>Unit cost<input type="number" min="0" value={receiveDraft.unitCost} onChange={(event) => setReceiveDraft((current) => ({ ...current, unitCost: Number(event.target.value) }))} /></label>
+              <label>PO / vendor ref<input value={receiveDraft.poNumber} onChange={(event) => setReceiveDraft((current) => ({ ...current, poNumber: event.target.value }))} placeholder="PO, receipt, or vendor" /></label>
+              <label className="span-2">Notes<textarea value={receiveDraft.notes} onChange={(event) => setReceiveDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Packing slip, order note, condition, or receiving issue." /></label>
+            </div>
+            <div className="source-file"><Truck size={16} /><span>{receiveItem.ref} currently has {receiveItem.stock}. Receipt will leave {receiveItem.stock + Math.max(1, Math.round(Number(receiveDraft.qty) || 1))} on hand.</span></div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowReceiveModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={saveReceive}>Receive Stock</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {showAdjustModal && adjustItem && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-adjust-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="inventory-adjust-modal-title">Adjust Stock Count</h2>
+                <p>Use this for cycle counts, damaged items, corrections, or retire cleanup.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowAdjustModal(false)} aria-label="Close adjust modal">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">Item<select value={adjustDraft.partRef} onChange={(event) => {
+                const next = inventoryItems.find((part) => part.ref === event.target.value);
+                setAdjustDraft((current) => ({ ...current, partRef: event.target.value, nextQty: next?.stock ?? current.nextQty }));
+              }}>{inventoryItems.filter((part) => !part.retired).map((part) => <option key={part.ref} value={part.ref}>{part.ref} - {part.name} ({part.stock} on hand)</option>)}</select></label>
+              <label>New count<input type="number" min="0" value={adjustDraft.nextQty} onChange={(event) => setAdjustDraft((current) => ({ ...current, nextQty: Number(event.target.value) }))} /></label>
+              <label className="span-2">Reason / notes<textarea value={adjustDraft.notes} onChange={(event) => setAdjustDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Cycle count, damaged, missing, found, returned, or correction reason." /></label>
+            </div>
+            <div className="source-file"><ClipboardList size={16} /><span>{adjustItem.ref} will move from {adjustItem.stock} to {Math.max(0, Math.round(Number(adjustDraft.nextQty) || 0))}.</span></div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowAdjustModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={saveAdjust}>Save Adjustment</button>
             </div>
           </section>
         </div>
@@ -2833,75 +3089,113 @@ function Reports({
     .sort((a, b) => Math.abs(b.trend.change) - Math.abs(a.trend.change))
     .slice(0, 8);
   const sourceRows = inventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
+  const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects">("purchasing");
 
   return (
     <div className="content-grid">
-      <section className="panel">
-        <PanelHeader title="Project Spend" label="From recent order PDFs" />
-        <div className="stack">
-          {projectSpend.map(([project, total]) => <div className="row-card" key={project}><strong>{project}</strong><b>{moneyExact(total)}</b></div>)}
-        </div>
-      </section>
-      <section className="panel">
-        <PanelHeader title="Vendor Spend" label="NeweggBusiness and Amazon" />
-        <div className="stack">
-          {vendorSpend.map(([vendor, total]) => <div className="row-card" key={vendor}><strong>{vendor}</strong><b>{moneyExact(total)}</b></div>)}
-        </div>
-      </section>
       <section className="panel wide">
-        <PanelHeader title="Purchase Category Mix" label="Line-item spend before tax" />
-        <div className="bar-list">
-          {categoryRows.map(([category, total]) => (
-            <div className="bar-row" key={category}>
-              <span>{category}</span>
-              <div><i style={{ width: `${(total / largestCategory) * 100}%` }} /></div>
-              <b>{moneyExact(total)}</b>
-            </div>
-          ))}
+        <div className="panel-title-row">
+          <div>
+            <h2>Reports</h2>
+            <p>Purchasing, inventory, manufacturing, and project movement views.</p>
+          </div>
+        </div>
+        <div className="segmented-tabs report-tabs">
+          <button className={reportTab === "purchasing" ? "active" : ""} type="button" onClick={() => setReportTab("purchasing")}>Purchasing</button>
+          <button className={reportTab === "inventory" ? "active" : ""} type="button" onClick={() => setReportTab("inventory")}>Inventory</button>
+          <button className={reportTab === "manufacturing" ? "active" : ""} type="button" onClick={() => setReportTab("manufacturing")}>Manufacturing</button>
+          <button className={reportTab === "projects" ? "active" : ""} type="button" onClick={() => setReportTab("projects")}>Projects</button>
         </div>
       </section>
-      <section className="panel wide">
-        <PanelHeader title="Inventory Cost History" label="Latest purchase price movement by item" />
+      {reportTab === "purchasing" && <>
+        <section className="panel">
+          <PanelHeader title="Project Spend" label="From recent order PDFs" />
+          <div className="stack">
+            {projectSpend.map(([project, total]) => <div className="row-card" key={project}><strong>{project}</strong><b>{moneyExact(total)}</b></div>)}
+          </div>
+        </section>
+        <section className="panel">
+          <PanelHeader title="Vendor Spend" label="NeweggBusiness and Amazon" />
+          <div className="stack">
+            {vendorSpend.map(([vendor, total]) => <div className="row-card" key={vendor}><strong>{vendor}</strong><b>{moneyExact(total)}</b></div>)}
+          </div>
+        </section>
+        <section className="panel wide">
+          <PanelHeader title="Purchase Category Mix" label="Line-item spend before tax" />
+          <div className="bar-list">
+            {categoryRows.map(([category, total]) => (
+              <div className="bar-row" key={category}>
+                <span>{category}</span>
+                <div><i style={{ width: `${(total / largestCategory) * 100}%` }} /></div>
+                <b>{moneyExact(total)}</b>
+              </div>
+            ))}
+          </div>
+        </section>
+      </>}
+      {reportTab === "inventory" && <>
+        <section className="panel wide">
+          <PanelHeader title="Inventory Cost History" label="Latest purchase price movement by item" />
+          <div className="report-table compact-report-table">
+            <div className="report-table-head"><span>Item</span><span>Latest</span><span>Previous</span><span>Change</span><span>Vendor</span></div>
+            {costHistoryRows.map(({ part, trend }) => (
+              <div className="report-table-row" key={part.ref}>
+                <span><strong>{part.name}</strong><small>{part.ref}</small></span>
+                <span>{moneyExact(trend.latest.unitCost)}</span>
+                <span>{trend.previous ? moneyExact(trend.previous.unitCost) : "No prior"}</span>
+                <span className={trend.change > 0 ? "cost-up" : trend.change < 0 ? "cost-down" : ""}>{trend.change === 0 ? "Flat" : `${trend.change > 0 ? "+" : ""}${moneyExact(trend.change)} (${trend.percent.toFixed(1)}%)`}</span>
+                <span>{trend.latest.vendor}<small>{trend.latest.date}</small></span>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="panel wide">
+          <PanelHeader title="Purchase Sources" label="Compact vendor link reference by inventory item" />
+          <div className="source-report-grid">
+            {sourceRows.map((part) => (
+              <article className="source-report-card" key={part.ref}>
+                <div><strong>{part.name}</strong><small>{part.ref} - {part.manufacturer}</small></div>
+                <div className="source-chip-list">
+                  {(part.purchaseUrls ?? []).map((source) =>
+                    source.url ? <a href={source.url} target="_blank" rel="noreferrer" key={source.id}><ExternalLink size={13} /> {source.label || "Source"}</a> : <span key={source.id}>{source.label || "Source pending"}</span>,
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+        <section className="panel wide">
+          <PanelHeader title="Ops Snapshot" label="Inventory plus captured purchasing" />
+          <div className="report-total">{money(inventoryValue + openPoValue)}</div>
+          <p className="muted">Current demo inventory value plus recent order PDFs now captured in Purchasing.</p>
+        </section>
+      </>}
+      {reportTab === "manufacturing" && <section className="panel wide">
+        <PanelHeader title="Manufacturing History" label="Recent build transactions and ledger count" />
+        <div className="snapshot-grid">
+          <Metric icon={<Building2 size={20} />} label="Build Transactions" value={String(buildTransactions.length)} />
+          <Metric icon={<ClipboardList size={20} />} label="Ledger Entries" value={String(inventoryMovements.length)} />
+          <Metric icon={<Boxes size={20} />} label="Project Allocations" value={String(projectAllocations.length)} />
+        </div>
         <div className="report-table compact-report-table">
-          <div className="report-table-head"><span>Item</span><span>Latest</span><span>Previous</span><span>Change</span><span>Vendor</span></div>
-          {costHistoryRows.map(({ part, trend }) => (
-            <div className="report-table-row" key={part.ref}>
-              <span><strong>{part.name}</strong><small>{part.ref}</small></span>
-              <span>{moneyExact(trend.latest.unitCost)}</span>
-              <span>{trend.previous ? moneyExact(trend.previous.unitCost) : "No prior"}</span>
-              <span className={trend.change > 0 ? "cost-up" : trend.change < 0 ? "cost-down" : ""}>{trend.change === 0 ? "Flat" : `${trend.change > 0 ? "+" : ""}${moneyExact(trend.change)} (${trend.percent.toFixed(1)}%)`}</span>
-              <span>{trend.latest.vendor}<small>{trend.latest.date}</small></span>
+          <div className="report-table-head"><span>Build</span><span>Qty</span><span>Stage</span><span>Status</span><span>Date</span></div>
+          {buildTransactions.slice(0, 12).map((build) => (
+            <div className="report-table-row" key={build.id}>
+              <span><strong>{build.equipmentName}</strong><small>{build.buildNumber}</small></span>
+              <span>{build.quantityBuilt}</span>
+              <span>{build.stage ?? "complete"}</span>
+              <span>{build.status}</span>
+              <span>{new Date(build.createdAt).toLocaleString()}</span>
             </div>
           ))}
+          {buildTransactions.length === 0 && <div className="empty-compact-state">No manufacturing transactions recorded yet.</div>}
         </div>
-      </section>
-      <section className="panel wide">
-        <PanelHeader title="Purchase Sources" label="Compact vendor link reference by inventory item" />
-        <div className="source-report-grid">
-          {sourceRows.map((part) => (
-            <article className="source-report-card" key={part.ref}>
-              <div>
-                <strong>{part.name}</strong>
-                <small>{part.ref} - {part.manufacturer}</small>
-              </div>
-              <div className="source-chip-list">
-                {(part.purchaseUrls ?? []).map((source) =>
-                  source.url ? (
-                    <a href={source.url} target="_blank" rel="noreferrer" key={source.id}><ExternalLink size={13} /> {source.label || "Source"}</a>
-                  ) : (
-                    <span key={source.id}>{source.label || "Source pending"}</span>
-                  ),
-                )}
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-      <section className="panel wide">
+      </section>}
+      {reportTab === "projects" && <section className="panel wide">
         <PanelHeader title="Project Allocation History" label="Every SKU movement tied to a project" />
         <div className="report-table compact-report-table">
           <div className="report-table-head"><span>Project</span><span>SKU</span><span>Qty</span><span>Action</span><span>Notes</span></div>
-          {projectAllocations.slice(0, 10).map((allocation) => (
+          {projectAllocations.slice(0, 14).map((allocation) => (
             <div className="report-table-row" key={allocation.id}>
               <span><strong>{allocation.projectName}</strong><small>{allocation.projectRef ?? "No PRJ"}</small></span>
               <span>{allocation.sku}<small>{allocation.itemName}</small></span>
@@ -2912,20 +3206,7 @@ function Reports({
           ))}
           {projectAllocations.length === 0 && <div className="empty-compact-state">No project allocations recorded yet.</div>}
         </div>
-      </section>
-      <section className="panel wide">
-        <PanelHeader title="Manufacturing History" label="Recent build transactions and ledger count" />
-        <div className="snapshot-grid">
-          <Metric icon={<Building2 size={20} />} label="Build Transactions" value={String(buildTransactions.length)} />
-          <Metric icon={<ClipboardList size={20} />} label="Ledger Entries" value={String(inventoryMovements.length)} />
-          <Metric icon={<Boxes size={20} />} label="Project Allocations" value={String(projectAllocations.length)} />
-        </div>
-      </section>
-      <section className="panel wide">
-        <PanelHeader title="Ops Snapshot" label="Inventory plus captured purchasing" />
-        <div className="report-total">{money(inventoryValue + openPoValue)}</div>
-        <p className="muted">Current demo inventory value plus recent order PDFs now captured in Purchasing.</p>
-      </section>
+      </section>}
     </div>
   );
 }
