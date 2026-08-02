@@ -1118,7 +1118,8 @@ td small {
   align-items: end;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(260px, 0.9fr) 104px minmax(260px, 0.85fr);
+  grid-template-columns: max-content 82px max-content;
+  justify-content: start;
   margin-bottom: 10px;
 }
 
@@ -1213,7 +1214,8 @@ td small {
   align-items: end;
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(260px, 1fr) 82px max-content 34px;
+  grid-template-columns: max-content 70px max-content 34px;
+  justify-content: start;
   padding: 9px 12px;
 }
 
@@ -1233,11 +1235,21 @@ td small {
 .device-line-row select {
   background: #fffdf9;
   border: 1px solid #ded7cb;
-  border-radius: 8px;
+  border-radius: 6px;
   color: #1b1a18;
   font: inherit;
-  min-height: 36px;
+  min-height: 32px;
   padding: 0 10px;
+}
+
+.device-line-row select {
+  max-width: 360px;
+  min-width: 260px;
+  width: 32ch;
+}
+
+.device-line-row input {
+  width: 58px;
 }
 
 .device-line-status {
@@ -1246,7 +1258,7 @@ td small {
   flex-wrap: nowrap;
   gap: 6px;
   justify-content: flex-start;
-  min-height: 36px;
+  min-height: 32px;
 }
 
 .device-line-status span:not(.status) {
@@ -1271,27 +1283,38 @@ td small {
 .build-planner select {
   background: #fffdf9;
   border: 1px solid #ded7cb;
-  border-radius: 8px;
+  border-radius: 6px;
   color: #1b1a18;
   font: inherit;
-  min-height: 38px;
+  min-height: 32px;
   padding: 0 12px;
+}
+
+.build-planner select {
+  width: 34ch;
+}
+
+.build-planner input {
+  width: 62px;
 }
 
 .build-summary {
   background: #f8f5ef;
   border: 1px solid #e8e1d5;
-  border-radius: 8px;
+  border-radius: 6px;
   display: grid;
   gap: 4px;
-  min-height: 38px;
-  padding: 8px 12px;
+  justify-self: start;
+  min-height: 32px;
+  padding: 7px 10px;
+  width: fit-content;
 }
 
 .build-summary span {
   color: #756d62;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 11px;
+  line-height: 1.25;
+  max-width: 430px;
 }
 
 .build-component-list {
@@ -1792,5 +1815,15 @@ td small {
 
   .item-image-upload {
     min-height: 180px;
+  }
+
+  .build-planner select,
+  .build-planner input,
+  .device-line-row select,
+  .device-line-row input,
+  .build-summary {
+    max-width: 100%;
+    min-width: 0;
+    width: 100%;
   }
 }
