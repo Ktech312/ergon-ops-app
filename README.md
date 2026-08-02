@@ -23,7 +23,8 @@ Supabase:
 - `VITE_SUPABASE_ANON_KEY`
 
 Apply Supabase migrations in `backend/supabase/migrations`, including
-`003_manufacturing_inventory_controls.sql`, before enabling cloud sync.
+`003_manufacturing_inventory_controls.sql` and
+`004_planned_builds_and_scan_fields.sql`, before enabling cloud sync.
 
 The current Supabase bridge uses `app_state_snapshots` while the UI is being
 moved toward fully normalized table writes.

@@ -9,9 +9,14 @@
   `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 - Parts Inventory and Finished Manufactured Equipment are split into tabs.
 - Inventory Movement Ledger is visible on the Inventory page.
-- Build History is visible on the Inventory page and posted builds can be undone.
+- Build History is visible on the Inventory page. Builds can be planned first,
+  moved through kitting/assembled/tested/complete stages, completed into stock,
+  cancelled, or undone after posting.
 - Project Allocation History is visible in Reports.
-- Role View selector is scaffolded for Warehouse, Purchasing, PM, and Manager.
+- Role View selector is scaffolded for Warehouse, Purchasing, PM, and Manager,
+  including role-focused dashboard and inventory workbench summaries.
+- Receiving and stock-adjustment modals are available from Inventory.
+- SKU scan/search entry is available for warehouse-style lookup.
 
 ## Database Foundation Added
 
@@ -22,13 +27,14 @@
 - `project_allocation_history`
 - `app_role_modes`
 - `app_state_snapshots`
+- `004_planned_builds_and_scan_fields.sql` extends build status/stage support
+  and adds scan/image/tag/source fields to inventory items.
 
 ## Next Hardening Pass
 
 - Replace the snapshot bridge with normalized Supabase reads/writes for each
   table.
 - Add transaction locking so two users cannot consume the same stock at once.
-- Add formal receiving and adjustment modals instead of relying on item edit.
 - Add login and role-based access rules before private company use.
-- Add barcode/SKU scan entry fields for warehouse workflows.
-- Add build traveler steps: planned, kitting, assembled, tested, complete.
+- Add barcode label printing and scanner-device testing.
+- Add deeper mobile testing for receiving, transfer, and planned-build flows.
