@@ -2,13 +2,12 @@
 
 ## Live In The App
 
-- Browser persistence is no longer fake in-memory only. The app now restores
-  inventory, projects, equipment recipes, movements, builds, allocations, and
-  role mode from saved state.
-- Supabase sync bridge is ready through `app_state_snapshots` once Vercel has
-  `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+- Browser cache protects active work, and production persistence now writes
+  authenticated `app_records` rows when Supabase Auth/env vars are configured.
+- Legacy `app_state_snapshots` rows remain readable only as migration fallback.
 - Project document records now persist with browser backup/restore and cloud
-  snapshot sync. They are ready to point at Google Drive or Supabase Storage.
+  production persistence. They are ready to point at Google Drive or Supabase
+  Storage.
 - Parts Inventory and Finished Manufactured Equipment are split into tabs.
 - Inventory Movement Ledger is visible on the Inventory page.
 - Build History is visible on the Inventory page. Builds can be planned first,
@@ -18,7 +17,7 @@
 - Project Allocation History is visible in Reports.
 - Role View selector is scaffolded for Warehouse, Purchasing, PM, and Manager,
   including role-focused dashboard summaries, inventory workbench summaries, and
-  visible permission chips.
+  visible permission chips. Signed-in users can persist their role assignment.
 - Receiving and stock-adjustment modals are available from Inventory.
 - SKU scan/search entry is available for warehouse-style lookup.
 
@@ -33,18 +32,22 @@
 - `app_state_snapshots`
 - `app_sync_events`
 - `app_transaction_locks`
+- `app_records`
+- `app_user_roles`
 - `004_planned_builds_and_scan_fields.sql` extends build status/stage support
   and adds scan/image/tag/source fields to inventory items.
 - `008_persistence_documents_and_transaction_safety.sql` adds document metadata,
   sync event logging, and lock scaffolding for future multi-user safety.
+- `009_production_auth_records_and_rls.sql` adds authenticated app records and
+  removes anonymous testing policies.
+- `010_user_role_assignments.sql` adds per-user production role assignments.
 
-## Next Hardening Pass
+## Production Follow-Up Queue
 
-- Replace the snapshot bridge with normalized Supabase reads/writes for each
-  table.
-- Wire `app_transaction_locks` into live Supabase posting once login/user
-  sessions exist.
-- Add login and role-based access rules before private company use.
+- Move from JSON app records into fully relational CRUD endpoints when the data
+  model stabilizes.
+- Move lock enforcement into server-side functions for stricter concurrent
+  multi-user posting.
 - Add barcode label printing and scanner-device testing.
-- Add real-device mobile testing for receiving, transfer, and planned-build
+- Run real-device mobile testing for receiving, transfer, and planned-build
   flows.

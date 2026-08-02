@@ -95,9 +95,9 @@ button {
 
 .topbar {
   align-items: flex-start;
-  display: flex;
+  display: grid;
   gap: 18px;
-  justify-content: space-between;
+  grid-template-columns: minmax(220px, 1fr) max-content max-content minmax(240px, 0.8fr) max-content minmax(240px, 0.8fr);
   margin-bottom: 22px;
 }
 
@@ -200,6 +200,40 @@ button {
   opacity: 0;
   position: absolute;
   width: 1px;
+}
+
+.auth-card {
+  align-self: start;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 8px;
+}
+
+.auth-card input {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 6px;
+  color: #1b1a18;
+  font: inherit;
+  font-size: 12px;
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.auth-card span,
+.auth-card small {
+  color: #756d62;
+  font-size: 11px;
+}
+
+.auth-card span,
+.auth-card small {
+  grid-column: 1 / -1;
 }
 
 .content-grid {
@@ -2549,6 +2583,10 @@ td small {
     grid-template-columns: 1fr;
   }
 
+  .topbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .sidebar {
     border-bottom: 1px solid #ded7cb;
     border-right: 0;
@@ -2644,6 +2682,7 @@ td small {
 
   .topbar {
     display: grid;
+    grid-template-columns: 1fr;
   }
 
   .search-box {

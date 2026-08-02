@@ -28,8 +28,7 @@ The project name is the reporting anchor for inventory transfers.
 
 Stores uploaded or linked files for a project, including sales quotes, SOWs,
 BOMs, purchase orders, invoices, field photos, and other reference documents.
-The first MVP can store Google Drive URLs here; later Supabase Storage can hold
-private file copies.
+Production records can point to Google Drive folders or Supabase Storage paths.
 Current app-side document records also track the local/browser document id,
 project name, file size, storage status, and future Drive or Supabase storage
 paths.
@@ -99,15 +98,25 @@ with reversal ledger rows.
 
 `app_state_snapshots`
 
-Temporary MVP bridge used by the current frontend while the UI is being moved
-from in-memory records to normalized Supabase tables. The app saves local browser
-state immediately and syncs this snapshot table when Supabase environment
-variables are configured.
+Legacy migration fallback used to read early app state. New production writes
+use `app_records`.
+
+`app_records`
+
+Authenticated production persistence table. Each major app collection is stored
+as its own record key, so inventory, projects, equipment recipes, movements,
+purchase requests, project documents, and role mode can be audited and migrated
+separately.
+
+`app_user_roles`
+
+Stores each signed-in user's active operational role view: Warehouse,
+Purchasing, PM, or Manager. This keeps role selection user-specific instead of
+sharing one global selector across the whole company.
 
 `app_sync_events`
 
-Auditable sync event log for imports, exports, snapshot saves, and future
-normalized table writes.
+Auditable sync event log for imports, exports, and normalized production writes.
 
 `app_transaction_locks`
 

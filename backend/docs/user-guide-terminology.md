@@ -9,10 +9,10 @@ Use these labels consistently across the app, reports, and future user guide.
 | SKU | Stock Keeping Unit | Inventory item master records: parts, components, stocked materials, and standard purchasable items. | SKU-0001 |
 | PO | Purchase Order | Vendor orders and purchasing documents. | PO-0001 |
 | PRJ | Project | Customer/site project records. | PRJ-2026-0001 |
-| BLD | Build | Internal device builds or finished assemblies created from component inventory. | BLD-0001 |
+| BLD | Build | Internal manufactured equipment builds or finished assemblies created from component inventory. | BLD-0001 |
 | TXN | Transaction | Inventory movement/history records, transfers, receives, adjustments, and build consumption. | TXN-0001 |
 | LOT | Lot | Received batches of the same SKU, when batch tracking is needed. | LOT-0001 |
-| SERIAL | Serial Number | Individual serialized devices, servers, VPUs, cameras, or other assets that need unit-level tracking. | SERIAL-0001 |
+| SERIAL | Serial Number | Individual serialized equipment, servers, VPUs, cameras, or other assets that need unit-level tracking. | SERIAL-0001 |
 
 ## Decisions Locked In
 

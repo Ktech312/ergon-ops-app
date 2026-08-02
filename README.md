@@ -15,9 +15,9 @@ Real company data, API keys, Supabase keys, and environment variables should sta
 
 ## Persistence
 
-The app now saves operational state locally in the browser immediately. If these
-Vercel environment variables are set, it also syncs the current MVP state to
-Supabase:
+The app keeps a local browser cache to prevent accidental data loss while the
+page is open. Production persistence uses Supabase Auth plus normalized
+`app_records` rows when these Vercel environment variables are set:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
@@ -28,11 +28,14 @@ Apply Supabase migrations in `backend/supabase/migrations`, including
 `005_purchase_requests.sql`, and
 `006_purchase_request_receipts.sql`, and
 `007_purchase_request_order_fields.sql`, and
-`008_persistence_documents_and_transaction_safety.sql`, before enabling cloud sync.
+`008_persistence_documents_and_transaction_safety.sql`,
+`009_production_auth_records_and_rls.sql`, and
+`010_user_role_assignments.sql`, before enabling cloud sync.
 
-The current Supabase bridge uses `app_state_snapshots` while the UI is being
-moved toward fully normalized table writes.
+Older `app_state_snapshots` rows are read only as a migration fallback. New
+production writes use authenticated `app_records` rows and audit entries in
+`app_sync_events`.
 
-Project document records are now included in browser backup/restore and the
-Supabase snapshot bridge. Files are tracked with metadata now; the storage
-target can later be switched to Google Drive folders or Supabase Storage.
+Project document records are included in browser backup/restore and production
+Supabase persistence. Files are tracked with metadata now; the storage target
+can later be switched to Google Drive folders or Supabase Storage.

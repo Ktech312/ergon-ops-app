@@ -21,7 +21,24 @@ import {
   Upload,
   User,
 } from "lucide-react";
-import { isRemotePersistenceConfigured, loadLocalAppState, loadRemoteAppState, saveLocalAppState, saveRemoteAppState, type PersistedAppState } from "./persistence";
+import {
+  isRemotePersistenceConfigured,
+  acquireTransactionLock,
+  loadAuthSession,
+  loadLocalAppState,
+  loadRemoteAppState,
+  loadUserRoleMode,
+  refreshAuthSession,
+  saveLocalAppState,
+  saveRemoteAppState,
+  saveUserRoleMode,
+  releaseTransactionLock,
+  signInWithPassword,
+  signOut,
+  signUpWithPassword,
+  type AuthSession,
+  type PersistedAppState,
+} from "./persistence";
 import "./styles.css";
 
 type View = "dashboard" | "purchasing" | "inventory" | "projects" | "reports";
@@ -75,7 +92,7 @@ type BuildRecipe = {
 };
 
 type RoleMode = "warehouse" | "purchasing" | "pm" | "manager";
-type SyncStatus = "local" | "loading" | "saving" | "synced" | "error";
+type SyncStatus = "local" | "auth" | "loading" | "saving" | "synced" | "error";
 
 type InventoryMovement = {
   id: string;
@@ -712,7 +729,7 @@ const projects: ProjectSite[] = [
     package: "Constant Power + WiFi",
     cameras: 2,
     allocated: 1740,
-    siteNotes: "Small surface lot demo project for the standard package matrix.",
+    siteNotes: "Small surface lot project for the standard package matrix.",
     sow: blankSow,
     bom: [
       { item: "FLI Edge VPI", qty: 1, status: "From Inventory", requestSpeed: "Standard" },
@@ -845,6 +862,10 @@ function App() {
   const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(() => isArray<PurchaseRequest>(localState?.purchaseRequests, []));
   const [projectDocuments, setProjectDocuments] = useState<UploadedDoc[]>(() => isArray<UploadedDoc>(localState?.projectDocuments, []));
   const [roleMode, setRoleMode] = useState<RoleMode>(() => ((localState?.roleMode as RoleMode | undefined) ?? "manager"));
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authStatus, setAuthStatus] = useState("Sign in to use production cloud persistence.");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => (isRemotePersistenceConfigured() ? "loading" : "local"));
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
@@ -859,8 +880,23 @@ function App() {
       };
     }
 
+    if (!authSession) {
+      setSyncStatus("auth");
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setSyncStatus("loading");
-    loadRemoteAppState()
+    const sessionPromise = authSession.expiresAt < Date.now() + 60_000 ? refreshAuthSession(authSession) : Promise.resolve(authSession);
+    sessionPromise
+      .then((session) => {
+        if (cancelled) {
+          return null;
+        }
+        setAuthSession(session);
+        return loadRemoteAppState(session.accessToken);
+      })
       .then((remoteState) => {
         if (!remoteState || cancelled) {
           if (!cancelled) {
@@ -882,11 +918,12 @@ function App() {
       .catch(() => {
         // Local persistence remains active when Supabase is not configured yet.
         setSyncStatus("error");
+        setAuthStatus("Cloud load failed. Sign in again or check Supabase settings.");
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authSession]);
 
   useEffect(() => {
     const state: PersistedAppState = {
@@ -905,17 +942,44 @@ function App() {
       setSyncStatus("local");
       return;
     }
+    if (!authSession) {
+      setSyncStatus("auth");
+      return;
+    }
     setSyncStatus("saving");
     const syncTimer = window.setTimeout(() => {
-      saveRemoteAppState(state)
+      saveRemoteAppState(state, authSession.accessToken)
         .then(() => setSyncStatus("synced"))
         .catch(() => {
           // Keep the UI usable offline or before Supabase keys are installed.
           setSyncStatus("error");
+          setAuthStatus("Cloud save failed. Check login, RLS policies, or Supabase env vars.");
         });
     }, 650);
     return () => window.clearTimeout(syncTimer);
-  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, purchaseRequests, projectDocuments, roleMode]);
+  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, purchaseRequests, projectDocuments, roleMode, authSession]);
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+
+    loadUserRoleMode(authSession.userId, authSession.accessToken)
+      .then((savedRole) => {
+        if (savedRole && ["warehouse", "purchasing", "pm", "manager"].includes(savedRole)) {
+          setRoleMode(savedRole as RoleMode);
+        }
+      })
+      .catch(() => undefined);
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+
+    void saveUserRoleMode(authSession.userId, roleMode, authSession.accessToken);
+  }, [authSession, roleMode]);
 
   useEffect(() => {
     if (!window.location.hash) {
@@ -970,7 +1034,28 @@ function App() {
     );
   }
 
+  function withProductionLock(lockType: "inventory_item" | "project" | "build" | "purchase_request", lockKey: string, action: () => void) {
+    if (!isRemotePersistenceConfigured() || !authSession) {
+      action();
+      return;
+    }
+
+    void (async () => {
+      let lockId: string | null = null;
+      try {
+        lockId = await acquireTransactionLock(lockType, lockKey, authSession.accessToken);
+        action();
+      } catch (error) {
+        setSyncStatus("error");
+        setAuthStatus(error instanceof Error ? error.message : "Record is locked for another operation.");
+      } finally {
+        await releaseTransactionLock(lockId, authSession.accessToken);
+      }
+    })();
+  }
+
   function addInventoryItem(part: Part) {
+    withProductionLock("inventory_item", part.ref, () => {
     setInventoryItems((current) => [part, ...current]);
     const movement: InventoryMovement = {
       id: makeId("txn"),
@@ -985,9 +1070,11 @@ function App() {
       createdAt: new Date().toISOString(),
     };
     setInventoryMovements((current) => [movement, ...current]);
+    });
   }
 
   function updateInventoryItem(ref: string, nextPart: Part) {
+    withProductionLock("inventory_item", ref, () => {
     const previousPart = inventoryItems.find((part) => part.ref === ref);
     setInventoryItems((current) => current.map((part) => (part.ref === ref ? nextPart : part)));
     if (!previousPart) {
@@ -1026,9 +1113,11 @@ function App() {
     if (movements.length) {
       setInventoryMovements((current) => [...movements, ...current]);
     }
+    });
   }
 
   function receiveInventoryStock(partRef: string, qty: number, unitCost: number, poNumber: string, notes: string) {
+    withProductionLock("inventory_item", partRef, () => {
     const part = inventoryItems.find((item) => item.ref === partRef);
     const receiveQty = Math.max(1, Math.round(Number(qty) || 1));
     if (!part || part.retired) {
@@ -1076,9 +1165,11 @@ function App() {
       ),
     );
     setInventoryMovements((current) => [movement, ...current]);
+    });
   }
 
   function adjustInventoryStock(partRef: string, nextQty: number, notes: string) {
+    withProductionLock("inventory_item", partRef, () => {
     const part = inventoryItems.find((item) => item.ref === partRef);
     const adjustedQty = Math.max(0, Math.round(Number(nextQty) || 0));
     if (!part || part.retired || adjustedQty === part.stock) {
@@ -1099,9 +1190,11 @@ function App() {
     };
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: adjustedQty } : item)));
     setInventoryMovements((current) => [movement, ...current]);
+    });
   }
 
   function transferInventoryToProject(partRef: string, projectName: string, qty: number, notes: string) {
+    withProductionLock("inventory_item", partRef, () => {
     const part = inventoryItems.find((item) => item.ref === partRef);
     if (!part || part.stock <= 0) {
       return;
@@ -1157,6 +1250,7 @@ function App() {
           : project,
       ),
     );
+    });
   }
 
   function planBuildTransaction(recipe: BuildRecipe, qty: number) {
@@ -1180,6 +1274,7 @@ function App() {
   }
 
   function buildInventoryUnit(recipe: BuildRecipe, qty: number, plannedBuildId?: string) {
+    withProductionLock("build", plannedBuildId ?? recipe.name, () => {
     const buildQty = Math.max(1, Math.round(Number(qty) || 1));
     const plannedBuild = plannedBuildId ? buildTransactions.find((build) => build.id === plannedBuildId && build.status === "planned") : undefined;
     const hasShortage = recipe.components.some((component) => {
@@ -1299,9 +1394,11 @@ function App() {
       setInventoryMovements((current) => [completionMovement as InventoryMovement, ...componentMovements, ...current]);
       setBuildTransactions((current) => (plannedBuild ? current.map((build) => (build.id === plannedBuild.id ? transaction : build)) : [transaction, ...current]));
     }, 0);
+    });
   }
 
   function undoBuildTransaction(buildId: string) {
+    withProductionLock("build", buildId, () => {
     const transaction = buildTransactions.find((build) => build.id === buildId);
     if (!transaction || transaction.status !== "posted" || !transaction.completionMovement) {
       return;
@@ -1344,6 +1441,7 @@ function App() {
     ];
     setInventoryMovements((current) => [...undoMovements, ...current]);
     setBuildTransactions((current) => current.map((build) => (build.id === buildId ? { ...build, status: "undone", undoneAt } : build)));
+    });
   }
 
   function updateBuildStage(buildId: string, stage: NonNullable<BuildTransaction["stage"]>) {
@@ -1568,6 +1666,43 @@ function App() {
     reader.readAsText(file);
   }
 
+  async function handleSignIn() {
+    try {
+      const session = await signInWithPassword(authEmail.trim(), authPassword);
+      setAuthSession(session);
+      setAuthPassword("");
+      setAuthStatus(`Signed in as ${session.email}.`);
+      setSyncStatus("loading");
+    } catch (error) {
+      setAuthStatus(error instanceof Error ? error.message : "Sign in failed.");
+      setSyncStatus("error");
+    }
+  }
+
+  async function handleSignUp() {
+    try {
+      const session = await signUpWithPassword(authEmail.trim(), authPassword);
+      setAuthPassword("");
+      if (!session) {
+        setAuthStatus("Account created. Check email confirmation, then sign in.");
+        return;
+      }
+      setAuthSession(session);
+      setAuthStatus(`Signed in as ${session.email}.`);
+      setSyncStatus("loading");
+    } catch (error) {
+      setAuthStatus(error instanceof Error ? error.message : "Sign up failed.");
+      setSyncStatus("error");
+    }
+  }
+
+  async function handleSignOut() {
+    await signOut(authSession);
+    setAuthSession(null);
+    setAuthStatus("Signed out. Local browser cache remains visible until cloud sign in.");
+    setSyncStatus(isRemotePersistenceConfigured() ? "auth" : "local");
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -1595,7 +1730,23 @@ function App() {
           </div>
           <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}><option value="warehouse">Warehouse</option><option value="purchasing">Purchasing</option><option value="pm">PM</option><option value="manager">Manager</option></select></label>
           <div className={`sync-status ${syncStatus}`}>
-            <span>{syncStatus === "local" ? "Local only" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
+            <span>{syncStatus === "local" ? "Setup required" : syncStatus === "auth" ? "Sign in required" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
+          </div>
+          <div className="auth-card">
+            {authSession ? (
+              <>
+                <span>{authSession.email}</span>
+                <button className="secondary-action mini-action" type="button" onClick={handleSignOut}>Sign out</button>
+              </>
+            ) : (
+              <>
+                <input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="Email" type="email" />
+                <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Password" type="password" />
+                <button className="secondary-action mini-action" type="button" onClick={handleSignIn} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Sign in</button>
+                <button className="secondary-action mini-action" type="button" onClick={handleSignUp} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Create user</button>
+              </>
+            )}
+            <small>{isRemotePersistenceConfigured() ? authStatus : "Set Supabase env vars for production cloud storage."}</small>
           </div>
           <div className="backup-actions">
             <button className="secondary-action mini-action" type="button" onClick={exportBackup}>Backup</button>
@@ -1611,7 +1762,7 @@ function App() {
         {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} />}
-        {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
+        {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} />}
       </main>
     </div>
   );
@@ -2978,11 +3129,11 @@ function Inventory({
             <p>Select equipment, edit its parts in a pop-up, then build finished units into inventory.</p>
           </div>
           <div className="action-row">
-            <button className="primary-action" type="button" onClick={() => setShowDeviceModal(true)}><Plus size={15} /> Open Equipment Builder</button>
+            <button className="primary-action" type="button" onClick={() => setShowDeviceModal(true)}><Plus size={15} /> Edit Equipment BOM</button>
           </div>
         </div>
         <div className="build-planner">
-          <label>Equipment type<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{equipmentOptions.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}{recipe.retired ? " (Retired)" : ""}</option>)}<option value="__create_new_device">Create new device</option></select></label>
+          <label>Equipment type<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{equipmentOptions.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}{recipe.retired ? " (Retired)" : ""}</option>)}<option value="__create_new_device">Create new equipment</option></select></label>
           <label>Quantity<input type="number" min="1" value={buildDraft.qty} onChange={(event) => setBuildDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
           <div className="build-summary">
             <strong>{selectedBuildRecipe.outputName}</strong>
@@ -3095,7 +3246,7 @@ function Inventory({
               <button className="icon-button" type="button" onClick={() => setShowDeviceModal(false)} aria-label="Close equipment builder">x</button>
             </div>
             <div className="device-modal-toolbar">
-              <label>Title of Device<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{equipmentOptions.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}{recipe.retired ? " (Retired)" : ""}</option>)}<option value="__create_new_device">Create new device</option></select></label>
+              <label>Equipment type<select value={buildDraft.recipeName} onChange={(event) => selectBuildRecipe(event.target.value)}>{equipmentOptions.map((recipe) => <option key={recipe.name} value={recipe.name}>{recipe.outputName}{recipe.retired ? " (Retired)" : ""}</option>)}<option value="__create_new_device">Create new equipment</option></select></label>
             </div>
             <div className="equipment-identity-card">
               <label className="equipment-image-upload">
@@ -3304,7 +3455,7 @@ function Inventory({
               <div className="compact-section-header">
                 <div>
                   <h3>Inventory Tags</h3>
-                  <p>Tags control where this item appears inside Equipment Builder.</p>
+                  <p>Tags control where this item appears inside manufactured equipment BOMs.</p>
                 </div>
               </div>
               <div className="tag-picker-grid">
@@ -4110,6 +4261,7 @@ function Reports({
   buildTransactions,
   projectAllocations,
   purchaseRequests,
+  projectDocuments,
 }: {
   inventoryItems: Part[];
   deviceRecipes: BuildRecipe[];
@@ -4119,6 +4271,7 @@ function Reports({
   buildTransactions: BuildTransaction[];
   projectAllocations: ProjectAllocationHistory[];
   purchaseRequests: PurchaseRequest[];
+  projectDocuments: UploadedDoc[];
 }) {
   const vendorSpend = Object.entries(sumBy(purchaseOrders, (order) => order.vendor)).sort((a, b) => b[1] - a[1]);
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
@@ -4171,7 +4324,7 @@ function Reports({
         .filter((row) => row.shortage > 0);
     })
     .slice(0, 14);
-  const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects">("purchasing");
+  const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects" | "documents">("purchasing");
 
   function exportActiveReport() {
     const today = new Date().toISOString().slice(0, 10);
@@ -4227,6 +4380,22 @@ function Reports({
       return;
     }
 
+    if (reportTab === "documents") {
+      exportCsv(
+        `ergon-report-documents-${today}.csv`,
+        projectDocuments.map((doc) => ({
+          project: doc.project,
+          document: doc.name,
+          type: doc.type ?? "",
+          status: doc.status,
+          storage: doc.storage ?? "",
+          size: doc.size,
+          uploaded_at: doc.uploadedAt ?? "",
+        })),
+      );
+      return;
+    }
+
     exportCsv(
       `ergon-report-project-allocations-${today}.csv`,
       projectAllocations.map((allocation) => ({
@@ -4257,6 +4426,7 @@ function Reports({
           <button className={reportTab === "inventory" ? "active" : ""} type="button" onClick={() => setReportTab("inventory")}>Inventory</button>
           <button className={reportTab === "manufacturing" ? "active" : ""} type="button" onClick={() => setReportTab("manufacturing")}>Manufacturing</button>
           <button className={reportTab === "projects" ? "active" : ""} type="button" onClick={() => setReportTab("projects")}>Projects</button>
+          <button className={reportTab === "documents" ? "active" : ""} type="button" onClick={() => setReportTab("documents")}>Documents</button>
         </div>
       </section>
       {reportTab === "purchasing" && <>
@@ -4355,7 +4525,7 @@ function Reports({
         <section className="panel wide">
           <PanelHeader title="Ops Snapshot" label="Inventory plus captured purchasing" />
           <div className="report-total">{money(inventoryValue + openPoValue)}</div>
-          <p className="muted">Current demo inventory value plus recent order PDFs now captured in Purchasing.</p>
+          <p className="muted">Current inventory value plus recent order PDFs now captured in Purchasing.</p>
         </section>
       </>}
       {reportTab === "manufacturing" && <section className="panel wide">
@@ -4408,6 +4578,27 @@ function Reports({
             </div>
           ))}
           {projectAllocations.length === 0 && <div className="empty-compact-state">No project allocations recorded yet.</div>}
+        </div>
+      </section>}
+      {reportTab === "documents" && <section className="panel wide">
+        <PanelHeader title="Document Storage Report" label="Project files, review status, and backup destination" />
+        <div className="snapshot-grid">
+          <Metric icon={<FileText size={20} />} label="Documents" value={String(projectDocuments.length)} />
+          <Metric icon={<FolderOpen size={20} />} label="Backed Up" value={String(projectDocuments.filter((doc) => doc.status === "Backed up").length)} />
+          <Metric icon={<Upload size={20} />} label="Needs Review" value={String(projectDocuments.filter((doc) => doc.status === "Uploaded" || doc.status === "Ready to review").length)} />
+        </div>
+        <div className="report-table compact-report-table">
+          <div className="report-table-head"><span>Project</span><span>Document</span><span>Type</span><span>Status</span><span>Storage</span></div>
+          {projectDocuments.slice(0, 16).map((doc) => (
+            <div className="report-table-row" key={`${doc.id}-${doc.name}`}>
+              <span>{doc.project}</span>
+              <span><strong>{doc.name}</strong><small>{doc.size ? formatBytes(doc.size) : "No file size saved"}</small></span>
+              <span>{doc.type ?? "Project"}</span>
+              <span>{doc.status}</span>
+              <span>{doc.storage ?? "Browser"}<small>{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : ""}</small></span>
+            </div>
+          ))}
+          {projectDocuments.length === 0 && <div className="empty-compact-state">No project documents have been uploaded yet.</div>}
         </div>
       </section>}
     </div>
