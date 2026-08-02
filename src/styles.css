@@ -327,8 +327,8 @@ td small {
 .part-cell-layout {
   align-items: start;
   display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(210px, 1fr) 112px;
+  gap: 8px;
+  grid-template-columns: minmax(210px, 1fr) minmax(92px, max-content);
   min-width: 0;
 }
 
@@ -336,11 +336,11 @@ td small {
   align-content: start;
   display: grid;
   gap: 3px;
-  grid-template-columns: 1fr;
+  grid-template-columns: max-content;
   justify-self: start;
-  max-width: 112px;
+  max-width: 128px;
   min-width: 0;
-  width: 112px;
+  width: max-content;
 }
 
 .tag-chip-row span {
@@ -348,16 +348,17 @@ td small {
   border: 1px solid #ded7cb;
   border-radius: 4px;
   color: #514b43;
-  display: block;
+  display: inline-block;
   font-size: 9px;
   font-weight: 900;
   line-height: 1.05;
-  max-width: 100%;
+  max-width: 128px;
   min-height: 15px;
   overflow: hidden;
-  padding: 2px 5px;
+  padding: 2px 6px;
   text-overflow: ellipsis;
   white-space: nowrap;
+  width: fit-content;
 }
 
 .filter-row th {
@@ -500,10 +501,14 @@ td small {
   border-radius: 999px;
   color: #443c2d;
   display: inline-flex;
+  flex: 0 0 auto;
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.1;
+  max-width: max-content;
   padding: 5px 9px;
   white-space: nowrap;
+  width: fit-content;
 }
 
 .status.warn {
@@ -819,8 +824,8 @@ td small {
   color: #514b43;
   display: flex;
   gap: 9px;
-  margin-top: 12px;
-  padding: 11px 12px;
+  margin-top: 10px;
+  padding: 8px 10px;
 }
 
 .source-file svg {
@@ -828,7 +833,7 @@ td small {
 }
 
 .source-file span {
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .modal-backdrop {
@@ -1110,10 +1115,11 @@ td small {
 }
 
 .build-planner {
+  align-items: end;
   display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(220px, 0.8fr) 120px minmax(260px, 1fr);
-  margin-bottom: 14px;
+  gap: 10px;
+  grid-template-columns: minmax(260px, 0.9fr) 104px minmax(260px, 0.85fr);
+  margin-bottom: 10px;
 }
 
 .device-editor {
@@ -1163,8 +1169,9 @@ td small {
 }
 
 .device-modal-panel {
-  max-width: 980px;
-  width: min(100%, 980px);
+  max-width: 900px;
+  padding: 16px;
+  width: min(100%, 900px);
 }
 
 .device-modal-toolbar {
@@ -1173,10 +1180,10 @@ td small {
   border: 1px solid #e8e1d5;
   border-radius: 8px;
   display: flex;
-  gap: 14px;
+  gap: 12px;
   justify-content: space-between;
-  margin-bottom: 14px;
-  padding: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
 }
 
 .device-modal-toolbar div {
@@ -1192,7 +1199,7 @@ td small {
 }
 
 .device-modal-toolbar strong {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .device-line-list {
@@ -1205,9 +1212,9 @@ td small {
 .device-line-row {
   align-items: end;
   display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(260px, 1fr) 90px minmax(210px, 0.8fr) 38px;
-  padding: 12px;
+  gap: 8px;
+  grid-template-columns: minmax(260px, 1fr) 82px max-content 34px;
+  padding: 9px 12px;
 }
 
 .device-line-row + .device-line-row {
@@ -1217,9 +1224,9 @@ td small {
 .device-line-row label {
   color: #514b43;
   display: grid;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
-  gap: 7px;
+  gap: 5px;
 }
 
 .device-line-row input,
@@ -1229,29 +1236,35 @@ td small {
   border-radius: 8px;
   color: #1b1a18;
   font: inherit;
-  min-height: 40px;
+  min-height: 36px;
   padding: 0 10px;
 }
 
 .device-line-status {
-  align-items: center;
+  align-items: end;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-height: 40px;
+  flex-wrap: nowrap;
+  gap: 6px;
+  justify-content: flex-start;
+  min-height: 36px;
 }
 
 .device-line-status span:not(.status) {
   color: #756d62;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.1;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .build-planner label {
   color: #514b43;
   display: grid;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
-  gap: 7px;
+  gap: 5px;
 }
 
 .build-planner input,
@@ -1261,7 +1274,7 @@ td small {
   border-radius: 8px;
   color: #1b1a18;
   font: inherit;
-  min-height: 42px;
+  min-height: 38px;
   padding: 0 12px;
 }
 
@@ -1271,7 +1284,8 @@ td small {
   border-radius: 8px;
   display: grid;
   gap: 4px;
-  padding: 11px 12px;
+  min-height: 38px;
+  padding: 8px 12px;
 }
 
 .build-summary span {
@@ -1767,9 +1781,13 @@ td small {
 
   .tag-chip-row {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 86px));
-    max-width: 180px;
-    width: 180px;
+    grid-template-columns: repeat(2, max-content);
+    max-width: 100%;
+    width: max-content;
+  }
+
+  .tag-chip-row span {
+    max-width: 112px;
   }
 
   .item-image-upload {
