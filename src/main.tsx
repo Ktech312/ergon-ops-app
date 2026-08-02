@@ -53,6 +53,7 @@ type Part = {
   reorderPoint: number;
   vendorUrl?: string;
   imageUrl?: string;
+  barcode?: string;
   purchaseUrls?: PurchaseUrl[];
   priceHistory?: PriceHistoryEntry[];
   tags?: string[];
@@ -1702,6 +1703,7 @@ function Inventory({
     stock: 0,
     reorderPoint: 0,
     imageUrl: "",
+    barcode: "",
     purchaseUrls: [],
     priceHistory: [],
     tags: [],
@@ -1796,6 +1798,7 @@ function Inventory({
     setItemDraft({
       ...part,
       imageUrl: part.imageUrl ?? "",
+      barcode: part.barcode ?? "",
       purchaseUrls: [...(part.purchaseUrls ?? [])],
       priceHistory: [...(part.priceHistory ?? [])],
       tags: [...(part.tags ?? [])],
@@ -1881,6 +1884,7 @@ function Inventory({
       stock: Math.max(0, Math.round(Number(itemDraft.stock) || 0)),
       reorderPoint: Math.max(0, Math.round(Number(itemDraft.reorderPoint) || 0)),
       imageUrl: itemDraft.imageUrl?.trim() ?? "",
+      barcode: itemDraft.barcode?.trim() ?? "",
       purchaseUrls: (itemDraft.purchaseUrls ?? [])
         .map((source) => ({ ...source, label: source.label.trim(), url: source.url.trim() }))
         .filter((source) => source.label || source.url)
@@ -1972,7 +1976,7 @@ function Inventory({
 
   function handleSkuScan() {
     const query = skuScan.trim().toLowerCase();
-    const matched = inventoryItems.find((part) => part.ref.toLowerCase() === query || part.name.toLowerCase().includes(query));
+    const matched = inventoryItems.find((part) => part.ref.toLowerCase() === query || (part.barcode ?? "").toLowerCase() === query || part.name.toLowerCase().includes(query));
     if (!matched) {
       setScanStatus("No matching SKU or item name found.");
       return;
@@ -2488,6 +2492,7 @@ function Inventory({
               </label>
               <div className="item-identity-fields">
                 <label>SKU<input value={itemDraft.ref} onChange={(event) => setItemDraft((current) => ({ ...current, ref: event.target.value }))} /></label>
+                <label>Barcode / scan code<input value={itemDraft.barcode ?? ""} onChange={(event) => setItemDraft((current) => ({ ...current, barcode: event.target.value }))} placeholder="Optional scanner value" /></label>
                 <label>Item name<input value={itemDraft.name} onChange={(event) => setItemDraft((current) => ({ ...current, name: event.target.value }))} /></label>
                 <label>Description<input value={itemDraft.description} onChange={(event) => setItemDraft((current) => ({ ...current, description: event.target.value }))} /></label>
               </div>
