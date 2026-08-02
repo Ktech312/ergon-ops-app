@@ -7,14 +7,18 @@
   role mode from saved state.
 - Supabase sync bridge is ready through `app_state_snapshots` once Vercel has
   `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+- Project document records now persist with browser backup/restore and cloud
+  snapshot sync. They are ready to point at Google Drive or Supabase Storage.
 - Parts Inventory and Finished Manufactured Equipment are split into tabs.
 - Inventory Movement Ledger is visible on the Inventory page.
 - Build History is visible on the Inventory page. Builds can be planned first,
   moved through kitting/assembled/tested/complete stages, completed into stock,
-  cancelled, or undone after posting.
+  cancelled, or undone after posting. Direct equipment consumption now requires
+  a review acknowledgement before posting.
 - Project Allocation History is visible in Reports.
 - Role View selector is scaffolded for Warehouse, Purchasing, PM, and Manager,
-  including role-focused dashboard and inventory workbench summaries.
+  including role-focused dashboard summaries, inventory workbench summaries, and
+  visible permission chips.
 - Receiving and stock-adjustment modals are available from Inventory.
 - SKU scan/search entry is available for warehouse-style lookup.
 
@@ -27,14 +31,20 @@
 - `project_allocation_history`
 - `app_role_modes`
 - `app_state_snapshots`
+- `app_sync_events`
+- `app_transaction_locks`
 - `004_planned_builds_and_scan_fields.sql` extends build status/stage support
   and adds scan/image/tag/source fields to inventory items.
+- `008_persistence_documents_and_transaction_safety.sql` adds document metadata,
+  sync event logging, and lock scaffolding for future multi-user safety.
 
 ## Next Hardening Pass
 
 - Replace the snapshot bridge with normalized Supabase reads/writes for each
   table.
-- Add transaction locking so two users cannot consume the same stock at once.
+- Wire `app_transaction_locks` into live Supabase posting once login/user
+  sessions exist.
 - Add login and role-based access rules before private company use.
 - Add barcode label printing and scanner-device testing.
-- Add deeper mobile testing for receiving, transfer, and planned-build flows.
+- Add real-device mobile testing for receiving, transfer, and planned-build
+  flows.

@@ -6,6 +6,7 @@ export type PersistedAppState = {
   buildTransactions: unknown[];
   projectAllocations: unknown[];
   purchaseRequests: unknown[];
+  projectDocuments: unknown[];
   roleMode: string;
 };
 
@@ -85,4 +86,26 @@ export async function saveRemoteAppState(state: PersistedAppState) {
   if (!response.ok) {
     throw new Error(`Supabase save failed: ${response.status}`);
   }
+
+  void fetch(supabaseUrl("app_sync_events"), {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({
+      workspace_key: WORKSPACE_KEY,
+      event_type: "snapshot_save",
+      entity_type: "app_state",
+      entity_ref: WORKSPACE_KEY,
+      payload: {
+        inventory_items: state.inventoryItems.length,
+        projects: state.projectSites.length,
+        equipment_recipes: state.deviceRecipes.length,
+        movements: state.inventoryMovements.length,
+        builds: state.buildTransactions.length,
+        purchase_requests: state.purchaseRequests.length,
+        project_documents: state.projectDocuments.length,
+      },
+    }),
+  }).catch(() => {
+    // Snapshot save already succeeded; event logging should not block the app.
+  });
 }

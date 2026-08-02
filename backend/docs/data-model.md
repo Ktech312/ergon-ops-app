@@ -30,6 +30,9 @@ Stores uploaded or linked files for a project, including sales quotes, SOWs,
 BOMs, purchase orders, invoices, field photos, and other reference documents.
 The first MVP can store Google Drive URLs here; later Supabase Storage can hold
 private file copies.
+Current app-side document records also track the local/browser document id,
+project name, file size, storage status, and future Drive or Supabase storage
+paths.
 
 `sales_quote_extractions`
 
@@ -100,6 +103,17 @@ Temporary MVP bridge used by the current frontend while the UI is being moved
 from in-memory records to normalized Supabase tables. The app saves local browser
 state immediately and syncs this snapshot table when Supabase environment
 variables are configured.
+
+`app_sync_events`
+
+Auditable sync event log for imports, exports, snapshot saves, and future
+normalized table writes.
+
+`app_transaction_locks`
+
+Short-lived lock records for future multi-user stock actions. Use this before
+posting receives, transfers, build consumption, adjustments, or retire/reactivate
+actions so two users cannot modify the same SKU or build at the same time.
 
 ## Transfers To Project
 

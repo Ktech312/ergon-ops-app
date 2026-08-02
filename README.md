@@ -27,7 +27,12 @@ Apply Supabase migrations in `backend/supabase/migrations`, including
 `004_planned_builds_and_scan_fields.sql`, and
 `005_purchase_requests.sql`, and
 `006_purchase_request_receipts.sql`, and
-`007_purchase_request_order_fields.sql`, before enabling cloud sync.
+`007_purchase_request_order_fields.sql`, and
+`008_persistence_documents_and_transaction_safety.sql`, before enabling cloud sync.
 
 The current Supabase bridge uses `app_state_snapshots` while the UI is being
 moved toward fully normalized table writes.
+
+Project document records are now included in browser backup/restore and the
+Supabase snapshot bridge. Files are tracked with metadata now; the storage
+target can later be switched to Google Drive folders or Supabase Storage.

@@ -170,11 +170,14 @@ type PurchaseRequest = {
 };
 
 type UploadedDoc = {
-  id: number;
+  id: string | number;
   name: string;
   project: string;
   size: number;
-  status: "Ready to review";
+  status: "Uploaded" | "Ready to review" | "Backed up" | "Archived";
+  type?: "Purchasing" | "Sales Quote" | "SOW" | "BOM" | "Project";
+  storage?: "Browser" | "Google Drive" | "Supabase Storage";
+  uploadedAt?: string;
 };
 
 type BomLine = {
@@ -840,6 +843,7 @@ function App() {
   const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>(() => isArray<BuildTransaction>(localState?.buildTransactions, []));
   const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>(() => isArray<ProjectAllocationHistory>(localState?.projectAllocations, []));
   const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(() => isArray<PurchaseRequest>(localState?.purchaseRequests, []));
+  const [projectDocuments, setProjectDocuments] = useState<UploadedDoc[]>(() => isArray<UploadedDoc>(localState?.projectDocuments, []));
   const [roleMode, setRoleMode] = useState<RoleMode>(() => ((localState?.roleMode as RoleMode | undefined) ?? "manager"));
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => (isRemotePersistenceConfigured() ? "loading" : "local"));
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
@@ -871,6 +875,7 @@ function App() {
         setBuildTransactions(isArray<BuildTransaction>(remoteState.buildTransactions, []));
         setProjectAllocations(isArray<ProjectAllocationHistory>(remoteState.projectAllocations, []));
         setPurchaseRequests(isArray<PurchaseRequest>(remoteState.purchaseRequests, []));
+        setProjectDocuments(isArray<UploadedDoc>(remoteState.projectDocuments, []));
         setRoleMode((remoteState.roleMode as RoleMode | undefined) ?? "manager");
         setSyncStatus("synced");
       })
@@ -892,6 +897,7 @@ function App() {
       buildTransactions,
       projectAllocations,
       purchaseRequests,
+      projectDocuments,
       roleMode,
     };
     saveLocalAppState(state);
@@ -909,7 +915,7 @@ function App() {
         });
     }, 650);
     return () => window.clearTimeout(syncTimer);
-  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, purchaseRequests, roleMode]);
+  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, purchaseRequests, projectDocuments, roleMode]);
 
   useEffect(() => {
     if (!window.location.hash) {
@@ -1520,6 +1526,7 @@ function App() {
       buildTransactions,
       projectAllocations,
       purchaseRequests,
+      projectDocuments,
       roleMode,
     };
   }
@@ -1550,6 +1557,7 @@ function App() {
         setBuildTransactions(isArray<BuildTransaction>(importedState.buildTransactions, buildTransactions));
         setProjectAllocations(isArray<ProjectAllocationHistory>(importedState.projectAllocations, projectAllocations));
         setPurchaseRequests(isArray<PurchaseRequest>(importedState.purchaseRequests, purchaseRequests));
+        setProjectDocuments(isArray<UploadedDoc>(importedState.projectDocuments, projectDocuments));
         if (["warehouse", "purchasing", "pm", "manager"].includes(String(importedState.roleMode))) {
           setRoleMode(importedState.roleMode as RoleMode);
         }
@@ -1600,9 +1608,9 @@ function App() {
         </header>
 
         {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
-        {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
+        {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
-        {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} onInventoryPull={pullFromInventory} />}
+        {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} />}
         {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
       </main>
     </div>
@@ -1835,6 +1843,8 @@ function Purchasing({
   projectSites,
   inventoryItems,
   purchaseRequests,
+  projectDocuments,
+  setProjectDocuments,
   lowStock,
   buildTransactions,
   onQueueReorderRequests,
@@ -1848,6 +1858,8 @@ function Purchasing({
   projectSites: ProjectSite[];
   inventoryItems: Part[];
   purchaseRequests: PurchaseRequest[];
+  projectDocuments: UploadedDoc[];
+  setProjectDocuments: Dispatch<SetStateAction<UploadedDoc[]>>;
   lowStock: Part[];
   buildTransactions: BuildTransaction[];
   onQueueReorderRequests: () => void;
@@ -1859,7 +1871,6 @@ function Purchasing({
   onReceivePurchaseRequest: (requestId: string, quantityReceived: number, unitCost: number, notes: string) => void;
 }) {
   const [selectedProject, setSelectedProject] = useState("Straud Medical");
-  const [uploadedDocs, setUploadedDocs] = useState<UploadedDoc[]>([]);
   const [manualRequestPartRef, setManualRequestPartRef] = useState(() => inventoryItems.find((item) => !item.retired)?.ref ?? "");
   const [manualRequestQty, setManualRequestQty] = useState(1);
   const [manualRequestNotes, setManualRequestNotes] = useState("");
@@ -1881,6 +1892,7 @@ function Purchasing({
   const openOrders = purchaseOrders.filter((order) => order.status !== "Imported").length;
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
   const documentProjects = Array.from(new Set([...purchaseOrders.map((order) => order.projectRef), ...projectSites.map((project) => project.name)]));
+  const activeProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject || purchaseOrders.some((order) => order.projectRef === selectedProject && order.sourceFile === doc.name));
   const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
   const receivingRequest = purchaseRequests.find((request) => request.id === receivingRequestId) ?? null;
@@ -1899,14 +1911,21 @@ function Purchasing({
   function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     const newDocs = files.map((file, index) => ({
-      id: Date.now() + index,
+      id: makeId("doc"),
       name: file.name,
       project: selectedProject,
       size: file.size,
       status: "Ready to review" as const,
+      type: "Purchasing" as const,
+      storage: "Browser" as const,
+      uploadedAt: new Date(Date.now() + index).toISOString(),
     }));
-    setUploadedDocs((current) => [...newDocs, ...current]);
+    setProjectDocuments((current) => [...newDocs, ...current]);
     event.target.value = "";
+  }
+
+  function updateProjectDocumentStatus(docId: UploadedDoc["id"], status: UploadedDoc["status"]) {
+    setProjectDocuments((current) => current.map((doc) => (doc.id === docId ? { ...doc, status } : doc)));
   }
 
   function submitManualRequest() {
@@ -2158,19 +2177,26 @@ function Purchasing({
           </div>
         </div>
         <div className="document-queue">
-          {(uploadedDocs.length ? uploadedDocs : purchaseOrders.slice(0, 3).map((order, index) => ({
+          {(activeProjectDocuments.length ? activeProjectDocuments : purchaseOrders.slice(0, 3).map((order, index) => ({
             id: index,
             name: order.sourceFile,
             project: order.projectRef,
             size: 0,
             status: "Ready to review" as const,
+            type: "Purchasing" as const,
+            storage: "Browser" as const,
           }))).map((doc) => (
             <div className="document-row" key={`${doc.id}-${doc.name}`}>
               <div>
                 <strong>{doc.name}</strong>
-                <span>{doc.project}{doc.size ? ` - ${formatBytes(doc.size)}` : " - imported sample"}</span>
+                <span>{doc.project}{doc.size ? ` - ${formatBytes(doc.size)}` : " - imported sample"}{doc.storage ? ` - ${doc.storage}` : ""}</span>
               </div>
-              <span className="status ok">{doc.status}</span>
+              <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])} disabled={typeof doc.id === "number"}>
+                <option>Uploaded</option>
+                <option>Ready to review</option>
+                <option>Backed up</option>
+                <option>Archived</option>
+              </select>
             </div>
           ))}
         </div>
@@ -2328,6 +2354,8 @@ function Inventory({
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showBuildConfirm, setShowBuildConfirm] = useState(false);
+  const [buildConfirmAck, setBuildConfirmAck] = useState(false);
+  const [buildConfirmPlannedId, setBuildConfirmPlannedId] = useState<string | undefined>(undefined);
   const [workOrderBuildId, setWorkOrderBuildId] = useState<string | null>(null);
   const [inventoryTab, setInventoryTab] = useState<"parts" | "finished">("parts");
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
@@ -2395,6 +2423,12 @@ function Inventory({
     purchasing: { title: "Purchasing workbench", body: "Watch reorder items, receive against POs, and keep vendor costs current." },
     pm: { title: "PM workbench", body: "Transfer stock to projects and review project allocation history from the ledger." },
     manager: { title: "Manager workbench", body: "Review inventory value, build readiness, shortages, and recent transactions." },
+  };
+  const rolePermissions: Record<RoleMode, string[]> = {
+    warehouse: ["Receive", "Adjust", "Transfer", "Scan"],
+    purchasing: ["Requests", "Receive PO", "Costs", "Vendors"],
+    pm: ["Projects", "BOM", "Transfers", "Docs"],
+    manager: ["Reports", "Builds", "Ledger", "Approvals"],
   };
   const filteredInventoryItems = inventoryItems.filter((part) => {
     const status = part.retired ? "Retired" : part.stock <= part.reorderPoint ? "Reorder" : "Healthy";
@@ -2658,11 +2692,13 @@ function Inventory({
     setShowTransferModal(false);
   }
 
-  function requestBuild() {
+  function requestBuild(plannedBuildId?: string) {
     if (selectedBuildRecipe.retired || buildHasShortage || buildComponentRows.length === 0) {
       return;
     }
 
+    setBuildConfirmAck(false);
+    setBuildConfirmPlannedId(plannedBuildId);
     setShowBuildConfirm(true);
   }
 
@@ -2675,8 +2711,10 @@ function Inventory({
   }
 
   function confirmBuild() {
-    onBuildInventoryUnit(selectedBuildRecipe, Math.max(1, Math.round(Number(buildDraft.qty) || 1)));
+    onBuildInventoryUnit(selectedBuildRecipe, Math.max(1, Math.round(Number(buildDraft.qty) || 1)), buildConfirmPlannedId);
     setShowBuildConfirm(false);
+    setBuildConfirmPlannedId(undefined);
+    setBuildConfirmAck(false);
   }
 
   function buildReadinessForTransaction(build: BuildTransaction) {
@@ -2849,6 +2887,9 @@ function Inventory({
           <div>
             <strong>{roleCopy[roleMode].title}</strong>
             <span>{roleCopy[roleMode].body}</span>
+          </div>
+          <div className="role-permission-strip" aria-label={`${roleMode} permissions`}>
+            {rolePermissions[roleMode].map((permission) => <span key={permission}>{permission}</span>)}
           </div>
           <div className="sku-scan-row">
             <input value={skuScan} onChange={(event) => setSkuScan(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") handleSkuScan(); }} placeholder="Scan or enter SKU" />
@@ -3095,7 +3136,7 @@ function Inventory({
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(false)}>Done</button>
               <button className="secondary-action" type="button" onClick={planBuild} disabled={selectedBuildRecipe.retired || buildComponentRows.length === 0}><CalendarDays size={15} /> Plan Build</button>
-              <button className="primary-action" type="button" onClick={requestBuild} disabled={selectedBuildRecipe.retired || buildHasShortage || buildComponentRows.length === 0}>Review &amp; Build Equipment</button>
+              <button className="primary-action" type="button" onClick={() => requestBuild()} disabled={selectedBuildRecipe.retired || buildHasShortage || buildComponentRows.length === 0}>Review &amp; Build Equipment</button>
             </div>
           </section>
         </div>
@@ -3155,9 +3196,12 @@ function Inventory({
               <button className="secondary-action" type="button" onClick={() => setWorkOrderBuildId(null)}>Close</button>
               {workOrderBuild.status === "planned" && workOrderRecipe && (
                 <button className="primary-action" type="button" disabled={workOrderHasShortage} onClick={() => {
-                  onBuildInventoryUnit(workOrderRecipe, workOrderBuild.quantityBuilt, workOrderBuild.id);
+                  setBuildDraft({ recipeName: workOrderRecipe.name, qty: workOrderBuild.quantityBuilt });
+                  setBuildConfirmAck(false);
+                  setBuildConfirmPlannedId(workOrderBuild.id);
+                  setShowBuildConfirm(true);
                   setWorkOrderBuildId(null);
-                }}>Complete Build</button>
+                }}>Review Completion</button>
               )}
             </div>
           </section>
@@ -3200,9 +3244,13 @@ function Inventory({
               ))}
             </div>
             <div className="source-file"><ShoppingCart size={16} /><span>This will post a build transaction. Use Build History to undo it if the build was entered by mistake.</span></div>
+            <label className="transaction-ack">
+              <input type="checkbox" checked={buildConfirmAck} onChange={(event) => setBuildConfirmAck(event.target.checked)} />
+              <span>I reviewed the build quantity and understand this will consume the listed inventory parts.</span>
+            </label>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowBuildConfirm(false)}>Cancel</button>
-              <button className="primary-action" type="button" onClick={confirmBuild}>Confirm Build</button>
+              <button className="primary-action" type="button" onClick={confirmBuild} disabled={!buildConfirmAck}>Confirm Build</button>
             </div>
           </section>
         </div>
@@ -3398,7 +3446,21 @@ function Inventory({
   );
 }
 
-function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPull }: { projectSites: ProjectSite[]; setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>; inventoryItems: Part[]; onInventoryPull: (itemName: string, qty: number) => void }) {
+function Projects({
+  projectSites,
+  setProjectSites,
+  inventoryItems,
+  projectDocuments,
+  setProjectDocuments,
+  onInventoryPull,
+}: {
+  projectSites: ProjectSite[];
+  setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
+  inventoryItems: Part[];
+  projectDocuments: UploadedDoc[];
+  setProjectDocuments: Dispatch<SetStateAction<UploadedDoc[]>>;
+  onInventoryPull: (itemName: string, qty: number) => void;
+}) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
   const [selectedProjectName, setSelectedProjectName] = useState(initialProject?.name ?? projects[0].name);
@@ -3415,6 +3477,7 @@ function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPu
     notes: "",
   });
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
+  const selectedProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject.name || doc.project === selectedProject.ref);
   const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
   const totalProjectValue = projectSites.reduce((sum, project) => sum + project.allocated, 0);
@@ -3642,6 +3705,19 @@ function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPu
     const projectRef = selectedProject.ref;
 
     updateProjectField("salesQuoteFile", file.name);
+    setProjectDocuments((current) => [
+      {
+        id: makeId("doc"),
+        name: file.name,
+        project: projectName,
+        size: file.size,
+        status: "Ready to review",
+        type: "Sales Quote",
+        storage: "Browser",
+        uploadedAt: new Date().toISOString(),
+      },
+      ...current,
+    ]);
     setIsExtractingQuote(true);
     setActionStatus(`Reading ${file.name} for ${projectRef}. Extracting PDF text in the browser...`);
 
@@ -3703,6 +3779,31 @@ function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPu
     setProjectSites((current) => current.map((project) => (project.name === projectName ? importedProject : project)));
     setSelectedProjectName(importedProject.name);
     setActionStatus(`${projectRef} was extracted from ${importedProject.salesQuoteFile} using ${extraction.mode}. Confidence: ${extraction.confidence}. Review every field before purchasing.`);
+  }
+
+  function handleProjectDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) {
+      return;
+    }
+
+    const docs = files.map((file, index) => ({
+      id: makeId("doc"),
+      name: file.name,
+      project: selectedProject.name,
+      size: file.size,
+      status: "Uploaded" as const,
+      type: "Project" as const,
+      storage: "Browser" as const,
+      uploadedAt: new Date(Date.now() + index).toISOString(),
+    }));
+    setProjectDocuments((current) => [...docs, ...current]);
+    setActionStatus(`${files.length} document${files.length === 1 ? "" : "s"} attached to ${selectedProject.ref}.`);
+    event.target.value = "";
+  }
+
+  function updateProjectDocumentStatus(docId: UploadedDoc["id"], status: UploadedDoc["status"]) {
+    setProjectDocuments((current) => current.map((doc) => (doc.id === docId ? { ...doc, status } : doc)));
   }
 
   function openProject(projectName: string) {
@@ -3792,6 +3893,36 @@ function Projects({ projectSites, setProjectSites, inventoryItems, onInventoryPu
           <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} disabled={isExtractingQuote} />
         </label>
         {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
+      </section>
+
+      <section className="panel full">
+        <div className="panel-title-row">
+          <div>
+            <h2>Project Documents</h2>
+            <p>Backups and reference files for this project workspace.</p>
+          </div>
+          <label className="secondary-action mini-action project-doc-upload">
+            <Upload size={15} /> Upload Docs
+            <input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx,.csv" multiple onChange={handleProjectDocumentSelect} />
+          </label>
+        </div>
+        <div className="project-doc-list">
+          {selectedProjectDocuments.map((doc) => (
+            <div className="document-row" key={`${doc.id}-${doc.name}`}>
+              <div>
+                <strong>{doc.name}</strong>
+                <span>{doc.type ?? "Project"} - {doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.storage ?? "Browser"}</span>
+              </div>
+              <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
+                <option>Uploaded</option>
+                <option>Ready to review</option>
+                <option>Backed up</option>
+                <option>Archived</option>
+              </select>
+            </div>
+          ))}
+          {selectedProjectDocuments.length === 0 && <div className="empty-compact-state">No project documents attached yet. Upload sales quotes, SOWs, BOM sheets, delivery docs, or photos here.</div>}
+        </div>
       </section>
 
       <section className="panel full">

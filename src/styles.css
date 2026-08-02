@@ -428,7 +428,7 @@ td small {
   border-radius: 8px;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(240px, 1fr) minmax(260px, 0.7fr) minmax(180px, 0.6fr);
+  grid-template-columns: minmax(220px, 1fr) max-content minmax(260px, 0.7fr) minmax(160px, 0.6fr);
   margin: 12px 0;
   padding: 10px 12px;
 }
@@ -447,6 +447,24 @@ td small {
 .role-workbench small {
   color: #756d62;
   font-size: 12px;
+}
+
+.role-permission-strip {
+  display: grid;
+  gap: 3px;
+  grid-template-columns: repeat(2, max-content);
+}
+
+.role-permission-strip span {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 4px;
+  color: #174c43;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  padding: 4px 6px;
+  white-space: nowrap;
 }
 
 .role-focus-grid {
@@ -689,6 +707,35 @@ td small {
 
 .document-row {
   justify-content: space-between;
+}
+
+.document-row select {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  color: #174c43;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.project-doc-list {
+  display: grid;
+  gap: 10px;
+}
+
+.project-doc-upload {
+  cursor: pointer;
+  position: relative;
+}
+
+.project-doc-upload input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
 }
 
 .status {
@@ -2061,6 +2108,25 @@ td small {
   font-size: 20px;
 }
 
+.transaction-ack {
+  align-items: start;
+  background: #fff8e9;
+  border: 1px solid #eadbbf;
+  border-radius: 8px;
+  color: #514b43;
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 9px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+
+.transaction-ack input {
+  margin-top: 2px;
+}
+
 .build-confirm-list {
   border: 1px solid #e8e1d5;
   border-radius: 8px;
@@ -2534,6 +2600,7 @@ td small {
   .form-grid,
   .sow-grid,
   .bom-modal-grid,
+  .build-confirm-audit,
   .role-workbench,
   .role-focus-grid,
   .sku-scan-row,
@@ -2581,6 +2648,15 @@ td small {
 
   .search-box {
     min-width: 0;
+  }
+
+  .document-row {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .document-row select {
+    width: 100%;
   }
 
   .bar-row {
