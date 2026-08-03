@@ -853,6 +853,42 @@ If continuing immediately, build in this order:
 13. [ ] Basic PM task list view.
 14. [ ] Real per-role permission enforcement (Phase 9) beyond the admin/
     non-admin split now in place.
+15. [x] Nav redesign: top bar with dropdowns instead of a left sidebar
+    (desktop and mobile).
+16. [x] Real Ergon logo/favicon wired in; Admin moved out of the main tab row
+    into the account dropdown menu.
+17. [x] Pending-approval workflow, optional account expiration, and per-user
+    tab permission overrides (migration `014`). See Authentication/Roles above
+    for the full breakdown and the RLS caveat.
+18. [ ] Email invite from the Admin page. Needs a new Vercel secret
+    (`SUPABASE_SERVICE_ROLE_KEY`) and a serverless function — get E's
+    explicit sign-off before adding this secret; it bypasses all RLS.
+19. [ ] Receiving proof/photo flow for purchase requests.
+20. [ ] Project document/media model cleanup (real Supabase Storage instead of
+    browser-only references).
+21. [ ] Inventory location/bin UI.
+
+## Next Session Priorities (start here)
+
+In order:
+
+1. Run migration `014_user_approval_and_tab_permissions.sql` in Supabase SQL
+   Editor (it was written and pushed but not yet applied as of this session).
+   Until it runs, every non-admin sign-in will see "Waiting for approval"
+   indefinitely (fails closed, which is safe, but nobody except the bootstrapped
+   admin can get in until the migration is applied).
+2. Test the pending-approval flow end to end with a second account: sign up,
+   confirm it lands on "Waiting for approval," then approve it from the Admin
+   page as the admin account and confirm it gets in with the assigned role's
+   default tabs.
+3. Visually check the tightened pills/dropzones (`.action-status`,
+   `.sales-dropzone`, `.upload-drop`) on both desktop and phone — sizing was
+   adjusted based on a screenshot, not a live re-check, since this session
+   cannot open a browser. Confirm they look right and are not now too cramped.
+4. Decide on the email-invite feature (needs `SUPABASE_SERVICE_ROLE_KEY`) —
+   see item 18 above.
+5. Continue down the unchecked items above in whatever order matters most for
+   the business (photo proof, document storage, bin UI, sales quote builder).
 
 ## Developer Guardrails
 
