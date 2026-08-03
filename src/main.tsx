@@ -1975,13 +1975,7 @@ function App() {
     return (
       <div className="auth-gate">
         <div className="auth-gate-card">
-          <div className="brand">
-            <div className="brand-mark">E</div>
-            <div>
-              <div className="brand-title">Ergon</div>
-              <div className="brand-subtitle">Ops Command</div>
-            </div>
-          </div>
+          <img className="auth-gate-logo" src="/ergon-logo.png" alt="Ergon" />
           <h2>Sign in to continue</h2>
           <p className="muted">Inventory, purchasing, projects, and reports are only visible after you sign in.</p>
           <label className="auth-gate-field">Email<input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="you@company.com" type="email" autoComplete="email" /></label>
@@ -2003,7 +1997,7 @@ function App() {
       <header className="top-nav">
         <div className="top-nav-row">
           <div className="brand">
-            <div className="brand-mark">E</div>
+            <img className="brand-mark" src="/ergon-icon.png" alt="Ergon" />
             <div>
               <div className="brand-title">Ergon</div>
               <div className="brand-subtitle">Ops Command</div>
@@ -2016,7 +2010,6 @@ function App() {
             <NavButton icon={<ClipboardList size={16} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />
             <NavButton icon={<DollarSign size={16} />} label="Sales" active={view === "sales"} onClick={() => navigateToView("sales")} />
             <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />
-            {isAdmin && <NavButton icon={<User size={16} />} label="Admin" active={view === "admin"} onClick={() => navigateToView("admin")} />}
           </nav>
           <div className="top-nav-actions">
             <div className={`sync-status ${syncStatus}`}>
@@ -2030,6 +2023,18 @@ function App() {
               {accountMenuOpen && (
                 <div className="account-menu-panel">
                   <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}><option value="warehouse">Warehouse</option><option value="purchasing">Purchasing</option><option value="pm">PM</option><option value="manager">Manager</option></select></label>
+                  {isAdmin && (
+                    <button
+                      className={`secondary-action mini-action account-menu-admin-link ${view === "admin" ? "active" : ""}`}
+                      type="button"
+                      onClick={() => {
+                        navigateToView("admin");
+                        setAccountMenuOpen(false);
+                      }}
+                    >
+                      <User size={14} /> Admin
+                    </button>
+                  )}
                   <div className="auth-card">
                     {authSession ? (
                       <>

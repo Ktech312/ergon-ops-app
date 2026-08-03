@@ -55,12 +55,21 @@ button {
   max-width: 380px;
 }
 
+.auth-gate-logo {
+  display: block;
+  margin: 0 auto 4px;
+  max-width: 220px;
+  width: 100%;
+}
+
 .auth-gate-card h2 {
   margin: 4px 0 0;
+  text-align: center;
 }
 
 .auth-gate-card p {
   margin: 0 0 8px;
+  text-align: center;
 }
 
 .auth-gate-field {
@@ -135,15 +144,9 @@ button {
 }
 
 .brand-mark {
-  align-items: center;
-  background: #174c43;
-  border-radius: 10px;
-  color: #fff;
-  display: grid;
-  font-weight: 800;
-  height: 42px;
-  justify-content: center;
-  width: 42px;
+  height: 34px;
+  object-fit: contain;
+  width: 34px;
 }
 
 .brand-title {
@@ -265,6 +268,16 @@ button {
 
 .account-menu-panel .auth-card {
   grid-template-columns: 1fr;
+}
+
+.account-menu-admin-link {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.account-menu-admin-link.active {
+  background: #174c43;
+  color: white;
 }
 
 .role-mode-select {
