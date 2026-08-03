@@ -22,9 +22,17 @@ button {
 }
 
 .app-shell {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
+}
+
+.checkbox-inline {
+  align-items: center;
+  color: #514b43;
+  display: inline-flex;
+  font-size: 13px;
+  gap: 6px;
 }
 
 .auth-gate {
@@ -95,17 +103,35 @@ button {
   text-align: center;
 }
 
-.sidebar {
-  border-right: 1px solid #ded7cb;
-  background: rgba(255, 255, 255, 0.78);
-  padding: 22px 18px;
+.top-nav {
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid #ded7cb;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.top-nav-row {
+  align-items: center;
+  display: flex;
+  gap: 20px;
+  padding: 10px 20px;
+}
+
+.top-nav-search {
+  align-items: center;
+  border-top: 1px solid #ded7cb;
+  color: #756d62;
+  display: flex;
+  gap: 9px;
+  padding: 8px 20px;
 }
 
 .brand {
   align-items: center;
   display: flex;
-  gap: 12px;
-  margin-bottom: 26px;
+  flex-shrink: 0;
+  gap: 10px;
 }
 
 .brand-mark {
@@ -132,22 +158,28 @@ button {
 }
 
 .nav-list {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .nav-button {
   align-items: center;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   color: #413d37;
   cursor: pointer;
   display: flex;
-  gap: 10px;
-  height: 42px;
+  flex-shrink: 0;
+  gap: 8px;
+  height: 38px;
   padding: 0 12px;
   text-align: left;
+  white-space: nowrap;
 }
 
 .nav-button.active,
@@ -161,35 +193,78 @@ button {
   padding: 28px;
 }
 
-.topbar {
-  align-items: flex-start;
-  display: grid;
-  gap: 18px;
-  grid-template-columns: minmax(220px, 1fr) max-content max-content minmax(240px, 0.8fr) max-content minmax(240px, 0.8fr);
+.page-heading {
   margin-bottom: 22px;
 }
 
-.topbar h1 {
+.page-heading h1 {
   font-size: 28px;
   line-height: 1.1;
   margin: 0 0 7px;
 }
 
-.topbar p {
+.page-heading p {
   color: #756d62;
   margin: 0;
 }
 
+.top-nav-actions {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+  position: relative;
+}
+
 .search-box {
   align-items: center;
-  background: white;
-  border: 1px solid #ded7cb;
-  border-radius: 10px;
   color: #756d62;
   display: flex;
   gap: 9px;
-  min-width: 290px;
-  padding: 12px 14px;
+}
+
+.account-menu {
+  position: relative;
+}
+
+.account-menu-trigger {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  color: #413d37;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.account-menu-email {
+  font-size: 13px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-menu-panel {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(23, 76, 67, 0.14);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 260px;
+  z-index: 30;
+}
+
+.account-menu-panel .auth-card {
+  grid-template-columns: 1fr;
 }
 
 .role-mode-select {
@@ -2659,21 +2734,8 @@ td small {
 }
 
 @media (max-width: 1100px) {
-  .app-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .topbar {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .sidebar {
-    border-bottom: 1px solid #ded7cb;
-    border-right: 0;
-  }
-
-  .nav-list {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+  .account-menu-email {
+    display: none;
   }
 
   .content-grid,
@@ -2698,7 +2760,25 @@ td small {
     padding: 18px;
   }
 
-  .topbar,
+  .top-nav-row {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .top-nav-search {
+    padding: 8px 12px;
+  }
+
+  .nav-list {
+    order: 3;
+    width: 100%;
+  }
+
+  .top-nav-actions {
+    margin-left: auto;
+  }
+
   .backup-actions,
   .content-grid,
   .metric-grid,
@@ -2706,8 +2786,7 @@ td small {
   .project-grid,
   .project-selector-grid,
   .order-grid,
-  .upload-layout,
-  .nav-list {
+  .upload-layout {
     grid-template-columns: 1fr;
   }
 
@@ -2760,13 +2839,8 @@ td small {
     padding: 12px;
   }
 
-  .topbar {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
-  .search-box {
-    min-width: 0;
+  .search-box span {
+    display: none;
   }
 
   .document-row {

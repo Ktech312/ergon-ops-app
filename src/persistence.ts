@@ -496,6 +496,163 @@ export async function revokeAdmin(userId: string, accessToken?: string) {
   }
 }
 
+export type CatalogItem = {
+  id: string;
+  catalogNumber: string;
+  productName: string;
+  salesDescription: string;
+  technicalDescription: string;
+  category: string;
+  manufacturer: string;
+  defaultSellPrice: number;
+  costSource: "manual" | "inventory_unit_cost" | "vendor_quote";
+  linkedReference: string;
+  datasheetUrl: string;
+  imageUrl: string;
+  isRetired: boolean;
+};
+
+type CatalogItemRow = {
+  id: string;
+  catalog_number: string;
+  product_name: string;
+  sales_description: string | null;
+  technical_description: string | null;
+  category: string | null;
+  manufacturer: string | null;
+  default_sell_price: number | string | null;
+  cost_source: string | null;
+  linked_reference: string | null;
+  datasheet_url: string | null;
+  image_url: string | null;
+  is_retired: boolean | null;
+};
+
+function mapCatalogRow(row: CatalogItemRow): CatalogItem {
+  return {
+    id: row.id,
+    catalogNumber: row.catalog_number,
+    productName: row.product_name,
+    salesDescription: row.sales_description ?? "",
+    technicalDescription: row.technical_description ?? "",
+    category: row.category ?? "",
+    manufacturer: row.manufacturer ?? "",
+    defaultSellPrice: Number(row.default_sell_price) || 0,
+    costSource: (row.cost_source as CatalogItem["costSource"]) ?? "manual",
+    linkedReference: row.linked_reference ?? "",
+    datasheetUrl: row.datasheet_url ?? "",
+    imageUrl: row.image_url ?? "",
+    isRetired: Boolean(row.is_retired),
+  };
+}
+
+export function makeCatalogNumber() {
+  return `CAT-${Date.now().toString(36).toUpperCase()}`;
+}
+
+export async function loadCatalogItems(accessToken?: string): Promise<CatalogItem[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("product_catalog?select=*&order=product_name.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as CatalogItemRow[];
+  return rows.map(mapCatalogRow);
+}
+
+export async function createCatalogItem(item: Omit<CatalogItem, "id">, accessToken?: string): Promise<CatalogItem> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const response = await fetch(supabaseUrl("product_catalog"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "return=representation",
+    },
+    body: JSON.stringify({
+      catalog_number: item.catalogNumber,
+      product_name: item.productName,
+      sales_description: item.salesDescription,
+      technical_description: item.technicalDescription,
+      category: item.category,
+      manufacturer: item.manufacturer,
+      default_sell_price: item.defaultSellPrice,
+      cost_source: item.costSource,
+      linked_reference: item.linkedReference,
+      datasheet_url: item.datasheetUrl,
+      image_url: item.imageUrl,
+      is_retired: item.isRetired,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not create catalog item: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as CatalogItemRow[];
+  return mapCatalogRow(rows[0]);
+}
+
+export async function updateCatalogItem(id: string, item: Omit<CatalogItem, "id">, accessToken?: string): Promise<CatalogItem> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const response = await fetch(supabaseUrl(`product_catalog?id=eq.${id}`), {
+    method: "PATCH",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "return=representation",
+    },
+    body: JSON.stringify({
+      catalog_number: item.catalogNumber,
+      product_name: item.productName,
+      sales_description: item.salesDescription,
+      technical_description: item.technicalDescription,
+      category: item.category,
+      manufacturer: item.manufacturer,
+      default_sell_price: item.defaultSellPrice,
+      cost_source: item.costSource,
+      linked_reference: item.linkedReference,
+      datasheet_url: item.datasheetUrl,
+      image_url: item.imageUrl,
+      is_retired: item.isRetired,
+      retired_at: item.isRetired ? new Date().toISOString() : null,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not update catalog item: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as CatalogItemRow[];
+  return mapCatalogRow(rows[0]);
+}
+
+export async function setCatalogItemRetired(id: string, retired: boolean, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  await fetch(supabaseUrl(`product_catalog?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({
+      is_retired: retired,
+      retired_at: retired ? new Date().toISOString() : null,
+    }),
+  });
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;

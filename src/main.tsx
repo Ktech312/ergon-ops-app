@@ -26,33 +26,39 @@ import {
   acquireTransactionLock,
   checkIsAdmin,
   consumeOAuthRedirectSession,
+  createCatalogItem,
   grantAdmin,
   loadAllAdmins,
   loadAllKnownUsers,
   loadAllUserRoles,
   loadAuthSession,
+  loadCatalogItems,
   loadLocalAppState,
   loadRemoteAppState,
   loadUserRoleMode,
+  makeCatalogNumber,
   refreshAuthSession,
   revokeAdmin,
   saveLocalAppState,
   saveRemoteAppState,
   saveUserRoleMode,
   releaseTransactionLock,
+  setCatalogItemRetired,
   setUserRole,
   signInWithGoogleRedirect,
   signInWithPassword,
   signOut,
   signUpWithPassword,
+  updateCatalogItem,
   upsertKnownUser,
   type AuthSession,
+  type CatalogItem,
   type KnownUser,
   type PersistedAppState,
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "projects" | "reports" | "admin";
+type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "reports" | "admin";
 
 type PurchaseUrl = {
   id: number;
@@ -808,7 +814,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "projects", "reports", "admin"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "projects", "sales", "reports", "admin"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -884,6 +890,9 @@ function App() {
   const [userRoleMap, setUserRoleMap] = useState<Record<string, string>>({});
   const [adminIds, setAdminIds] = useState<string[]>([]);
   const [adminStatus, setAdminStatus] = useState("");
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
+  const [catalogStatus, setCatalogStatus] = useState("");
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -1089,6 +1098,54 @@ function App() {
     } catch (error) {
       setAdminStatus(error instanceof Error ? error.message : "Could not remove admin access.");
     }
+  }
+
+  function reloadCatalog(accessToken: string) {
+    loadCatalogItems(accessToken)
+      .then(setCatalogItems)
+      .catch(() => setCatalogStatus("Could not load the product catalog."));
+  }
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setCatalogItems([]);
+      return;
+    }
+    reloadCatalog(authSession.accessToken);
+  }, [authSession]);
+
+  async function handleCreateCatalogItem(item: Omit<CatalogItem, "id" | "catalogNumber">) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const created = await createCatalogItem({ ...item, catalogNumber: makeCatalogNumber() }, authSession.accessToken);
+      setCatalogItems((current) => [...current, created].sort((a, b) => a.productName.localeCompare(b.productName)));
+      setCatalogStatus(`${created.productName} added to the catalog.`);
+    } catch (error) {
+      setCatalogStatus(error instanceof Error ? error.message : "Could not add catalog item.");
+    }
+  }
+
+  async function handleUpdateCatalogItem(id: string, item: Omit<CatalogItem, "id">) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const updated = await updateCatalogItem(id, item, authSession.accessToken);
+      setCatalogItems((current) => current.map((existing) => (existing.id === id ? updated : existing)).sort((a, b) => a.productName.localeCompare(b.productName)));
+      setCatalogStatus(`${updated.productName} updated.`);
+    } catch (error) {
+      setCatalogStatus(error instanceof Error ? error.message : "Could not update catalog item.");
+    }
+  }
+
+  async function handleSetCatalogItemRetired(id: string, retired: boolean) {
+    if (!authSession) {
+      return;
+    }
+    await setCatalogItemRetired(id, retired, authSession.accessToken);
+    setCatalogItems((current) => current.map((item) => (item.id === id ? { ...item, isRetired: retired } : item)));
   }
 
   useEffect(() => {
@@ -1943,65 +2000,89 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">E</div>
-          <div>
-            <div className="brand-title">Ergon</div>
-            <div className="brand-subtitle">Ops Command</div>
+      <header className="top-nav">
+        <div className="top-nav-row">
+          <div className="brand">
+            <div className="brand-mark">E</div>
+            <div>
+              <div className="brand-title">Ergon</div>
+              <div className="brand-subtitle">Ops Command</div>
+            </div>
+          </div>
+          <nav className="nav-list">
+            <NavButton icon={<LayoutDashboard size={16} />} label="Dashboard" active={view === "dashboard"} onClick={() => navigateToView("dashboard")} />
+            <NavButton icon={<ShoppingCart size={16} />} label="Purchasing" active={view === "purchasing"} onClick={() => navigateToView("purchasing")} />
+            <NavButton icon={<Boxes size={16} />} label="Inventory" active={view === "inventory"} onClick={() => navigateToView("inventory")} />
+            <NavButton icon={<ClipboardList size={16} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />
+            <NavButton icon={<DollarSign size={16} />} label="Sales" active={view === "sales"} onClick={() => navigateToView("sales")} />
+            <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />
+            {isAdmin && <NavButton icon={<User size={16} />} label="Admin" active={view === "admin"} onClick={() => navigateToView("admin")} />}
+          </nav>
+          <div className="top-nav-actions">
+            <div className={`sync-status ${syncStatus}`}>
+              <span>{syncStatus === "local" ? "Setup required" : syncStatus === "auth" ? "Sign in required" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
+            </div>
+            <div className="account-menu">
+              <button className="account-menu-trigger" type="button" onClick={() => setAccountMenuOpen((open) => !open)}>
+                <User size={16} />
+                <span className="account-menu-email">{authSession?.email ?? "Account"}</span>
+              </button>
+              {accountMenuOpen && (
+                <div className="account-menu-panel">
+                  <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}><option value="warehouse">Warehouse</option><option value="purchasing">Purchasing</option><option value="pm">PM</option><option value="manager">Manager</option></select></label>
+                  <div className="auth-card">
+                    {authSession ? (
+                      <>
+                        <span>{authSession.email}</span>
+                        <button className="secondary-action mini-action" type="button" onClick={handleSignOut}>Sign out</button>
+                      </>
+                    ) : (
+                      <>
+                        <input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="Email" type="email" />
+                        <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Password" type="password" />
+                        <button className="secondary-action mini-action" type="button" onClick={handleSignIn} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Sign in</button>
+                        <button className="secondary-action mini-action" type="button" onClick={handleSignUp} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Create user</button>
+                        <button className="secondary-action mini-action" type="button" onClick={handleGoogleSignIn} disabled={!isRemotePersistenceConfigured()}>Sign in with Google</button>
+                      </>
+                    )}
+                    <small>{isRemotePersistenceConfigured() ? authStatus : "Set Supabase env vars for production cloud storage."}</small>
+                  </div>
+                  <div className="backup-actions">
+                    <button className="secondary-action mini-action" type="button" onClick={exportBackup}>Backup</button>
+                    <label className="secondary-action mini-action">Restore<input type="file" accept="application/json,.json" onChange={(event) => { importBackup(event.target.files?.[0]); event.target.value = ""; }} /></label>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-        <nav className="nav-list">
-          <NavButton icon={<LayoutDashboard size={18} />} label="Dashboard" active={view === "dashboard"} onClick={() => navigateToView("dashboard")} />
-          <NavButton icon={<ShoppingCart size={18} />} label="Purchasing" active={view === "purchasing"} onClick={() => navigateToView("purchasing")} />
-          <NavButton icon={<Boxes size={18} />} label="Inventory" active={view === "inventory"} onClick={() => navigateToView("inventory")} />
-          <NavButton icon={<ClipboardList size={18} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />
-          <NavButton icon={<BarChart3 size={18} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />
-          {isAdmin && <NavButton icon={<User size={18} />} label="Admin" active={view === "admin"} onClick={() => navigateToView("admin")} />}
-        </nav>
-      </aside>
+        <div className="top-nav-search">
+          <Search size={16} />
+          <span>Search parts, POs, projects</span>
+        </div>
+      </header>
 
       <main className="main">
-        <header className="topbar">
-          <div>
-            <h1>{pageTitle(view)}</h1>
-            <p>Purchasing, inventory, project transfers, and reports for field packages.</p>
-          </div>
-          <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}><option value="warehouse">Warehouse</option><option value="purchasing">Purchasing</option><option value="pm">PM</option><option value="manager">Manager</option></select></label>
-          <div className={`sync-status ${syncStatus}`}>
-            <span>{syncStatus === "local" ? "Setup required" : syncStatus === "auth" ? "Sign in required" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
-          </div>
-          <div className="auth-card">
-            {authSession ? (
-              <>
-                <span>{authSession.email}</span>
-                <button className="secondary-action mini-action" type="button" onClick={handleSignOut}>Sign out</button>
-              </>
-            ) : (
-              <>
-                <input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="Email" type="email" />
-                <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Password" type="password" />
-                <button className="secondary-action mini-action" type="button" onClick={handleSignIn} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Sign in</button>
-                <button className="secondary-action mini-action" type="button" onClick={handleSignUp} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Create user</button>
-                <button className="secondary-action mini-action" type="button" onClick={handleGoogleSignIn} disabled={!isRemotePersistenceConfigured()}>Sign in with Google</button>
-              </>
-            )}
-            <small>{isRemotePersistenceConfigured() ? authStatus : "Set Supabase env vars for production cloud storage."}</small>
-          </div>
-          <div className="backup-actions">
-            <button className="secondary-action mini-action" type="button" onClick={exportBackup}>Backup</button>
-            <label className="secondary-action mini-action">Restore<input type="file" accept="application/json,.json" onChange={(event) => { importBackup(event.target.files?.[0]); event.target.value = ""; }} /></label>
-          </div>
-          <div className="search-box">
-            <Search size={16} />
-            <span>Search parts, POs, projects</span>
-          </div>
-        </header>
+        <div className="page-heading">
+          <h1>{pageTitle(view)}</h1>
+          <p>Purchasing, inventory, project transfers, and reports for field packages.</p>
+        </div>
 
         {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
         {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} />}
+        {view === "sales" && (
+          <SalesCatalog
+            catalogItems={catalogItems}
+            status={catalogStatus}
+            isConfigured={isRemotePersistenceConfigured()}
+            onCreate={handleCreateCatalogItem}
+            onUpdate={handleUpdateCatalogItem}
+            onSetRetired={handleSetCatalogItemRetired}
+            onRefresh={() => authSession && reloadCatalog(authSession.accessToken)}
+          />
+        )}
         {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} />}
         {view === "admin" && isAdmin && (
           <AdminPage
@@ -2036,6 +2117,7 @@ function pageTitle(view: View) {
     purchasing: "Purchasing",
     inventory: "Inventory",
     projects: "Projects",
+    sales: "Sales",
     reports: "Reports",
     admin: "Admin",
   };
@@ -5072,6 +5154,174 @@ function AdminPage({
             </tbody>
           </table>
       </section>
+    </div>
+  );
+}
+
+const EMPTY_CATALOG_DRAFT = {
+  catalogNumber: "",
+  productName: "",
+  salesDescription: "",
+  technicalDescription: "",
+  category: "",
+  manufacturer: "",
+  defaultSellPrice: 0,
+  costSource: "manual" as CatalogItem["costSource"],
+  linkedReference: "",
+  datasheetUrl: "",
+  imageUrl: "",
+  isRetired: false,
+};
+
+function SalesCatalog({
+  catalogItems,
+  status,
+  isConfigured,
+  onCreate,
+  onUpdate,
+  onSetRetired,
+  onRefresh,
+}: {
+  catalogItems: CatalogItem[];
+  status: string;
+  isConfigured: boolean;
+  onCreate: (item: Omit<CatalogItem, "id" | "catalogNumber">) => void;
+  onUpdate: (id: string, item: Omit<CatalogItem, "id">) => void;
+  onSetRetired: (id: string, retired: boolean) => void;
+  onRefresh: () => void;
+}) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState(EMPTY_CATALOG_DRAFT);
+  const [showRetired, setShowRetired] = useState(false);
+
+  const visibleItems = catalogItems.filter((item) => showRetired || !item.isRetired);
+
+  function openAddModal() {
+    setEditingId(null);
+    setDraft(EMPTY_CATALOG_DRAFT);
+    setModalOpen(true);
+  }
+
+  function openEditModal(item: CatalogItem) {
+    setEditingId(item.id);
+    setDraft({
+      catalogNumber: item.catalogNumber,
+      productName: item.productName,
+      salesDescription: item.salesDescription,
+      technicalDescription: item.technicalDescription,
+      category: item.category,
+      manufacturer: item.manufacturer,
+      defaultSellPrice: item.defaultSellPrice,
+      costSource: item.costSource,
+      linkedReference: item.linkedReference,
+      datasheetUrl: item.datasheetUrl,
+      imageUrl: item.imageUrl,
+      isRetired: item.isRetired,
+    });
+    setModalOpen(true);
+  }
+
+  function submitDraft() {
+    if (!draft.productName.trim()) {
+      return;
+    }
+    if (editingId) {
+      onUpdate(editingId, draft);
+    } else {
+      onCreate(draft);
+    }
+    setModalOpen(false);
+  }
+
+  return (
+    <div className="content-grid">
+      <section className="panel wide">
+        <PanelHeader title="Product Catalog" label="Sellable products and specs, separate from physical inventory" />
+        <div className="report-filter-row">
+          <button className="primary-action mini-action" type="button" onClick={openAddModal} disabled={!isConfigured}>
+            <Plus size={14} /> Add Product
+          </button>
+          <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
+          <label className="checkbox-inline"><input type="checkbox" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} /> Show retired</label>
+          {!isConfigured && <span className="muted">Set Supabase env vars to manage the catalog.</span>}
+          {status && <span className="muted">{status}</span>}
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Catalog #</th>
+              <th>Product</th>
+              <th>Category</th>
+              <th>Manufacturer</th>
+              <th>Sell Price</th>
+              <th>Linked Ref</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleItems.map((item) => (
+              <tr key={item.id} className={item.isRetired ? "muted-row" : ""}>
+                <td>{item.catalogNumber}</td>
+                <td>{item.productName}</td>
+                <td>{item.category}</td>
+                <td>{item.manufacturer}</td>
+                <td>{money(item.defaultSellPrice)}</td>
+                <td>{item.linkedReference}</td>
+                <td>{item.isRetired ? "Retired" : "Active"}</td>
+                <td>
+                  <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(item)}>Edit</button>
+                  <button className="secondary-action mini-action" type="button" onClick={() => onSetRetired(item.id, !item.isRetired)}>
+                    {item.isRetired ? "Reactivate" : "Retire"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {visibleItems.length === 0 && (
+              <tr>
+                <td colSpan={8} className="empty-compact-state">
+                  No catalog items yet. Add a product to start building the sales catalog.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      {modalOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-item-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="catalog-item-title">{editingId ? "Edit Product" : "Add Product"}</h2>
+                <p>Sales-facing product details for quotes and the catalog list.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setModalOpen(false)} aria-label="Close product editor">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">Product name<input value={draft.productName} onChange={(event) => setDraft((current) => ({ ...current, productName: event.target.value }))} placeholder="Product name" /></label>
+              <label>Category<input value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="Category" /></label>
+              <label>Manufacturer<input value={draft.manufacturer} onChange={(event) => setDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Manufacturer" /></label>
+              <label>Default sell price<input type="number" min={0} step="0.01" value={draft.defaultSellPrice} onChange={(event) => setDraft((current) => ({ ...current, defaultSellPrice: Number(event.target.value) }))} /></label>
+              <label>Cost source<select value={draft.costSource} onChange={(event) => setDraft((current) => ({ ...current, costSource: event.target.value as CatalogItem["costSource"] }))}>
+                <option value="manual">Manual</option>
+                <option value="inventory_unit_cost">Inventory unit cost</option>
+                <option value="vendor_quote">Vendor quote</option>
+              </select></label>
+              <label className="span-2">Linked SKU / equipment<input value={draft.linkedReference} onChange={(event) => setDraft((current) => ({ ...current, linkedReference: event.target.value }))} placeholder="e.g. SKU-1234 or VPU Server Recipe" /></label>
+              <label className="span-2">Sales description<textarea value={draft.salesDescription} onChange={(event) => setDraft((current) => ({ ...current, salesDescription: event.target.value }))} placeholder="Customer-facing description for quotes" /></label>
+              <label className="span-2">Technical description<textarea value={draft.technicalDescription} onChange={(event) => setDraft((current) => ({ ...current, technicalDescription: event.target.value }))} placeholder="Specs, dimensions, technical notes" /></label>
+              <label>Datasheet URL<input value={draft.datasheetUrl} onChange={(event) => setDraft((current) => ({ ...current, datasheetUrl: event.target.value }))} placeholder="Link to a datasheet" /></label>
+              <label>Image URL<input value={draft.imageUrl} onChange={(event) => setDraft((current) => ({ ...current, imageUrl: event.target.value }))} placeholder="Product image link" /></label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setModalOpen(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={submitDraft} disabled={!draft.productName.trim()}>{editingId ? "Save Product" : "Add Product"}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

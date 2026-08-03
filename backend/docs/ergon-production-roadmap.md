@@ -361,6 +361,7 @@ Existing Supabase migrations include:
 - `010_user_role_assignments.sql`
 - `011_direct_project_purchase_requests.sql`
 - `012_admin_roles_and_user_directory.sql`
+- `013_product_catalog.sql`
 
 Important concepts already represented:
 
@@ -498,7 +499,27 @@ Acceptance criteria:
 
 ### Phase 4 - Product Catalog / Sold Item Catalog
 
-Goal:
+Status: initial version built.
+
+- Migration `013_product_catalog.sql` adds a `product_catalog` table, separate
+  from `inventory_items`.
+- New "Sales" nav item and `SalesCatalog` component in `src/main.tsx`: add/edit
+  modal, retire/reactivate, show-retired filter, catalog list table.
+- Fields implemented: catalog number (auto-generated), product name, sales
+  description, technical description, category, manufacturer, default sell
+  price, cost source, datasheet URL, image URL, retired status.
+- `linked_reference` is a free-text field ("SKU-1234" or a recipe name) rather
+  than a real foreign key to inventory/equipment. The table also has
+  `inventory_item_id` / `equipment_type_id` uuid columns reserved for later,
+  but today's Inventory and Manufactured Equipment data lives in the
+  `app_records` JSON blob, not in the relational `inventory_items` /
+  `equipment_types` tables, so a strict FK link would not reliably resolve yet.
+  Wire up real linking once Phase 10 (relational CRUD) covers those two areas.
+- Not yet built: image upload (image field is a URL only), datasheet file
+  upload (link only), and connecting catalog items into the sales quote
+  builder (Phase 5).
+
+Original goal:
 
 Separate products Ergon sells/specifies from physical inventory stock.
 
@@ -790,7 +811,9 @@ If continuing immediately, build in this order:
    - `AdminPage` component in `src/main.tsx`, nav item only visible to admins.
    - First admin must be bootstrapped manually via SQL (see Authentication/
      Roles section above) since there is no admin yet on a fresh database.
-9. [ ] Product catalog table and UI.
+9. [x] Product catalog table and UI (initial version; see Phase 4 above for
+   what's still missing: real image/datasheet uploads, and linking into a
+   quote builder).
 10. [ ] Sales quote builder shell.
 11. [ ] Field photo offline queue.
 12. [ ] Taskboard data model.
@@ -842,6 +865,12 @@ Before calling this production-ready for team use:
 
 ## Known Risks
 
+- Navigation moved from a left sidebar to a top bar with a horizontally
+  scrollable tab row and a right-side account dropdown (`.top-nav` /
+  `.nav-list` / `.account-menu*` in `src/styles.css`, header markup in
+  `src/main.tsx`). This has not been checked on a real phone yet, only browser
+  responsive mode. Verify the tab row scrolls cleanly and the account dropdown
+  doesn't get clipped at very narrow widths.
 - `src/main.tsx` is too large. Future work should gradually extract components
   without changing behavior.
 - `app_records` is useful now but should not be the final long-term data layer.
