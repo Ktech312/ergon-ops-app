@@ -27,6 +27,17 @@ button {
   min-height: 100vh;
 }
 
+.tab-permission-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  max-width: 260px;
+}
+
+.auth-gate-loading {
+  margin: 0;
+}
+
 .checkbox-inline {
   align-items: center;
   color: #514b43;

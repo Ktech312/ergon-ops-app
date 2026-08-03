@@ -333,17 +333,49 @@ Current status:
 - Per-user role mode persistence exists when signed in.
 - Role chips and summaries exist.
 
+- Pending-approval + per-tab permissions (migration `014`):
+  - New sign-ins (any method) are "pending" until a Manager or Admin approves
+    them. Pending/denied/expired users see a blocking screen instead of the
+    app (`requiresSignIn` / the `!isApproved` branch in `src/main.tsx`).
+    Admins always bypass this (never blocked).
+  - Approval can include an optional expiration date; once past, the user is
+    blocked again automatically (no cron job needed — checked client-side on
+    every load against `expires_at`).
+  - Role assignment (`app_user_roles.role_key`) is now admin-only. Migration
+    `014` drops the old self-service write policies from migration `010`.
+    Regular users can no longer pick their own role; it must be assigned by an
+    Admin (typically as part of approving them).
+  - Admins can override exactly which tabs (Dashboard/Purchasing/Inventory/
+    Projects/Sales/Reports) an individual user sees via
+    `app_user_roles.allowed_views` (nullable `text[]`; null = use the role's
+    default set in `DEFAULT_TABS_BY_ROLE` in `src/main.tsx`). Manager defaults
+    to all tabs per E's instruction; other defaults are a first guess and can
+    be freely overridden per user from the Admin page regardless.
+  - This is enforced in the nav/view routing (UI layer) — see the honest
+    caveat below, it is not yet enforced in Supabase RLS for the underlying
+    operational tables.
+
 Needs improvement:
 
-- Role views are still a UI convenience, not enforced permissions. Being an
-  "admin" only unlocks the Admin page and role-assignment API calls; it does not
-  yet restrict what warehouse/purchasing/pm/manager can each do inside the rest
-  of the app. That is Phase 9.
+- IMPORTANT CAVEAT: hiding a tab in the UI does not yet stop someone from
+  reading/writing that data directly against the Supabase REST API. Most
+  operational tables (inventory_items, purchase_requests, projects, etc.) still
+  use blanket "any authenticated user can read/write" RLS policies from
+  migrations 001/003/005. The new tab permissions and role system control what
+  the app *shows*, not yet what the database *allows*. Closing that gap is
+  Phase 9 (real per-role RLS enforcement) and has not been done.
 - There is no bootstrap UI for the very first admin. After creating the first
   real account, run this once in Supabase SQL Editor to seed the first admin:
   `insert into app_admins (user_id) select id from auth.users where email = '<first admin email>';`
 - External public/client access is not built.
-- Invite/user management (removing a user, resending invites) is not built.
+- Email invites are NOT built yet. E asked for "send invites from the Admin
+  page" — doing this properly requires a new Vercel serverless function using
+  `SUPABASE_SERVICE_ROLE_KEY` (Supabase's Admin API `POST /auth/v1/admin/invite`
+  cannot be called from the browser with just the anon key). This is a new,
+  highly sensitive secret (full bypass of all RLS) and should not be added
+  without E explicitly confirming it, and it should only ever live in a
+  server-side Vercel env var, never in client code. Flagged as its own item
+  below — do this next time E is available to walk through creating that key.
 
 ## Database Foundation Already Added
 
@@ -362,6 +394,7 @@ Existing Supabase migrations include:
 - `011_direct_project_purchase_requests.sql`
 - `012_admin_roles_and_user_directory.sql`
 - `013_product_catalog.sql`
+- `014_user_approval_and_tab_permissions.sql`
 
 Important concepts already represented:
 
@@ -862,6 +895,15 @@ Before calling this production-ready for team use:
   - Project BOM modal
   - Receiving
   - Project document upload
+
+## UI Design Rule (locked in per E, Aug 2026)
+
+Pills, status banners, empty-state boxes, and notice bars must be sized to
+their content, not stretched to fill the available row/column width. Several
+existing panels (project "opened" banner, empty-state notices, upload
+dropzones) are oversized and waste vertical/horizontal space. When doing UI
+passes, tighten these down: padding should feel intentional, not like filler.
+This applies sitewide, not just to the examples above.
 
 ## Known Risks
 

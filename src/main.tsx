@@ -27,23 +27,30 @@ import {
   checkIsAdmin,
   consumeOAuthRedirectSession,
   createCatalogItem,
+  ensureOwnApprovalRequest,
   grantAdmin,
   loadAllAdmins,
+  loadAllAllowedViews,
+  loadAllApprovalStatuses,
   loadAllKnownUsers,
   loadAllUserRoles,
   loadAuthSession,
   loadCatalogItems,
   loadLocalAppState,
+  loadOwnAllowedViews,
+  loadOwnApprovalStatus,
   loadRemoteAppState,
   loadUserRoleMode,
   makeCatalogNumber,
   refreshAuthSession,
+  reviewUserApproval,
   revokeAdmin,
   saveLocalAppState,
   saveRemoteAppState,
   saveUserRoleMode,
   releaseTransactionLock,
   setCatalogItemRetired,
+  setUserAllowedViews,
   setUserRole,
   signInWithGoogleRedirect,
   signInWithPassword,
@@ -51,10 +58,12 @@ import {
   signUpWithPassword,
   updateCatalogItem,
   upsertKnownUser,
+  type ApprovalStatus,
   type AuthSession,
   type CatalogItem,
   type KnownUser,
   type PersistedAppState,
+  type UserStatus,
 } from "./persistence";
 import "./styles.css";
 
@@ -109,6 +118,28 @@ type BuildRecipe = {
 };
 
 type RoleMode = "warehouse" | "purchasing" | "pm" | "manager";
+
+const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "projects", "sales", "reports"];
+
+const TAB_LABELS: Record<View, string> = {
+  dashboard: "Dashboard",
+  purchasing: "Purchasing",
+  inventory: "Inventory",
+  projects: "Projects",
+  sales: "Sales",
+  reports: "Reports",
+  admin: "Admin",
+};
+
+// Starting point when a role has no explicit per-user tab override. An admin
+// can grant/restrict any individual user's exact tab list from the Admin page
+// regardless of these defaults.
+const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
+  warehouse: ["dashboard", "inventory", "projects"],
+  purchasing: ["dashboard", "purchasing", "inventory", "reports"],
+  pm: ["dashboard", "projects", "inventory", "sales", "reports"],
+  manager: ["dashboard", "purchasing", "inventory", "projects", "sales", "reports"],
+};
 type SyncStatus = "local" | "auth" | "loading" | "saving" | "synced" | "error";
 
 type InventoryMovement = {
@@ -893,6 +924,12 @@ function App() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [catalogStatus, setCatalogStatus] = useState("");
+  const [authChecksReady, setAuthChecksReady] = useState(false);
+  const [userApprovalStatus, setUserApprovalStatus] = useState<UserStatus | null>(null);
+  const [ownAllowedViews, setOwnAllowedViews] = useState<string[] | null>(null);
+  const [approvalStatuses, setApprovalStatuses] = useState<UserStatus[]>([]);
+  const [allowedViewsMap, setAllowedViewsMap] = useState<Record<string, string[] | null>>({});
+  const [approvalReviewStatus, setApprovalReviewStatus] = useState("");
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -1010,52 +1047,111 @@ function App() {
   }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, purchaseRequests, projectDocuments, roleMode, authSession]);
 
   useEffect(() => {
-    if (!authSession || !isRemotePersistenceConfigured()) {
-      return;
-    }
-
-    loadUserRoleMode(authSession.userId, authSession.accessToken)
-      .then((savedRole) => {
-        if (savedRole && ["warehouse", "purchasing", "pm", "manager"].includes(savedRole)) {
-          setRoleMode(savedRole as RoleMode);
-        }
-      })
-      .catch(() => undefined);
-  }, [authSession]);
-
-  useEffect(() => {
-    if (!authSession || !isRemotePersistenceConfigured()) {
+    if (!authSession || !isRemotePersistenceConfigured() || !isAdmin) {
       return;
     }
 
     void saveUserRoleMode(authSession.userId, roleMode, authSession.accessToken);
-  }, [authSession, roleMode]);
+  }, [authSession, roleMode, isAdmin]);
 
   function reloadAdminDirectory(accessToken: string) {
-    Promise.all([loadAllKnownUsers(accessToken), loadAllUserRoles(accessToken), loadAllAdmins(accessToken)])
-      .then(([users, roles, admins]) => {
+    Promise.all([loadAllKnownUsers(accessToken), loadAllUserRoles(accessToken), loadAllAdmins(accessToken), loadAllAllowedViews(accessToken)])
+      .then(([users, roles, admins, allowedViews]) => {
         setKnownUsers(users);
         setUserRoleMap(roles);
         setAdminIds(admins);
+        setAllowedViewsMap(allowedViews);
       })
       .catch(() => setAdminStatus("Could not load the user directory."));
+  }
+
+  function reloadApprovalQueue(accessToken: string) {
+    loadAllApprovalStatuses(accessToken)
+      .then(setApprovalStatuses)
+      .catch(() => setApprovalReviewStatus("Could not load pending approvals."));
   }
 
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setIsAdmin(false);
+      setAuthChecksReady(false);
+      setUserApprovalStatus(null);
+      setOwnAllowedViews(null);
       return;
     }
 
+    let cancelled = false;
+    setAuthChecksReady(false);
     void upsertKnownUser(authSession.userId, authSession.email, authSession.accessToken);
 
-    checkIsAdmin(authSession.userId, authSession.accessToken).then((adminFlag) => {
+    Promise.all([
+      checkIsAdmin(authSession.userId, authSession.accessToken),
+      loadUserRoleMode(authSession.userId, authSession.accessToken),
+      loadOwnAllowedViews(authSession.userId, authSession.accessToken),
+      ensureOwnApprovalRequest(authSession.userId, authSession.accessToken).then(() =>
+        loadOwnApprovalStatus(authSession.userId, authSession.accessToken),
+      ),
+    ]).then(([adminFlag, savedRole, allowedViews, status]) => {
+      if (cancelled) {
+        return;
+      }
       setIsAdmin(adminFlag);
+      const resolvedRole = savedRole && ["warehouse", "purchasing", "pm", "manager"].includes(savedRole) ? (savedRole as RoleMode) : null;
+      if (resolvedRole) {
+        setRoleMode(resolvedRole);
+      }
+      setOwnAllowedViews(allowedViews);
+      setUserApprovalStatus(status);
+      setAuthChecksReady(true);
       if (adminFlag) {
         reloadAdminDirectory(authSession.accessToken);
       }
+      if (adminFlag || resolvedRole === "manager") {
+        reloadApprovalQueue(authSession.accessToken);
+      }
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [authSession]);
+
+  async function handleReviewApproval(targetUserId: string, status: ApprovalStatus, expiresAt: string | null) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      await reviewUserApproval(targetUserId, status, authSession.userId, expiresAt, authSession.accessToken);
+      setApprovalStatuses((current) => {
+        const existing = current.find((entry) => entry.userId === targetUserId);
+        const updated: UserStatus = {
+          userId: targetUserId,
+          approvalStatus: status,
+          expiresAt,
+          approvedBy: authSession.userId,
+          approvedAt: new Date().toISOString(),
+          requestedAt: existing?.requestedAt ?? new Date().toISOString(),
+        };
+        return existing ? current.map((entry) => (entry.userId === targetUserId ? updated : entry)) : [...current, updated];
+      });
+      setApprovalReviewStatus("Updated.");
+    } catch (error) {
+      setApprovalReviewStatus(error instanceof Error ? error.message : "Could not update approval.");
+    }
+  }
+
+  async function handleSetAllowedViews(userId: string, views: string[] | null) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      await setUserAllowedViews(userId, views, authSession.accessToken);
+      setAllowedViewsMap((current) => ({ ...current, [userId]: views }));
+      setAdminStatus("Tab access updated.");
+    } catch (error) {
+      setAdminStatus(error instanceof Error ? error.message : "Could not update tab access.");
+    }
+  }
 
   async function handleSetUserRole(userId: string, roleKey: string) {
     if (!authSession) {
@@ -1992,6 +2088,53 @@ function App() {
     );
   }
 
+  if (authSession && isRemotePersistenceConfigured() && !authChecksReady) {
+    return (
+      <div className="auth-gate">
+        <div className="auth-gate-card">
+          <img className="auth-gate-logo" src="/ergon-logo.png" alt="Ergon" />
+          <p className="muted auth-gate-loading">Checking your account...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isApproved =
+    isAdmin ||
+    (userApprovalStatus?.approvalStatus === "approved" &&
+      (!userApprovalStatus.expiresAt || new Date(userApprovalStatus.expiresAt).getTime() > Date.now()));
+
+  if (authSession && isRemotePersistenceConfigured() && !isApproved) {
+    const isExpired = Boolean(
+      userApprovalStatus?.approvalStatus === "approved" && userApprovalStatus.expiresAt && new Date(userApprovalStatus.expiresAt).getTime() <= Date.now(),
+    );
+    const isDenied = userApprovalStatus?.approvalStatus === "denied";
+    return (
+      <div className="auth-gate">
+        <div className="auth-gate-card">
+          <img className="auth-gate-logo" src="/ergon-logo.png" alt="Ergon" />
+          <h2>{isDenied ? "Access denied" : isExpired ? "Access expired" : "Waiting for approval"}</h2>
+          <p className="muted">
+            {isDenied
+              ? "A Manager or Admin has denied access for this account. Contact your Ergon admin if you believe this is a mistake."
+              : isExpired
+                ? "Your access has expired. Ask a Manager or Admin to renew it."
+                : "Your account is signed in but a Manager or Admin needs to approve access before you can use Ergon."}
+          </p>
+          <div className="auth-gate-actions">
+            <button className="secondary-action" type="button" onClick={handleSignOut}>Sign out</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const allowedTabs: View[] = isAdmin
+    ? ALL_TABS
+    : ((ownAllowedViews && ownAllowedViews.length > 0 ? ownAllowedViews : DEFAULT_TABS_BY_ROLE[roleMode]) as View[]);
+  const isManagerRole = authChecksReady && roleMode === "manager";
+  const canReviewApprovals = isAdmin || isManagerRole;
+
   return (
     <div className="app-shell">
       <header className="top-nav">
@@ -2004,12 +2147,12 @@ function App() {
             </div>
           </div>
           <nav className="nav-list">
-            <NavButton icon={<LayoutDashboard size={16} />} label="Dashboard" active={view === "dashboard"} onClick={() => navigateToView("dashboard")} />
-            <NavButton icon={<ShoppingCart size={16} />} label="Purchasing" active={view === "purchasing"} onClick={() => navigateToView("purchasing")} />
-            <NavButton icon={<Boxes size={16} />} label="Inventory" active={view === "inventory"} onClick={() => navigateToView("inventory")} />
-            <NavButton icon={<ClipboardList size={16} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />
-            <NavButton icon={<DollarSign size={16} />} label="Sales" active={view === "sales"} onClick={() => navigateToView("sales")} />
-            <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />
+            {allowedTabs.includes("dashboard") && <NavButton icon={<LayoutDashboard size={16} />} label="Dashboard" active={view === "dashboard"} onClick={() => navigateToView("dashboard")} />}
+            {allowedTabs.includes("purchasing") && <NavButton icon={<ShoppingCart size={16} />} label="Purchasing" active={view === "purchasing"} onClick={() => navigateToView("purchasing")} />}
+            {allowedTabs.includes("inventory") && <NavButton icon={<Boxes size={16} />} label="Inventory" active={view === "inventory"} onClick={() => navigateToView("inventory")} />}
+            {allowedTabs.includes("projects") && <NavButton icon={<ClipboardList size={16} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />}
+            {allowedTabs.includes("sales") && <NavButton icon={<DollarSign size={16} />} label="Sales" active={view === "sales"} onClick={() => navigateToView("sales")} />}
+            {allowedTabs.includes("reports") && <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />}
           </nav>
           <div className="top-nav-actions">
             <div className={`sync-status ${syncStatus}`}>
@@ -2023,7 +2166,7 @@ function App() {
               {accountMenuOpen && (
                 <div className="account-menu-panel">
                   <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}><option value="warehouse">Warehouse</option><option value="purchasing">Purchasing</option><option value="pm">PM</option><option value="manager">Manager</option></select></label>
-                  {isAdmin && (
+                  {canReviewApprovals && (
                     <button
                       className={`secondary-action mini-action account-menu-admin-link ${view === "admin" ? "active" : ""}`}
                       type="button"
@@ -2073,11 +2216,11 @@ function App() {
           <p>Purchasing, inventory, project transfers, and reports for field packages.</p>
         </div>
 
-        {view === "dashboard" && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
-        {view === "purchasing" && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
-        {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
-        {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} />}
-        {view === "sales" && (
+        {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
+        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
+        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} />}
+        {view === "sales" && allowedTabs.includes("sales") && (
           <SalesCatalog
             catalogItems={catalogItems}
             status={catalogStatus}
@@ -2088,18 +2231,31 @@ function App() {
             onRefresh={() => authSession && reloadCatalog(authSession.accessToken)}
           />
         )}
-        {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} />}
-        {view === "admin" && isAdmin && (
+        {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} />}
+        {view === "admin" && canReviewApprovals && (
           <AdminPage
             currentUserId={authSession?.userId ?? ""}
+            isAdmin={isAdmin}
+            isManagerRole={isManagerRole}
             knownUsers={knownUsers}
             userRoleMap={userRoleMap}
             adminIds={adminIds}
+            allowedViewsMap={allowedViewsMap}
+            approvalStatuses={approvalStatuses}
             status={adminStatus}
+            approvalStatusMessage={approvalReviewStatus}
             onSetRole={handleSetUserRole}
             onGrantAdmin={handleGrantAdmin}
             onRevokeAdmin={handleRevokeAdmin}
-            onRefresh={() => authSession && reloadAdminDirectory(authSession.accessToken)}
+            onSetAllowedViews={handleSetAllowedViews}
+            onReviewApproval={handleReviewApproval}
+            onRefresh={() => {
+              if (!authSession) {
+                return;
+              }
+              reloadAdminDirectory(authSession.accessToken);
+              reloadApprovalQueue(authSession.accessToken);
+            }}
           />
         )}
       </main>
@@ -5074,47 +5230,141 @@ const ROLE_KEY_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "manager", label: "Manager" },
 ];
 
+function PendingApprovalRow({
+  user,
+  onApprove,
+  onDeny,
+}: {
+  user: KnownUser;
+  onApprove: (roleKey: string, expiresAt: string | null) => void;
+  onDeny: () => void;
+}) {
+  const [roleKey, setRoleKey] = useState("warehouse");
+  const [expiresOn, setExpiresOn] = useState("");
+
+  return (
+    <tr>
+      <td>{user.email}</td>
+      <td>
+        <select value={roleKey} onChange={(event) => setRoleKey(event.target.value)}>
+          {ROLE_KEY_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </td>
+      <td><input type="date" value={expiresOn} onChange={(event) => setExpiresOn(event.target.value)} /></td>
+      <td>
+        <button className="primary-action mini-action" type="button" onClick={() => onApprove(roleKey, expiresOn ? new Date(expiresOn).toISOString() : null)}>Approve</button>
+        <button className="secondary-action mini-action" type="button" onClick={onDeny}>Deny</button>
+      </td>
+    </tr>
+  );
+}
+
 function AdminPage({
   currentUserId,
+  isAdmin,
+  isManagerRole,
   knownUsers,
   userRoleMap,
   adminIds,
+  allowedViewsMap,
+  approvalStatuses,
   status,
+  approvalStatusMessage,
   onSetRole,
   onGrantAdmin,
   onRevokeAdmin,
+  onSetAllowedViews,
+  onReviewApproval,
   onRefresh,
 }: {
   currentUserId: string;
+  isAdmin: boolean;
+  isManagerRole: boolean;
   knownUsers: KnownUser[];
   userRoleMap: Record<string, string>;
   adminIds: string[];
+  allowedViewsMap: Record<string, string[] | null>;
+  approvalStatuses: UserStatus[];
   status: string;
+  approvalStatusMessage: string;
   onSetRole: (userId: string, roleKey: string) => void;
   onGrantAdmin: (userId: string) => void;
   onRevokeAdmin: (userId: string) => void;
+  onSetAllowedViews: (userId: string, views: string[] | null) => void;
+  onReviewApproval: (userId: string, status: ApprovalStatus, expiresAt: string | null) => void;
   onRefresh: () => void;
 }) {
+  const usersByid = new Map(knownUsers.map((user) => [user.userId, user]));
+  const approvalByUserId = new Map(approvalStatuses.map((entry) => [entry.userId, entry]));
+  const pendingUsers = approvalStatuses
+    .filter((entry) => entry.approvalStatus === "pending" && !adminIds.includes(entry.userId))
+    .map((entry) => usersByid.get(entry.userId))
+    .filter((user): user is KnownUser => Boolean(user));
+
   return (
     <div className="content-grid">
       <section className="panel wide">
-        <PanelHeader title="Admin" label="Assign roles and admin access for every user who has signed in" />
+        <PanelHeader title="Pending Approvals" label="New sign-ins wait here until a Manager or Admin lets them in" />
         <div className="report-filter-row">
-          <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh directory</button>
-          {status && <span className="muted">{status}</span>}
+          <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
+          {approvalStatusMessage && <span className="muted">{approvalStatusMessage}</span>}
         </div>
         <table>
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Assign role</th>
+              <th>Expires (optional)</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {pendingUsers.map((user) => (
+              <PendingApprovalRow
+                key={user.userId}
+                user={user}
+                onApprove={(roleKey, expiresAt) => {
+                  onSetRole(user.userId, roleKey);
+                  onReviewApproval(user.userId, "approved", expiresAt);
+                }}
+                onDeny={() => onReviewApproval(user.userId, "denied", null)}
+              />
+            ))}
+            {pendingUsers.length === 0 && (
+              <tr>
+                <td colSpan={4} className="empty-compact-state">No one is waiting for approval.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      {isAdmin && (
+        <section className="panel wide">
+          <PanelHeader title="Admin" label="Assign roles, tab access, and admin rights for every user who has signed in" />
+          <div className="report-filter-row">
+            <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh directory</button>
+            {status && <span className="muted">{status}</span>}
+          </div>
+          <table>
             <thead>
               <tr>
                 <th>Email</th>
                 <th>Role</th>
+                <th>Tab access</th>
                 <th>Admin</th>
+                <th>Approval</th>
                 <th>Last seen</th>
               </tr>
             </thead>
             <tbody>
               {knownUsers.map((user) => {
                 const isUserAdmin = adminIds.includes(user.userId);
+                const approval = approvalByUserId.get(user.userId);
+                const override = allowedViewsMap[user.userId] ?? null;
+                const effectiveViews = override && override.length > 0 ? override : DEFAULT_TABS_BY_ROLE[(userRoleMap[user.userId] as RoleMode) ?? "warehouse"];
                 return (
                   <tr key={user.userId}>
                     <td>{user.email}{user.userId === currentUserId ? " (you)" : ""}</td>
@@ -5128,6 +5378,28 @@ function AdminPage({
                           <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
+                    </td>
+                    <td>
+                      <div className="tab-permission-grid">
+                        {ALL_TABS.map((tab) => (
+                          <label key={tab} className="checkbox-inline">
+                            <input
+                              type="checkbox"
+                              checked={effectiveViews.includes(tab)}
+                              onChange={(event) => {
+                                const next = new Set(effectiveViews);
+                                if (event.target.checked) {
+                                  next.add(tab);
+                                } else {
+                                  next.delete(tab);
+                                }
+                                onSetAllowedViews(user.userId, Array.from(next));
+                              }}
+                            />
+                            {TAB_LABELS[tab]}
+                          </label>
+                        ))}
+                      </div>
                     </td>
                     <td>
                       {isUserAdmin ? (
@@ -5145,20 +5417,31 @@ function AdminPage({
                         </button>
                       )}
                     </td>
+                    <td>
+                      {approval?.approvalStatus ?? "-"}
+                      {approval?.expiresAt ? ` (until ${new Date(approval.expiresAt).toLocaleDateString()})` : ""}
+                    </td>
                     <td>{new Date(user.lastSeenAt).toLocaleString()}</td>
                   </tr>
                 );
               })}
               {knownUsers.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="empty-compact-state">
+                  <td colSpan={6} className="empty-compact-state">
                     No users have signed in yet. Users appear here automatically the first time they sign in.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
-      </section>
+        </section>
+      )}
+
+      {!isAdmin && isManagerRole && (
+        <section className="panel wide">
+          <p className="muted">Full role and tab-access management is limited to Admins. As a Manager, you can approve or deny new sign-ins above.</p>
+        </section>
+      )}
     </div>
   );
 }

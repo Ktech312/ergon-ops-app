@@ -323,6 +323,45 @@ export async function loadUserRoleMode(userId: string, accessToken?: string) {
   return rows[0]?.role_key ?? null;
 }
 
+export async function loadOwnAllowedViews(userId: string, accessToken?: string): Promise<string[] | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+
+  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&select=allowed_views&limit=1`), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const rows = (await response.json()) as Array<{ allowed_views?: string[] | null }>;
+  return rows[0]?.allowed_views ?? null;
+}
+
+// Requires the target user to already have an app_user_roles row (assign a
+// role first). PATCH only updates an existing row rather than risking an
+// insert that is missing the required role_key.
+export async function setUserAllowedViews(userId: string, allowedViews: string[] | null, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({
+      allowed_views: allowedViews,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not update tab permissions: ${response.status}`);
+  }
+}
+
 export async function saveUserRoleMode(userId: string, roleKey: string, accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
@@ -418,6 +457,27 @@ export async function loadAllUserRoles(accessToken?: string): Promise<Record<str
   const map: Record<string, string> = {};
   rows.forEach((row) => {
     map[row.user_id] = row.role_key;
+  });
+  return map;
+}
+
+export async function loadAllAllowedViews(accessToken?: string): Promise<Record<string, string[] | null>> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return {};
+  }
+
+  const response = await fetch(supabaseUrl("app_user_roles?select=user_id,allowed_views"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return {};
+  }
+
+  const rows = (await response.json()) as Array<{ user_id: string; allowed_views: string[] | null }>;
+  const map: Record<string, string[] | null> = {};
+  rows.forEach((row) => {
+    map[row.user_id] = row.allowed_views;
   });
   return map;
 }
@@ -651,6 +711,116 @@ export async function setCatalogItemRetired(id: string, retired: boolean, access
       retired_at: retired ? new Date().toISOString() : null,
     }),
   });
+}
+
+export type ApprovalStatus = "pending" | "approved" | "denied";
+
+export type UserStatus = {
+  userId: string;
+  approvalStatus: ApprovalStatus;
+  expiresAt: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  requestedAt: string;
+};
+
+type UserStatusRow = {
+  user_id: string;
+  approval_status: ApprovalStatus;
+  expires_at: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  requested_at: string;
+};
+
+function mapUserStatusRow(row: UserStatusRow): UserStatus {
+  return {
+    userId: row.user_id,
+    approvalStatus: row.approval_status,
+    expiresAt: row.expires_at,
+    approvedBy: row.approved_by,
+    approvedAt: row.approved_at,
+    requestedAt: row.requested_at,
+  };
+}
+
+// Creates a pending-approval row for the current user if one doesn't already
+// exist. Safe to call every sign-in: a 409 conflict on the unique user_id just
+// means the row is already there, which is not an error worth surfacing.
+export async function ensureOwnApprovalRequest(userId: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  await fetch(supabaseUrl("app_user_status"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "resolution=ignore-duplicates",
+    },
+    body: JSON.stringify({ user_id: userId }),
+  }).catch(() => undefined);
+}
+
+export async function loadOwnApprovalStatus(userId: string, accessToken?: string): Promise<UserStatus | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+
+  const response = await fetch(supabaseUrl(`app_user_status?user_id=eq.${userId}&select=*`), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const rows = (await response.json()) as UserStatusRow[];
+  return rows[0] ? mapUserStatusRow(rows[0]) : null;
+}
+
+export async function loadAllApprovalStatuses(accessToken?: string): Promise<UserStatus[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("app_user_status?select=*"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as UserStatusRow[];
+  return rows.map(mapUserStatusRow);
+}
+
+export async function reviewUserApproval(
+  targetUserId: string,
+  approvalStatus: ApprovalStatus,
+  reviewerUserId: string,
+  expiresAt: string | null,
+  accessToken?: string,
+) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  const response = await fetch(supabaseUrl(`app_user_status?user_id=eq.${targetUserId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({
+      approval_status: approvalStatus,
+      expires_at: expiresAt,
+      approved_by: reviewerUserId,
+      approved_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not update approval status: ${response.status}`);
+  }
 }
 
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
