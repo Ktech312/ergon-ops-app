@@ -1444,6 +1444,8 @@ td small {
   display: grid;
   gap: 6px;
   justify-items: center;
+  margin: 0 auto;
+  max-width: 460px;
   min-height: 100px;
   padding: 16px;
   position: relative;
@@ -1867,7 +1869,14 @@ td small {
   border-radius: 8px;
   color: #756d62;
   font-size: 13px;
+  margin: 0 auto;
+  max-width: 560px;
   padding: 10px 12px;
+  text-align: center;
+}
+
+td.empty-compact-state {
+  max-width: none;
 }
 
 .tag-picker-grid {
