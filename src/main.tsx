@@ -24,26 +24,35 @@ import {
 import {
   isRemotePersistenceConfigured,
   acquireTransactionLock,
+  checkIsAdmin,
   consumeOAuthRedirectSession,
+  grantAdmin,
+  loadAllAdmins,
+  loadAllKnownUsers,
+  loadAllUserRoles,
   loadAuthSession,
   loadLocalAppState,
   loadRemoteAppState,
   loadUserRoleMode,
   refreshAuthSession,
+  revokeAdmin,
   saveLocalAppState,
   saveRemoteAppState,
   saveUserRoleMode,
   releaseTransactionLock,
+  setUserRole,
   signInWithGoogleRedirect,
   signInWithPassword,
   signOut,
   signUpWithPassword,
+  upsertKnownUser,
   type AuthSession,
+  type KnownUser,
   type PersistedAppState,
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "projects" | "reports";
+type View = "dashboard" | "purchasing" | "inventory" | "projects" | "reports" | "admin";
 
 type PurchaseUrl = {
   id: number;
@@ -799,7 +808,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "projects", "reports"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "projects", "reports", "admin"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -870,6 +879,11 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [authStatus, setAuthStatus] = useState("Sign in to use production cloud persistence.");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => (isRemotePersistenceConfigured() ? "loading" : "local"));
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
+  const [userRoleMap, setUserRoleMap] = useState<Record<string, string>>({});
+  const [adminIds, setAdminIds] = useState<string[]>([]);
+  const [adminStatus, setAdminStatus] = useState("");
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -1007,6 +1021,75 @@ function App() {
 
     void saveUserRoleMode(authSession.userId, roleMode, authSession.accessToken);
   }, [authSession, roleMode]);
+
+  function reloadAdminDirectory(accessToken: string) {
+    Promise.all([loadAllKnownUsers(accessToken), loadAllUserRoles(accessToken), loadAllAdmins(accessToken)])
+      .then(([users, roles, admins]) => {
+        setKnownUsers(users);
+        setUserRoleMap(roles);
+        setAdminIds(admins);
+      })
+      .catch(() => setAdminStatus("Could not load the user directory."));
+  }
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setIsAdmin(false);
+      return;
+    }
+
+    void upsertKnownUser(authSession.userId, authSession.email, authSession.accessToken);
+
+    checkIsAdmin(authSession.userId, authSession.accessToken).then((adminFlag) => {
+      setIsAdmin(adminFlag);
+      if (adminFlag) {
+        reloadAdminDirectory(authSession.accessToken);
+      }
+    });
+  }, [authSession]);
+
+  async function handleSetUserRole(userId: string, roleKey: string) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      await setUserRole(userId, roleKey, authSession.accessToken);
+      setUserRoleMap((current) => ({ ...current, [userId]: roleKey }));
+      setAdminStatus("Role updated.");
+    } catch (error) {
+      setAdminStatus(error instanceof Error ? error.message : "Could not update role.");
+    }
+  }
+
+  async function handleGrantAdmin(userId: string) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      await grantAdmin(userId, authSession.accessToken);
+      setAdminIds((current) => (current.includes(userId) ? current : [...current, userId]));
+      setAdminStatus("Admin access granted.");
+    } catch (error) {
+      setAdminStatus(error instanceof Error ? error.message : "Could not grant admin access.");
+    }
+  }
+
+  async function handleRevokeAdmin(userId: string) {
+    if (!authSession) {
+      return;
+    }
+    if (userId === authSession.userId) {
+      setAdminStatus("You cannot remove your own admin access from this screen.");
+      return;
+    }
+    try {
+      await revokeAdmin(userId, authSession.accessToken);
+      setAdminIds((current) => current.filter((id) => id !== userId));
+      setAdminStatus("Admin access removed.");
+    } catch (error) {
+      setAdminStatus(error instanceof Error ? error.message : "Could not remove admin access.");
+    }
+  }
 
   useEffect(() => {
     if (!window.location.hash) {
@@ -1829,6 +1912,35 @@ function App() {
     setSyncStatus(isRemotePersistenceConfigured() ? "auth" : "local");
   }
 
+  const requiresSignIn = isRemotePersistenceConfigured() && !authSession;
+
+  if (requiresSignIn) {
+    return (
+      <div className="auth-gate">
+        <div className="auth-gate-card">
+          <div className="brand">
+            <div className="brand-mark">E</div>
+            <div>
+              <div className="brand-title">Ergon</div>
+              <div className="brand-subtitle">Ops Command</div>
+            </div>
+          </div>
+          <h2>Sign in to continue</h2>
+          <p className="muted">Inventory, purchasing, projects, and reports are only visible after you sign in.</p>
+          <label className="auth-gate-field">Email<input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="you@company.com" type="email" autoComplete="email" /></label>
+          <label className="auth-gate-field">Password<input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Password" type="password" autoComplete="current-password" /></label>
+          <div className="auth-gate-actions">
+            <button className="primary-action" type="button" onClick={handleSignIn} disabled={!authEmail || !authPassword}>Sign in</button>
+            <button className="secondary-action" type="button" onClick={handleSignUp} disabled={!authEmail || !authPassword}>Create user</button>
+          </div>
+          <div className="auth-gate-divider">or</div>
+          <button className="secondary-action auth-gate-google" type="button" onClick={handleGoogleSignIn}>Sign in with Google</button>
+          <small className="auth-gate-status">{authStatus}</small>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -1845,6 +1957,7 @@ function App() {
           <NavButton icon={<Boxes size={18} />} label="Inventory" active={view === "inventory"} onClick={() => navigateToView("inventory")} />
           <NavButton icon={<ClipboardList size={18} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />
           <NavButton icon={<BarChart3 size={18} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />
+          {isAdmin && <NavButton icon={<User size={18} />} label="Admin" active={view === "admin"} onClick={() => navigateToView("admin")} />}
         </nav>
       </aside>
 
@@ -1890,6 +2003,19 @@ function App() {
         {view === "inventory" && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
         {view === "projects" && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} />}
         {view === "reports" && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} />}
+        {view === "admin" && isAdmin && (
+          <AdminPage
+            currentUserId={authSession?.userId ?? ""}
+            knownUsers={knownUsers}
+            userRoleMap={userRoleMap}
+            adminIds={adminIds}
+            status={adminStatus}
+            onSetRole={handleSetUserRole}
+            onGrantAdmin={handleGrantAdmin}
+            onRevokeAdmin={handleRevokeAdmin}
+            onRefresh={() => authSession && reloadAdminDirectory(authSession.accessToken)}
+          />
+        )}
       </main>
     </div>
   );
@@ -1911,6 +2037,7 @@ function pageTitle(view: View) {
     inventory: "Inventory",
     projects: "Projects",
     reports: "Reports",
+    admin: "Admin",
   };
   return titles[view];
 }
@@ -4849,6 +4976,102 @@ function Reports({
           {filteredProjectDocuments.length === 0 && <div className="empty-compact-state">No project documents match the current filters.</div>}
         </div>
       </section>}
+    </div>
+  );
+}
+
+const ROLE_KEY_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "warehouse", label: "Warehouse" },
+  { value: "purchasing", label: "Purchasing" },
+  { value: "pm", label: "PM" },
+  { value: "manager", label: "Manager" },
+];
+
+function AdminPage({
+  currentUserId,
+  knownUsers,
+  userRoleMap,
+  adminIds,
+  status,
+  onSetRole,
+  onGrantAdmin,
+  onRevokeAdmin,
+  onRefresh,
+}: {
+  currentUserId: string;
+  knownUsers: KnownUser[];
+  userRoleMap: Record<string, string>;
+  adminIds: string[];
+  status: string;
+  onSetRole: (userId: string, roleKey: string) => void;
+  onGrantAdmin: (userId: string) => void;
+  onRevokeAdmin: (userId: string) => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="content-grid">
+      <section className="panel wide">
+        <PanelHeader title="Admin" label="Assign roles and admin access for every user who has signed in" />
+        <div className="report-filter-row">
+          <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh directory</button>
+          {status && <span className="muted">{status}</span>}
+        </div>
+        <table>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Admin</th>
+                <th>Last seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {knownUsers.map((user) => {
+                const isUserAdmin = adminIds.includes(user.userId);
+                return (
+                  <tr key={user.userId}>
+                    <td>{user.email}{user.userId === currentUserId ? " (you)" : ""}</td>
+                    <td>
+                      <select
+                        value={userRoleMap[user.userId] ?? ""}
+                        onChange={(event) => onSetRole(user.userId, event.target.value)}
+                      >
+                        <option value="" disabled>Not set</option>
+                        {ROLE_KEY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      {isUserAdmin ? (
+                        <button
+                          className="secondary-action mini-action"
+                          type="button"
+                          onClick={() => onRevokeAdmin(user.userId)}
+                          disabled={user.userId === currentUserId}
+                        >
+                          Remove admin
+                        </button>
+                      ) : (
+                        <button className="secondary-action mini-action" type="button" onClick={() => onGrantAdmin(user.userId)}>
+                          Make admin
+                        </button>
+                      )}
+                    </td>
+                    <td>{new Date(user.lastSeenAt).toLocaleString()}</td>
+                  </tr>
+                );
+              })}
+              {knownUsers.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="empty-compact-state">
+                    No users have signed in yet. Users appear here automatically the first time they sign in.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+      </section>
     </div>
   );
 }

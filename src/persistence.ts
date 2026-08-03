@@ -342,6 +342,160 @@ export async function saveUserRoleMode(userId: string, roleKey: string, accessTo
   });
 }
 
+export type KnownUser = {
+  userId: string;
+  email: string;
+  lastSeenAt: string;
+};
+
+export async function upsertKnownUser(userId: string, email: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  await fetch(supabaseUrl("app_known_users?on_conflict=user_id"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "resolution=merge-duplicates",
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      email,
+      last_seen_at: new Date().toISOString(),
+    }),
+  }).catch(() => undefined);
+}
+
+export async function checkIsAdmin(userId: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+
+  const response = await fetch(supabaseUrl(`app_admins?user_id=eq.${userId}&select=user_id`), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return false;
+  }
+
+  const rows = (await response.json()) as Array<{ user_id?: string }>;
+  return rows.length > 0;
+}
+
+export async function loadAllKnownUsers(accessToken?: string): Promise<KnownUser[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("app_known_users?select=user_id,email,last_seen_at&order=email.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as Array<{ user_id: string; email: string; last_seen_at: string }>;
+  return rows.map((row) => ({ userId: row.user_id, email: row.email, lastSeenAt: row.last_seen_at }));
+}
+
+export async function loadAllUserRoles(accessToken?: string): Promise<Record<string, string>> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return {};
+  }
+
+  const response = await fetch(supabaseUrl("app_user_roles?select=user_id,role_key"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return {};
+  }
+
+  const rows = (await response.json()) as Array<{ user_id: string; role_key: string }>;
+  const map: Record<string, string> = {};
+  rows.forEach((row) => {
+    map[row.user_id] = row.role_key;
+  });
+  return map;
+}
+
+export async function loadAllAdmins(accessToken?: string): Promise<string[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("app_admins?select=user_id"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as Array<{ user_id: string }>;
+  return rows.map((row) => row.user_id);
+}
+
+export async function setUserRole(userId: string, roleKey: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  const response = await fetch(supabaseUrl("app_user_roles?on_conflict=user_id"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "resolution=merge-duplicates",
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      role_key: roleKey,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not update role: ${response.status}`);
+  }
+}
+
+export async function grantAdmin(userId: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  const response = await fetch(supabaseUrl("app_admins?on_conflict=user_id"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "resolution=merge-duplicates",
+    },
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not grant admin: ${response.status}`);
+  }
+}
+
+export async function revokeAdmin(userId: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  const response = await fetch(supabaseUrl(`app_admins?user_id=eq.${userId}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not revoke admin: ${response.status}`);
+  }
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;

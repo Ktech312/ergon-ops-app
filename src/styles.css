@@ -27,6 +27,74 @@ button {
   min-height: 100vh;
 }
 
+.auth-gate {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.auth-gate-card {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #ded7cb;
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(23, 76, 67, 0.12);
+  display: grid;
+  gap: 14px;
+  padding: 32px;
+  width: 100%;
+  max-width: 380px;
+}
+
+.auth-gate-card h2 {
+  margin: 4px 0 0;
+}
+
+.auth-gate-card p {
+  margin: 0 0 8px;
+}
+
+.auth-gate-field {
+  display: grid;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 6px;
+}
+
+.auth-gate-field input {
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 400;
+  padding: 10px 12px;
+}
+
+.auth-gate-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.auth-gate-actions button {
+  flex: 1;
+}
+
+.auth-gate-divider {
+  color: #756d62;
+  font-size: 12px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.auth-gate-google {
+  width: 100%;
+}
+
+.auth-gate-status {
+  color: #756d62;
+  text-align: center;
+}
+
 .sidebar {
   border-right: 1px solid #ded7cb;
   background: rgba(255, 255, 255, 0.78);

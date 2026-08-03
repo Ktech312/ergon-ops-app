@@ -307,6 +307,24 @@ Current status:
 
 - Supabase auth helpers exist.
 - Sign-in/create-user UI exists.
+- Google sign-in exists via Supabase OAuth redirect (`signInWithGoogleRedirect` /
+  `consumeOAuthRedirectSession` in `src/persistence.ts`). Requires a Google Cloud
+  OAuth client (published to Production, not Testing) and the Google provider
+  enabled in Supabase with that client ID/secret.
+- The app now hard-gates behind sign-in: if Supabase env vars are configured and
+  no session exists, the user sees a dedicated sign-in screen (`requiresSignIn`
+  in `src/main.tsx`) instead of the full app shell. No inventory/project/
+  purchasing data renders before authentication.
+- An Admin page exists (`AdminPage` in `src/main.tsx`, nav item only shown to
+  admins) backed by three new tables from migration `012`:
+  - `app_admins`: explicit admin allowlist.
+  - `app_known_users`: directory of every user who has signed in (id + email),
+    since `auth.users` is not exposed through the REST API. Each user upserts
+    their own row on sign-in.
+  - RLS additions on `app_user_roles` so admins can read/write everyone's role,
+    not just their own.
+  - An admin can assign warehouse/purchasing/pm/manager roles to any known user
+    and grant/revoke admin access to other users.
 - Role view selector exists for:
   - Warehouse
   - Purchasing
@@ -317,10 +335,15 @@ Current status:
 
 Needs improvement:
 
-- Role views are not yet true security enforcement.
-- Real permissions must be enforced in Supabase RLS and/or server functions.
+- Role views are still a UI convenience, not enforced permissions. Being an
+  "admin" only unlocks the Admin page and role-assignment API calls; it does not
+  yet restrict what warehouse/purchasing/pm/manager can each do inside the rest
+  of the app. That is Phase 9.
+- There is no bootstrap UI for the very first admin. After creating the first
+  real account, run this once in Supabase SQL Editor to seed the first admin:
+  `insert into app_admins (user_id) select id from auth.users where email = '<first admin email>';`
 - External public/client access is not built.
-- Invite/user management is not built.
+- Invite/user management (removing a user, resending invites) is not built.
 
 ## Database Foundation Already Added
 
@@ -336,6 +359,8 @@ Existing Supabase migrations include:
 - `008_persistence_documents_and_transaction_safety.sql`
 - `009_production_auth_records_and_rls.sql`
 - `010_user_role_assignments.sql`
+- `011_direct_project_purchase_requests.sql`
+- `012_admin_roles_and_user_directory.sql`
 
 Important concepts already represented:
 
@@ -747,11 +772,31 @@ If continuing immediately, build in this order:
        report sections use filtered datasets.
      - CSV exports use the same filtered datasets so exported files match what
        the user is reviewing.
-6. [ ] Product catalog table and UI.
-7. [ ] Sales quote builder shell.
-8. [ ] Field photo offline queue.
-9. [ ] Taskboard data model.
-10. [ ] Basic PM task list view.
+6. [x] Google sign-in.
+   - Added in `src/persistence.ts` (`signInWithGoogleRedirect`,
+     `consumeOAuthRedirectSession`) and wired into the sign-in screen in
+     `src/main.tsx`.
+   - Requires a Google Cloud OAuth client (Production publishing status, not
+     Testing) with redirect URI `https://hnjxvsxsxoowhegcqurf.supabase.co/auth/v1/callback`,
+     and the Google provider enabled in Supabase with that client ID/secret.
+7. [x] Real sign-in gate (no data visible while signed out).
+   - `requiresSignIn` in `src/main.tsx` now renders a dedicated sign-in screen
+     instead of the app shell whenever Supabase is configured and there is no
+     session. Previously the full app rendered regardless of auth state.
+8. [x] Admin page for role assignment.
+   - New migration `012_admin_roles_and_user_directory.sql` adds `app_admins`
+     and `app_known_users`, plus RLS letting admins read/write everyone's role
+     in `app_user_roles`.
+   - `AdminPage` component in `src/main.tsx`, nav item only visible to admins.
+   - First admin must be bootstrapped manually via SQL (see Authentication/
+     Roles section above) since there is no admin yet on a fresh database.
+9. [ ] Product catalog table and UI.
+10. [ ] Sales quote builder shell.
+11. [ ] Field photo offline queue.
+12. [ ] Taskboard data model.
+13. [ ] Basic PM task list view.
+14. [ ] Real per-role permission enforcement (Phase 9) beyond the admin/
+    non-admin split now in place.
 
 ## Developer Guardrails
 
@@ -773,16 +818,21 @@ If continuing immediately, build in this order:
 
 Before calling this production-ready for team use:
 
-- Supabase migrations `001` through `011` applied.
-- Vercel env vars configured:
+- [x] Supabase migrations `001` through `012` applied (Ergon project
+      `hnjxvsxsxoowhegcqurf`).
+- [x] Vercel env vars configured:
   - `VITE_SUPABASE_URL`
   - `VITE_SUPABASE_ANON_KEY`
-  - `OPENAI_API_KEY` if AI quote extraction is enabled
+  - `OPENAI_API_KEY` if AI quote extraction is enabled (not yet configured)
   - `OPENAI_MODEL` optional
-- Supabase Auth enabled.
-- At least one owner/admin user created.
-- RLS reviewed for the current security stage.
-- Vercel production deployment verified.
+- [x] Supabase Auth enabled (email/password + Google OAuth).
+- [ ] At least one owner/admin user created. Create the first real account
+      through the app, then run the bootstrap SQL in the Authentication/Roles
+      section above to make that account an admin.
+- [ ] RLS reviewed for the current security stage. Role views (warehouse/
+      purchasing/pm/manager) are still UI-only; only the admin/non-admin split
+      is enforced at the database level so far.
+- [x] Vercel production deployment verified.
 - Mobile browser checks completed for:
   - Inventory
   - Equipment BOM modal
