@@ -24,6 +24,7 @@ import {
 import {
   isRemotePersistenceConfigured,
   acquireTransactionLock,
+  consumeOAuthRedirectSession,
   loadAuthSession,
   loadLocalAppState,
   loadRemoteAppState,
@@ -33,6 +34,7 @@ import {
   saveRemoteAppState,
   saveUserRoleMode,
   releaseTransactionLock,
+  signInWithGoogleRedirect,
   signInWithPassword,
   signOut,
   signUpWithPassword,
@@ -871,6 +873,30 @@ function App() {
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
+
+  useEffect(() => {
+    if (!isRemotePersistenceConfigured()) {
+      return;
+    }
+    let cancelled = false;
+    consumeOAuthRedirectSession()
+      .then((session) => {
+        if (session && !cancelled) {
+          setAuthSession(session);
+          setAuthStatus(`Signed in as ${session.email}.`);
+          setSyncStatus("loading");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAuthStatus(error instanceof Error ? error.message : "Google sign-in failed.");
+          setSyncStatus("error");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1769,6 +1795,16 @@ function App() {
     }
   }
 
+  function handleGoogleSignIn() {
+    try {
+      setAuthStatus("Redirecting to Google...");
+      signInWithGoogleRedirect();
+    } catch (error) {
+      setAuthStatus(error instanceof Error ? error.message : "Google sign-in is not available yet.");
+      setSyncStatus("error");
+    }
+  }
+
   async function handleSignUp() {
     try {
       const session = await signUpWithPassword(authEmail.trim(), authPassword);
@@ -1834,6 +1870,7 @@ function App() {
                 <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Password" type="password" />
                 <button className="secondary-action mini-action" type="button" onClick={handleSignIn} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Sign in</button>
                 <button className="secondary-action mini-action" type="button" onClick={handleSignUp} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Create user</button>
+                <button className="secondary-action mini-action" type="button" onClick={handleGoogleSignIn} disabled={!isRemotePersistenceConfigured()}>Sign in with Google</button>
               </>
             )}
             <small>{isRemotePersistenceConfigured() ? authStatus : "Set Supabase env vars for production cloud storage."}</small>

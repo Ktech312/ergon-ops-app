@@ -181,6 +181,81 @@ export async function refreshAuthSession(session: AuthSession): Promise<AuthSess
   return refreshed;
 }
 
+export function signInWithGoogleRedirect() {
+  if (!isRemotePersistenceConfigured()) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const redirectTo = `${window.location.origin}${window.location.pathname}`;
+  const authorizeUrl = `${supabaseAuthUrl("authorize")}?provider=google&redirect_to=${encodeURIComponent(redirectTo)}`;
+  window.location.assign(authorizeUrl);
+}
+
+async function fetchAuthUser(accessToken: string): Promise<{ id: string; email: string } | null> {
+  const response = await fetch(supabaseAuthUrl("user"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as { id?: string; email?: string };
+  if (!payload.id || !payload.email) {
+    return null;
+  }
+
+  return { id: payload.id, email: payload.email };
+}
+
+// After a Google (or other OAuth provider) redirect, Supabase sends the session
+// back as a URL hash fragment instead of a normal response body. Call this once
+// on app load to pick that fragment up, exchange it for user info, persist the
+// session, and scrub the tokens out of the visible URL/history.
+export async function consumeOAuthRedirectSession(): Promise<AuthSession | null> {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const rawHash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  if (!rawHash || !rawHash.includes("access_token")) {
+    return null;
+  }
+
+  const params = new URLSearchParams(rawHash);
+  const accessToken = params.get("access_token");
+  const refreshToken = params.get("refresh_token");
+  const expiresIn = params.get("expires_in");
+  const errorDescription = params.get("error_description");
+
+  // Always clear the token fragment so tokens do not sit in browser history.
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+
+  if (errorDescription) {
+    throw new Error(errorDescription);
+  }
+
+  if (!accessToken || !refreshToken) {
+    return null;
+  }
+
+  const user = await fetchAuthUser(accessToken);
+  if (!user) {
+    throw new Error("Google sign-in did not return a valid Supabase user.");
+  }
+
+  const session: AuthSession = {
+    accessToken,
+    refreshToken,
+    expiresAt: Date.now() + Math.max(60, Number(expiresIn) || 3600) * 1000,
+    email: user.email,
+    userId: user.id,
+  };
+
+  saveAuthSession(session);
+  return session;
+}
+
 export async function signOut(session: AuthSession | null) {
   if (session && isRemotePersistenceConfigured()) {
     await fetch(supabaseAuthUrl("logout"), {
