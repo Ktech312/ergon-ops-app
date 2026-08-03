@@ -828,10 +828,10 @@ td small {
   color: #174c43;
   cursor: pointer;
   display: grid;
-  gap: 8px;
+  gap: 6px;
   justify-items: center;
-  min-height: 150px;
-  padding: 22px;
+  min-height: 96px;
+  padding: 16px;
   text-align: center;
 }
 
@@ -1049,11 +1049,14 @@ td small {
 .action-status {
   background: #f8f5ef;
   border: 1px solid #e8e1d5;
-  border-radius: 8px;
+  border-radius: 999px;
   color: #514b43;
+  display: inline-flex;
   font-size: 13px;
   margin-bottom: 14px;
-  padding: 11px 12px;
+  max-width: 100%;
+  padding: 6px 14px;
+  width: fit-content;
 }
 
 .panel-title-row {
@@ -1439,10 +1442,10 @@ td small {
   color: #174c43;
   cursor: pointer;
   display: grid;
-  gap: 8px;
+  gap: 6px;
   justify-items: center;
-  min-height: 160px;
-  padding: 24px;
+  min-height: 100px;
+  padding: 16px;
   position: relative;
   text-align: center;
 }
@@ -1460,7 +1463,7 @@ td small {
 
 .sales-dropzone strong {
   color: #174c43;
-  font-size: 17px;
+  font-size: 15px;
 }
 
 .sales-dropzone span {
