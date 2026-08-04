@@ -1076,6 +1076,57 @@ Not built yet (intentionally deferred, flagged as follow-up):
   `impact_areas` tags are informational only, same caveat as before.
 - Automations tied to task completion.
 
+### Ideas From Manufacturing/Procurement PM Research (Aug 2026)
+
+Researched what standard manufacturing/procurement PM tools consider
+must-have, to inform what to build next. Cross-referenced against what
+Ergon Ops already has. Ranked roughly by how directly useful each is to this
+business, not by how common it is in the source material.
+
+1. **Automation rules engine** ("if stock < reorder point, auto-create
+   purchase request"; "if task marked done, notify next assignee"; "if due
+   date passes, alert the project lead"). This generalizes the
+   already-built-but-manual reorder queue and gives real teeth to the
+   existing (informational-only) task impact-area tags.
+2. **BOM revision/version history.** BOM management is called out repeatedly
+   as the #1 differentiator of manufacturing-specific tools. Today's project
+   BOM lines are free text with no revision history -- worth a version log
+   once Phase 10 gives BOM lines a real table.
+3. **Quality/inspection checkpoints in the build workflow.** The existing
+   build stages (planned/kitting/assembled/tested/complete) are a natural
+   fit for adding a required QA sign-off gate plus defect/non-conformance
+   logging at the "tested" stage.
+4. **Client-facing status portal.** A read-only link for a property manager
+   or GC to check their install's progress without full app access -- this
+   is already Phase 8 in this roadmap ("Public Client Progress View"),
+   unbuilt; the research confirms it's a standard, valuable feature.
+5. **Job costing: actual vs. estimate.** Projects track an `allocated`
+   dollar figure but not a true budget-vs-actual reconciliation (material +
+   labor + overhead against the original estimate) surfaced as margin.
+6. **Overdue-task notifications.** Due dates exist but are silent today --
+   no email/reminder when a task or purchase request passes its due date.
+7. **Workload/capacity dashboard.** A "who's overloaded" view (open task
+   count and overdue count per roster member) -- a natural extension of the
+   "group by individual" view just built, fits the "very task driven by
+   individuals and by groups" goal directly.
+8. **Document version control with approval history** for project documents
+   (SOW, BOM sheets, spec drawings) -- richer than today's simple status
+   dropdown, with a real change history and sign-off trail.
+9. **Field/job-site capture for on-site installs** (photos, notes, logs from
+   the actual garage/lot site, not just the shop). This is already Phase 7
+   in this roadmap ("Field Media Capture And Offline Mode"), unbuilt.
+10. **Real per-role, server-enforced permissions.** Already scoped as Phase 9
+    in this roadmap -- the research reinforces that UI-only role hiding is
+    considered insufficient by standard PM-tool practice, not just an
+    Ergon-specific gap.
+
+Explicitly not recommended for this business's scale/type (noted so it isn't
+re-suggested later): AI-driven predictive scheduling, digital twin process
+simulation, CAD/PLM integration, ecommerce order intake, sustainability/
+emissions tracking, full MES shop-floor IoT monitoring. These target larger
+or different manufacturing contexts than Ergon's parking equipment
+purchasing/build/install operation.
+
 ## Next Session Priorities (start here)
 
 In order:
