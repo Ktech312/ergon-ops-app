@@ -743,6 +743,12 @@ Acceptance criteria:
 - Client can view progress without logging in.
 - Internal purchasing/inventory information remains hidden.
 
+Scoping update (Aug 2026): this phase's public-token infrastructure is now
+also the delivery mechanism for Phase 11's Submittals approval flow (a
+client needs to view and approve/reject a submittal without logging in,
+which is the same problem this phase already solves). Build the public-token
+system once, use it for both progress viewing and submittal approval.
+
 ### Phase 9 - Real Role-Based Security
 
 Goal:
@@ -958,6 +964,259 @@ Acceptance criteria:
 - Legacy/unused tables from the original schema pass (`departments`,
   `profiles`, `purchase_orders`, etc.) are either formally adopted or dropped,
   not left in an ambiguous half-used state.
+
+### Phase 11 - AI-Assisted Scheduling, Project Templates, and Submittals
+
+Goal (per E, Aug 2026 -- this was originally raised at project kickoff):
+generate a draft project schedule automatically from a project's BOM and a
+library of standard install times, using a reusable Template, adjustable
+by the PM afterward -- plus a formal Submittals package the client signs off
+on before final purchasing happens.
+
+This phase has three connected parts. It depends on Phase 10's BOM lines
+having a real table (`project_bom_lines`) and, ideally, on Phase 12's BOM
+categories/standard-time library, so build after those, or in parallel with
+Phase 10f specifically.
+
+**1. Standard Time Library**
+
+- New table `standard_install_times`: maps an inventory category (or a
+  specific `inventory_item_id`) to a standard install duration (hours per
+  unit) and an optional crew-size factor. Admin-managed (a simple table in
+  the Admin page: category/item, hours per unit, notes).
+- Seed data has to come from E/the PM team -- there is no way to infer
+  "how long does one camera install take" without input from the business.
+  This is the first real open item: someone needs to supply initial
+  standard times per category before scheduling can produce anything
+  useful.
+
+**2. Project Schedule Templates**
+
+- New table `project_schedule_templates` (id, name, description,
+  is_active) and `project_schedule_template_phases` (id, template_id,
+  phase_name, sequence_order, depends_on_phase_id nullable, duration_mode
+  `fixed_hours` | `per_bom_unit`, fixed_hours numeric nullable,
+  bom_category_filter text nullable, default_role text nullable e.g.
+  "Installer"/"PM"/"Warehouse"). A template is an ordered phase list like
+  "Site Prep -> Infrastructure -> Camera Install -> Signage -> Commissioning
+  -> Fine-Tuning -> Go-Live," matching the existing SOW section shape
+  already in `ProjectSite.sow`.
+- Admin/PM page to create and edit templates (add/reorder/remove phases,
+  set duration mode per phase).
+- A project can have one template applied. Applying a template + a project
+  start date computes each phase's duration (fixed, or standard-time x BOM
+  quantity in that phase's category) and generates real rows in the `tasks`
+  table (`section: "projects"`, `project_ref` set, one task per phase,
+  sequenced due dates based on cumulative duration from the start date).
+  These are ordinary tasks after generation -- the PM can drag due dates,
+  reassign, or edit them exactly like any manually-created task, using the
+  task system already built. Re-applying a template to a project that
+  already has generated tasks should update rather than duplicate (match
+  by a `generated_from_template_phase_id` marker column on `tasks`).
+
+**3. AI vs. deterministic calculation -- an open decision**
+
+The actual duration math (standard time x BOM quantity, summed per phase)
+is a deterministic calculation, not something that needs an LLM -- it's
+more reliable, cheaper, and easier to debug as a straightforward formula
+than as a generative AI call, and a PM can trust a number they can audit
+back to "12 cameras x 2 hours." Two ways to still deliver on "AI-driven":
+
+- (a) **Deterministic core + AI fallback/narrative.** Use the formula above
+  for the actual date math. Use the AI provider already anticipated in this
+  codebase (`OPENAI_API_KEY`/`OPENAI_MODEL`, referenced for future sales-quote
+  extraction but not yet turned on) only for softer jobs: writing a
+  human-readable schedule summary, suggesting a reasonable standard time
+  when a BOM category has none on file yet, or flagging an unusual BOM mix
+  that doesn't match a template well.
+- (b) **Full generative scheduling.** Send the BOM + template + standard
+  times to an LLM and let it produce the whole draft schedule, including
+  sequencing decisions.
+
+Recommendation: (a). It keeps the numbers trustworthy and auditable while
+still using AI where it adds real value (filling gaps, writing summaries).
+Needs E's sign-off either way, and either path needs the
+`OPENAI_API_KEY`/`OPENAI_MODEL` Vercel secrets actually configured (not yet
+done -- flagged as "not yet configured" in the Production Setup Checklist
+since this roadmap's first draft).
+
+**4. Submittals**
+
+- New table `project_submittals` (id, project_id, version integer, status
+  `draft`|`sent`|`approved`|`rejected`|`revision_requested`, a content
+  snapshot -- BOM summary, spec sheets/datasheet links pulled from
+  `product_catalog`, proposed schedule from the phases above -- captured as
+  of send time so a later BOM edit doesn't retroactively change what the
+  client already saw, client contact name/email, sent_at, responded_at,
+  response_notes).
+- Reuses Phase 8's public-token link mechanism: PM sends a submittal, client
+  opens a token link (no login), reviews BOM/spec sheets/schedule, and
+  clicks Approve or Request Revision with a name/notes field.
+- Open decision: **is a typed-name "I approve" click sufficient, or does
+  this need a real e-signature?** A simple click-to-approve with an audit
+  trail (IP, timestamp, typed name, content hash of what was shown) is
+  straightforward to build in-house but is not a legally binding signature.
+  A true e-signature (DocuSign, Dropbox Sign/HelloSign, PandaDoc) is legally
+  stronger but means a new paid third-party integration and API credentials.
+  Needs E's decision before building; recommend starting with the
+  audit-trailed click-to-approve unless there's a specific legal/contractual
+  reason submittals must be cryptographically signed.
+- Purchasing gate: once Purchase Requests move to a real table (Phase 10a),
+  add a rule (enforced in the UI first, in RLS once Phase 9 lands) that a
+  project's BOM-sourced purchase requests can't move past "Ready to Order"
+  until that project has at least one `approved` submittal -- this is the
+  actual "sign off before final purchasing" behavior E asked for.
+
+Acceptance criteria:
+
+- A PM can apply a template to a project and get a real, adjustable draft
+  schedule instead of building one task-by-task.
+- Standard times are editable by an admin, not hardcoded.
+- A client can review and approve/reject a submittal without an account.
+- Purchase requests tied to a project's BOM cannot be finalized without an
+  approved submittal for that project.
+
+### Phase 12 - BOM Revision History
+
+Goal: track changes to a project's Bill of Materials over time instead of
+silently overwriting lines, since BOM management is the single most-cited
+differentiator of manufacturing-specific PM tools in the research pass.
+
+- Depends on Phase 10f (`project_bom_lines` as a real table).
+- Add `project_bom_line_revisions` (id, project_bom_line_id, changed_by,
+  changed_at, previous_qty, previous_status, previous_notes, change_reason
+  nullable). A trigger or application-level write logs the prior state
+  before every update, rather than requiring a separate manual "save
+  revision" step.
+- UI: a small "History" expandable row or modal per BOM line showing who
+  changed what and when. Not a full diff/redline view initially -- that's a
+  reasonable v2 if it turns out to matter.
+- Ties into Phase 11's Submittals: a submittal's BOM snapshot is naturally
+  just "the current revision at send time," so this phase and Phase 11 share
+  the same underlying revisioning concept.
+
+Acceptance criteria:
+
+- Every BOM line change is attributable to a person and a timestamp.
+- A PM can see what a BOM line looked like before the last change without
+  digging through unrelated activity logs.
+
+### Phase 13 - Quality Checkpoints In The Build Workflow
+
+Goal: add a real QA gate to manufacturing builds instead of "tested" being
+just a label a person sets with no enforced check behind it.
+
+- Extends the existing build stages (`planned -> kitting -> assembled ->
+  tested -> complete`, already in `build_transactions.stage`).
+- Add `build_inspection_checklists` (id, build_transaction_id,
+  checklist_item, is_required boolean, is_checked boolean, checked_by,
+  checked_at, notes) -- a simple required-checklist model, not a generic
+  form builder. Checklist items can come from a per-equipment-type template
+  (extends `equipment_types`) so "VPU Server" builds always get the same
+  checklist, for example.
+- Add `build_defects` (id, build_transaction_id, description, severity,
+  status `open`|`corrected`|`wont_fix`, logged_by, logged_at, corrected_at,
+  corrective_action) for defect/non-conformance logging.
+- UI rule: a build cannot move from `tested` to `complete` while any
+  required checklist item is unchecked or any defect is still `open`.
+
+Acceptance criteria:
+
+- A build's "tested" stage requires actually completing a checklist, not
+  just clicking a status dropdown.
+- Defects are logged against a specific build with a corrective-action
+  trail, not lost in free-text notes.
+
+### Phase 14 - Job Costing (Actual vs. Estimate)
+
+Goal: track real cost against the original estimate per project, not just
+the flat `allocated` dollar figure that exists today.
+
+- Depends on Phase 10 (real inventory/movement/purchase-request tables) for
+  accurate actual-cost roll-ups; can be scoped now, built once Phase 10
+  lands for the entities it needs.
+- Add an `estimated_budget` (already have `allocated`, which is closer to
+  "committed," not "estimated at signing" -- needs a distinct field) and a
+  computed/materialized "actual cost" view per project: sum of received
+  purchase request costs (`estimated_unit_cost x quantity_received`) +
+  allocated inventory pulls at their unit cost, tagged to that project.
+- Surface as a simple budget-vs-actual bar/number on the Project Progress
+  card already built, plus a project-level margin line in Reports.
+
+Acceptance criteria:
+
+- A PM can see committed budget vs. actual spend per project without
+  manually adding up purchase requests and inventory pulls.
+
+### Phase 15 - Overdue-Task Notifications
+
+Goal: make due dates actually alert someone instead of sitting silently in
+a table cell.
+
+- Needs a decision on channel: email is the most likely to reach people
+  reliably given the roster (Phase built Aug 2026) doesn't require login,
+  so an in-app notification alone wouldn't reach someone who isn't
+  currently signed in. Email requires a transactional email provider
+  (Resend, Postmark, SendGrid) and its own API key -- a new secret, same
+  category as the deferred invite feature and needing E's sign-off.
+- Simplest first version: a scheduled check (daily) that finds tasks past
+  `due_date` and not `done`/`cancelled`, and emails the assignee (if they
+  have an email on the roster) plus, for high/urgent priority, the project's
+  PM. Can be built as a Supabase scheduled function or an external cron
+  hitting a small serverless endpoint.
+- A v2 could add Slack/Teams webhook delivery if the company uses one of
+  those day to day -- worth asking E which channel people actually watch
+  before building email-only.
+
+Acceptance criteria:
+
+- An overdue task results in an actual notification within a day of going
+  overdue, not just a red date in a table.
+
+### Phase 16 - Workload/Capacity Dashboard
+
+Goal: a "who's overloaded" view, extending the "group by individual" view
+already built in the Tasks tab.
+
+- No new tables needed -- this is a read/aggregation view over the existing
+  `tasks` and `team_members` tables.
+- New compact dashboard (could live on the Dashboard tab or as a 4th Tasks
+  view alongside List/Board/Calendar): per roster member, show open task
+  count, overdue count, and a simple load indicator (e.g., color banding at
+  a configurable "too many open tasks" threshold).
+- Natural extension: click a person to filter the Tasks tab to just their
+  work (the "group by individual" board already supports this at the
+  column level).
+
+Acceptance criteria:
+
+- A manager can see at a glance who has too much on their plate without
+  opening every person's task list individually.
+
+### Phase 17 - Document Version Control With Approval History
+
+Goal: give project documents (SOW, BOM sheets, spec drawings, sales quotes)
+a real change history and sign-off trail instead of a single status
+dropdown (Uploaded/Ready to review/Backed up/Archived) that just gets
+overwritten.
+
+- Depends on Phase 10b (`project_documents` as a real table).
+- Add `project_document_revisions` (id, project_document_id, version,
+  file_url/storage_path at that version, uploaded_by, uploaded_at, notes) --
+  uploading a new version of an existing document creates a new revision
+  row rather than overwriting the file reference.
+- Add lightweight approval fields already partially possible via
+  `project_documents.status` -- extend with `approved_by`, `approved_at`,
+  `approval_notes` so a status change to "approved" carries who/when/why.
+- Comment/markup-on-PDF (mentioned in the research) is a materially bigger
+  feature (needs a PDF annotation UI/library) -- scope as an explicit v2,
+  not part of this phase's first cut.
+
+Acceptance criteria:
+
+- Uploading a new version of a document doesn't lose the previous version.
+- A document's approval (or rejection) is attributable to a person and
+  timestamp, not just a label.
 
 ## Suggested Next Development Sprint
 
