@@ -5,10 +5,13 @@ export type PersistedAppState = {
   inventoryMovements: unknown[];
   buildTransactions: unknown[];
   projectAllocations: unknown[];
-  purchaseRequests: unknown[];
   // projectDocuments intentionally removed (Phase 10b cutover, Aug 2026) --
   // that entity now lives exclusively in the real `project_documents` table
   // via loadProjectDocuments/createProjectDocuments, not this blob.
+  // purchaseRequests intentionally removed (Phase 10a cutover, Aug 2026) --
+  // that entity now lives exclusively in the real `purchase_requests` table
+  // via loadPurchaseRequests/createPurchaseRequestRemote/updatePurchaseRequestRemote,
+  // not this blob.
   roleMode: string;
 };
 
@@ -30,7 +33,6 @@ const STATE_KEYS: Array<keyof PersistedAppState> = [
   "inventoryMovements",
   "buildTransactions",
   "projectAllocations",
-  "purchaseRequests",
   "roleMode",
 ];
 
@@ -73,7 +75,6 @@ function asPersistedState(records: Array<{ record_key: string; data: unknown }>)
     inventoryMovements: Array.isArray(byKey.get("inventoryMovements")) ? (byKey.get("inventoryMovements") as unknown[]) : [],
     buildTransactions: Array.isArray(byKey.get("buildTransactions")) ? (byKey.get("buildTransactions") as unknown[]) : [],
     projectAllocations: Array.isArray(byKey.get("projectAllocations")) ? (byKey.get("projectAllocations") as unknown[]) : [],
-    purchaseRequests: Array.isArray(byKey.get("purchaseRequests")) ? (byKey.get("purchaseRequests") as unknown[]) : [],
     roleMode: typeof byKey.get("roleMode") === "string" ? (byKey.get("roleMode") as string) : "manager",
   };
 }
@@ -2330,6 +2331,224 @@ export async function updateProjectDocumentStatusRemote(
   });
 }
 
+// --- Phase 10a: Purchase Requests (cut over from the app_records blob to the
+// relational `purchase_requests` table, migration 016) -----------------------
+
+export type PurchaseRequest = {
+  id: string;
+  requestNumber: string;
+  sku: string;
+  itemName: string;
+  quantity: number;
+  reason: "Reorder Point" | "Planned Build Shortage" | "Manual" | "Project BOM";
+  sourceRef?: string;
+  projectName?: string;
+  procurementTrack?: "warehouse_stock" | "direct_to_project";
+  preferredVendor?: string;
+  poNumber?: string;
+  expectedDate?: string;
+  estimatedUnitCost: number;
+  receivedQuantity?: number;
+  status: "Draft" | "Need Quote" | "Ready to Order" | "Ordered" | "Received" | "Cancelled";
+  createdAt: string;
+  notes: string;
+};
+
+type PurchaseRequestRow = {
+  id: string;
+  request_number: string;
+  sku_snapshot: string | null;
+  item_name_snapshot: string | null;
+  quantity_requested: number | string;
+  reason: string;
+  source_ref: string | null;
+  project_name: string | null;
+  procurement_track: string | null;
+  preferred_vendor: string | null;
+  po_number: string | null;
+  expected_date: string | null;
+  estimated_unit_cost: number | string;
+  quantity_received: number | string | null;
+  status: string;
+  created_at: string;
+  notes: string | null;
+};
+
+function appPurchaseReason(reason: string): PurchaseRequest["reason"] {
+  switch (reason) {
+    case "reorder_point": return "Reorder Point";
+    case "planned_build_shortage": return "Planned Build Shortage";
+    case "project_bom": return "Project BOM";
+    default: return "Manual";
+  }
+}
+
+function pgPurchaseReason(reason: PurchaseRequest["reason"]): string {
+  switch (reason) {
+    case "Reorder Point": return "reorder_point";
+    case "Planned Build Shortage": return "planned_build_shortage";
+    case "Project BOM": return "project_bom";
+    default: return "manual";
+  }
+}
+
+function pgPurchaseSourceType(reason: PurchaseRequest["reason"]): string {
+  switch (reason) {
+    case "Project BOM": return "project";
+    case "Planned Build Shortage": return "build";
+    case "Reorder Point": return "inventory";
+    default: return "manual";
+  }
+}
+
+function appPurchaseStatus(status: string): PurchaseRequest["status"] {
+  switch (status) {
+    case "need_quote": return "Need Quote";
+    case "ready_to_order": return "Ready to Order";
+    case "ordered": return "Ordered";
+    case "received": return "Received";
+    case "cancelled": return "Cancelled";
+    default: return "Draft";
+  }
+}
+
+function pgPurchaseStatus(status: PurchaseRequest["status"]): string {
+  switch (status) {
+    case "Need Quote": return "need_quote";
+    case "Ready to Order": return "ready_to_order";
+    case "Ordered": return "ordered";
+    case "Received": return "received";
+    case "Cancelled": return "cancelled";
+    default: return "draft";
+  }
+}
+
+function mapPurchaseRequestRow(row: PurchaseRequestRow): PurchaseRequest {
+  return {
+    id: row.id,
+    requestNumber: row.request_number,
+    sku: row.sku_snapshot ?? "",
+    itemName: row.item_name_snapshot ?? "",
+    quantity: Number(row.quantity_requested) || 0,
+    reason: appPurchaseReason(row.reason),
+    sourceRef: row.source_ref ?? undefined,
+    projectName: row.project_name ?? undefined,
+    procurementTrack: (row.procurement_track === "direct_to_project" ? "direct_to_project" : "warehouse_stock"),
+    preferredVendor: row.preferred_vendor ?? undefined,
+    poNumber: row.po_number ?? undefined,
+    expectedDate: row.expected_date ?? undefined,
+    estimatedUnitCost: Number(row.estimated_unit_cost) || 0,
+    receivedQuantity: Number(row.quantity_received) || 0,
+    status: appPurchaseStatus(row.status),
+    createdAt: row.created_at,
+    notes: row.notes ?? "",
+  };
+}
+
+const PURCHASE_REQUEST_SELECT =
+  "id,request_number,sku_snapshot,item_name_snapshot,quantity_requested,reason,source_ref,project_name,procurement_track,preferred_vendor,po_number,expected_date,estimated_unit_cost,quantity_received,status,created_at,notes";
+
+export async function loadPurchaseRequests(accessToken?: string): Promise<PurchaseRequest[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`purchase_requests?select=${PURCHASE_REQUEST_SELECT}&order=created_at.desc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as PurchaseRequestRow[];
+  return rows.map(mapPurchaseRequestRow);
+}
+
+export async function createPurchaseRequestRemote(
+  input: {
+    requestNumber: string;
+    sku: string;
+    itemName: string;
+    quantity: number;
+    reason: PurchaseRequest["reason"];
+    sourceRef?: string;
+    projectName?: string;
+    procurementTrack?: PurchaseRequest["procurementTrack"];
+    preferredVendor?: string;
+    estimatedUnitCost: number;
+    status: PurchaseRequest["status"];
+    notes: string;
+  },
+  accessToken?: string,
+): Promise<PurchaseRequest | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const payload = {
+    request_number: input.requestNumber,
+    sku_snapshot: input.sku,
+    item_name_snapshot: input.itemName,
+    quantity_requested: input.quantity,
+    reason: pgPurchaseReason(input.reason),
+    source_type: pgPurchaseSourceType(input.reason),
+    source_ref: input.sourceRef ?? null,
+    project_name: input.projectName ?? null,
+    procurement_track: input.procurementTrack ?? "warehouse_stock",
+    preferred_vendor: input.preferredVendor ?? null,
+    estimated_unit_cost: input.estimatedUnitCost,
+    status: pgPurchaseStatus(input.status),
+    notes: input.notes,
+  };
+  const response = await fetch(supabaseUrl("purchase_requests"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not save purchase request: ${response.status}`);
+  }
+  const rows = (await response.json()) as PurchaseRequestRow[];
+  return rows[0] ? mapPurchaseRequestRow(rows[0]) : null;
+}
+
+export async function updatePurchaseRequestRemote(
+  id: string,
+  updates: Partial<{
+    quantity: number;
+    preferredVendor: string;
+    poNumber: string | null;
+    expectedDate: string | null;
+    estimatedUnitCost: number;
+    status: PurchaseRequest["status"];
+    notes: string;
+    procurementTrack: PurchaseRequest["procurementTrack"];
+    projectName: string | null;
+    receivedQuantity: number;
+  }>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.quantity !== undefined) payload.quantity_requested = updates.quantity;
+  if (updates.preferredVendor !== undefined) payload.preferred_vendor = updates.preferredVendor;
+  if (updates.poNumber !== undefined) payload.po_number = updates.poNumber || null;
+  if (updates.expectedDate !== undefined) payload.expected_date = updates.expectedDate || null;
+  if (updates.estimatedUnitCost !== undefined) payload.estimated_unit_cost = updates.estimatedUnitCost;
+  if (updates.status !== undefined) payload.status = pgPurchaseStatus(updates.status);
+  if (updates.notes !== undefined) payload.notes = updates.notes;
+  if (updates.procurementTrack !== undefined) payload.procurement_track = updates.procurementTrack;
+  if (updates.projectName !== undefined) payload.project_name = updates.projectName || null;
+  if (updates.receivedQuantity !== undefined) payload.quantity_received = updates.receivedQuantity;
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl(`purchase_requests?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;
@@ -2400,7 +2619,6 @@ export async function saveRemoteAppState(state: PersistedAppState, accessToken?:
         equipment_recipes: state.deviceRecipes.length,
         movements: state.inventoryMovements.length,
         builds: state.buildTransactions.length,
-        purchase_requests: state.purchaseRequests.length,
       },
     }),
   }).catch(() => {

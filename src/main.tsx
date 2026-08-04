@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { StrictMode, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx";
 import {
@@ -37,6 +37,7 @@ import {
   createNotification,
   createPresalesRule,
   createProjectDocuments,
+  createPurchaseRequestRemote,
   createScheduleTemplate,
   createSubmittal,
   createSubmittalShareToken,
@@ -67,6 +68,7 @@ import {
   loadNotifications,
   loadPresalesRules,
   loadProjectDocuments,
+  loadPurchaseRequests,
   loadRemoteAppState,
   loadScheduleTemplates,
   loadStandardInstallTimes,
@@ -101,6 +103,7 @@ import {
   updateHandoverResponses,
   updateNotificationRule,
   updateProjectDocumentStatusRemote,
+  updatePurchaseRequestRemote,
   updateTask,
   updateTaskHardwareDependencyStatus,
   updateTeamMember,
@@ -121,6 +124,7 @@ import {
   type ProjectHandover,
   type ProjectSubmittal,
   type PublicSubmittalView,
+  type PurchaseRequest,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
   type StandardInstallTime,
@@ -310,25 +314,9 @@ type PurchaseOrder = {
   lines: PurchaseLine[];
 };
 
-type PurchaseRequest = {
-  id: string;
-  requestNumber: string;
-  sku: string;
-  itemName: string;
-  quantity: number;
-  reason: "Reorder Point" | "Planned Build Shortage" | "Manual" | "Project BOM";
-  sourceRef?: string;
-  projectName?: string;
-  procurementTrack?: "warehouse_stock" | "direct_to_project";
-  preferredVendor?: string;
-  poNumber?: string;
-  expectedDate?: string;
-  estimatedUnitCost: number;
-  receivedQuantity?: number;
-  status: "Draft" | "Need Quote" | "Ready to Order" | "Ordered" | "Received" | "Cancelled";
-  createdAt: string;
-  notes: string;
-};
+// PurchaseRequest used to be defined locally; as of Phase 10a it's imported
+// from persistence.ts (see the import block above) since it's now backed by
+// the real `purchase_requests` table instead of the app_records blob.
 
 // UploadedDoc used to be a locally-defined blob shape; as of Phase 10b it's
 // just an alias for the real ProjectDocument row shape from persistence.ts
@@ -998,7 +986,15 @@ function App() {
   const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>(() => isArray<InventoryMovement>(localState?.inventoryMovements, []));
   const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>(() => isArray<BuildTransaction>(localState?.buildTransactions, []));
   const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>(() => isArray<ProjectAllocationHistory>(localState?.projectAllocations, []));
-  const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(() => isArray<PurchaseRequest>(localState?.purchaseRequests, []));
+  // Phase 10a: Purchase Requests no longer lives in the local/blob state --
+  // it's always loaded fresh from the real table (see the effect below).
+  // purchaseRequestsRef mirrors this state synchronously (updated at the
+  // same time as every setPurchaseRequests call below) so the dedupe logic
+  // in queuePurchaseRequest sees fresh data even when several requests are
+  // queued back-to-back in the same synchronous loop, ahead of React's
+  // render/effect cycle.
+  const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>([]);
+  const purchaseRequestsRef = useRef<PurchaseRequest[]>([]);
   // Phase 10b: Project Documents no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [projectDocuments, setProjectDocuments] = useState<UploadedDoc[]>([]);
@@ -1109,7 +1105,6 @@ function App() {
         setInventoryMovements(isArray<InventoryMovement>(remoteState.inventoryMovements, []));
         setBuildTransactions(isArray<BuildTransaction>(remoteState.buildTransactions, []));
         setProjectAllocations(isArray<ProjectAllocationHistory>(remoteState.projectAllocations, []));
-        setPurchaseRequests(isArray<PurchaseRequest>(remoteState.purchaseRequests, []));
         setRoleMode((remoteState.roleMode as RoleMode | undefined) ?? "manager");
         setSyncStatus("synced");
       })
@@ -1131,7 +1126,6 @@ function App() {
       inventoryMovements,
       buildTransactions,
       projectAllocations,
-      purchaseRequests,
       roleMode,
     };
     saveLocalAppState(state);
@@ -1154,7 +1148,21 @@ function App() {
         });
     }, 650);
     return () => window.clearTimeout(syncTimer);
-  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, purchaseRequests, roleMode, authSession]);
+  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, roleMode, authSession]);
+
+  // Phase 10a: Purchase Requests now lives in its own real table, loaded and
+  // saved independently of the blob-based state above.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadPurchaseRequests(authSession.accessToken)
+      .then((loaded) => {
+        purchaseRequestsRef.current = loaded;
+        setPurchaseRequests(loaded);
+      })
+      .catch(() => {});
+  }, [authSession]);
 
   // Phase 10b: Project Documents now lives in its own real table, loaded and
   // saved independently of the blob-based state above.
@@ -1957,7 +1965,7 @@ function App() {
         await updateTaskHardwareDependencyStatus(dep.id, "allocated", authSession.accessToken);
         setTaskHardwareDependencies((current) => current.map((entry) => (entry.id === dep.id ? { ...entry, fulfillmentStatus: "allocated" } : entry)));
       } else {
-        queueProjectBomPurchaseRequest(part.name, dep.quantityRequired, project?.name ?? "", task.projectRef, "Standard", note, "warehouse_stock");
+        await queueProjectBomPurchaseRequest(part.name, dep.quantityRequired, project?.name ?? "", task.projectRef, "Standard", note, "warehouse_stock");
         await updateTaskHardwareDependencyStatus(dep.id, "procurement_queued", authSession.accessToken);
         setTaskHardwareDependencies((current) => current.map((entry) => (entry.id === dep.id ? { ...entry, fulfillmentStatus: "procurement_queued" } : entry)));
       }
@@ -2484,7 +2492,12 @@ function App() {
     );
   }
 
-  function queuePurchaseRequest(
+  // Phase 10a: all of the functions below write through to the real
+  // `purchase_requests` table via persistence.ts, then mirror the change
+  // into local state (and purchaseRequestsRef, kept in sync alongside it so
+  // dedupe logic always reads fresh data even mid-loop, ahead of React's
+  // render cycle). See the note by purchaseRequestsRef's declaration above.
+  async function queuePurchaseRequest(
     part: Part,
     quantity: number,
     reason: PurchaseRequest["reason"],
@@ -2493,139 +2506,188 @@ function App() {
     projectName?: string,
     procurementTrack: PurchaseRequest["procurementTrack"] = "warehouse_stock",
   ) {
-    if (part.retired) {
+    if (part.retired || !authSession) {
       return;
     }
 
     const requestQty = Math.max(1, Math.round(Number(quantity) || 1));
-    setPurchaseRequests((current) => {
-      const openStatuses: PurchaseRequest["status"][] = ["Draft", "Need Quote", "Ready to Order", "Ordered"];
-      const matchingOpen = current.find(
-        (request) =>
-          request.sku === part.ref &&
-          request.reason === reason &&
-          request.sourceRef === sourceRef &&
-          request.projectName === projectName &&
-          (request.procurementTrack ?? "warehouse_stock") === procurementTrack &&
-          openStatuses.includes(request.status),
+    const openStatuses: PurchaseRequest["status"][] = ["Draft", "Need Quote", "Ready to Order", "Ordered"];
+    const current = purchaseRequestsRef.current;
+    const matchingOpen = current.find(
+      (request) =>
+        request.sku === part.ref &&
+        request.reason === reason &&
+        request.sourceRef === sourceRef &&
+        request.projectName === projectName &&
+        (request.procurementTrack ?? "warehouse_stock") === procurementTrack &&
+        openStatuses.includes(request.status),
+    );
+
+    if (matchingOpen) {
+      const nextQuantity = Math.max(matchingOpen.quantity, requestQty);
+      const nextNotes = notes || matchingOpen.notes;
+      const next = current.map((request) =>
+        request.id === matchingOpen.id ? { ...request, quantity: nextQuantity, notes: nextNotes } : request,
       );
-
-      if (matchingOpen) {
-        return current.map((request) =>
-          request.id === matchingOpen.id
-            ? {
-                ...request,
-                quantity: Math.max(request.quantity, requestQty),
-                notes: notes || request.notes,
-              }
-            : request,
-        );
+      purchaseRequestsRef.current = next;
+      setPurchaseRequests(next);
+      try {
+        await updatePurchaseRequestRemote(matchingOpen.id, { quantity: nextQuantity, notes: nextNotes }, authSession.accessToken);
+      } catch {
+        setSyncStatus("error");
       }
+      return;
+    }
 
-      const request: PurchaseRequest = {
-        id: makeId("req"),
-        requestNumber: purchaseRequestNumber(current.length),
-        sku: part.ref,
-        itemName: part.name,
-        quantity: requestQty,
-        reason,
-        sourceRef,
-        projectName,
-        procurementTrack,
-        preferredVendor: (part.purchaseUrls ?? [])[0]?.label || part.manufacturer,
-        estimatedUnitCost: part.cost,
-        status: reason === "Manual" ? "Draft" : "Need Quote",
-        createdAt: new Date().toISOString(),
-        notes,
-      };
-      return [request, ...current];
-    });
+    try {
+      const created = await createPurchaseRequestRemote(
+        {
+          requestNumber: purchaseRequestNumber(current.length),
+          sku: part.ref,
+          itemName: part.name,
+          quantity: requestQty,
+          reason,
+          sourceRef,
+          projectName,
+          procurementTrack,
+          preferredVendor: (part.purchaseUrls ?? [])[0]?.label || part.manufacturer,
+          estimatedUnitCost: part.cost,
+          status: reason === "Manual" ? "Draft" : "Need Quote",
+          notes,
+        },
+        authSession.accessToken,
+      );
+      if (created) {
+        const next = [created, ...purchaseRequestsRef.current];
+        purchaseRequestsRef.current = next;
+        setPurchaseRequests(next);
+      }
+    } catch {
+      setSyncStatus("error");
+    }
   }
 
-  function queueReorderRequests() {
-    lowStock.forEach((part) => {
+  async function queueReorderRequests() {
+    for (const part of lowStock) {
       const qty = Math.max(1, part.reorderPoint - part.stock);
-      queuePurchaseRequest(part, qty, "Reorder Point", `Stock is ${part.stock}; reorder point is ${part.reorderPoint}.`);
-    });
+      await queuePurchaseRequest(part, qty, "Reorder Point", `Stock is ${part.stock}; reorder point is ${part.reorderPoint}.`);
+    }
   }
 
-  function queuePlannedBuildShortageRequests() {
-    buildTransactions
-      .filter((build) => build.status === "planned")
-      .forEach((build) => {
-        queueBuildShortageRequests(build.id);
-      });
+  async function queuePlannedBuildShortageRequests() {
+    for (const build of buildTransactions.filter((build) => build.status === "planned")) {
+      await queueBuildShortageRequests(build.id);
+    }
   }
 
-  function queueBuildShortageRequests(buildId: string) {
+  async function queueBuildShortageRequests(buildId: string) {
     const build = buildTransactions.find((item) => item.id === buildId);
     if (!build || build.status !== "planned") {
       return;
     }
 
     const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
-    recipe?.components.forEach((component) => {
+    if (!recipe) {
+      return;
+    }
+    for (const component of recipe.components) {
       const part = inventoryItems.find((item) => item.name === component.itemName);
       if (!part || part.retired) {
-        return;
+        continue;
       }
       const required = component.qty * build.quantityBuilt;
       const shortage = Math.max(0, required - part.stock);
       if (shortage > 0) {
-        queuePurchaseRequest(part, shortage, "Planned Build Shortage", `${build.buildNumber} needs ${required}; inventory has ${part.stock}.`, build.buildNumber);
+        await queuePurchaseRequest(part, shortage, "Planned Build Shortage", `${build.buildNumber} needs ${required}; inventory has ${part.stock}.`, build.buildNumber);
       }
-    });
+    }
   }
 
-  function queueManualPurchaseRequest(partRef: string, quantity: number, notes: string, projectName?: string, procurementTrack: PurchaseRequest["procurementTrack"] = "warehouse_stock") {
+  async function queueManualPurchaseRequest(partRef: string, quantity: number, notes: string, projectName?: string, procurementTrack: PurchaseRequest["procurementTrack"] = "warehouse_stock") {
     const part = inventoryItems.find((item) => item.ref === partRef);
     if (!part) {
       return;
     }
-    queuePurchaseRequest(part, quantity, "Manual", notes.trim() || "Manual purchasing request.", projectName ? "Manual project request" : undefined, projectName, procurementTrack);
+    await queuePurchaseRequest(part, quantity, "Manual", notes.trim() || "Manual purchasing request.", projectName ? "Manual project request" : undefined, projectName, procurementTrack);
   }
 
-  function queueProjectBomPurchaseRequest(partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) {
+  async function queueProjectBomPurchaseRequest(partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) {
     const part = inventoryItems.find((item) => item.name === partName || item.ref === partName);
     if (!part) {
       return false;
     }
     const trackNote = procurementTrack === "direct_to_project" ? "Direct-to-project purchase" : "Warehouse stock purchase request";
-    queuePurchaseRequest(part, quantity, "Project BOM", notes.trim() || `${trackNote} from ${projectRef} BOM. Request speed: ${requestSpeed}.`, projectRef, projectName, procurementTrack);
+    await queuePurchaseRequest(part, quantity, "Project BOM", notes.trim() || `${trackNote} from ${projectRef} BOM. Request speed: ${requestSpeed}.`, projectRef, projectName, procurementTrack);
     return true;
   }
 
-  function updatePurchaseRequestStatus(requestId: string, status: PurchaseRequest["status"]) {
-    setPurchaseRequests((current) => current.map((request) => (request.id === requestId ? { ...request, status } : request)));
+  async function updatePurchaseRequestStatus(requestId: string, status: PurchaseRequest["status"]) {
+    const next = purchaseRequestsRef.current.map((request) => (request.id === requestId ? { ...request, status } : request));
+    purchaseRequestsRef.current = next;
+    setPurchaseRequests(next);
+    if (authSession) {
+      await updatePurchaseRequestRemote(requestId, { status }, authSession.accessToken);
+    }
   }
 
-  function updatePurchaseRequest(requestId: string, updates: Partial<Pick<PurchaseRequest, "quantity" | "preferredVendor" | "poNumber" | "expectedDate" | "estimatedUnitCost" | "status" | "notes" | "procurementTrack" | "projectName">>) {
-    setPurchaseRequests((current) =>
-      current.map((request) =>
-        request.id === requestId
-          ? {
-              ...request,
-              ...updates,
-              quantity: updates.quantity !== undefined ? Math.max(request.receivedQuantity ?? 0, Math.max(1, Math.round(Number(updates.quantity) || 1))) : request.quantity,
-              preferredVendor: updates.preferredVendor?.trim() || request.preferredVendor,
-              poNumber: updates.poNumber?.trim() ?? request.poNumber,
-              expectedDate: updates.expectedDate ?? request.expectedDate,
-              estimatedUnitCost: updates.estimatedUnitCost !== undefined ? Math.max(0, Number(updates.estimatedUnitCost) || 0) : request.estimatedUnitCost,
-              projectName: updates.projectName !== undefined ? updates.projectName || undefined : request.projectName,
-              procurementTrack: updates.procurementTrack ?? request.procurementTrack,
-              notes: updates.notes !== undefined ? updates.notes.trim() : request.notes,
-            }
-          : request,
-      ),
+  async function updatePurchaseRequest(requestId: string, updates: Partial<Pick<PurchaseRequest, "quantity" | "preferredVendor" | "poNumber" | "expectedDate" | "estimatedUnitCost" | "status" | "notes" | "procurementTrack" | "projectName">>) {
+    const current = purchaseRequestsRef.current;
+    const existing = current.find((request) => request.id === requestId);
+    if (!existing) {
+      return;
+    }
+    const nextQuantity = updates.quantity !== undefined ? Math.max(existing.receivedQuantity ?? 0, Math.max(1, Math.round(Number(updates.quantity) || 1))) : existing.quantity;
+    const nextPreferredVendor = updates.preferredVendor?.trim() || existing.preferredVendor;
+    const nextPoNumber = updates.poNumber?.trim() ?? existing.poNumber;
+    const nextExpectedDate = updates.expectedDate ?? existing.expectedDate;
+    const nextEstimatedUnitCost = updates.estimatedUnitCost !== undefined ? Math.max(0, Number(updates.estimatedUnitCost) || 0) : existing.estimatedUnitCost;
+    const nextProjectName = updates.projectName !== undefined ? updates.projectName || undefined : existing.projectName;
+    const nextProcurementTrack = updates.procurementTrack ?? existing.procurementTrack;
+    const nextNotes = updates.notes !== undefined ? updates.notes.trim() : existing.notes;
+    const nextStatus = updates.status ?? existing.status;
+    const next = current.map((request) =>
+      request.id === requestId
+        ? {
+            ...request,
+            quantity: nextQuantity,
+            preferredVendor: nextPreferredVendor,
+            poNumber: nextPoNumber,
+            expectedDate: nextExpectedDate,
+            estimatedUnitCost: nextEstimatedUnitCost,
+            projectName: nextProjectName,
+            procurementTrack: nextProcurementTrack,
+            notes: nextNotes,
+            status: nextStatus,
+          }
+        : request,
     );
+    purchaseRequestsRef.current = next;
+    setPurchaseRequests(next);
+    if (authSession) {
+      await updatePurchaseRequestRemote(
+        requestId,
+        {
+          quantity: nextQuantity,
+          preferredVendor: nextPreferredVendor,
+          poNumber: nextPoNumber ?? null,
+          expectedDate: nextExpectedDate ?? null,
+          estimatedUnitCost: nextEstimatedUnitCost,
+          status: nextStatus,
+          notes: nextNotes,
+          procurementTrack: nextProcurementTrack,
+          projectName: nextProjectName ?? null,
+        },
+        authSession.accessToken,
+      );
+    }
   }
 
-  function cancelPurchaseRequest(requestId: string) {
-    updatePurchaseRequestStatus(requestId, "Cancelled");
+  async function cancelPurchaseRequest(requestId: string) {
+    await updatePurchaseRequestStatus(requestId, "Cancelled");
   }
 
-  function receivePurchaseRequest(requestId: string, quantityReceived: number, unitCost: number, notes: string) {
-    const request = purchaseRequests.find((item) => item.id === requestId);
+  async function receivePurchaseRequest(requestId: string, quantityReceived: number, unitCost: number, notes: string) {
+    const request = purchaseRequestsRef.current.find((item) => item.id === requestId);
     if (!request || request.status === "Received" || request.status === "Cancelled") {
       return;
     }
@@ -2673,18 +2735,26 @@ function App() {
       receiveInventoryStock(request.sku, receiveQty, effectiveUnitCost, request.poNumber || request.requestNumber, notes || request.notes || "Received from purchase request.");
     }
     const nextReceived = alreadyReceived + receiveQty;
-    setPurchaseRequests((current) =>
-      current.map((item) =>
-        item.id === request.id
-          ? {
-              ...item,
-              receivedQuantity: nextReceived,
-              estimatedUnitCost: effectiveUnitCost,
-              status: nextReceived >= item.quantity ? "Received" : "Ordered",
-            }
-          : item,
-      ),
+    const nextStatus: PurchaseRequest["status"] = nextReceived >= request.quantity ? "Received" : "Ordered";
+    const nextList = purchaseRequestsRef.current.map((item) =>
+      item.id === request.id
+        ? {
+            ...item,
+            receivedQuantity: nextReceived,
+            estimatedUnitCost: effectiveUnitCost,
+            status: nextStatus,
+          }
+        : item,
     );
+    purchaseRequestsRef.current = nextList;
+    setPurchaseRequests(nextList);
+    if (authSession) {
+      await updatePurchaseRequestRemote(
+        request.id,
+        { receivedQuantity: nextReceived, estimatedUnitCost: effectiveUnitCost, status: nextStatus },
+        authSession.accessToken,
+      );
+    }
   }
 
   function currentPersistedState(): PersistedAppState {
@@ -2695,7 +2765,6 @@ function App() {
       inventoryMovements,
       buildTransactions,
       projectAllocations,
-      purchaseRequests,
       roleMode,
     };
   }
@@ -2725,7 +2794,6 @@ function App() {
         setInventoryMovements(isArray<InventoryMovement>(importedState.inventoryMovements, inventoryMovements));
         setBuildTransactions(isArray<BuildTransaction>(importedState.buildTransactions, buildTransactions));
         setProjectAllocations(isArray<ProjectAllocationHistory>(importedState.projectAllocations, projectAllocations));
-        setPurchaseRequests(isArray<PurchaseRequest>(importedState.purchaseRequests, purchaseRequests));
         if (["warehouse", "purchasing", "pm", "manager"].includes(String(importedState.roleMode))) {
           setRoleMode(importedState.roleMode as RoleMode);
         }
@@ -5000,7 +5068,7 @@ function Projects({
   onCreateDocuments: (docs: Array<Omit<UploadedDoc, "id">>) => void;
   onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
   onInventoryPull: (itemName: string, qty: number, projectName?: string, notes?: string) => void;
-  onQueueProjectBomPurchaseRequest: (partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) => boolean;
+  onQueueProjectBomPurchaseRequest: (partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) => Promise<boolean>;
   tasks: EOTask[];
   teamMembers: TeamMember[];
   onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
@@ -5268,7 +5336,7 @@ function Projects({
     setEditingBomIndex(null);
   }
 
-  function addBomLine() {
+  async function addBomLine() {
     const item = bomDraft.item.trim();
     const qty = Math.max(1, Math.round(Number(bomDraft.qty) || 1));
     if (!item) {
@@ -5300,10 +5368,10 @@ function Projects({
       onInventoryPull(item, qty, selectedProject.name, bomDraft.notes || `Pulled from inventory for ${selectedProject.ref} BOM.`);
       setActionStatus(`${qty} ${item} added to ${selectedProject.ref} and pulled from inventory.`);
     } else if (bomDraft.action === "pull" && selectedInventoryItem) {
-      const queued = onQueueProjectBomPurchaseRequest(item, qty, selectedProject.name, selectedProject.ref, bomDraft.requestSpeed, bomDraft.notes, "warehouse_stock");
+      const queued = await onQueueProjectBomPurchaseRequest(item, qty, selectedProject.name, selectedProject.ref, bomDraft.requestSpeed, bomDraft.notes, "warehouse_stock");
       setActionStatus(queued ? `${item} was added as Need Quote because only ${selectedInventoryItem.stock} are available in inventory. Purchasing request created.` : `${item} was added as Need Quote, but no SKU match was found for Purchasing.`);
     } else {
-      const queued = onQueueProjectBomPurchaseRequest(item, qty, selectedProject.name, selectedProject.ref, bomDraft.requestSpeed, bomDraft.notes, directToProject ? "direct_to_project" : "warehouse_stock");
+      const queued = await onQueueProjectBomPurchaseRequest(item, qty, selectedProject.name, selectedProject.ref, bomDraft.requestSpeed, bomDraft.notes, directToProject ? "direct_to_project" : "warehouse_stock");
       setActionStatus(queued ? `${qty} ${item} added to ${selectedProject.ref} as a ${directToProject ? "direct-to-project" : "warehouse stock"} purchasing request.` : `${qty} ${item} added to ${selectedProject.ref}, but Purchasing request was not created because it is not matched to a SKU.`);
     }
 
