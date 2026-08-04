@@ -1,5 +1,4 @@
 export type PersistedAppState = {
-  inventoryItems: unknown[];
   projectSites: unknown[];
   deviceRecipes: unknown[];
   inventoryMovements: unknown[];
@@ -11,6 +10,10 @@ export type PersistedAppState = {
   // purchaseRequests intentionally removed (Phase 10a cutover, Aug 2026) --
   // that entity now lives exclusively in the real `purchase_requests` table
   // via loadPurchaseRequests/createPurchaseRequestRemote/updatePurchaseRequestRemote,
+  // not this blob.
+  // inventoryItems intentionally removed (Phase 10c cutover, Aug 2026) -- that
+  // entity now lives exclusively in the real `inventory_items` /
+  // `inventory_balances` tables via loadInventoryItems/saveInventoryItems,
   // not this blob.
   roleMode: string;
 };
@@ -27,7 +30,6 @@ const LOCAL_STATE_KEY = "ergon:app-state:v1";
 const AUTH_SESSION_KEY = "ergon:auth-session:v1";
 const WORKSPACE_KEY = "default";
 const STATE_KEYS: Array<keyof PersistedAppState> = [
-  "inventoryItems",
   "projectSites",
   "deviceRecipes",
   "inventoryMovements",
@@ -69,7 +71,6 @@ function asPersistedState(records: Array<{ record_key: string; data: unknown }>)
 
   const byKey = new Map(records.map((record) => [record.record_key, record.data]));
   return {
-    inventoryItems: Array.isArray(byKey.get("inventoryItems")) ? (byKey.get("inventoryItems") as unknown[]) : [],
     projectSites: Array.isArray(byKey.get("projectSites")) ? (byKey.get("projectSites") as unknown[]) : [],
     deviceRecipes: Array.isArray(byKey.get("deviceRecipes")) ? (byKey.get("deviceRecipes") as unknown[]) : [],
     inventoryMovements: Array.isArray(byKey.get("inventoryMovements")) ? (byKey.get("inventoryMovements") as unknown[]) : [],
@@ -2132,9 +2133,8 @@ export async function updateTaskHardwareDependencyStatus(
 
 // Natural-key bridges (same pattern as resolveProjectId) so the Linked
 // Hardware picker and the automation that reads dependencies back can both
-// work off `inventory_items.sku`, which is what the still-blob-backed
-// `inventoryItems` client state actually keys on (Phase 10 app cutover for
-// inventory hasn't happened yet either).
+// work off `inventory_items.sku`, which is what the app's `Part.ref` field
+// (loaded via loadInventoryItems, Phase 10c) keys on.
 
 export async function resolveInventoryItemIdBySku(sku: string, accessToken?: string): Promise<string | null> {
   if (!isRemotePersistenceConfigured() || !accessToken || !sku) {
@@ -2549,6 +2549,165 @@ export async function updatePurchaseRequestRemote(
   });
 }
 
+// --- Phase 10c: Inventory Items + Price History (cut over from the
+// app_records blob to the relational `inventory_items` table, migration 018)
+// -----------------------------------------------------------------------
+//
+// This entity keeps the exact same whole-array "load once, debounce-save the
+// full array" shape the blob used, rather than converting every stock
+// mutation call site (pull/receive/transfer/build-consume/build-undo/adjust)
+// into its own network call -- those all stay as in-memory React state
+// updates in main.tsx, completely unchanged. Only the persistence backing
+// moves from the JSON blob to inventory_items + inventory_balances.
+
+export type PurchaseUrl = { id: number; label: string; url: string };
+export type PriceHistoryEntry = { id: number; date: string; vendor: string; unitCost: number; notes: string };
+
+export type Part = {
+  ref: string;
+  name: string;
+  description: string;
+  manufacturer: string;
+  category: "Base" | "Communications" | "Power" | "Lighting" | "Display" | "Build";
+  cost: number;
+  stock: number;
+  reorderPoint: number;
+  vendorUrl?: string;
+  imageUrl?: string;
+  barcode?: string;
+  purchaseUrls?: PurchaseUrl[];
+  priceHistory?: PriceHistoryEntry[];
+  tags?: string[];
+  retired?: boolean;
+};
+
+type InventoryItemRow = {
+  id: string;
+  sku: string;
+  item_name: string;
+  description: string | null;
+  manufacturer: string | null;
+  category: string | null;
+  default_unit_cost: number | string;
+  reorder_point: number | string;
+  vendor_url: string | null;
+  image_url: string | null;
+  barcode_value: string | null;
+  purchase_sources: PurchaseUrl[] | null;
+  price_history: PriceHistoryEntry[] | null;
+  inventory_tags: string[] | null;
+  is_active: boolean;
+  inventory_balances: Array<{ quantity_on_hand: number | string }> | null;
+};
+
+const INVENTORY_ITEM_SELECT =
+  "id,sku,item_name,description,manufacturer,category,default_unit_cost,reorder_point,vendor_url,image_url,barcode_value,purchase_sources,price_history,inventory_tags,is_active,inventory_balances(quantity_on_hand)";
+
+function mapInventoryItemRow(row: InventoryItemRow): Part {
+  const stock = (row.inventory_balances ?? []).reduce((sum, balance) => sum + (Number(balance.quantity_on_hand) || 0), 0);
+  return {
+    ref: row.sku,
+    name: row.item_name,
+    description: row.description ?? "",
+    manufacturer: row.manufacturer ?? "",
+    category: (row.category as Part["category"]) ?? "Base",
+    cost: Number(row.default_unit_cost) || 0,
+    stock,
+    reorderPoint: Number(row.reorder_point) || 0,
+    vendorUrl: row.vendor_url ?? undefined,
+    imageUrl: row.image_url ?? undefined,
+    barcode: row.barcode_value ?? undefined,
+    purchaseUrls: row.purchase_sources ?? [],
+    priceHistory: row.price_history ?? [],
+    tags: row.inventory_tags ?? [],
+    retired: !row.is_active,
+  };
+}
+
+export async function loadInventoryItems(accessToken?: string): Promise<Part[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`inventory_items?select=${INVENTORY_ITEM_SELECT}&order=item_name.asc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as InventoryItemRow[];
+  return rows.map(mapInventoryItemRow);
+}
+
+let mainWarehouseLocationId: string | null = null;
+
+async function getMainWarehouseLocationId(accessToken: string): Promise<string | null> {
+  if (mainWarehouseLocationId) {
+    return mainWarehouseLocationId;
+  }
+  const response = await fetch(supabaseUrl("locations?select=id&name=eq.Main Warehouse&limit=1"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as Array<{ id: string }>;
+  mainWarehouseLocationId = rows[0]?.id ?? null;
+  return mainWarehouseLocationId;
+}
+
+export async function saveInventoryItems(items: Part[], accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken || items.length === 0) {
+    return;
+  }
+  const itemPayload = items.map((item) => ({
+    sku: item.ref,
+    item_name: item.name,
+    description: item.description || null,
+    manufacturer: item.manufacturer || null,
+    category: item.category,
+    default_unit_cost: item.cost,
+    reorder_point: item.reorderPoint,
+    vendor_url: item.vendorUrl || null,
+    image_url: item.imageUrl || null,
+    barcode_value: item.barcode || null,
+    purchase_sources: item.purchaseUrls ?? [],
+    price_history: item.priceHistory ?? [],
+    inventory_tags: item.tags ?? [],
+    is_active: !item.retired,
+  }));
+
+  const itemResponse = await fetch(supabaseUrl("inventory_items?on_conflict=sku"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify(itemPayload),
+  });
+  if (!itemResponse.ok) {
+    throw new Error(`Could not save inventory items: ${itemResponse.status}`);
+  }
+  const savedRows = (await itemResponse.json()) as Array<{ id: string; sku: string }>;
+  const idBySku = new Map(savedRows.map((row) => [row.sku, row.id]));
+
+  const locationId = await getMainWarehouseLocationId(accessToken);
+  if (!locationId) {
+    return;
+  }
+  const balancePayload = items
+    .map((item) => {
+      const inventoryItemId = idBySku.get(item.ref);
+      return inventoryItemId ? { inventory_item_id: inventoryItemId, location_id: locationId, quantity_on_hand: item.stock } : null;
+    })
+    .filter((row): row is { inventory_item_id: string; location_id: string; quantity_on_hand: number } => row !== null);
+
+  if (balancePayload.length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl("inventory_balances?on_conflict=inventory_item_id,location_id"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(balancePayload),
+  });
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;
@@ -2614,7 +2773,6 @@ export async function saveRemoteAppState(state: PersistedAppState, accessToken?:
       entity_type: "app_state",
       entity_ref: WORKSPACE_KEY,
       payload: {
-        inventory_items: state.inventoryItems.length,
         projects: state.projectSites.length,
         equipment_recipes: state.deviceRecipes.length,
         movements: state.inventoryMovements.length,

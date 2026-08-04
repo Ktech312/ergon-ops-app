@@ -60,6 +60,7 @@ import {
   loadCatalogItems,
   loadFormSchema,
   loadHandoversForProject,
+  loadInventoryItems,
   loadInventoryItemSkusByIds,
   loadLocalAppState,
   loadOwnAllowedViews,
@@ -86,6 +87,7 @@ import {
   respondToPublicSubmittal,
   reviewUserApproval,
   revokeAdmin,
+  saveInventoryItems,
   saveLocalAppState,
   saveRemoteAppState,
   saveUserRoleMode,
@@ -118,13 +120,16 @@ import {
   type KnownUser,
   type NotificationItem,
   type NotificationRule,
+  type Part,
   type PersistedAppState,
   type PresalesHardwareRule,
+  type PriceHistoryEntry,
   type ProjectDocument,
   type ProjectHandover,
   type ProjectSubmittal,
   type PublicSubmittalView,
   type PurchaseRequest,
+  type PurchaseUrl,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
   type StandardInstallTime,
@@ -140,39 +145,12 @@ import "./styles.css";
 
 type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "tasks" | "reports" | "admin";
 
-type PurchaseUrl = {
-  id: number;
-  label: string;
-  url: string;
-};
-
-type PriceHistoryEntry = {
-  id: number;
-  date: string;
-  vendor: string;
-  unitCost: number;
-  notes: string;
-};
+// PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
+// Phase 10c they're imported from persistence.ts (see the import block
+// above) since inventory items are now backed by the real `inventory_items`
+// / `inventory_balances` tables instead of the app_records blob.
 
 const inventoryTags = ["VPU Part", "Edge Box Part", "Solar Part", "Server Part", "Network Part", "Power Part", "Field Hardware"];
-
-type Part = {
-  ref: string;
-  name: string;
-  description: string;
-  manufacturer: string;
-  category: "Base" | "Communications" | "Power" | "Lighting" | "Display" | "Build";
-  cost: number;
-  stock: number;
-  reorderPoint: number;
-  vendorUrl?: string;
-  imageUrl?: string;
-  barcode?: string;
-  purchaseUrls?: PurchaseUrl[];
-  priceHistory?: PriceHistoryEntry[];
-  tags?: string[];
-  retired?: boolean;
-};
 
 type BuildComponent = {
   itemName: string;
@@ -980,7 +958,9 @@ function App() {
   const localState = loadLocalAppState();
   const [view, setView] = useState<View>(() => (window.location.hash ? viewFromHash() : savedView()));
   const [locationHash, setLocationHash] = useState(window.location.hash || window.localStorage.getItem("ergon:lastHash") || "#dashboard");
-  const [inventoryItems, setInventoryItems] = useState<Part[]>(() => isArray<Part>(localState?.inventoryItems, parts));
+  // Phase 10c: Inventory Items no longer lives in the local/blob state --
+  // it's always loaded fresh from the real table (see the effect below).
+  const [inventoryItems, setInventoryItems] = useState<Part[]>([]);
   const [projectSites, setProjectSites] = useState<ProjectSite[]>(() => isArray<ProjectSite>(localState?.projectSites, projects));
   const [deviceRecipes, setDeviceRecipes] = useState<BuildRecipe[]>(() => isArray<BuildRecipe>(localState?.deviceRecipes, buildRecipes));
   const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>(() => isArray<InventoryMovement>(localState?.inventoryMovements, []));
@@ -1099,7 +1079,6 @@ function App() {
           }
           return;
         }
-        setInventoryItems(isArray<Part>(remoteState.inventoryItems, parts));
         setProjectSites(isArray<ProjectSite>(remoteState.projectSites, projects));
         setDeviceRecipes(isArray<BuildRecipe>(remoteState.deviceRecipes, buildRecipes));
         setInventoryMovements(isArray<InventoryMovement>(remoteState.inventoryMovements, []));
@@ -1120,7 +1099,6 @@ function App() {
 
   useEffect(() => {
     const state: PersistedAppState = {
-      inventoryItems,
       projectSites,
       deviceRecipes,
       inventoryMovements,
@@ -1148,7 +1126,32 @@ function App() {
         });
     }, 650);
     return () => window.clearTimeout(syncTimer);
-  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, roleMode, authSession]);
+  }, [projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, roleMode, authSession]);
+
+  // Phase 10c: Inventory Items now lives in its own real tables
+  // (inventory_items + inventory_balances), loaded once per session and then
+  // debounce-saved as a whole array on every change -- the same shape the
+  // blob used, so none of the pull/receive/transfer/build/adjust logic below
+  // needed to change, only where it's persisted.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadInventoryItems(authSession.accessToken).then(setInventoryItems).catch(() => {});
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured() || inventoryItems.length === 0) {
+      return;
+    }
+    const syncTimer = window.setTimeout(() => {
+      saveInventoryItems(inventoryItems, authSession.accessToken).catch(() => {
+        setSyncStatus("error");
+        setAuthStatus("Cloud save failed for inventory items. Check login, RLS policies, or Supabase env vars.");
+      });
+    }, 650);
+    return () => window.clearTimeout(syncTimer);
+  }, [inventoryItems, authSession]);
 
   // Phase 10a: Purchase Requests now lives in its own real table, loaded and
   // saved independently of the blob-based state above.
@@ -2759,7 +2762,6 @@ function App() {
 
   function currentPersistedState(): PersistedAppState {
     return {
-      inventoryItems,
       projectSites,
       deviceRecipes,
       inventoryMovements,
@@ -2788,7 +2790,6 @@ function App() {
     reader.onload = () => {
       try {
         const importedState = JSON.parse(String(reader.result ?? "{}")) as Partial<PersistedAppState>;
-        setInventoryItems(isArray<Part>(importedState.inventoryItems, inventoryItems));
         setProjectSites(isArray<ProjectSite>(importedState.projectSites, projectSites));
         setDeviceRecipes(isArray<BuildRecipe>(importedState.deviceRecipes, deviceRecipes));
         setInventoryMovements(isArray<InventoryMovement>(importedState.inventoryMovements, inventoryMovements));
