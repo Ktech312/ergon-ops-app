@@ -1268,6 +1268,182 @@ export async function updateNotificationRule(id: string, patch: Partial<Pick<Not
   return mapNotificationRuleRow(rows[0]);
 }
 
+export type StandardInstallTime = {
+  id: string;
+  category: string;
+  hoursPerUnit: number;
+  notes: string;
+};
+
+type StandardInstallTimeRow = {
+  id: string;
+  category: string | null;
+  hours_per_unit: number | string;
+  notes: string | null;
+};
+
+function mapStandardInstallTimeRow(row: StandardInstallTimeRow): StandardInstallTime {
+  return {
+    id: row.id,
+    category: row.category ?? "",
+    hoursPerUnit: Number(row.hours_per_unit) || 0,
+    notes: row.notes ?? "",
+  };
+}
+
+export async function loadStandardInstallTimes(accessToken?: string): Promise<StandardInstallTime[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("standard_install_times?select=id,category,hours_per_unit,notes&order=category.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as StandardInstallTimeRow[];
+  return rows.map(mapStandardInstallTimeRow);
+}
+
+export async function upsertStandardInstallTime(entry: Omit<StandardInstallTime, "id">, accessToken?: string): Promise<StandardInstallTime> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("standard_install_times?on_conflict=category"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "resolution=merge-duplicates,return=representation",
+    },
+    body: JSON.stringify({ category: entry.category, hours_per_unit: entry.hoursPerUnit, notes: entry.notes }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not save standard install time: ${response.status}`);
+  }
+  const rows = (await response.json()) as StandardInstallTimeRow[];
+  return mapStandardInstallTimeRow(rows[0]);
+}
+
+export type ScheduleTemplatePhase = {
+  id: string;
+  templateId: string;
+  phaseName: string;
+  sequenceOrder: number;
+  durationMode: "fixed_hours" | "per_bom_unit";
+  fixedHours: number | null;
+  bomCategoryFilter: string;
+  defaultRole: string;
+};
+
+export type ScheduleTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  isActive: boolean;
+  phases: ScheduleTemplatePhase[];
+};
+
+type ScheduleTemplateRow = { id: string; name: string; description: string | null; is_active: boolean };
+type ScheduleTemplatePhaseRow = {
+  id: string;
+  template_id: string;
+  phase_name: string;
+  sequence_order: number;
+  duration_mode: "fixed_hours" | "per_bom_unit";
+  fixed_hours: number | string | null;
+  bom_category_filter: string | null;
+  default_role: string | null;
+};
+
+function mapPhaseRow(row: ScheduleTemplatePhaseRow): ScheduleTemplatePhase {
+  return {
+    id: row.id,
+    templateId: row.template_id,
+    phaseName: row.phase_name,
+    sequenceOrder: row.sequence_order,
+    durationMode: row.duration_mode,
+    fixedHours: row.fixed_hours === null ? null : Number(row.fixed_hours),
+    bomCategoryFilter: row.bom_category_filter ?? "",
+    defaultRole: row.default_role ?? "",
+  };
+}
+
+export async function loadScheduleTemplates(accessToken?: string): Promise<ScheduleTemplate[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const [templatesRes, phasesRes] = await Promise.all([
+    fetch(supabaseUrl("project_schedule_templates?select=*&order=name.asc"), { headers: supabaseHeaders(accessToken) }),
+    fetch(supabaseUrl("project_schedule_template_phases?select=*&order=sequence_order.asc"), { headers: supabaseHeaders(accessToken) }),
+  ]);
+  if (!templatesRes.ok || !phasesRes.ok) {
+    return [];
+  }
+  const templateRows = (await templatesRes.json()) as ScheduleTemplateRow[];
+  const phaseRows = (await phasesRes.json()) as ScheduleTemplatePhaseRow[];
+  return templateRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    description: row.description ?? "",
+    isActive: row.is_active,
+    phases: phaseRows.filter((phase) => phase.template_id === row.id).map(mapPhaseRow),
+  }));
+}
+
+export async function createScheduleTemplate(name: string, description: string, accessToken?: string): Promise<ScheduleTemplate> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("project_schedule_templates"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ name, description, is_active: true }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not create template: ${response.status}`);
+  }
+  const rows = (await response.json()) as ScheduleTemplateRow[];
+  return { id: rows[0].id, name: rows[0].name, description: rows[0].description ?? "", isActive: rows[0].is_active, phases: [] };
+}
+
+export async function addScheduleTemplatePhase(
+  templateId: string,
+  phase: Omit<ScheduleTemplatePhase, "id" | "templateId">,
+  accessToken?: string,
+): Promise<ScheduleTemplatePhase> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("project_schedule_template_phases"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      template_id: templateId,
+      phase_name: phase.phaseName,
+      sequence_order: phase.sequenceOrder,
+      duration_mode: phase.durationMode,
+      fixed_hours: phase.fixedHours,
+      bom_category_filter: phase.bomCategoryFilter || null,
+      default_role: phase.defaultRole || null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not add phase: ${response.status}`);
+  }
+  const rows = (await response.json()) as ScheduleTemplatePhaseRow[];
+  return mapPhaseRow(rows[0]);
+}
+
+export async function deleteScheduleTemplatePhase(id: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`project_schedule_template_phases?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;

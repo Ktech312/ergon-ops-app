@@ -328,6 +328,25 @@ button {
   color: #9a2f20;
 }
 
+.schedule-generate-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.schedule-generate-row select {
+  flex: 1;
+  min-height: 34px;
+}
+
+.schedule-template-block {
+  background: #faf8f4;
+  border: 1px solid #e8e1d5;
+  border-radius: 10px;
+  margin-top: 14px;
+  padding: 14px;
+}
+
 .status-pill,
 .priority-pill {
   border-radius: 999px;

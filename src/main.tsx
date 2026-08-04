@@ -28,10 +28,13 @@ import {
   acquireTransactionLock,
   checkIsAdmin,
   consumeOAuthRedirectSession,
+  addScheduleTemplatePhase,
   createCatalogItem,
   createNotification,
+  createScheduleTemplate,
   createTask,
   createTeamMember,
+  deleteScheduleTemplatePhase,
   deleteTask,
   ensureOwnApprovalRequest,
   grantAdmin,
@@ -48,6 +51,8 @@ import {
   loadNotificationRules,
   loadNotifications,
   loadRemoteAppState,
+  loadScheduleTemplates,
+  loadStandardInstallTimes,
   loadTasks,
   loadTeamMembers,
   loadUserRoleMode,
@@ -73,6 +78,7 @@ import {
   updateTask,
   updateTeamMember,
   upsertKnownUser,
+  upsertStandardInstallTime,
   type ApprovalStatus,
   type AuthSession,
   type CatalogItem,
@@ -81,6 +87,9 @@ import {
   type NotificationItem,
   type NotificationRule,
   type PersistedAppState,
+  type ScheduleTemplate,
+  type ScheduleTemplatePhase,
+  type StandardInstallTime,
   type TaskPriority,
   type TaskSection,
   type TaskStatus,
@@ -987,6 +996,9 @@ function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationRules, setNotificationRules] = useState<NotificationRule[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [standardInstallTimes, setStandardInstallTimes] = useState<StandardInstallTime[]>([]);
+  const [scheduleTemplates, setScheduleTemplates] = useState<ScheduleTemplate[]>([]);
+  const [scheduleStatus, setScheduleStatus] = useState("");
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -1476,6 +1488,119 @@ function App() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks, notificationRules, authSession]);
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setStandardInstallTimes([]);
+      setScheduleTemplates([]);
+      return;
+    }
+    loadStandardInstallTimes(authSession.accessToken).then(setStandardInstallTimes).catch(() => {});
+    loadScheduleTemplates(authSession.accessToken).then(setScheduleTemplates).catch(() => {});
+  }, [authSession]);
+
+  async function handleSaveStandardInstallTime(entry: Omit<StandardInstallTime, "id">) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const saved = await upsertStandardInstallTime(entry, authSession.accessToken);
+      setStandardInstallTimes((current) => {
+        const withoutExisting = current.filter((item) => item.category !== saved.category);
+        return [...withoutExisting, saved].sort((a, b) => a.category.localeCompare(b.category));
+      });
+    } catch (error) {
+      setScheduleStatus(error instanceof Error ? error.message : "Could not save standard time.");
+    }
+  }
+
+  async function handleCreateScheduleTemplate(name: string, description: string) {
+    if (!authSession || !name.trim()) {
+      return;
+    }
+    try {
+      const created = await createScheduleTemplate(name.trim(), description, authSession.accessToken);
+      setScheduleTemplates((current) => [...current, created]);
+    } catch (error) {
+      setScheduleStatus(error instanceof Error ? error.message : "Could not create template.");
+    }
+  }
+
+  async function handleAddSchedulePhase(templateId: string, phase: Omit<import("./persistence").ScheduleTemplatePhase, "id" | "templateId">) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const created = await addScheduleTemplatePhase(templateId, phase, authSession.accessToken);
+      setScheduleTemplates((current) => current.map((template) => (template.id === templateId ? { ...template, phases: [...template.phases, created] } : template)));
+    } catch (error) {
+      setScheduleStatus(error instanceof Error ? error.message : "Could not add phase.");
+    }
+  }
+
+  async function handleDeleteSchedulePhase(templateId: string, phaseId: string) {
+    if (!authSession) {
+      return;
+    }
+    await deleteScheduleTemplatePhase(phaseId, authSession.accessToken);
+    setScheduleTemplates((current) => current.map((template) => (template.id === templateId ? { ...template, phases: template.phases.filter((phase) => phase.id !== phaseId) } : template)));
+  }
+
+  // Deterministic schedule generation: standard time (hours per unit for a
+  // BOM category) x quantity of that category in the project's BOM, summed
+  // per phase, sequenced by phase order into calendar due dates (assumes an
+  // 8-hour work day, does not currently skip weekends -- a reasonable v1).
+  // No AI call in this path at all, per E's decision to keep the actual
+  // date math deterministic and auditable.
+  function generateScheduleTasks(project: ProjectSite, template: ScheduleTemplate): Array<Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">> {
+    const bomQtyByCategory = new Map<string, number>();
+    project.bom.forEach((line) => {
+      const part = inventoryItems.find((item) => item.name === line.item);
+      const category = part?.category ?? "Base";
+      bomQtyByCategory.set(category, (bomQtyByCategory.get(category) ?? 0) + line.qty);
+    });
+
+    let cumulativeHours = 0;
+    const sortedPhases = [...template.phases].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+    return sortedPhases.map((phase) => {
+      let hours = phase.fixedHours ?? 0;
+      if (phase.durationMode === "per_bom_unit" && phase.bomCategoryFilter) {
+        const qty = bomQtyByCategory.get(phase.bomCategoryFilter) ?? 0;
+        const standardTime = standardInstallTimes.find((entry) => entry.category === phase.bomCategoryFilter);
+        hours = qty * (standardTime?.hoursPerUnit ?? 0);
+      }
+      cumulativeHours += hours;
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + Math.ceil(cumulativeHours / 8));
+      return {
+        title: `${phase.phaseName} - ${project.name}`,
+        description: `Auto-generated from schedule template "${template.name}" (${hours.toFixed(1)} standard hours).`,
+        section: "projects" as TaskSection,
+        projectRef: project.ref,
+        isInternal: false,
+        status: "to_do" as TaskStatus,
+        priority: "normal" as TaskPriority,
+        category: phase.defaultRole || "",
+        impactAreas: [],
+        assigneeUserId: null,
+        assigneeEmail: "",
+        dueDate: dueDate.toISOString().slice(0, 10),
+      };
+    });
+  }
+
+  async function handleGenerateSchedule(project: ProjectSite, templateId: string) {
+    const template = scheduleTemplates.find((entry) => entry.id === templateId);
+    if (!template || template.phases.length === 0) {
+      setScheduleStatus("Pick a template with at least one phase first.");
+      return;
+    }
+    const generatedTasks = generateScheduleTasks(project, template);
+    for (const task of generatedTasks) {
+      await handleCreateTask(task);
+    }
+    setScheduleStatus(`Generated ${generatedTasks.length} schedule tasks for ${project.name} from "${template.name}".`);
+  }
 
   useEffect(() => {
     if (!window.location.hash) {
@@ -2477,7 +2602,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesCatalog
             catalogItems={catalogItems}
@@ -2532,6 +2657,12 @@ function App() {
             onUpdateTeamMember={handleUpdateTeamMember}
             notificationRules={notificationRules}
             onUpdateNotificationRule={handleUpdateNotificationRule}
+            standardInstallTimes={standardInstallTimes}
+            onSaveStandardInstallTime={handleSaveStandardInstallTime}
+            scheduleTemplates={scheduleTemplates}
+            onCreateScheduleTemplate={handleCreateScheduleTemplate}
+            onAddSchedulePhase={handleAddSchedulePhase}
+            onDeleteSchedulePhase={handleDeleteSchedulePhase}
             onRefresh={() => {
               if (!authSession) {
                 return;
@@ -4468,6 +4599,9 @@ function Projects({
   onUpdateTask,
   onDeleteTask,
   onOpenTasksView,
+  scheduleTemplates,
+  scheduleStatus,
+  onGenerateSchedule,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -4482,6 +4616,9 @@ function Projects({
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
+  scheduleTemplates: ScheduleTemplate[];
+  scheduleStatus: string;
+  onGenerateSchedule: (project: ProjectSite, templateId: string) => void;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
@@ -4489,6 +4626,7 @@ function Projects({
   const [projectMode, setProjectMode] = useState<"list" | "detail">(initialProject ? "detail" : "list");
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
   const [isExtractingQuote, setIsExtractingQuote] = useState(false);
+  const [scheduleTemplateChoice, setScheduleTemplateChoice] = useState("");
   const [showBomModal, setShowBomModal] = useState(false);
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
@@ -4962,6 +5100,23 @@ function Projects({
               <div><span>Open BOM</span><strong>{openBomLines}</strong></div>
             </div>
           </div>
+          <div className="schedule-generate-row">
+            <select value={scheduleTemplateChoice} onChange={(event) => setScheduleTemplateChoice(event.target.value)}>
+              <option value="">Apply schedule template...</option>
+              {scheduleTemplates.filter((template) => template.isActive).map((template) => (
+                <option key={template.id} value={template.id}>{template.name} ({template.phases.length} phases)</option>
+              ))}
+            </select>
+            <button
+              className="secondary-action mini-action"
+              type="button"
+              disabled={!scheduleTemplateChoice}
+              onClick={() => scheduleTemplateChoice && onGenerateSchedule(selectedProject, scheduleTemplateChoice)}
+            >
+              Generate Schedule
+            </button>
+          </div>
+          {scheduleStatus && <small className="muted">{scheduleStatus}</small>}
         </section>
       </div>
 
@@ -5655,6 +5810,12 @@ function AdminPage({
   onUpdateTeamMember,
   notificationRules,
   onUpdateNotificationRule,
+  standardInstallTimes,
+  onSaveStandardInstallTime,
+  scheduleTemplates,
+  onCreateScheduleTemplate,
+  onAddSchedulePhase,
+  onDeleteSchedulePhase,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -5678,8 +5839,21 @@ function AdminPage({
   onUpdateTeamMember: (id: string, member: Partial<Omit<TeamMember, "id">>) => void;
   notificationRules: NotificationRule[];
   onUpdateNotificationRule: (id: string, patch: Partial<Pick<NotificationRule, "channels" | "isActive">>) => void;
+  standardInstallTimes: StandardInstallTime[];
+  onSaveStandardInstallTime: (entry: Omit<StandardInstallTime, "id">) => void;
+  scheduleTemplates: ScheduleTemplate[];
+  onCreateScheduleTemplate: (name: string, description: string) => void;
+  onAddSchedulePhase: (templateId: string, phase: Omit<ScheduleTemplatePhase, "id" | "templateId">) => void;
+  onDeleteSchedulePhase: (templateId: string, phaseId: string) => void;
 }) {
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", roleTitle: "" });
+  const [timeDraft, setTimeDraft] = useState({ category: "", hoursPerUnit: 0, notes: "" });
+  const [templateNameDraft, setTemplateNameDraft] = useState("");
+  const [phaseDrafts, setPhaseDrafts] = useState<Record<string, { phaseName: string; durationMode: "fixed_hours" | "per_bom_unit"; fixedHours: number; bomCategoryFilter: string; defaultRole: string }>>({});
+
+  function phaseDraftFor(templateId: string) {
+    return phaseDrafts[templateId] ?? { phaseName: "", durationMode: "fixed_hours" as const, fixedHours: 4, bomCategoryFilter: "", defaultRole: "" };
+  }
 
   function submitRosterDraft() {
     if (!rosterDraft.fullName.trim()) {
@@ -5809,6 +5983,99 @@ function AdminPage({
               )}
             </tbody>
           </table>
+        </section>
+
+        <section className="panel wide">
+          <PanelHeader title="Standard Install Times" label="Hours per unit, by inventory category -- powers schedule generation" />
+          <div className="roster-add-row">
+            <input value={timeDraft.category} onChange={(event) => setTimeDraft((current) => ({ ...current, category: event.target.value }))} placeholder="Category (e.g. Communications)" />
+            <input type="number" min={0} step="0.25" value={timeDraft.hoursPerUnit} onChange={(event) => setTimeDraft((current) => ({ ...current, hoursPerUnit: Number(event.target.value) }))} placeholder="Hours per unit" />
+            <input value={timeDraft.notes} onChange={(event) => setTimeDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Notes (optional)" />
+            <button className="primary-action mini-action" type="button" disabled={!timeDraft.category.trim()} onClick={() => { onSaveStandardInstallTime(timeDraft); setTimeDraft({ category: "", hoursPerUnit: 0, notes: "" }); }}>
+              <Plus size={14} /> Save
+            </button>
+          </div>
+          <table>
+            <thead><tr><th>Category</th><th>Hours / unit</th><th>Notes</th></tr></thead>
+            <tbody>
+              {standardInstallTimes.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{entry.category}</td>
+                  <td>{entry.hoursPerUnit}</td>
+                  <td>{entry.notes || "-"}</td>
+                </tr>
+              ))}
+              {standardInstallTimes.length === 0 && (
+                <tr><td colSpan={3} className="empty-compact-state">No standard times set yet -- schedule generation needs at least one category defined here.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+
+        <section className="panel wide">
+          <PanelHeader title="Project Schedule Templates" label="Ordered phases a PM can apply to a project to auto-draft a schedule" />
+          <div className="roster-add-row">
+            <input value={templateNameDraft} onChange={(event) => setTemplateNameDraft(event.target.value)} placeholder="New template name (e.g. Standard Parking Garage Install)" className="span-2" />
+            <button className="primary-action mini-action" type="button" disabled={!templateNameDraft.trim()} onClick={() => { onCreateScheduleTemplate(templateNameDraft, ""); setTemplateNameDraft(""); }}>
+              <Plus size={14} /> New Template
+            </button>
+          </div>
+          {scheduleTemplates.map((template) => {
+            const draft = phaseDraftFor(template.id);
+            return (
+              <div className="schedule-template-block" key={template.id}>
+                <div className="panel-title-row">
+                  <div><h2>{template.name}</h2><p>{template.phases.length} phase(s)</p></div>
+                </div>
+                <table>
+                  <thead><tr><th>#</th><th>Phase</th><th>Duration</th><th>Role</th><th></th></tr></thead>
+                  <tbody>
+                    {[...template.phases].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((phase) => (
+                      <tr key={phase.id}>
+                        <td>{phase.sequenceOrder}</td>
+                        <td>{phase.phaseName}</td>
+                        <td>{phase.durationMode === "fixed_hours" ? `${phase.fixedHours ?? 0}h fixed` : `per BOM unit (${phase.bomCategoryFilter})`}</td>
+                        <td>{phase.defaultRole || "-"}</td>
+                        <td><button className="secondary-action mini-action" type="button" onClick={() => onDeleteSchedulePhase(template.id, phase.id)}>Remove</button></td>
+                      </tr>
+                    ))}
+                    {template.phases.length === 0 && <tr><td colSpan={5} className="empty-compact-state">No phases yet.</td></tr>}
+                  </tbody>
+                </table>
+                <div className="roster-add-row">
+                  <input value={draft.phaseName} onChange={(event) => setPhaseDrafts((current) => ({ ...current, [template.id]: { ...draft, phaseName: event.target.value } }))} placeholder="Phase name (e.g. Camera Install)" />
+                  <select value={draft.durationMode} onChange={(event) => setPhaseDrafts((current) => ({ ...current, [template.id]: { ...draft, durationMode: event.target.value as "fixed_hours" | "per_bom_unit" } }))}>
+                    <option value="fixed_hours">Fixed hours</option>
+                    <option value="per_bom_unit">Per BOM unit (by category)</option>
+                  </select>
+                  {draft.durationMode === "fixed_hours" ? (
+                    <input type="number" min={0} step="0.5" value={draft.fixedHours} onChange={(event) => setPhaseDrafts((current) => ({ ...current, [template.id]: { ...draft, fixedHours: Number(event.target.value) } }))} placeholder="Hours" />
+                  ) : (
+                    <input value={draft.bomCategoryFilter} onChange={(event) => setPhaseDrafts((current) => ({ ...current, [template.id]: { ...draft, bomCategoryFilter: event.target.value } }))} placeholder="BOM category (e.g. Communications)" />
+                  )}
+                  <button
+                    className="primary-action mini-action"
+                    type="button"
+                    disabled={!draft.phaseName.trim()}
+                    onClick={() => {
+                      onAddSchedulePhase(template.id, {
+                        phaseName: draft.phaseName,
+                        sequenceOrder: template.phases.length + 1,
+                        durationMode: draft.durationMode,
+                        fixedHours: draft.durationMode === "fixed_hours" ? draft.fixedHours : null,
+                        bomCategoryFilter: draft.durationMode === "per_bom_unit" ? draft.bomCategoryFilter : "",
+                        defaultRole: draft.defaultRole,
+                      });
+                      setPhaseDrafts((current) => ({ ...current, [template.id]: { phaseName: "", durationMode: "fixed_hours", fixedHours: 4, bomCategoryFilter: "", defaultRole: "" } }));
+                    }}
+                  >
+                    <Plus size={14} /> Add Phase
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {scheduleTemplates.length === 0 && <div className="empty-compact-state">No templates yet. Create one above, then add phases to it.</div>}
         </section>
         </>
       )}
