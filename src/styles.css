@@ -1290,13 +1290,19 @@ td small {
   padding: 14px;
 }
 
-.sales-dropzone.compact {
-  min-height: 64px;
-  padding: 10px;
+.sales-dropzone.compact-row {
+  display: inline-flex;
+  flex-direction: row;
+  gap: 8px;
+  margin: 0;
+  min-height: 0;
+  padding: 8px 12px;
+  width: fit-content;
 }
 
-.sales-dropzone.compact strong {
-  font-size: 13px;
+.sales-dropzone.compact-row strong {
+  font-size: 12.5px;
+  white-space: nowrap;
 }
 
 .project-progress-body {

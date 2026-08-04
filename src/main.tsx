@@ -4665,8 +4665,8 @@ function Projects({
       <div className="project-top-row">
         <section className="panel compact-card">
           <PanelHeader title="Build Sales BOM and Scope" label="One-time setup: upload a sales quote PDF" />
-          <label className={`sales-dropzone compact ${isExtractingQuote ? "is-working" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
-            <Upload size={18} />
+          <label className={`sales-dropzone compact-row ${isExtractingQuote ? "is-working" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
+            <Upload size={15} />
             <strong>{isExtractingQuote ? "Reading sales quote..." : "Drag or choose sales quote PDF"}</strong>
             <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} disabled={isExtractingQuote} />
           </label>
