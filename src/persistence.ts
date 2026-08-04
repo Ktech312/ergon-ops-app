@@ -1444,6 +1444,274 @@ export async function deleteScheduleTemplatePhase(id: string, accessToken?: stri
   });
 }
 
+// --- Phase 11: Submittals -------------------------------------------------
+// Client review/approval happens with no login via two security-definer RPCs
+// (get_submittal_by_token / respond_to_submittal) exposed to the anon role.
+// supabaseHeaders() with no accessToken already falls back to the anon key
+// for both apikey and authorization, so the public functions below need no
+// special-casing beyond simply not passing a token.
+
+export type SubmittalSowSnapshot = {
+  summary: string;
+  preparation: string;
+  infrastructure: string;
+  installation: string;
+  commissioning: string;
+  fineTuning: string;
+  assumptions: string;
+  exclusions: string;
+};
+
+export type SubmittalBomLineSnapshot = { item: string; qty: number; status: string };
+
+export type SubmittalSnapshot = {
+  projectName: string;
+  projectRef: string;
+  clientName: string;
+  siteAddress: string;
+  targetDate: string;
+  allocated: number;
+  sow: SubmittalSowSnapshot;
+  bom: SubmittalBomLineSnapshot[];
+};
+
+export type ProjectSubmittal = {
+  id: string;
+  projectId: string;
+  version: number;
+  status: "draft" | "sent" | "approved" | "rejected" | "revision_requested";
+  contentSnapshot: SubmittalSnapshot;
+  clientName: string;
+  clientEmail: string;
+  sentAt: string | null;
+  respondedAt: string | null;
+  responseNotes: string;
+  approvalName: string;
+  shareToken: string | null;
+  createdAt: string;
+};
+
+export type PublicSubmittalView = {
+  submittalId: string;
+  status: ProjectSubmittal["status"];
+  version: number;
+  contentSnapshot: SubmittalSnapshot;
+  clientName: string;
+  projectName: string;
+};
+
+type ProjectSubmittalRow = {
+  id: string;
+  project_id: string;
+  version: number;
+  status: string;
+  content_snapshot: SubmittalSnapshot;
+  client_name: string | null;
+  client_email: string | null;
+  sent_at: string | null;
+  responded_at: string | null;
+  response_notes: string | null;
+  approval_name: string | null;
+  created_at: string;
+};
+
+type ShareTokenRow = { token: string; entity_id: string };
+
+function mapSubmittalRow(row: ProjectSubmittalRow, shareToken: string | null): ProjectSubmittal {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    version: row.version,
+    status: row.status as ProjectSubmittal["status"],
+    contentSnapshot: row.content_snapshot,
+    clientName: row.client_name ?? "",
+    clientEmail: row.client_email ?? "",
+    sentAt: row.sent_at,
+    respondedAt: row.responded_at,
+    responseNotes: row.response_notes ?? "",
+    approvalName: row.approval_name ?? "",
+    shareToken,
+    createdAt: row.created_at,
+  };
+}
+
+function generateShareToken(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
+  }
+  return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+}
+
+// Phase 10's app-code cutover hasn't happened yet, so ProjectSite objects in
+// the app have no relational `projects.id`. This resolves (or lazily
+// creates) the row by the natural `project_name` key so Submittals can link
+// to a real project_id without waiting on the full cutover.
+export async function resolveProjectId(projectName: string, accessToken?: string): Promise<string | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !projectName) {
+    return null;
+  }
+
+  const existing = await fetch(supabaseUrl(`projects?project_name=eq.${encodeURIComponent(projectName)}&select=id&limit=1`), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (existing.ok) {
+    const rows = (await existing.json()) as Array<{ id: string }>;
+    if (rows.length) {
+      return rows[0].id;
+    }
+  }
+
+  const created = await fetch(supabaseUrl("projects"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ project_name: projectName }),
+  });
+
+  if (!created.ok) {
+    return null;
+  }
+
+  const rows = (await created.json()) as Array<{ id: string }>;
+  return rows[0]?.id ?? null;
+}
+
+export async function loadSubmittalsForProject(projectId: string, accessToken?: string): Promise<ProjectSubmittal[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !projectId) {
+    return [];
+  }
+
+  const [submittalsRes, tokensRes] = await Promise.all([
+    fetch(supabaseUrl(`project_submittals?project_id=eq.${projectId}&select=*&order=version.desc`), {
+      headers: supabaseHeaders(accessToken),
+    }),
+    fetch(supabaseUrl(`public_share_tokens?entity_type=eq.project_submittal&select=token,entity_id`), {
+      headers: supabaseHeaders(accessToken),
+    }),
+  ]);
+
+  if (!submittalsRes.ok) {
+    return [];
+  }
+
+  const rows = (await submittalsRes.json()) as ProjectSubmittalRow[];
+  const tokenRows = tokensRes.ok ? ((await tokensRes.json()) as ShareTokenRow[]) : [];
+  return rows.map((row) => mapSubmittalRow(row, tokenRows.find((entry) => entry.entity_id === row.id)?.token ?? null));
+}
+
+export async function createSubmittal(
+  input: { projectId: string; version: number; contentSnapshot: SubmittalSnapshot; clientName: string; clientEmail: string },
+  accessToken?: string,
+): Promise<ProjectSubmittal> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const response = await fetch(supabaseUrl("project_submittals"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      project_id: input.projectId,
+      version: input.version,
+      status: "sent",
+      content_snapshot: input.contentSnapshot,
+      client_name: input.clientName || null,
+      client_email: input.clientEmail || null,
+      sent_at: new Date().toISOString(),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not create submittal: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as ProjectSubmittalRow[];
+  return mapSubmittalRow(rows[0], null);
+}
+
+export async function createSubmittalShareToken(submittalId: string, accessToken?: string): Promise<string> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const token = generateShareToken();
+  const response = await fetch(supabaseUrl("public_share_tokens"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ token, entity_type: "project_submittal", entity_id: submittalId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not create share link: ${response.status}`);
+  }
+
+  return token;
+}
+
+export async function fetchPublicSubmittal(token: string): Promise<PublicSubmittalView | null> {
+  if (!isRemotePersistenceConfigured() || !token) {
+    return null;
+  }
+
+  const response = await fetch(supabaseUrl("rpc/get_submittal_by_token"), {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ share_token: token }),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const rows = (await response.json()) as Array<{
+    submittal_id: string;
+    status: string;
+    version: number;
+    content_snapshot: SubmittalSnapshot;
+    client_name: string | null;
+    project_name: string;
+  }>;
+
+  if (!rows.length) {
+    return null;
+  }
+
+  const row = rows[0];
+  return {
+    submittalId: row.submittal_id,
+    status: row.status as ProjectSubmittal["status"],
+    version: row.version,
+    contentSnapshot: row.content_snapshot,
+    clientName: row.client_name ?? "",
+    projectName: row.project_name,
+  };
+}
+
+export async function respondToPublicSubmittal(
+  token: string,
+  newStatus: "approved" | "rejected" | "revision_requested",
+  approverName: string,
+  notes: string,
+): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !token) {
+    return false;
+  }
+
+  const response = await fetch(supabaseUrl("rpc/respond_to_submittal"), {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({
+      share_token: token,
+      new_status: newStatus,
+      approver_name: approverName || "Unknown",
+      approver_ip: "",
+      notes: notes || "",
+    }),
+  });
+
+  return response.ok;
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;

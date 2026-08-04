@@ -32,11 +32,14 @@ import {
   createCatalogItem,
   createNotification,
   createScheduleTemplate,
+  createSubmittal,
+  createSubmittalShareToken,
   createTask,
   createTeamMember,
   deleteScheduleTemplatePhase,
   deleteTask,
   ensureOwnApprovalRequest,
+  fetchPublicSubmittal,
   grantAdmin,
   loadAllAdmins,
   loadAllAllowedViews,
@@ -53,6 +56,7 @@ import {
   loadRemoteAppState,
   loadScheduleTemplates,
   loadStandardInstallTimes,
+  loadSubmittalsForProject,
   loadTasks,
   loadTeamMembers,
   loadUserRoleMode,
@@ -60,6 +64,8 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   refreshAuthSession,
+  resolveProjectId,
+  respondToPublicSubmittal,
   reviewUserApproval,
   revokeAdmin,
   saveLocalAppState,
@@ -87,9 +93,12 @@ import {
   type NotificationItem,
   type NotificationRule,
   type PersistedAppState,
+  type ProjectSubmittal,
+  type PublicSubmittalView,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
   type StandardInstallTime,
+  type SubmittalSnapshot,
   type TaskPriority,
   type TaskSection,
   type TaskStatus,
@@ -999,6 +1008,8 @@ function App() {
   const [standardInstallTimes, setStandardInstallTimes] = useState<StandardInstallTime[]>([]);
   const [scheduleTemplates, setScheduleTemplates] = useState<ScheduleTemplate[]>([]);
   const [scheduleStatus, setScheduleStatus] = useState("");
+  const [submittals, setSubmittals] = useState<ProjectSubmittal[]>([]);
+  const [submittalStatus, setSubmittalStatus] = useState("");
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -1600,6 +1611,58 @@ function App() {
       await handleCreateTask(task);
     }
     setScheduleStatus(`Generated ${generatedTasks.length} schedule tasks for ${project.name} from "${template.name}".`);
+  }
+
+  // Phase 11: Submittals. Reads/writes go straight to the new relational
+  // tables (not the app_records blob) since resolveProjectId bridges the gap
+  // until Phase 10's full app cutover happens.
+  async function reloadSubmittals(projectName: string) {
+    if (!authSession || !projectName) {
+      setSubmittals([]);
+      return;
+    }
+    const projectId = await resolveProjectId(projectName, authSession.accessToken);
+    if (!projectId) {
+      setSubmittals([]);
+      return;
+    }
+    const rows = await loadSubmittalsForProject(projectId, authSession.accessToken);
+    setSubmittals(rows);
+  }
+
+  async function handleCreateSubmittal(project: ProjectSite, clientName: string, clientEmail: string) {
+    if (!authSession) {
+      return;
+    }
+    setSubmittalStatus("Creating submittal...");
+    try {
+      const projectId = await resolveProjectId(project.name, authSession.accessToken);
+      if (!projectId) {
+        setSubmittalStatus("Could not resolve this project's database record.");
+        return;
+      }
+      const existing = await loadSubmittalsForProject(projectId, authSession.accessToken);
+      const nextVersion = existing.length ? Math.max(...existing.map((entry) => entry.version)) + 1 : 1;
+      const snapshot: SubmittalSnapshot = {
+        projectName: project.name,
+        projectRef: project.ref,
+        clientName: project.client,
+        siteAddress: project.address,
+        targetDate: project.due,
+        allocated: project.allocated,
+        sow: { ...project.sow },
+        bom: project.bom.map((line) => ({ item: line.item, qty: line.qty, status: line.status })),
+      };
+      const created = await createSubmittal(
+        { projectId, version: nextVersion, contentSnapshot: snapshot, clientName, clientEmail },
+        authSession.accessToken,
+      );
+      const shareToken = await createSubmittalShareToken(created.id, authSession.accessToken);
+      setSubmittals([{ ...created, shareToken }, ...existing]);
+      setSubmittalStatus(`Submittal v${created.version} created and ready to share.`);
+    } catch (error) {
+      setSubmittalStatus(error instanceof Error ? error.message : "Could not create submittal.");
+    }
   }
 
   useEffect(() => {
@@ -2602,7 +2665,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesCatalog
             catalogItems={catalogItems}
@@ -4602,6 +4665,10 @@ function Projects({
   scheduleTemplates,
   scheduleStatus,
   onGenerateSchedule,
+  submittals,
+  submittalStatus,
+  onLoadSubmittals,
+  onCreateSubmittal,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -4619,6 +4686,10 @@ function Projects({
   scheduleTemplates: ScheduleTemplate[];
   scheduleStatus: string;
   onGenerateSchedule: (project: ProjectSite, templateId: string) => void;
+  submittals: ProjectSubmittal[];
+  submittalStatus: string;
+  onLoadSubmittals: (projectName: string) => void;
+  onCreateSubmittal: (project: ProjectSite, clientName: string, clientEmail: string) => void;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
@@ -4627,6 +4698,9 @@ function Projects({
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
   const [isExtractingQuote, setIsExtractingQuote] = useState(false);
   const [scheduleTemplateChoice, setScheduleTemplateChoice] = useState("");
+  const [submittalClientName, setSubmittalClientName] = useState("");
+  const [submittalClientEmail, setSubmittalClientEmail] = useState("");
+  const [copiedSubmittalId, setCopiedSubmittalId] = useState("");
   const [showBomModal, setShowBomModal] = useState(false);
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
@@ -4638,6 +4712,13 @@ function Projects({
   });
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
   const selectedProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject.name || doc.project === selectedProject.ref);
+
+  useEffect(() => {
+    onLoadSubmittals(selectedProject.name);
+    setSubmittalClientName(selectedProject.client);
+    setSubmittalClientEmail("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject.name]);
   const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
   const totalProjectValue = projectSites.reduce((sum, project) => sum + project.allocated, 0);
@@ -5133,6 +5214,68 @@ function Projects({
         onDelete={onDeleteTask}
         onOpenFull={onOpenTasksView}
       />
+
+      <section className="panel full submittals-panel">
+        <div className="panel-title-row">
+          <div>
+            <h2>Submittals</h2>
+            <p>Client sign-off on scope and BOM before final purchasing.</p>
+          </div>
+        </div>
+        <div className="submittal-create-row">
+          <input
+            placeholder="Client name"
+            value={submittalClientName}
+            onChange={(event) => setSubmittalClientName(event.target.value)}
+          />
+          <input
+            placeholder="Client email (optional)"
+            value={submittalClientEmail}
+            onChange={(event) => setSubmittalClientEmail(event.target.value)}
+          />
+          <button
+            className="primary-action mini-action"
+            type="button"
+            onClick={() => onCreateSubmittal(selectedProject, submittalClientName, submittalClientEmail)}
+          >
+            Create &amp; Send Submittal
+          </button>
+        </div>
+        {submittalStatus && <small className="muted">{submittalStatus}</small>}
+        <div className="submittal-list">
+          {submittals.length === 0 && <div className="empty-compact-state">No submittals yet for this project.</div>}
+          {submittals.map((submittal) => (
+            <div className="submittal-row" key={submittal.id}>
+              <div className="submittal-row-head">
+                <strong>Version {submittal.version}</strong>
+                <span className={`status-pill submittal-status-${submittal.status}`}>{submittal.status.replace(/_/g, " ")}</span>
+              </div>
+              <div className="submittal-meta">
+                <span>Sent {submittal.sentAt ? new Date(submittal.sentAt).toLocaleDateString() : "-"}</span>
+                {submittal.respondedAt && (
+                  <span>Responded {new Date(submittal.respondedAt).toLocaleDateString()} by {submittal.approvalName || "client"}</span>
+                )}
+              </div>
+              {submittal.responseNotes && <p className="submittal-notes">"{submittal.responseNotes}"</p>}
+              {submittal.shareToken && (
+                <button
+                  className="secondary-action mini-action"
+                  type="button"
+                  onClick={() => {
+                    const link = `${window.location.origin}${window.location.pathname}?submittal=${submittal.shareToken}`;
+                    navigator.clipboard?.writeText(link).then(() => {
+                      setCopiedSubmittalId(submittal.id);
+                      setTimeout(() => setCopiedSubmittalId(""), 2000);
+                    });
+                  }}
+                >
+                  {copiedSubmittalId === submittal.id ? "Copied!" : "Copy client link"}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
 
       <section className="panel full">
         <div className="panel-title-row">
@@ -7036,9 +7179,138 @@ function PanelHeader({ title, label }: { title: string; label: string }) {
   return <header className="panel-header"><div><h2>{title}</h2><p>{label}</p></div><FileText size={18} /></header>;
 }
 
+// Public, no-login client view for a single Submittal. Reached via
+// ?submittal=<token> on the root URL (no server-side routing needed since
+// it's still index.html) and rendered instead of <App/> entirely -- it never
+// touches auth state and talks to Supabase only through the anon-key RPCs.
+type SubmittalResponseStatus = "approved" | "rejected" | "revision_requested";
+
+function SubmittalPublicPage({ token }: { token: string }) {
+  const [phase, setPhase] = useState<"loading" | "error" | "ready" | "responded">("loading");
+  const [data, setData] = useState<PublicSubmittalView | null>(null);
+  const [approverName, setApproverName] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [respondedStatus, setRespondedStatus] = useState<SubmittalResponseStatus | null>(null);
+
+  useEffect(() => {
+    fetchPublicSubmittal(token)
+      .then((result) => {
+        if (!result) {
+          setPhase("error");
+          return;
+        }
+        setData(result);
+        if (result.status === "sent") {
+          setPhase("ready");
+        } else {
+          setPhase("responded");
+          if (result.status === "approved" || result.status === "rejected" || result.status === "revision_requested") {
+            setRespondedStatus(result.status);
+          }
+        }
+      })
+      .catch(() => setPhase("error"));
+  }, [token]);
+
+  async function respond(newStatus: SubmittalResponseStatus) {
+    if (!approverName.trim()) {
+      setSubmitError("Please enter your name before responding.");
+      return;
+    }
+    setSubmitError("");
+    setSubmitting(true);
+    const ok = await respondToPublicSubmittal(token, newStatus, approverName.trim(), notes.trim());
+    setSubmitting(false);
+    if (ok) {
+      setRespondedStatus(newStatus);
+      setPhase("responded");
+    } else {
+      setSubmitError("Could not submit your response. Please try again or contact your Ergon representative.");
+    }
+  }
+
+  if (phase === "loading") {
+    return (
+      <div className="submittal-public-page">
+        <p>Loading submittal...</p>
+      </div>
+    );
+  }
+
+  if (phase === "error" || !data) {
+    return (
+      <div className="submittal-public-page">
+        <h1>Link not found</h1>
+        <p>This submittal link is invalid or has expired. Please contact your Ergon representative for a new link.</p>
+      </div>
+    );
+  }
+
+  const snapshot = data.contentSnapshot;
+
+  return (
+    <div className="submittal-public-page">
+      <header className="submittal-public-header">
+        <h1>{snapshot.projectName}</h1>
+        <p>Submittal v{data.version}{snapshot.clientName ? ` - ${snapshot.clientName}` : ""}</p>
+      </header>
+
+      {phase === "responded" && respondedStatus && (
+        <div className={`submittal-response-banner submittal-status-${respondedStatus}`}>
+          {respondedStatus === "approved" && "Thank you - this submittal has been approved."}
+          {respondedStatus === "rejected" && "This submittal has been marked as rejected. Your Ergon representative will follow up."}
+          {respondedStatus === "revision_requested" && "Thanks - a revision has been requested. Your Ergon representative will follow up."}
+        </div>
+      )}
+
+      <section className="submittal-public-section">
+        <h2>Scope of Work</h2>
+        <p><strong>Summary:</strong> {snapshot.sow.summary || "-"}</p>
+        <p><strong>Preparation:</strong> {snapshot.sow.preparation || "-"}</p>
+        <p><strong>Infrastructure:</strong> {snapshot.sow.infrastructure || "-"}</p>
+        <p><strong>Installation:</strong> {snapshot.sow.installation || "-"}</p>
+        <p><strong>Commissioning:</strong> {snapshot.sow.commissioning || "-"}</p>
+        <p><strong>Fine tuning / go-live:</strong> {snapshot.sow.fineTuning || "-"}</p>
+        <p><strong>Assumptions:</strong> {snapshot.sow.assumptions || "-"}</p>
+        <p><strong>Exclusions:</strong> {snapshot.sow.exclusions || "-"}</p>
+      </section>
+
+      <section className="submittal-public-section">
+        <h2>Bill of Material</h2>
+        <table>
+          <thead><tr><th>Item</th><th>Qty</th></tr></thead>
+          <tbody>
+            {snapshot.bom.map((line, index) => (
+              <tr key={`${line.item}-${index}`}><td>{line.item}</td><td>{line.qty}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      {phase === "ready" && (
+        <section className="submittal-public-section submittal-response-form">
+          <h2>Your Response</h2>
+          <label>Your name<input value={approverName} onChange={(event) => setApproverName(event.target.value)} /></label>
+          <label>Notes (optional)<textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
+          {submitError && <small className="error-text">{submitError}</small>}
+          <div className="submittal-response-actions">
+            <button type="button" className="primary-action" disabled={submitting} onClick={() => respond("approved")}>Approve</button>
+            <button type="button" className="secondary-action" disabled={submitting} onClick={() => respond("revision_requested")}>Request Revision</button>
+            <button type="button" className="secondary-action" disabled={submitting} onClick={() => respond("rejected")}>Reject</button>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+const submittalToken = new URLSearchParams(window.location.search).get("submittal");
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    {submittalToken ? <SubmittalPublicPage token={submittalToken} /> : <App />}
   </StrictMode>
 );
 

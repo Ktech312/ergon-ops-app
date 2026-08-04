@@ -92,7 +92,7 @@ left join projects proj on proj.project_name = elem->>'projectName'
 where ar.workspace_key = 'default'
   and ar.record_key = 'purchaseRequests'
   and elem->>'id' is not null
-on conflict (legacy_id) do update set
+on conflict (legacy_id) where legacy_id is not null do update set
   request_number = excluded.request_number,
   inventory_item_id = excluded.inventory_item_id,
   sku_snapshot = excluded.sku_snapshot,

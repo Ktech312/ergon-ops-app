@@ -116,7 +116,7 @@ select
     when 'reactivate' then 'reactivate'
     when 'undo' then 'undo'
     else 'adjustment'
-  end as movement_type,
+  end::inventory_movement_type as movement_type,
   inv.id as inventory_item_id,
   coalesce((elem->>'quantity')::numeric, 0) as quantity,
   proj.id as project_id,
@@ -136,7 +136,7 @@ left join build_transactions bt on bt.build_number = elem->>'buildNumber'
 where ar.workspace_key = 'default'
   and ar.record_key = 'inventoryMovements'
   and elem->>'id' is not null
-on conflict (legacy_id) do update set
+on conflict (legacy_id) where legacy_id is not null do update set
   movement_type = excluded.movement_type,
   inventory_item_id = excluded.inventory_item_id,
   quantity = excluded.quantity,
@@ -189,7 +189,7 @@ left join inventory_movements mv on mv.legacy_id = elem->>'movementId'
 where ar.workspace_key = 'default'
   and ar.record_key = 'projectAllocations'
   and elem->>'id' is not null
-on conflict (legacy_id) do update set
+on conflict (legacy_id) where legacy_id is not null do update set
   project_id = excluded.project_id,
   inventory_item_id = excluded.inventory_item_id,
   movement_id = excluded.movement_id,

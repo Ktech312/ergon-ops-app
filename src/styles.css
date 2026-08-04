@@ -3536,3 +3536,161 @@ td.empty-compact-state {
     width: 100%;
   }
 }
+
+/* Phase 11: Submittals ---------------------------------------------------- */
+
+.error-text {
+  color: #9a2f20;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.submittal-create-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.submittal-create-row input {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  font: inherit;
+  min-height: 34px;
+  padding: 0 10px;
+  width: 220px;
+}
+
+.submittal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.submittal-row {
+  background: #faf8f4;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.submittal-row-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.submittal-meta {
+  color: #756d62;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.submittal-notes {
+  color: #443c2d;
+  font-size: 13px;
+  font-style: italic;
+  margin: 6px 0 0;
+}
+
+.submittal-row .mini-action {
+  margin-top: 8px;
+}
+
+.status-pill.submittal-status-draft { background: #ebe5d8; color: #443c2d; }
+.status-pill.submittal-status-sent { background: #e6effa; color: #1d5fa3; }
+.status-pill.submittal-status-approved { background: #dceef7; color: #123f6b; }
+.status-pill.submittal-status-rejected { background: #fbe3df; color: #9a2f20; }
+.status-pill.submittal-status-revision_requested { background: #fff1d6; color: #906313; }
+
+/* Public, no-login client view -- rendered standalone, outside .app-shell,
+   so it needs its own page-level layout rather than relying on .main. */
+.submittal-public-page {
+  box-sizing: border-box;
+  margin: 0 auto;
+  max-width: 720px;
+  padding: 32px 20px 60px;
+}
+
+.submittal-public-header {
+  border-bottom: 1px solid #e8e1d5;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+}
+
+.submittal-public-header h1 {
+  color: #123f6b;
+  font-size: 24px;
+  margin: 0 0 6px;
+}
+
+.submittal-public-header p {
+  color: #756d62;
+  margin: 0;
+}
+
+.submittal-response-banner {
+  border-radius: 10px;
+  display: inline-block;
+  font-weight: 700;
+  margin-bottom: 20px;
+  padding: 10px 16px;
+  width: auto;
+}
+
+.submittal-response-banner.submittal-status-approved { background: #dceef7; color: #123f6b; }
+.submittal-response-banner.submittal-status-rejected { background: #fbe3df; color: #9a2f20; }
+.submittal-response-banner.submittal-status-revision_requested { background: #fff1d6; color: #906313; }
+
+.submittal-public-section {
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  padding: 18px;
+}
+
+.submittal-public-section h2 {
+  color: #123f6b;
+  font-size: 15px;
+  margin: 0 0 12px;
+}
+
+.submittal-public-section p {
+  color: #443c2d;
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.submittal-public-section table {
+  width: 100%;
+}
+
+.submittal-response-form label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.submittal-response-form input,
+.submittal-response-form textarea {
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  font: inherit;
+  margin-top: 4px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.submittal-response-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}

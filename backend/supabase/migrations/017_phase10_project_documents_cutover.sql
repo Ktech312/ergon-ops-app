@@ -76,7 +76,7 @@ left join projects proj on proj.project_name = elem->>'project'
 where ar.workspace_key = 'default'
   and ar.record_key = 'projectDocuments'
   and elem->>'id' is not null
-on conflict (local_document_id) do update set
+on conflict (local_document_id) where local_document_id is not null do update set
   project_id = excluded.project_id,
   project_name = excluded.project_name,
   document_type = excluded.document_type,
