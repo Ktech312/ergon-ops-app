@@ -277,8 +277,11 @@ button {
 }
 
 .main {
+  margin: 0 auto;
+  max-width: 1360px;
   min-width: 0;
   padding: 28px;
+  width: 100%;
 }
 
 .page-heading {
