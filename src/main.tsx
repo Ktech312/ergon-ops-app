@@ -4608,7 +4608,6 @@ function Projects({
               <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
             </div>
           </div>
-          <div className="action-status">{actionStatus}</div>
         </section>
 
         <section className="metric-grid">
@@ -4653,17 +4652,17 @@ function Projects({
 
   return (
     <div className="content-grid projects-layout">
-      <section className="panel wide">
-        <div className="action-header">
-          <PanelHeader title={selectedProject.name} label="Project workspace: site information, SOW, and BOM" />
-          <div className="action-row">
-            <button className="secondary-action" type="button" onClick={backToProjectList}>Back to Projects</button>
-          </div>
+      <div className="project-detail-header">
+        <div className="project-detail-breadcrumb">
+          <span>Projects</span> / <strong>{selectedProject.name}</strong>
         </div>
-        <div className="action-status">{actionStatus}</div>
-      </section>
+        <div className="project-detail-header-actions">
+          <div className="locked-ref-inline"><span>Ref</span><strong>{selectedProject.ref}</strong></div>
+          <button className="secondary-action mini-action" type="button" onClick={backToProjectList}>Back to Projects</button>
+        </div>
+      </div>
 
-      <section className="panel full">
+      <section className="panel">
         <PanelHeader title="Build Sales BOM and Scope" label="Upload a sales quote PDF to fill this project" />
         <label className={`sales-dropzone ${isExtractingQuote ? "is-working" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
           <Upload size={26} />
@@ -4674,7 +4673,7 @@ function Projects({
         {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
       </section>
 
-      <section className="panel full">
+      <section className="panel">
         <div className="panel-title-row">
           <div>
             <h2>Project Documents</h2>
@@ -4709,10 +4708,6 @@ function Projects({
           <div>
             <h2>Project Details</h2>
             <p>Editable site intake for this parking garage or lot</p>
-          </div>
-          <div className="locked-ref">
-            <span>Internal project ref</span>
-            <strong>{selectedProject.ref}</strong>
           </div>
         </div>
         <div className="form-grid">
