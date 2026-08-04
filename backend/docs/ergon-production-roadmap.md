@@ -1432,6 +1432,68 @@ emissions tracking, full MES shop-floor IoT monitoring. These target larger
 or different manufacturing contexts than Ergon's parking equipment
 purchasing/build/install operation.
 
+## Overnight Session Recap (Aug 2026) -- Start Here In The Morning
+
+E asked me to burn through as much of the roadmap as possible overnight,
+skip anything needing a decision, and recap in the morning. Here's exactly
+what is and isn't actually working yet.
+
+**What you need to do first: run migrations 016-025 in the Supabase SQL
+editor, in numeric order.** None of tonight's SQL has been applied to the
+database -- I have no way to execute SQL from this sandbox (confirmed: it
+can't even resolve Supabase's hostname, network is allowlisted to a couple
+of domains only). Every file was written, but paste-and-run is still a
+manual step on your end, same as every migration before it. Run them in
+order (016 through 025); several depend on earlier ones in that range.
+
+**Fully built and working once those migrations are run:**
+- Phase 15: in-app notification bell (top-right, next to account menu).
+  Fires on task assignment and daily-deduped overdue tasks. Admin ->
+  Notification Rules lets you toggle in-app on/off per event type right
+  now; email/Slack columns are visible but disabled (greyed out) since
+  those need a provider secret you haven't signed off on yet.
+- Phase 16: workload strip at the top of the Tasks tab -- shows each
+  active roster member's open/overdue count, click one to filter the board
+  to just their work.
+- Phase 11 (scheduling half): Admin -> Standard Install Times and Admin ->
+  Project Schedule Templates are real, editable now. On a project's detail
+  page, a "Generate Schedule" dropdown lets a PM pick a template and
+  auto-create tasks, with due dates computed from BOM quantity x standard
+  time per phase -- deterministic, no AI call, matches your decision.
+  **This needs real standard-time numbers entered in Admin before it's
+  useful** -- there's no way for me to know how long a camera install
+  actually takes; that has to come from you or the PM team.
+
+**Schema is ready, but the feature isn't usable yet (no UI built):**
+- Phase 11 (Submittals half): the `project_submittals` table and the two
+  public RPC functions (`get_submittal_by_token`, `respond_to_submittal`)
+  exist so a client can review/approve without logging in, but there is no
+  screen yet to create a submittal, send it, or for a client to actually
+  open and respond to one. This is the biggest real gap from tonight --
+  worth prioritizing next given it was your top request.
+
+**Schema is ready, app still reads/writes the old JSON blob (Phase 10
+a-f):** migrations 016-022 create/backfill real tables for purchase
+requests, project documents, inventory items, equipment recipes,
+movements/builds/allocations, and projects+BOM+SOW. Running them copies
+today's data into those tables. But `persistence.ts` and `main.tsx` have
+NOT been rewired to actually read/write those tables instead of
+`app_records` -- the live app's behavior is unchanged tonight. Re-run the
+relevant migration again right before doing the actual code cutover for
+each entity, so the copy is fresh (blob data keeps changing as the app is
+used in the meantime).
+
+**Phase 9 (role RLS):** migration 023 writes real per-role policies
+(warehouse/purchasing/pm write-gated on their tables, admin bypasses all).
+Since the Phase 10 app-code cutover hasn't happened, these policies mostly
+affect tables the live app doesn't touch yet -- they'll start mattering as
+each Phase 10 entity gets cut over.
+
+**Not touched tonight (would need a decision or a new secret first):**
+email invites, email/Slack notification delivery, Gantt view, real task
+dependencies, job costing, document version control, QA build checkpoints,
+BOM revision history, and the actual Phase 10 app-code cutover.
+
 ## Next Session Priorities (start here)
 
 In order:
