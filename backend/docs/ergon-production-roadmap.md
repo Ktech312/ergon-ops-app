@@ -1033,12 +1033,14 @@ back to "12 cameras x 2 hours." Two ways to still deliver on "AI-driven":
   times to an LLM and let it produce the whole draft schedule, including
   sequencing decisions.
 
-Recommendation: (a). It keeps the numbers trustworthy and auditable while
-still using AI where it adds real value (filling gaps, writing summaries).
-Needs E's sign-off either way, and either path needs the
+**Decided (Aug 2026, per E): option (a), deterministic core.** The formula
+does the actual date math; AI is used only to fill gaps (no standard time on
+file yet) and write human-readable summaries. Still needs the
 `OPENAI_API_KEY`/`OPENAI_MODEL` Vercel secrets actually configured (not yet
 done -- flagged as "not yet configured" in the Production Setup Checklist
-since this roadmap's first draft).
+since this roadmap's first draft) before the AI-fallback part can work; the
+deterministic scheduling itself does not depend on those secrets at all and
+can be built and used without AI configured.
 
 **4. Submittals**
 
@@ -1052,15 +1054,11 @@ since this roadmap's first draft).
 - Reuses Phase 8's public-token link mechanism: PM sends a submittal, client
   opens a token link (no login), reviews BOM/spec sheets/schedule, and
   clicks Approve or Request Revision with a name/notes field.
-- Open decision: **is a typed-name "I approve" click sufficient, or does
-  this need a real e-signature?** A simple click-to-approve with an audit
-  trail (IP, timestamp, typed name, content hash of what was shown) is
-  straightforward to build in-house but is not a legally binding signature.
-  A true e-signature (DocuSign, Dropbox Sign/HelloSign, PandaDoc) is legally
-  stronger but means a new paid third-party integration and API credentials.
-  Needs E's decision before building; recommend starting with the
-  audit-trailed click-to-approve unless there's a specific legal/contractual
-  reason submittals must be cryptographically signed.
+- **Decided (Aug 2026, per E): audit-trailed click-to-approve**, not a true
+  e-signature, unless a specific contractual reason surfaces later that
+  requires cryptographic signing. Capture IP, timestamp, typed name, and a
+  content hash of what was shown at approval time, so there is still a solid
+  audit trail even without a third-party e-signature vendor.
 - Purchasing gate: once Purchase Requests move to a real table (Phase 10a),
   add a rule (enforced in the UI first, in RLS once Phase 9 lands) that a
   project's BOM-sourced purchase requests can't move past "Ready to Order"
@@ -1148,30 +1146,78 @@ Acceptance criteria:
 - A PM can see committed budget vs. actual spend per project without
   manually adding up purchase requests and inventory pulls.
 
-### Phase 15 - Overdue-Task Notifications
+### Phase 15 - Automation & Notification Rules Engine
 
-Goal: make due dates actually alert someone instead of sitting silently in
-a table cell.
+Goal (per E, Aug 2026): every alert type -- overdue tasks, and more broadly
+any event worth flagging -- should be able to fire through email, Slack/
+Teams, an in-app bell, or any combination, and which channel(s) fire for
+which event should be **admin-configurable ("programmable")**, not
+hardcoded per feature. This merges what was originally scoped as a narrow
+"overdue-task email" phase with the broader "automation rules engine" idea
+from the PM-tools research pass (idea #1: "if stock < reorder point, create
+a purchase request"; "if task done, notify next assignee"; "if due date
+passes, alert the lead") -- one system now covers both.
 
-- Needs a decision on channel: email is the most likely to reach people
-  reliably given the roster (Phase built Aug 2026) doesn't require login,
-  so an in-app notification alone wouldn't reach someone who isn't
-  currently signed in. Email requires a transactional email provider
-  (Resend, Postmark, SendGrid) and its own API key -- a new secret, same
-  category as the deferred invite feature and needing E's sign-off.
-- Simplest first version: a scheduled check (daily) that finds tasks past
-  `due_date` and not `done`/`cancelled`, and emails the assignee (if they
-  have an email on the roster) plus, for high/urgent priority, the project's
-  PM. Can be built as a Supabase scheduled function or an external cron
-  hitting a small serverless endpoint.
-- A v2 could add Slack/Teams webhook delivery if the company uses one of
-  those day to day -- worth asking E which channel people actually watch
-  before building email-only.
+**Core data model**
+
+- `notification_rules` (id, event_type, conditions jsonb e.g. `{"priority":
+  ["high","urgent"]}`, recipient_mode `assignee`|`project_pm`|`role`|
+  `specific_person`, recipient_value text nullable, channels text[] subset
+  of `in_app`/`email`/`slack`/`teams`, is_active, created_by). Admin-managed
+  list, editable in the Admin page -- this is the "programmable" part.
+  event_type values to start: `task_overdue`, `task_assigned`,
+  `task_status_changed`, `purchase_request_status_changed`,
+  `build_stage_changed`, `submittal_responded`, `low_stock_reached`.
+- `notifications` (id, user_id nullable, team_member_id nullable, rule_id,
+  event_type, title, body, related_entity_type, related_entity_id, is_read,
+  created_at) -- the actual generated alerts. This table feeds the in-app
+  bell regardless of which other channels also fired for that event.
+- `notification_deliveries` (id, notification_id, channel, status
+  `sent`|`failed`|`skipped`, error_message nullable, sent_at) -- a delivery
+  log per channel per notification, so a failed Slack post or bounced email
+  is visible and debuggable, not silent.
+
+**Channels, in increasing order of setup complexity**
+
+1. **In-app bell** (build first): a bell icon in the top-right of the nav
+   bar (next to the account menu) with an unread count badge and a
+   dropdown list of recent notifications, marking read on open/click.
+   Needs only the tables above -- no new secret, works immediately for
+   anyone signed into the app.
+2. **Email**: needs one new transactional-email-provider secret (Resend,
+   Postmark, or SendGrid) -- new sensitive credential, needs E's explicit
+   sign-off before adding, same category as the deferred invite feature.
+   Reaches roster members even if they're not currently signed in.
+3. **Slack/Teams, channel-level (simpler)**: a single incoming webhook URL
+   posts to one shared channel (e.g. "#purchasing-alerts"). Good fit for
+   team-wide events (a build needs QA, a submittal was rejected) but posts
+   to a channel, not a specific person's DMs.
+4. **Slack/Teams, per-person DM (meaningfully bigger lift)**: actually
+   pinging "Sunil" directly (not just a channel) requires a real Slack App
+   /Teams app registration with a bot token and email-to-user-ID mapping --
+   its own small sub-project, not just a webhook URL. Scope as an explicit
+   follow-up once channel-level webhooks are proven useful, rather than
+   building it as part of this phase's first cut.
+
+**Trigger mechanism**
+
+- Time-based rules (`task_overdue`) need a scheduled check (daily, via a
+  Supabase scheduled function or external cron hitting a small serverless
+  endpoint) that scans for tasks past `due_date` and not `done`/`cancelled`.
+- Event-based rules (`task_assigned`, `purchase_request_status_changed`,
+  etc.) fire at the moment of the write itself -- the existing
+  `handleUpdateTask`/`handleCreateTask`/purchase-request handlers (and their
+  Phase 10 successors) call into a shared "evaluate rules for this event"
+  function after a successful write.
 
 Acceptance criteria:
 
-- An overdue task results in an actual notification within a day of going
-  overdue, not just a red date in a table.
+- An admin can see and edit which channel(s) fire for which event type,
+  without a code change.
+- The in-app bell works with zero new secrets; email and Slack/Teams are
+  additive, sign-off-gated channels on top of it.
+- A failed delivery (bad webhook, bounced email) is visible in
+  `notification_deliveries`, not silently dropped.
 
 ### Phase 16 - Workload/Capacity Dashboard
 
