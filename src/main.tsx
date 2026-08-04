@@ -29,6 +29,7 @@ import {
   consumeOAuthRedirectSession,
   createCatalogItem,
   createTask,
+  createTeamMember,
   deleteTask,
   ensureOwnApprovalRequest,
   grantAdmin,
@@ -44,6 +45,7 @@ import {
   loadOwnApprovalStatus,
   loadRemoteAppState,
   loadTasks,
+  loadTeamMembers,
   loadUserRoleMode,
   makeCatalogNumber,
   refreshAuthSession,
@@ -62,6 +64,7 @@ import {
   signUpWithPassword,
   updateCatalogItem,
   updateTask,
+  updateTeamMember,
   upsertKnownUser,
   type ApprovalStatus,
   type AuthSession,
@@ -72,6 +75,7 @@ import {
   type TaskPriority,
   type TaskSection,
   type TaskStatus,
+  type TeamMember,
   type UserStatus,
 } from "./persistence";
 import "./styles.css";
@@ -969,6 +973,8 @@ function App() {
   const [approvalReviewStatus, setApprovalReviewStatus] = useState("");
   const [tasks, setTasks] = useState<EOTask[]>([]);
   const [taskStatusMessage, setTaskStatusMessage] = useState("");
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [teamMemberStatus, setTeamMemberStatus] = useState("");
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -1329,6 +1335,46 @@ function App() {
     }
     await deleteTask(id, authSession.accessToken);
     setTasks((current) => current.filter((task) => task.id !== id));
+  }
+
+  function reloadTeamMembers(accessToken: string) {
+    loadTeamMembers(accessToken)
+      .then(setTeamMembers)
+      .catch(() => setTeamMemberStatus("Could not load the team roster."));
+  }
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setTeamMembers([]);
+      return;
+    }
+    reloadTeamMembers(authSession.accessToken);
+  }, [authSession]);
+
+  async function handleAddTeamMember(member: Omit<TeamMember, "id">) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const created = await createTeamMember(member, authSession.accessToken);
+      setTeamMembers((current) => [...current, created].sort((a, b) => a.fullName.localeCompare(b.fullName)));
+      setTeamMemberStatus(`${created.fullName} added to the roster.`);
+    } catch (error) {
+      setTeamMemberStatus(error instanceof Error ? error.message : "Could not add team member.");
+    }
+  }
+
+  async function handleUpdateTeamMember(id: string, member: Partial<Omit<TeamMember, "id">>) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const updated = await updateTeamMember(id, member, authSession.accessToken);
+      setTeamMembers((current) => current.map((existing) => (existing.id === id ? updated : existing)));
+      setTeamMemberStatus(`${updated.fullName} updated.`);
+    } catch (error) {
+      setTeamMemberStatus(error instanceof Error ? error.message : "Could not update team member.");
+    }
   }
 
   useEffect(() => {
@@ -2305,9 +2351,9 @@ function App() {
         </div>
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
-        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} />}
-        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} />}
+        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
+        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesCatalog
             catalogItems={catalogItems}
@@ -2317,12 +2363,20 @@ function App() {
             onUpdate={handleUpdateCatalogItem}
             onSetRetired={handleSetCatalogItemRetired}
             onRefresh={() => authSession && reloadCatalog(authSession.accessToken)}
+            projectSites={projectSites}
+            tasks={tasks}
+            teamMembers={teamMembers}
+            onCreateTask={handleCreateTask}
+            onUpdateTask={handleUpdateTask}
+            onDeleteTask={handleDeleteTask}
+            onOpenTasksView={() => navigateToView("tasks")}
           />
         )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
           <TasksBoard
             tasks={tasks}
             projectSites={projectSites}
+            teamMembers={teamMembers}
             status={taskStatusMessage}
             onCreate={handleCreateTask}
             onUpdate={handleUpdateTask}
@@ -2348,6 +2402,10 @@ function App() {
             onRevokeAdmin={handleRevokeAdmin}
             onSetAllowedViews={handleSetAllowedViews}
             onReviewApproval={handleReviewApproval}
+            teamMembers={teamMembers}
+            teamMemberStatus={teamMemberStatus}
+            onAddTeamMember={handleAddTeamMember}
+            onUpdateTeamMember={handleUpdateTeamMember}
             onRefresh={() => {
               if (!authSession) {
                 return;
@@ -2602,6 +2660,12 @@ function Purchasing({
   onUpdatePurchaseRequestStatus,
   onCancelPurchaseRequest,
   onReceivePurchaseRequest,
+  tasks,
+  teamMembers,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteTask,
+  onOpenTasksView,
 }: {
   projectSites: ProjectSite[];
   inventoryItems: Part[];
@@ -2617,6 +2681,12 @@ function Purchasing({
   onUpdatePurchaseRequestStatus: (requestId: string, status: PurchaseRequest["status"]) => void;
   onCancelPurchaseRequest: (requestId: string) => void;
   onReceivePurchaseRequest: (requestId: string, quantityReceived: number, unitCost: number, notes: string) => void;
+  tasks: EOTask[];
+  teamMembers: TeamMember[];
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onDeleteTask: (id: string) => void;
+  onOpenTasksView: () => void;
 }) {
   const [selectedProject, setSelectedProject] = useState("Straud Medical");
   const [manualRequestPartRef, setManualRequestPartRef] = useState(() => inventoryItems.find((item) => !item.retired)?.ref ?? "");
@@ -2759,6 +2829,19 @@ function Purchasing({
         <Metric icon={<FileText size={20} />} label="Sales Tax" value={money(totalTax)} />
         <Metric icon={<ClipboardList size={20} />} label="Open Requests" value={String(activeRequests.length + openOrders)} />
       </section>
+
+      <TaskMiniPanel
+        title="Purchasing Tasks"
+        tasks={tasks.filter((task) => task.section === "purchasing")}
+        teamMembers={teamMembers}
+        projectSites={projectSites}
+        section="purchasing"
+        isInternal
+        onCreate={onCreateTask}
+        onUpdate={onUpdateTask}
+        onDelete={onDeleteTask}
+        onOpenFull={onOpenTasksView}
+      />
 
       <section className="panel wide">
         <div className="panel-title-row">
@@ -3082,6 +3165,12 @@ function Inventory({
   onUpdateBuildStage,
   onCancelPlannedBuild,
   onQueueBuildShortageRequests,
+  tasks,
+  teamMembers,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteTask,
+  onOpenTasksView,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
@@ -3102,6 +3191,12 @@ function Inventory({
   onUpdateBuildStage: (buildId: string, stage: NonNullable<BuildTransaction["stage"]>) => void;
   onCancelPlannedBuild: (buildId: string) => void;
   onQueueBuildShortageRequests: (buildId: string) => void;
+  tasks: EOTask[];
+  teamMembers: TeamMember[];
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onDeleteTask: (id: string) => void;
+  onOpenTasksView: () => void;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -3644,6 +3739,19 @@ function Inventory({
 
   return (
     <div className="content-grid">
+      <TaskMiniPanel
+        title="Inventory Tasks"
+        tasks={tasks.filter((task) => task.section === "inventory" || task.section === "warehouse")}
+        teamMembers={teamMembers}
+        projectSites={projectSites}
+        section="inventory"
+        isInternal
+        onCreate={onCreateTask}
+        onUpdate={onUpdateTask}
+        onDelete={onDeleteTask}
+        onOpenFull={onOpenTasksView}
+      />
+
       <section className="panel wide">
         <div className="panel-title-row">
           <div>
@@ -4228,6 +4336,12 @@ function Projects({
   setProjectDocuments,
   onInventoryPull,
   onQueueProjectBomPurchaseRequest,
+  tasks,
+  teamMembers,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteTask,
+  onOpenTasksView,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -4236,6 +4350,12 @@ function Projects({
   setProjectDocuments: Dispatch<SetStateAction<UploadedDoc[]>>;
   onInventoryPull: (itemName: string, qty: number, projectName?: string, notes?: string) => void;
   onQueueProjectBomPurchaseRequest: (partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) => boolean;
+  tasks: EOTask[];
+  teamMembers: TeamMember[];
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onDeleteTask: (id: string) => void;
+  onOpenTasksView: () => void;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
@@ -4718,6 +4838,20 @@ function Projects({
           </div>
         </section>
       </div>
+
+      <TaskMiniPanel
+        title="Project Tasks"
+        tasks={tasks.filter((task) => task.projectRef === selectedProject.ref)}
+        teamMembers={teamMembers}
+        projectSites={projectSites}
+        section="projects"
+        projectRef={selectedProject.ref}
+        isInternal={false}
+        onCreate={onCreateTask}
+        onUpdate={onUpdateTask}
+        onDelete={onDeleteTask}
+        onOpenFull={onOpenTasksView}
+      />
 
       <section className="panel full">
         <div className="panel-title-row">
@@ -5389,6 +5523,10 @@ function AdminPage({
   onSetAllowedViews,
   onReviewApproval,
   onRefresh,
+  teamMembers,
+  teamMemberStatus,
+  onAddTeamMember,
+  onUpdateTeamMember,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -5406,7 +5544,21 @@ function AdminPage({
   onSetAllowedViews: (userId: string, views: string[] | null) => void;
   onReviewApproval: (userId: string, status: ApprovalStatus, expiresAt: string | null) => void;
   onRefresh: () => void;
+  teamMembers: TeamMember[];
+  teamMemberStatus: string;
+  onAddTeamMember: (member: Omit<TeamMember, "id">) => void;
+  onUpdateTeamMember: (id: string, member: Partial<Omit<TeamMember, "id">>) => void;
 }) {
+  const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", roleTitle: "" });
+
+  function submitRosterDraft() {
+    if (!rosterDraft.fullName.trim()) {
+      return;
+    }
+    onAddTeamMember({ fullName: rosterDraft.fullName.trim(), email: rosterDraft.email.trim(), roleTitle: rosterDraft.roleTitle.trim(), isActive: true });
+    setRosterDraft({ fullName: "", email: "", roleTitle: "" });
+  }
+
   const usersByid = new Map(knownUsers.map((user) => [user.userId, user]));
   const approvalByUserId = new Map(approvalStatuses.map((entry) => [entry.userId, entry]));
   const pendingUsers = approvalStatuses
@@ -5451,6 +5603,52 @@ function AdminPage({
           </tbody>
         </table>
       </section>
+
+      {(isAdmin || isManagerRole) && (
+        <section className="panel wide">
+          <PanelHeader title="Team Roster" label="People who can be assigned tasks, whether or not they've ever logged in" />
+          <div className="report-filter-row">
+            {teamMemberStatus && <span className="muted">{teamMemberStatus}</span>}
+          </div>
+          <div className="roster-add-row">
+            <input value={rosterDraft.fullName} onChange={(event) => setRosterDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name" />
+            <input value={rosterDraft.email} onChange={(event) => setRosterDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email (optional)" />
+            <input value={rosterDraft.roleTitle} onChange={(event) => setRosterDraft((current) => ({ ...current, roleTitle: event.target.value }))} placeholder="Role / title (optional)" />
+            <button className="primary-action mini-action" type="button" onClick={submitRosterDraft} disabled={!rosterDraft.fullName.trim()}><Plus size={14} /> Add person</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role / title</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {teamMembers.map((member) => (
+                <tr key={member.id}>
+                  <td>{member.fullName}</td>
+                  <td>{member.email || "-"}</td>
+                  <td>{member.roleTitle || "-"}</td>
+                  <td>{member.isActive ? "Active" : "Inactive"}</td>
+                  <td>
+                    <button className="secondary-action mini-action" type="button" onClick={() => onUpdateTeamMember(member.id, { isActive: !member.isActive })}>
+                      {member.isActive ? "Deactivate" : "Reactivate"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {teamMembers.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="empty-compact-state">No one on the roster yet. Add teammates above so tasks can be assigned to them.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       {isAdmin && (
         <section className="panel wide">
@@ -5580,6 +5778,13 @@ function SalesCatalog({
   onUpdate,
   onSetRetired,
   onRefresh,
+  projectSites,
+  tasks,
+  teamMembers,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteTask,
+  onOpenTasksView,
 }: {
   catalogItems: CatalogItem[];
   status: string;
@@ -5588,6 +5793,13 @@ function SalesCatalog({
   onUpdate: (id: string, item: Omit<CatalogItem, "id">) => void;
   onSetRetired: (id: string, retired: boolean) => void;
   onRefresh: () => void;
+  projectSites: ProjectSite[];
+  tasks: EOTask[];
+  teamMembers: TeamMember[];
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onDeleteTask: (id: string) => void;
+  onOpenTasksView: () => void;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -5635,6 +5847,19 @@ function SalesCatalog({
 
   return (
     <div className="content-grid">
+      <TaskMiniPanel
+        title="Sales Tasks"
+        tasks={tasks.filter((task) => task.section === "sales")}
+        teamMembers={teamMembers}
+        projectSites={projectSites}
+        section="sales"
+        isInternal
+        onCreate={onCreateTask}
+        onUpdate={onUpdateTask}
+        onDelete={onDeleteTask}
+        onOpenFull={onOpenTasksView}
+      />
+
       <section className="panel wide">
         <PanelHeader title="Product Catalog" label="Sellable products and specs, separate from physical inventory" />
         <div className="report-filter-row">
@@ -5744,9 +5969,273 @@ function priorityBadgeClass(priority: TaskPriority) {
   return `priority-pill priority-${priority}`;
 }
 
+type TaskGroupBy = "status" | "assignee" | "section";
+type TaskDraft = typeof EMPTY_TASK_DRAFT;
+
+function assigneeLabel(email: string, teamMembers: TeamMember[]) {
+  if (!email) {
+    return "Unassigned";
+  }
+  return teamMembers.find((member) => member.email && member.email.toLowerCase() === email.toLowerCase())?.fullName ?? email;
+}
+
+function taskGroupDefs(groupBy: TaskGroupBy, teamMembers: TeamMember[], tasks: EOTask[]): Array<{ key: string; label: string; pillClass?: string }> {
+  if (groupBy === "status") {
+    return TASK_STATUS_OPTIONS.map((option) => ({ key: option.value, label: option.label, pillClass: `status-pill status-${option.value}` }));
+  }
+  if (groupBy === "section") {
+    return TASK_SECTION_OPTIONS.map((option) => ({ key: option.value, label: option.label }));
+  }
+  const seen = new Set<string>();
+  const groups: Array<{ key: string; label: string }> = [];
+  tasks.forEach((task) => {
+    const key = task.assigneeEmail || "";
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      groups.push({ key, label: assigneeLabel(key, teamMembers) });
+    }
+  });
+  groups.sort((a, b) => a.label.localeCompare(b.label));
+  groups.push({ key: "", label: "Unassigned" });
+  return groups;
+}
+
+function taskMatchesGroup(task: EOTask, groupBy: TaskGroupBy, key: string) {
+  if (groupBy === "status") {
+    return task.status === key;
+  }
+  if (groupBy === "section") {
+    return task.section === key;
+  }
+  return (task.assigneeEmail || "") === key;
+}
+
+function AssigneeSelect({ value, teamMembers, onChange }: { value: string; teamMembers: TeamMember[]; onChange: (email: string) => void }) {
+  const activeMembers = teamMembers.filter((member) => member.isActive && member.email);
+  const valueIsKnown = !value || activeMembers.some((member) => member.email.toLowerCase() === value.toLowerCase());
+  return (
+    <select value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">Unassigned</option>
+      {activeMembers.map((member) => (
+        <option key={member.id} value={member.email}>{member.fullName}{member.roleTitle ? ` - ${member.roleTitle}` : ""}</option>
+      ))}
+      {!valueIsKnown && <option value={value}>{value} (not on roster)</option>}
+    </select>
+  );
+}
+
+function TaskEditorModal({
+  draft,
+  setDraft,
+  editingId,
+  projectSites,
+  teamMembers,
+  onSubmit,
+  onClose,
+  lockSection,
+  lockProjectRef,
+}: {
+  draft: TaskDraft;
+  setDraft: Dispatch<SetStateAction<TaskDraft>>;
+  editingId: string | null;
+  projectSites: ProjectSite[];
+  teamMembers: TeamMember[];
+  onSubmit: () => void;
+  onClose: () => void;
+  lockSection?: boolean;
+  lockProjectRef?: boolean;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
+        <div className="modal-header">
+          <div>
+            <h2 id="task-editor-title">{editingId ? "Edit Task" : "Add Task"}</h2>
+            <p>Track work across sections and, when relevant, a specific project.</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close task editor">x</button>
+        </div>
+        <div className="bom-modal-grid">
+          <label className="span-2">Title<input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Task title" /></label>
+          {lockSection ? (
+            <label>Section<input value={TASK_SECTION_OPTIONS.find((option) => option.value === draft.section)?.label ?? draft.section} disabled /></label>
+          ) : (
+            <label>Section<select value={draft.section} onChange={(event) => setDraft((current) => ({ ...current, section: event.target.value as TaskSection }))}>
+              {TASK_SECTION_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select></label>
+          )}
+          <label>Priority<select value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value as TaskPriority }))}>
+            {TASK_PRIORITY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select></label>
+          <label>Status<select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as TaskStatus }))}>
+            {TASK_STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select></label>
+          <label>Category<input value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="e.g. API, Portal, FLI" /></label>
+          {!lockProjectRef && (
+            <label className="checkbox-inline-field">
+              <input
+                type="checkbox"
+                checked={draft.isInternal}
+                onChange={(event) => setDraft((current) => ({ ...current, isInternal: event.target.checked, projectRef: event.target.checked ? "" : current.projectRef }))}
+              />
+              Internal (not tied to a client project)
+            </label>
+          )}
+          {!lockProjectRef && !draft.isInternal && (
+            <label>Project<select value={draft.projectRef} onChange={(event) => setDraft((current) => ({ ...current, projectRef: event.target.value }))}>
+              <option value="">Select a project</option>
+              {projectSites.map((project) => (
+                <option key={project.ref} value={project.ref}>{project.ref} - {project.name}</option>
+              ))}
+            </select></label>
+          )}
+          <label>Assignee<AssigneeSelect value={draft.assigneeEmail} teamMembers={teamMembers} onChange={(email) => setDraft((current) => ({ ...current, assigneeEmail: email }))} /></label>
+          <label>Due date<input type="date" value={draft.dueDate} onChange={(event) => setDraft((current) => ({ ...current, dueDate: event.target.value }))} /></label>
+          <label className="span-2">Description<textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Details, links, context" /></label>
+          <div className="span-2">
+            <span className="muted">Affects (optional): which parts of the business this task touches when complete</span>
+            <div className="tag-picker-grid">
+              {IMPACT_AREA_OPTIONS.map((tag) => {
+                const checked = draft.impactAreas.includes(tag);
+                return (
+                  <label key={tag} className="checkbox-inline">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) => {
+                        setDraft((current) => ({
+                          ...current,
+                          impactAreas: event.target.checked
+                            ? [...current.impactAreas, tag]
+                            : current.impactAreas.filter((existing) => existing !== tag),
+                        }));
+                      }}
+                    />
+                    {tag}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-action" type="button" onClick={onClose}>Cancel</button>
+          <button className="primary-action" type="button" onClick={onSubmit} disabled={!draft.title.trim()}>{editingId ? "Save Task" : "Add Task"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TaskCard({ task, teamMembers, onUpdate, onEdit, onDelete, showStatusMove }: { task: EOTask; teamMembers: TeamMember[]; onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void; onEdit: () => void; onDelete: () => void; showStatusMove?: boolean }) {
+  return (
+    <div className="task-card">
+      <div className="task-card-top">
+        <span className={priorityBadgeClass(task.priority)}>{task.priority}</span>
+        {task.dueDate && <span className="task-card-due">{task.dueDate}</span>}
+      </div>
+      <strong className="task-card-title">{task.title}</strong>
+      <div className="task-card-meta">
+        <span>{assigneeLabel(task.assigneeEmail, teamMembers)}</span>
+        <span>{task.isInternal ? "Internal" : task.projectRef || "External"}</span>
+      </div>
+      {task.impactAreas.length > 0 && (
+        <div className="tag-chip-row">{task.impactAreas.map((tag) => <span key={tag}>{tag}</span>)}</div>
+      )}
+      <div className="task-card-actions">
+        {showStatusMove && (
+          <select value={task.status} onChange={(event) => onUpdate(task.id, { status: event.target.value as TaskStatus })}>
+            {TASK_STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        )}
+        <button className="secondary-action mini-action" type="button" onClick={onEdit}>Edit</button>
+        <button className="secondary-action mini-action" type="button" onClick={onDelete}>Delete</button>
+      </div>
+    </div>
+  );
+}
+
+function TaskCalendar({ tasks, teamMembers, onSelectTask }: { tasks: EOTask[]; teamMembers: TeamMember[]; onSelectTask: (task: EOTask) => void }) {
+  const [monthCursor, setMonthCursor] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+
+  const year = monthCursor.getFullYear();
+  const month = monthCursor.getMonth();
+  const firstWeekday = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthLabel = monthCursor.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+  const tasksByDay = new Map<number, EOTask[]>();
+  const undated: EOTask[] = [];
+  tasks.forEach((task) => {
+    if (!task.dueDate) {
+      undated.push(task);
+      return;
+    }
+    const parsed = new Date(`${task.dueDate}T00:00:00`);
+    if (parsed.getFullYear() === year && parsed.getMonth() === month) {
+      const day = parsed.getDate();
+      tasksByDay.set(day, [...(tasksByDay.get(day) ?? []), task]);
+    }
+  });
+
+  const cells: Array<number | null> = [...Array(firstWeekday).fill(null), ...Array.from({ length: daysInMonth }, (_, index) => index + 1)];
+
+  return (
+    <div className="task-calendar">
+      <div className="task-calendar-header">
+        <button className="secondary-action mini-action" type="button" onClick={() => setMonthCursor(new Date(year, month - 1, 1))}>&lt;</button>
+        <strong>{monthLabel}</strong>
+        <button className="secondary-action mini-action" type="button" onClick={() => setMonthCursor(new Date(year, month + 1, 1))}>&gt;</button>
+      </div>
+      <div className="task-calendar-grid task-calendar-weekdays">
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => <span key={label}>{label}</span>)}
+      </div>
+      <div className="task-calendar-grid">
+        {cells.map((day, index) => (
+          <div key={index} className={`task-calendar-cell ${day === null ? "is-empty" : ""}`}>
+            {day !== null && (
+              <>
+                <span className="task-calendar-day">{day}</span>
+                {(tasksByDay.get(day) ?? []).slice(0, 3).map((task) => (
+                  <button key={task.id} className={`task-calendar-chip priority-${task.priority}`} type="button" onClick={() => onSelectTask(task)}>
+                    {task.title}
+                  </button>
+                ))}
+                {(tasksByDay.get(day) ?? []).length > 3 && (
+                  <span className="muted">+{(tasksByDay.get(day) ?? []).length - 3} more</span>
+                )}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+      {undated.length > 0 && (
+        <div className="task-calendar-undated">
+          <span className="muted">No due date ({undated.length}):</span>
+          {undated.slice(0, 6).map((task) => (
+            <button key={task.id} className="task-calendar-chip" type="button" onClick={() => onSelectTask(task)}>{task.title}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TasksBoard({
   tasks,
   projectSites,
+  teamMembers,
   status,
   onCreate,
   onUpdate,
@@ -5755,6 +6244,7 @@ function TasksBoard({
 }: {
   tasks: EOTask[];
   projectSites: ProjectSite[];
+  teamMembers: TeamMember[];
   status: string;
   onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
   onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
@@ -5763,11 +6253,14 @@ function TasksBoard({
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState(EMPTY_TASK_DRAFT);
+  const [draft, setDraft] = useState<TaskDraft>(EMPTY_TASK_DRAFT);
   const [sectionFilter, setSectionFilter] = useState<"all" | TaskSection>("all");
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [viewMode, setViewMode] = useState<"list" | "board" | "calendar">("list");
+  const [groupBy, setGroupBy] = useState<TaskGroupBy>("status");
 
   const filteredTasks = sectionFilter === "all" ? tasks : tasks.filter((task) => task.section === sectionFilter);
+  const groups = taskGroupDefs(groupBy, teamMembers, filteredTasks);
 
   function openAddModal() {
     setEditingId(null);
@@ -5809,12 +6302,17 @@ function TasksBoard({
   return (
     <div className="content-grid">
       <section className="panel wide">
-        <PanelHeader title="Tasks" label="Work items grouped by status across every section" />
+        <PanelHeader title="Tasks" label="Work items across every section, by status, person, or group" />
         <div className="report-filter-row">
           <button className="primary-action mini-action" type="button" onClick={openAddModal}>
             <Plus size={14} /> Add Task
           </button>
           <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
+          <div className="view-mode-tabs">
+            <button className={`view-mode-tab ${viewMode === "list" ? "active" : ""}`} type="button" onClick={() => setViewMode("list")}>List</button>
+            <button className={`view-mode-tab ${viewMode === "board" ? "active" : ""}`} type="button" onClick={() => setViewMode("board")}>Board</button>
+            <button className={`view-mode-tab ${viewMode === "calendar" ? "active" : ""}`} type="button" onClick={() => setViewMode("calendar")}>Calendar</button>
+          </div>
           <label className="inline-filter-field">Section
             <select value={sectionFilter} onChange={(event) => setSectionFilter(event.target.value as "all" | TaskSection)}>
               <option value="all">All sections</option>
@@ -5823,20 +6321,33 @@ function TasksBoard({
               ))}
             </select>
           </label>
+          {viewMode !== "calendar" && (
+            <label className="inline-filter-field">Group by
+              <select value={groupBy} onChange={(event) => setGroupBy(event.target.value as TaskGroupBy)}>
+                <option value="status">Status</option>
+                <option value="assignee">Individual</option>
+                <option value="section">Section / Group</option>
+              </select>
+            </label>
+          )}
           {status && <span className="muted">{status}</span>}
         </div>
 
-        {TASK_STATUS_OPTIONS.map((statusOption) => {
-          const groupTasks = filteredTasks.filter((task) => task.status === statusOption.value);
-          const isCollapsed = collapsedGroups[statusOption.value] ?? false;
+        {viewMode === "calendar" && (
+          <TaskCalendar tasks={filteredTasks} teamMembers={teamMembers} onSelectTask={openEditModal} />
+        )}
+
+        {viewMode === "list" && groups.map((group) => {
+          const groupTasks = filteredTasks.filter((task) => taskMatchesGroup(task, groupBy, group.key));
+          const isCollapsed = collapsedGroups[group.key] ?? false;
           return (
-            <div className="task-status-group" key={statusOption.value}>
+            <div className="task-status-group" key={group.key || "unassigned"}>
               <button
                 className="task-status-group-header"
                 type="button"
-                onClick={() => setCollapsedGroups((current) => ({ ...current, [statusOption.value]: !isCollapsed }))}
+                onClick={() => setCollapsedGroups((current) => ({ ...current, [group.key]: !isCollapsed }))}
               >
-                <span className={`status-pill status-${statusOption.value}`}>{statusOption.label}</span>
+                <span className={group.pillClass ?? "status-pill"}>{group.label}</span>
                 <span className="muted">{groupTasks.length}</span>
               </button>
               {!isCollapsed && (
@@ -5868,7 +6379,7 @@ function TasksBoard({
                             "-"
                           )}
                         </td>
-                        <td>{task.assigneeEmail || "Unassigned"}</td>
+                        <td>{assigneeLabel(task.assigneeEmail, teamMembers)}</td>
                         <td>{task.dueDate || "-"}</td>
                         <td>{task.isInternal ? "Internal" : task.projectRef || "External"}</td>
                         <td>
@@ -5887,7 +6398,7 @@ function TasksBoard({
                     ))}
                     {groupTasks.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="empty-compact-state">No tasks in this status.</td>
+                        <td colSpan={9} className="empty-compact-state">No tasks in this group.</td>
                       </tr>
                     )}
                   </tbody>
@@ -5896,89 +6407,154 @@ function TasksBoard({
             </div>
           );
         })}
+
+        {viewMode === "board" && (
+          <div className="task-board">
+            {groups.map((group) => {
+              const groupTasks = filteredTasks.filter((task) => taskMatchesGroup(task, groupBy, group.key));
+              return (
+                <div className="task-board-column" key={group.key || "unassigned"}>
+                  <div className="task-board-column-header">
+                    <span className={group.pillClass ?? "status-pill"}>{group.label}</span>
+                    <span className="muted">{groupTasks.length}</span>
+                  </div>
+                  <div className="task-board-column-body">
+                    {groupTasks.map((task) => (
+                      <TaskCard key={task.id} task={task} teamMembers={teamMembers} onUpdate={onUpdate} onEdit={() => openEditModal(task)} onDelete={() => onDelete(task.id)} showStatusMove={groupBy === "status"} />
+                    ))}
+                    {groupTasks.length === 0 && <div className="empty-compact-state">No tasks.</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {modalOpen && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
-            <div className="modal-header">
-              <div>
-                <h2 id="task-editor-title">{editingId ? "Edit Task" : "Add Task"}</h2>
-                <p>Track work across sections and, when relevant, a specific project.</p>
-              </div>
-              <button className="icon-button" type="button" onClick={() => setModalOpen(false)} aria-label="Close task editor">x</button>
-            </div>
-            <div className="bom-modal-grid">
-              <label className="span-2">Title<input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Task title" /></label>
-              <label>Section<select value={draft.section} onChange={(event) => setDraft((current) => ({ ...current, section: event.target.value as TaskSection }))}>
-                {TASK_SECTION_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select></label>
-              <label>Priority<select value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value as TaskPriority }))}>
-                {TASK_PRIORITY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select></label>
-              <label>Status<select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as TaskStatus }))}>
-                {TASK_STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select></label>
-              <label>Category<input value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="e.g. API, Portal, FLI" /></label>
-              <label className="checkbox-inline-field">
-                <input
-                  type="checkbox"
-                  checked={draft.isInternal}
-                  onChange={(event) => setDraft((current) => ({ ...current, isInternal: event.target.checked, projectRef: event.target.checked ? "" : current.projectRef }))}
-                />
-                Internal (not tied to a client project)
-              </label>
-              {!draft.isInternal && (
-                <label>Project<select value={draft.projectRef} onChange={(event) => setDraft((current) => ({ ...current, projectRef: event.target.value }))}>
-                  <option value="">Select a project</option>
-                  {projectSites.map((project) => (
-                    <option key={project.ref} value={project.ref}>{project.ref} - {project.name}</option>
-                  ))}
-                </select></label>
-              )}
-              <label>Assignee email<input value={draft.assigneeEmail} onChange={(event) => setDraft((current) => ({ ...current, assigneeEmail: event.target.value }))} placeholder="name@company.com" /></label>
-              <label>Due date<input type="date" value={draft.dueDate} onChange={(event) => setDraft((current) => ({ ...current, dueDate: event.target.value }))} /></label>
-              <label className="span-2">Description<textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Details, links, context" /></label>
-              <div className="span-2">
-                <span className="muted">Affects (optional): which parts of the business this task touches when complete</span>
-                <div className="tag-picker-grid">
-                  {IMPACT_AREA_OPTIONS.map((tag) => {
-                    const checked = draft.impactAreas.includes(tag);
-                    return (
-                      <label key={tag} className="checkbox-inline">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(event) => {
-                            setDraft((current) => ({
-                              ...current,
-                              impactAreas: event.target.checked
-                                ? [...current.impactAreas, tag]
-                                : current.impactAreas.filter((existing) => existing !== tag),
-                            }));
-                          }}
-                        />
-                        {tag}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-            <div className="modal-actions">
-              <button className="secondary-action" type="button" onClick={() => setModalOpen(false)}>Cancel</button>
-              <button className="primary-action" type="button" onClick={submitDraft} disabled={!draft.title.trim()}>{editingId ? "Save Task" : "Add Task"}</button>
-            </div>
-          </section>
-        </div>
+        <TaskEditorModal
+          draft={draft}
+          setDraft={setDraft}
+          editingId={editingId}
+          projectSites={projectSites}
+          teamMembers={teamMembers}
+          onSubmit={submitDraft}
+          onClose={() => setModalOpen(false)}
+        />
       )}
     </div>
+  );
+}
+
+function TaskMiniPanel({
+  title,
+  tasks,
+  teamMembers,
+  projectSites,
+  section,
+  projectRef,
+  isInternal,
+  onCreate,
+  onUpdate,
+  onDelete,
+  onOpenFull,
+}: {
+  title: string;
+  tasks: EOTask[];
+  teamMembers: TeamMember[];
+  projectSites: ProjectSite[];
+  section: TaskSection;
+  projectRef?: string;
+  isInternal?: boolean;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onDelete: (id: string) => void;
+  onOpenFull: () => void;
+}) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<TaskDraft>(EMPTY_TASK_DRAFT);
+  const [showAll, setShowAll] = useState(false);
+  const openTasks = tasks.filter((task) => task.status !== "done");
+  const visibleTasks = showAll ? tasks : openTasks.slice(0, 5);
+
+  function openAddModal() {
+    setEditingId(null);
+    setDraft({ ...EMPTY_TASK_DRAFT, section, projectRef: projectRef ?? "", isInternal: isInternal ?? true });
+    setModalOpen(true);
+  }
+
+  function openEditModal(task: EOTask) {
+    setEditingId(task.id);
+    setDraft({
+      title: task.title,
+      description: task.description,
+      section: task.section,
+      projectRef: task.projectRef,
+      isInternal: task.isInternal,
+      status: task.status,
+      priority: task.priority,
+      category: task.category,
+      impactAreas: task.impactAreas,
+      assigneeUserId: task.assigneeUserId,
+      assigneeEmail: task.assigneeEmail,
+      dueDate: task.dueDate,
+    });
+    setModalOpen(true);
+  }
+
+  function submitDraft() {
+    if (!draft.title.trim()) {
+      return;
+    }
+    if (editingId) {
+      onUpdate(editingId, draft);
+    } else {
+      onCreate(draft);
+    }
+    setModalOpen(false);
+  }
+
+  return (
+    <section className="panel task-mini-panel wide">
+      <div className="panel-title-row">
+        <div>
+          <h2>{title}</h2>
+          <p>{openTasks.length} open{tasks.length !== openTasks.length ? `, ${tasks.length - openTasks.length} done` : ""}</p>
+        </div>
+        <div className="action-row">
+          <button className="secondary-action mini-action" type="button" onClick={onOpenFull}>Open in Tasks</button>
+          <button className="primary-action mini-action" type="button" onClick={openAddModal}><Plus size={14} /> Add</button>
+        </div>
+      </div>
+      <div className="task-mini-list">
+        {visibleTasks.map((task) => (
+          <button key={task.id} className="task-mini-row" type="button" onClick={() => openEditModal(task)}>
+            <span className={`status-pill status-${task.status}`}>{TASK_STATUS_OPTIONS.find((option) => option.value === task.status)?.label ?? task.status}</span>
+            <span className="task-mini-row-title">{task.title}</span>
+            <span className="muted">{assigneeLabel(task.assigneeEmail, teamMembers)}</span>
+            {task.dueDate && <span className="muted">{task.dueDate}</span>}
+          </button>
+        ))}
+        {visibleTasks.length === 0 && <div className="empty-compact-state">No tasks yet.</div>}
+        {!showAll && openTasks.length > 5 && (
+          <button className="secondary-action mini-action" type="button" onClick={() => setShowAll(true)}>Show all ({tasks.length})</button>
+        )}
+      </div>
+      {modalOpen && (
+        <TaskEditorModal
+          draft={draft}
+          setDraft={setDraft}
+          editingId={editingId}
+          projectSites={projectSites}
+          teamMembers={teamMembers}
+          onSubmit={submitDraft}
+          onClose={() => setModalOpen(false)}
+          lockSection
+          lockProjectRef={projectRef !== undefined}
+        />
+      )}
+    </section>
   );
 }
 

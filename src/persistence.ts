@@ -999,6 +999,104 @@ export async function deleteTask(id: string, accessToken?: string) {
   });
 }
 
+export type TeamMember = {
+  id: string;
+  fullName: string;
+  email: string;
+  roleTitle: string;
+  isActive: boolean;
+};
+
+type TeamMemberRow = {
+  id: string;
+  full_name: string;
+  email: string | null;
+  role_title: string | null;
+  is_active: boolean;
+};
+
+function mapTeamMemberRow(row: TeamMemberRow): TeamMember {
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    email: row.email ?? "",
+    roleTitle: row.role_title ?? "",
+    isActive: row.is_active,
+  };
+}
+
+export async function loadTeamMembers(accessToken?: string): Promise<TeamMember[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("team_members?select=*&order=full_name.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as TeamMemberRow[];
+  return rows.map(mapTeamMemberRow);
+}
+
+export async function createTeamMember(member: Omit<TeamMember, "id">, accessToken?: string): Promise<TeamMember> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const response = await fetch(supabaseUrl("team_members"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "return=representation",
+    },
+    body: JSON.stringify({
+      full_name: member.fullName,
+      email: member.email || null,
+      role_title: member.roleTitle,
+      is_active: member.isActive,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not add team member: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as TeamMemberRow[];
+  return mapTeamMemberRow(rows[0]);
+}
+
+export async function updateTeamMember(id: string, member: Partial<Omit<TeamMember, "id">>, accessToken?: string): Promise<TeamMember> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const payload: Record<string, unknown> = {};
+  if (member.fullName !== undefined) payload.full_name = member.fullName;
+  if (member.email !== undefined) payload.email = member.email || null;
+  if (member.roleTitle !== undefined) payload.role_title = member.roleTitle;
+  if (member.isActive !== undefined) payload.is_active = member.isActive;
+
+  const response = await fetch(supabaseUrl(`team_members?id=eq.${id}`), {
+    method: "PATCH",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "return=representation",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not update team member: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as TeamMemberRow[];
+  return mapTeamMemberRow(rows[0]);
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;

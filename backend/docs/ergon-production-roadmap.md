@@ -1048,6 +1048,34 @@ If continuing immediately, build in this order:
     browser-only references).
 21. [ ] Inventory location/bin UI.
 
+## Embedded Task/PM System (Aug 2026)
+
+Built out the Tasks feature from a single global list into a lighter
+ClickUp-style system, per E's request after seeing ClickUp's task board:
+
+- New migration `019_team_roster.sql` adds a `team_members` table (full name,
+  email, role title, active flag) so tasks can be assigned to anyone on a
+  roster the Admin/Manager maintains directly -- no login required first.
+  This is separate from the deferred email-invite feature (that's about app
+  *access*; this is about naming someone as a task owner). **This migration
+  still needs to be run in the Supabase SQL editor** -- it has NOT been
+  applied yet.
+- Task panels are now embedded directly in Purchasing, Inventory, Sales, and
+  each individual project's detail page, each filtered to that section (or
+  that project's ref) -- all reading/writing the same `tasks` table as the
+  global Tasks tab, so nothing is duplicated and everything stays in sync.
+- The Tasks tab itself gained List / Board (kanban) / Calendar views, plus a
+  "group by" toggle (Status / Individual / Section) so work can be sliced by
+  person or by group, not just status.
+- The assignee field is now a real picker sourced from the roster instead of
+  a free-text email box.
+
+Not built yet (intentionally deferred, flagged as follow-up):
+- Gantt view.
+- Real task-to-task dependencies (task A blocks task B) -- today's
+  `impact_areas` tags are informational only, same caveat as before.
+- Automations tied to task completion.
+
 ## Next Session Priorities (start here)
 
 In order:
