@@ -841,6 +841,7 @@ export type EOTask = {
   impactAreas: string[];
   assigneeUserId: string | null;
   assigneeEmail: string;
+  startDate: string;
   dueDate: string;
   createdBy: string | null;
   createdAt: string;
@@ -861,6 +862,7 @@ type TaskRow = {
   impact_areas: string[] | null;
   assignee_user_id: string | null;
   assignee_email: string | null;
+  start_date: string | null;
   due_date: string | null;
   created_by: string | null;
   created_at: string;
@@ -882,6 +884,7 @@ function mapTaskRow(row: TaskRow): EOTask {
     impactAreas: row.impact_areas ?? [],
     assigneeUserId: row.assignee_user_id,
     assigneeEmail: row.assignee_email ?? "",
+    startDate: row.start_date ?? "",
     dueDate: row.due_date ?? "",
     createdBy: row.created_by,
     createdAt: row.created_at,
@@ -937,6 +940,7 @@ export async function createTask(
       category: task.category,
       impact_areas: task.impactAreas,
       assignee_email: task.assigneeEmail || null,
+      start_date: task.startDate || null,
       due_date: task.dueDate || null,
       created_by: createdBy,
     }),
@@ -969,6 +973,7 @@ export async function updateTask(id: string, task: Partial<Omit<EOTask, "id" | "
   if (task.category !== undefined) payload.category = task.category;
   if (task.impactAreas !== undefined) payload.impact_areas = task.impactAreas;
   if (task.assigneeEmail !== undefined) payload.assignee_email = task.assigneeEmail || null;
+  if (task.startDate !== undefined) payload.start_date = task.startDate || null;
   if (task.dueDate !== undefined) payload.due_date = task.dueDate || null;
 
   const response = await fetch(supabaseUrl(`tasks?id=eq.${id}`), {
@@ -1710,6 +1715,463 @@ export async function respondToPublicSubmittal(
   });
 
   return response.ok;
+}
+
+// --- Phase 18: Fluid Forms Engine + Handovers ------------------------------
+
+export type FormSchemaField = {
+  id: string;
+  formSchemaId: string;
+  section: string;
+  fieldKey: string;
+  label: string;
+  fieldType: "text" | "textarea" | "number" | "select" | "checkbox" | "date";
+  placeholder: string;
+  isRequired: boolean;
+  options: string[];
+  sequenceOrder: number;
+};
+
+export type FormSchema = {
+  id: string;
+  formKey: string;
+  name: string;
+  description: string;
+  isActive: boolean;
+  fields: FormSchemaField[];
+};
+
+type FormSchemaRow = { id: string; form_key: string; name: string; description: string | null; is_active: boolean };
+type FormSchemaFieldRow = {
+  id: string;
+  form_schema_id: string;
+  section: string;
+  field_key: string;
+  label: string;
+  field_type: FormSchemaField["fieldType"];
+  placeholder: string | null;
+  is_required: boolean;
+  options: string[] | null;
+  sequence_order: number;
+};
+
+function mapFormSchemaFieldRow(row: FormSchemaFieldRow): FormSchemaField {
+  return {
+    id: row.id,
+    formSchemaId: row.form_schema_id,
+    section: row.section,
+    fieldKey: row.field_key,
+    label: row.label,
+    fieldType: row.field_type,
+    placeholder: row.placeholder ?? "",
+    isRequired: row.is_required,
+    options: row.options ?? [],
+    sequenceOrder: row.sequence_order,
+  };
+}
+
+export async function loadFormSchema(formKey: string, accessToken?: string): Promise<FormSchema | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+
+  const schemaRes = await fetch(supabaseUrl(`form_schemas?form_key=eq.${encodeURIComponent(formKey)}&select=*&limit=1`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!schemaRes.ok) {
+    return null;
+  }
+  const schemaRows = (await schemaRes.json()) as FormSchemaRow[];
+  if (!schemaRows.length) {
+    return null;
+  }
+  const schema = schemaRows[0];
+
+  const fieldsRes = await fetch(
+    supabaseUrl(`form_schema_fields?form_schema_id=eq.${schema.id}&select=*&order=sequence_order.asc`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  const fieldRows = fieldsRes.ok ? ((await fieldsRes.json()) as FormSchemaFieldRow[]) : [];
+
+  return {
+    id: schema.id,
+    formKey: schema.form_key,
+    name: schema.name,
+    description: schema.description ?? "",
+    isActive: schema.is_active,
+    fields: fieldRows.map(mapFormSchemaFieldRow),
+  };
+}
+
+export async function addFormSchemaField(
+  formSchemaId: string,
+  field: Omit<FormSchemaField, "id" | "formSchemaId">,
+  accessToken?: string,
+): Promise<FormSchemaField> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("form_schema_fields"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      form_schema_id: formSchemaId,
+      section: field.section || "general",
+      field_key: field.fieldKey,
+      label: field.label,
+      field_type: field.fieldType,
+      placeholder: field.placeholder || null,
+      is_required: field.isRequired,
+      options: field.options,
+      sequence_order: field.sequenceOrder,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not add form field: ${response.status}`);
+  }
+  const rows = (await response.json()) as FormSchemaFieldRow[];
+  return mapFormSchemaFieldRow(rows[0]);
+}
+
+export async function updateFormSchemaField(
+  id: string,
+  patch: Partial<Omit<FormSchemaField, "id" | "formSchemaId">>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (patch.section !== undefined) payload.section = patch.section;
+  if (patch.fieldKey !== undefined) payload.field_key = patch.fieldKey;
+  if (patch.label !== undefined) payload.label = patch.label;
+  if (patch.fieldType !== undefined) payload.field_type = patch.fieldType;
+  if (patch.placeholder !== undefined) payload.placeholder = patch.placeholder || null;
+  if (patch.isRequired !== undefined) payload.is_required = patch.isRequired;
+  if (patch.options !== undefined) payload.options = patch.options;
+  if (patch.sequenceOrder !== undefined) payload.sequence_order = patch.sequenceOrder;
+
+  await fetch(supabaseUrl(`form_schema_fields?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteFormSchemaField(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`form_schema_fields?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+}
+
+export type ProjectHandover = {
+  id: string;
+  projectId: string;
+  formSchemaId: string;
+  status: "draft" | "submitted";
+  responses: Record<string, string>;
+  submittedByEmail: string;
+  submittedAt: string | null;
+  createdAt: string;
+};
+
+type ProjectHandoverRow = {
+  id: string;
+  project_id: string;
+  form_schema_id: string;
+  status: string;
+  responses: Record<string, string>;
+  submitted_by_email: string | null;
+  submitted_at: string | null;
+  created_at: string;
+};
+
+function mapHandoverRow(row: ProjectHandoverRow): ProjectHandover {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    formSchemaId: row.form_schema_id,
+    status: row.status as ProjectHandover["status"],
+    responses: row.responses ?? {},
+    submittedByEmail: row.submitted_by_email ?? "",
+    submittedAt: row.submitted_at,
+    createdAt: row.created_at,
+  };
+}
+
+export async function loadHandoversForProject(projectId: string, accessToken?: string): Promise<ProjectHandover[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !projectId) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`project_handovers?project_id=eq.${projectId}&select=*&order=created_at.desc`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ProjectHandoverRow[];
+  return rows.map(mapHandoverRow);
+}
+
+export async function createHandover(projectId: string, formSchemaId: string, accessToken?: string): Promise<ProjectHandover> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("project_handovers"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ project_id: projectId, form_schema_id: formSchemaId, status: "draft", responses: {} }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not create handover: ${response.status}`);
+  }
+  const rows = (await response.json()) as ProjectHandoverRow[];
+  return mapHandoverRow(rows[0]);
+}
+
+export async function updateHandoverResponses(id: string, responses: Record<string, string>, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`project_handovers?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ responses }),
+  });
+}
+
+export async function submitHandover(id: string, submittedByEmail: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`project_handovers?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ status: "submitted", submitted_by_email: submittedByEmail, submitted_at: new Date().toISOString() }),
+  });
+}
+
+// --- Phase 20: Pre-Sales Hardware Rules Engine -----------------------------
+
+export type PresalesHardwareRule = {
+  id: string;
+  tier: string;
+  baseItemName: string;
+  quantityMode: "fixed" | "per_node_ceil";
+  fixedQty: number;
+  perNodeDivisor: number | null;
+  requiresCloudSync: boolean | null;
+  sequenceOrder: number;
+  isActive: boolean;
+};
+
+type PresalesHardwareRuleRow = {
+  id: string;
+  tier: string;
+  base_item_name: string;
+  quantity_mode: PresalesHardwareRule["quantityMode"];
+  fixed_qty: number | string;
+  per_node_divisor: number | string | null;
+  requires_cloud_sync: boolean | null;
+  sequence_order: number;
+  is_active: boolean;
+};
+
+function mapPresalesRuleRow(row: PresalesHardwareRuleRow): PresalesHardwareRule {
+  return {
+    id: row.id,
+    tier: row.tier,
+    baseItemName: row.base_item_name,
+    quantityMode: row.quantity_mode,
+    fixedQty: Number(row.fixed_qty),
+    perNodeDivisor: row.per_node_divisor === null ? null : Number(row.per_node_divisor),
+    requiresCloudSync: row.requires_cloud_sync,
+    sequenceOrder: row.sequence_order,
+    isActive: row.is_active,
+  };
+}
+
+export async function loadPresalesRules(accessToken?: string): Promise<PresalesHardwareRule[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("presales_hardware_rules?select=*&order=tier.asc,sequence_order.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as PresalesHardwareRuleRow[];
+  return rows.map(mapPresalesRuleRow);
+}
+
+export async function createPresalesRule(rule: Omit<PresalesHardwareRule, "id">, accessToken?: string): Promise<PresalesHardwareRule> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("presales_hardware_rules"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      tier: rule.tier,
+      base_item_name: rule.baseItemName,
+      quantity_mode: rule.quantityMode,
+      fixed_qty: rule.fixedQty,
+      per_node_divisor: rule.perNodeDivisor,
+      requires_cloud_sync: rule.requiresCloudSync,
+      sequence_order: rule.sequenceOrder,
+      is_active: rule.isActive,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not add rule: ${response.status}`);
+  }
+  const rows = (await response.json()) as PresalesHardwareRuleRow[];
+  return mapPresalesRuleRow(rows[0]);
+}
+
+export async function deletePresalesRule(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`presales_hardware_rules?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+}
+
+// --- Phase 21: Task-Linked Inventory Automation ----------------------------
+
+export type TaskHardwareDependency = {
+  id: string;
+  taskId: string;
+  projectBomLineId: string | null;
+  inventoryItemId: string | null;
+  quantityRequired: number;
+  fulfillmentStatus: "pending" | "allocated" | "procurement_queued";
+};
+
+type TaskHardwareDependencyRow = {
+  id: string;
+  task_id: string;
+  project_bom_line_id: string | null;
+  inventory_item_id: string | null;
+  quantity_required: number | string;
+  fulfillment_status: TaskHardwareDependency["fulfillmentStatus"];
+};
+
+function mapTaskDependencyRow(row: TaskHardwareDependencyRow): TaskHardwareDependency {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    projectBomLineId: row.project_bom_line_id,
+    inventoryItemId: row.inventory_item_id,
+    quantityRequired: Number(row.quantity_required),
+    fulfillmentStatus: row.fulfillment_status,
+  };
+}
+
+export async function loadTaskHardwareDependencies(accessToken?: string): Promise<TaskHardwareDependency[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("task_hardware_dependencies?select=*"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as TaskHardwareDependencyRow[];
+  return rows.map(mapTaskDependencyRow);
+}
+
+export async function addTaskHardwareDependency(
+  dependency: Omit<TaskHardwareDependency, "id" | "fulfillmentStatus">,
+  accessToken?: string,
+): Promise<TaskHardwareDependency> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("task_hardware_dependencies"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      task_id: dependency.taskId,
+      project_bom_line_id: dependency.projectBomLineId,
+      inventory_item_id: dependency.inventoryItemId,
+      quantity_required: dependency.quantityRequired,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not link hardware to task: ${response.status}`);
+  }
+  const rows = (await response.json()) as TaskHardwareDependencyRow[];
+  return mapTaskDependencyRow(rows[0]);
+}
+
+export async function updateTaskHardwareDependencyStatus(
+  id: string,
+  fulfillmentStatus: TaskHardwareDependency["fulfillmentStatus"],
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`task_hardware_dependencies?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ fulfillment_status: fulfillmentStatus }),
+  });
+}
+
+// Natural-key bridges (same pattern as resolveProjectId) so the Linked
+// Hardware picker and the automation that reads dependencies back can both
+// work off `inventory_items.sku`, which is what the still-blob-backed
+// `inventoryItems` client state actually keys on (Phase 10 app cutover for
+// inventory hasn't happened yet either).
+
+export async function resolveInventoryItemIdBySku(sku: string, accessToken?: string): Promise<string | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !sku) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl(`inventory_items?sku=eq.${encodeURIComponent(sku)}&select=id&limit=1`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as Array<{ id: string }>;
+  return rows[0]?.id ?? null;
+}
+
+export async function loadInventoryItemSkusByIds(ids: string[], accessToken?: string): Promise<Record<string, string>> {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (!isRemotePersistenceConfigured() || !accessToken || uniqueIds.length === 0) {
+    return {};
+  }
+  const response = await fetch(supabaseUrl(`inventory_items?id=in.(${uniqueIds.join(",")})&select=id,sku`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return {};
+  }
+  const rows = (await response.json()) as Array<{ id: string; sku: string }>;
+  return Object.fromEntries(rows.map((row) => [row.id, row.sku]));
+}
+
+export async function deleteTaskHardwareDependency(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`task_hardware_dependencies?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
 }
 
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {

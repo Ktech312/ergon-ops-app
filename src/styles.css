@@ -3694,3 +3694,119 @@ td.empty-compact-state {
   gap: 10px;
   margin-top: 12px;
 }
+
+/* Phase 6 addendum: Gantt ------------------------------------------------- */
+
+.task-gantt {
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.task-gantt-header {
+  background: #faf8f4;
+  border-bottom: 1px solid #e8e1d5;
+  display: flex;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.task-gantt-label-col {
+  flex: 0 0 220px;
+  overflow: hidden;
+  padding: 8px 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-gantt-track-col {
+  flex: 1;
+  min-width: 480px;
+  position: relative;
+}
+
+.task-gantt-header .task-gantt-track-col {
+  height: 30px;
+}
+
+.task-gantt-marker {
+  color: #756d62;
+  position: absolute;
+  top: 8px;
+  white-space: nowrap;
+}
+
+.task-gantt-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.task-gantt-row {
+  align-items: center;
+  border-bottom: 1px solid #f1ece2;
+  display: flex;
+}
+
+.task-gantt-row:last-child {
+  border-bottom: none;
+}
+
+.task-gantt-row .task-gantt-track-col {
+  height: 40px;
+}
+
+.task-gantt-bar {
+  background: #123f6b;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  height: 22px;
+  overflow: hidden;
+  padding: 0 8px;
+  position: absolute;
+  text-align: left;
+  text-overflow: ellipsis;
+  top: 9px;
+  white-space: nowrap;
+}
+
+.task-gantt-bar.status-done { background: #2f8f5b; }
+.task-gantt-bar.status-blocked { background: #9a2f20; }
+.task-gantt-bar.status-in_progress { background: #906313; }
+.task-gantt-bar.status-ready_for_review { background: #1d5fa3; }
+
+/* Phase 18/19/20/21 -------------------------------------------------------- */
+
+.handover-block {
+  background: #faf8f4;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  padding: 14px;
+}
+
+.handover-block .form-grid {
+  margin-top: 10px;
+}
+
+.linked-hardware-block {
+  border-top: 1px solid #e8e1d5;
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.linked-hardware-block .submittal-list {
+  margin: 10px 0;
+}
+
+.bom-import-preview {
+  background: #faf8f4;
+  border: 1px dashed #ded7cb;
+  border-radius: 8px;
+  margin: 10px 0;
+  padding: 12px;
+}

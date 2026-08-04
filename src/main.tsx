@@ -1,5 +1,6 @@
 import { StrictMode, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
+import * as XLSX from "xlsx";
 import {
   BarChart3,
   Bell,
@@ -26,18 +27,25 @@ import {
 import {
   isRemotePersistenceConfigured,
   acquireTransactionLock,
+  addFormSchemaField,
+  addScheduleTemplatePhase,
+  addTaskHardwareDependency,
   checkIsAdmin,
   consumeOAuthRedirectSession,
-  addScheduleTemplatePhase,
   createCatalogItem,
+  createHandover,
   createNotification,
+  createPresalesRule,
   createScheduleTemplate,
   createSubmittal,
   createSubmittalShareToken,
   createTask,
   createTeamMember,
+  deleteFormSchemaField,
+  deletePresalesRule,
   deleteScheduleTemplatePhase,
   deleteTask,
+  deleteTaskHardwareDependency,
   ensureOwnApprovalRequest,
   fetchPublicSubmittal,
   grantAdmin,
@@ -48,15 +56,20 @@ import {
   loadAllUserRoles,
   loadAuthSession,
   loadCatalogItems,
+  loadFormSchema,
+  loadHandoversForProject,
+  loadInventoryItemSkusByIds,
   loadLocalAppState,
   loadOwnAllowedViews,
   loadOwnApprovalStatus,
   loadNotificationRules,
   loadNotifications,
+  loadPresalesRules,
   loadRemoteAppState,
   loadScheduleTemplates,
   loadStandardInstallTimes,
   loadSubmittalsForProject,
+  loadTaskHardwareDependencies,
   loadTasks,
   loadTeamMembers,
   loadUserRoleMode,
@@ -64,6 +77,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   refreshAuthSession,
+  resolveInventoryItemIdBySku,
   resolveProjectId,
   respondToPublicSubmittal,
   reviewUserApproval,
@@ -79,9 +93,13 @@ import {
   signInWithPassword,
   signOut,
   signUpWithPassword,
+  submitHandover,
   updateCatalogItem,
+  updateFormSchemaField,
+  updateHandoverResponses,
   updateNotificationRule,
   updateTask,
+  updateTaskHardwareDependencyStatus,
   updateTeamMember,
   upsertKnownUser,
   upsertStandardInstallTime,
@@ -89,16 +107,21 @@ import {
   type AuthSession,
   type CatalogItem,
   type EOTask,
+  type FormSchema,
+  type FormSchemaField,
   type KnownUser,
   type NotificationItem,
   type NotificationRule,
   type PersistedAppState,
+  type PresalesHardwareRule,
+  type ProjectHandover,
   type ProjectSubmittal,
   type PublicSubmittalView,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
   type StandardInstallTime,
   type SubmittalSnapshot,
+  type TaskHardwareDependency,
   type TaskPriority,
   type TaskSection,
   type TaskStatus,
@@ -1010,6 +1033,14 @@ function App() {
   const [scheduleStatus, setScheduleStatus] = useState("");
   const [submittals, setSubmittals] = useState<ProjectSubmittal[]>([]);
   const [submittalStatus, setSubmittalStatus] = useState("");
+  const [handoverSchema, setHandoverSchema] = useState<FormSchema | null>(null);
+  const [formBuilderStatus, setFormBuilderStatus] = useState("");
+  const [handovers, setHandovers] = useState<ProjectHandover[]>([]);
+  const [handoverStatus, setHandoverStatus] = useState("");
+  const [presalesRules, setPresalesRules] = useState<PresalesHardwareRule[]>([]);
+  const [presalesStatus, setPresalesStatus] = useState("");
+  const [taskHardwareDependencies, setTaskHardwareDependencies] = useState<TaskHardwareDependency[]>([]);
+  const [inventoryItemSkuById, setInventoryItemSkuById] = useState<Record<string, string>>({});
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -1366,6 +1397,9 @@ function App() {
       if (updated.assigneeEmail && updated.assigneeEmail !== previous?.assigneeEmail) {
         notify("task_assigned", updated.assigneeEmail, "Task assigned", `"${updated.title}" was assigned to you.`, "task", updated.id, `task_assigned:${updated.id}:${updated.assigneeEmail}`);
       }
+      if (updated.status === "in_progress" && previous?.status !== "in_progress") {
+        runTaskHardwareAutomation(updated);
+      }
     } catch (error) {
       setTaskStatusMessage(error instanceof Error ? error.message : "Could not update task.");
     }
@@ -1580,6 +1614,8 @@ function App() {
         const standardTime = standardInstallTimes.find((entry) => entry.category === phase.bomCategoryFilter);
         hours = qty * (standardTime?.hoursPerUnit ?? 0);
       }
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() + Math.ceil(cumulativeHours / 8));
       cumulativeHours += hours;
       const dueDate = new Date();
       dueDate.setDate(dueDate.getDate() + Math.ceil(cumulativeHours / 8));
@@ -1595,6 +1631,7 @@ function App() {
         impactAreas: [],
         assigneeUserId: null,
         assigneeEmail: "",
+        startDate: startDate.toISOString().slice(0, 10),
         dueDate: dueDate.toISOString().slice(0, 10),
       };
     });
@@ -1662,6 +1699,241 @@ function App() {
       setSubmittalStatus(`Submittal v${created.version} created and ready to share.`);
     } catch (error) {
       setSubmittalStatus(error instanceof Error ? error.message : "Could not create submittal.");
+    }
+  }
+
+  // Phase 18: fluid forms engine + After-Sales Handover. Loaded once per
+  // auth session, same as schedule templates/standard times.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setHandoverSchema(null);
+      setPresalesRules([]);
+      setTaskHardwareDependencies([]);
+      return;
+    }
+    loadFormSchema("after_sales_handover", authSession.accessToken).then(setHandoverSchema).catch(() => {});
+    loadPresalesRules(authSession.accessToken).then(setPresalesRules).catch(() => {});
+    loadTaskHardwareDependencies(authSession.accessToken).then(async (deps) => {
+      setTaskHardwareDependencies(deps);
+      const skuMap = await loadInventoryItemSkusByIds(deps.map((dep) => dep.inventoryItemId).filter((id): id is string => Boolean(id)), authSession.accessToken);
+      setInventoryItemSkuById(skuMap);
+    }).catch(() => {});
+  }, [authSession]);
+
+  async function handleAddFormField(field: Omit<FormSchemaField, "id" | "formSchemaId">) {
+    if (!authSession || !handoverSchema) {
+      return;
+    }
+    try {
+      const created = await addFormSchemaField(handoverSchema.id, field, authSession.accessToken);
+      setHandoverSchema((current) => (current ? { ...current, fields: [...current.fields, created].sort((a, b) => a.sequenceOrder - b.sequenceOrder) } : current));
+    } catch (error) {
+      setFormBuilderStatus(error instanceof Error ? error.message : "Could not add field.");
+    }
+  }
+
+  async function handleUpdateFormField(id: string, patch: Partial<Omit<FormSchemaField, "id" | "formSchemaId">>) {
+    if (!authSession) {
+      return;
+    }
+    await updateFormSchemaField(id, patch, authSession.accessToken);
+    setHandoverSchema((current) =>
+      current ? { ...current, fields: current.fields.map((field) => (field.id === id ? { ...field, ...patch } : field)).sort((a, b) => a.sequenceOrder - b.sequenceOrder) } : current,
+    );
+  }
+
+  async function handleDeleteFormField(id: string) {
+    if (!authSession) {
+      return;
+    }
+    await deleteFormSchemaField(id, authSession.accessToken);
+    setHandoverSchema((current) => (current ? { ...current, fields: current.fields.filter((field) => field.id !== id) } : current));
+  }
+
+  function handleReorderFormField(id: string, direction: "up" | "down") {
+    if (!handoverSchema) {
+      return;
+    }
+    const sorted = [...handoverSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+    const index = sorted.findIndex((field) => field.id === id);
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || targetIndex < 0 || targetIndex >= sorted.length) {
+      return;
+    }
+    const a = sorted[index];
+    const b = sorted[targetIndex];
+    handleUpdateFormField(a.id, { sequenceOrder: b.sequenceOrder });
+    handleUpdateFormField(b.id, { sequenceOrder: a.sequenceOrder });
+  }
+
+  async function reloadHandovers(projectName: string) {
+    if (!authSession || !projectName) {
+      setHandovers([]);
+      return;
+    }
+    const projectId = await resolveProjectId(projectName, authSession.accessToken);
+    if (!projectId) {
+      setHandovers([]);
+      return;
+    }
+    setHandovers(await loadHandoversForProject(projectId, authSession.accessToken));
+  }
+
+  async function handleCreateHandover(project: ProjectSite) {
+    if (!authSession || !handoverSchema) {
+      setHandoverStatus("Handover form isn't configured yet -- check Admin -> Form Builder.");
+      return;
+    }
+    setHandoverStatus("Creating handover...");
+    try {
+      const projectId = await resolveProjectId(project.name, authSession.accessToken);
+      if (!projectId) {
+        setHandoverStatus("Could not resolve this project's database record.");
+        return;
+      }
+      const created = await createHandover(projectId, handoverSchema.id, authSession.accessToken);
+      setHandovers((current) => [created, ...current]);
+      setHandoverStatus("Draft handover created -- fill it in below.");
+    } catch (error) {
+      setHandoverStatus(error instanceof Error ? error.message : "Could not create handover.");
+    }
+  }
+
+  async function handleSaveHandoverResponses(handoverId: string, responses: Record<string, string>) {
+    if (!authSession) {
+      return;
+    }
+    await updateHandoverResponses(handoverId, responses, authSession.accessToken);
+    setHandovers((current) => current.map((entry) => (entry.id === handoverId ? { ...entry, responses } : entry)));
+  }
+
+  async function handleSubmitHandover(handoverId: string) {
+    if (!authSession) {
+      return;
+    }
+    await submitHandover(handoverId, authSession.email, authSession.accessToken);
+    setHandovers((current) =>
+      current.map((entry) => (entry.id === handoverId ? { ...entry, status: "submitted", submittedByEmail: authSession.email, submittedAt: new Date().toISOString() } : entry)),
+    );
+    setHandoverStatus("Handover submitted.");
+  }
+
+  // Phase 20: pre-sales hardware rules engine. Evaluates the active rule set
+  // against a tier/node-count/cloud-sync questionnaire and writes ordinary
+  // project_bom_lines-equivalent rows -- for tonight, since Phase 10's BOM
+  // cutover hasn't happened, that means appending to the same blob-backed
+  // `project.bom` the manual "Add Material" button already writes to.
+  function evaluatePresalesRules(tier: string, nodeCount: number, cloudSync: boolean) {
+    return presalesRules
+      .filter((rule) => rule.isActive && rule.tier === tier)
+      .filter((rule) => rule.requiresCloudSync === null || rule.requiresCloudSync === cloudSync)
+      .map((rule) => ({
+        item: rule.baseItemName,
+        qty: rule.quantityMode === "per_node_ceil" ? Math.max(1, Math.ceil(nodeCount / Math.max(1, rule.perNodeDivisor ?? 1))) : Math.round(rule.fixedQty),
+      }));
+  }
+
+  function handleGenerateBaselineBom(projectRef: string, tier: string, nodeCount: number, cloudSync: boolean) {
+    const lines = evaluatePresalesRules(tier, nodeCount, cloudSync);
+    if (lines.length === 0) {
+      setPresalesStatus("No matching rules for that tier -- add some in Admin -> Pre-Sales Rules.");
+      return;
+    }
+    setProjectSites((current) =>
+      current.map((project) =>
+        project.ref === projectRef
+          ? {
+              ...project,
+              bom: [
+                ...project.bom,
+                ...lines.map((line) => ({
+                  item: line.item,
+                  qty: line.qty,
+                  status: "Not started" as BomLine["status"],
+                  requestSpeed: "Standard" as BomLine["requestSpeed"],
+                  notes: "Auto-generated from pre-sales rules.",
+                })),
+              ],
+            }
+          : project,
+      ),
+    );
+    setPresalesStatus(`Added ${lines.length} baseline line${lines.length === 1 ? "" : "s"} to the BOM.`);
+  }
+
+  async function handleAddPresalesRule(rule: Omit<PresalesHardwareRule, "id">) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const created = await createPresalesRule(rule, authSession.accessToken);
+      setPresalesRules((current) => [...current, created]);
+    } catch (error) {
+      setPresalesStatus(error instanceof Error ? error.message : "Could not add rule.");
+    }
+  }
+
+  async function handleDeletePresalesRule(id: string) {
+    if (!authSession) {
+      return;
+    }
+    await deletePresalesRule(id, authSession.accessToken);
+    setPresalesRules((current) => current.filter((rule) => rule.id !== id));
+  }
+
+  // Phase 21: task-linked inventory automation. All client-side, sequential
+  // REST calls -- no Edge Function, no service-role key. Reuses the same
+  // blob-backed pullFromInventory/queueProjectBomPurchaseRequest paths every
+  // other inventory/purchasing action in this app already goes through, so
+  // this can't create a split-brain state between Postgres and the blob.
+  async function handleAddTaskDependency(taskId: string, sku: string, quantityRequired: number) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const inventoryItemId = await resolveInventoryItemIdBySku(sku, authSession.accessToken);
+      if (!inventoryItemId) {
+        setFormBuilderStatus(`"${sku}" hasn't synced to the database yet -- open Inventory once to sync it, then try again.`);
+        return;
+      }
+      const created = await addTaskHardwareDependency({ taskId, projectBomLineId: null, inventoryItemId, quantityRequired }, authSession.accessToken);
+      setTaskHardwareDependencies((current) => [...current, created]);
+      setInventoryItemSkuById((current) => ({ ...current, [inventoryItemId]: sku }));
+    } catch (error) {
+      setFormBuilderStatus(error instanceof Error ? error.message : "Could not link hardware to task.");
+    }
+  }
+
+  async function handleDeleteTaskDependency(id: string) {
+    if (!authSession) {
+      return;
+    }
+    await deleteTaskHardwareDependency(id, authSession.accessToken);
+    setTaskHardwareDependencies((current) => current.filter((dep) => dep.id !== id));
+  }
+
+  async function runTaskHardwareAutomation(task: EOTask) {
+    const pending = taskHardwareDependencies.filter((dep) => dep.taskId === task.id && dep.fulfillmentStatus === "pending");
+    if (pending.length === 0 || !authSession) {
+      return;
+    }
+    const project = projectSites.find((entry) => entry.ref === task.projectRef);
+    for (const dep of pending) {
+      const sku = dep.inventoryItemId ? inventoryItemSkuById[dep.inventoryItemId] : undefined;
+      const part = sku ? inventoryItems.find((item) => item.ref === sku) : undefined;
+      if (!part) {
+        continue;
+      }
+      const note = `Auto-${part.stock >= dep.quantityRequired ? "reserved" : "queued"} for task ${task.taskNumber}.`;
+      if (part.stock >= dep.quantityRequired) {
+        pullFromInventory(part.name, dep.quantityRequired, project?.name, note);
+        await updateTaskHardwareDependencyStatus(dep.id, "allocated", authSession.accessToken);
+        setTaskHardwareDependencies((current) => current.map((entry) => (entry.id === dep.id ? { ...entry, fulfillmentStatus: "allocated" } : entry)));
+      } else {
+        queueProjectBomPurchaseRequest(part.name, dep.quantityRequired, project?.name ?? "", task.projectRef, "Standard", note, "warehouse_stock");
+        await updateTaskHardwareDependencyStatus(dep.id, "procurement_queued", authSession.accessToken);
+        setTaskHardwareDependencies((current) => current.map((entry) => (entry.id === dep.id ? { ...entry, fulfillmentStatus: "procurement_queued" } : entry)));
+      }
     }
   }
 
@@ -2665,7 +2937,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesCatalog
             catalogItems={catalogItems}
@@ -2694,6 +2966,10 @@ function App() {
             onUpdate={handleUpdateTask}
             onDelete={handleDeleteTask}
             onRefresh={() => authSession && reloadTasks(authSession.accessToken)}
+            inventoryItems={inventoryItems}
+            taskHardwareDependencies={taskHardwareDependencies}
+            onAddTaskDependency={handleAddTaskDependency}
+            onDeleteTaskDependency={handleDeleteTaskDependency}
           />
         )}
         {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} />}
@@ -2726,6 +3002,16 @@ function App() {
             onCreateScheduleTemplate={handleCreateScheduleTemplate}
             onAddSchedulePhase={handleAddSchedulePhase}
             onDeleteSchedulePhase={handleDeleteSchedulePhase}
+            handoverSchema={handoverSchema}
+            formBuilderStatus={formBuilderStatus}
+            onAddFormField={handleAddFormField}
+            onUpdateFormField={handleUpdateFormField}
+            onDeleteFormField={handleDeleteFormField}
+            onReorderFormField={handleReorderFormField}
+            presalesRules={presalesRules}
+            presalesStatus={presalesStatus}
+            onAddPresalesRule={handleAddPresalesRule}
+            onDeletePresalesRule={handleDeletePresalesRule}
             onRefresh={() => {
               if (!authSession) {
                 return;
@@ -4669,6 +4955,16 @@ function Projects({
   submittalStatus,
   onLoadSubmittals,
   onCreateSubmittal,
+  handoverSchema,
+  handovers,
+  handoverStatus,
+  onLoadHandovers,
+  onCreateHandover,
+  onSaveHandoverResponses,
+  onSubmitHandover,
+  presalesRules,
+  presalesStatus,
+  onGenerateBaselineBom,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -4690,6 +4986,16 @@ function Projects({
   submittalStatus: string;
   onLoadSubmittals: (projectName: string) => void;
   onCreateSubmittal: (project: ProjectSite, clientName: string, clientEmail: string) => void;
+  handoverSchema: FormSchema | null;
+  handovers: ProjectHandover[];
+  handoverStatus: string;
+  onLoadHandovers: (projectName: string) => void;
+  onCreateHandover: (project: ProjectSite) => void;
+  onSaveHandoverResponses: (handoverId: string, responses: Record<string, string>) => void;
+  onSubmitHandover: (handoverId: string) => void;
+  presalesRules: PresalesHardwareRule[];
+  presalesStatus: string;
+  onGenerateBaselineBom: (projectRef: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
@@ -4701,6 +5007,11 @@ function Projects({
   const [submittalClientName, setSubmittalClientName] = useState("");
   const [submittalClientEmail, setSubmittalClientEmail] = useState("");
   const [copiedSubmittalId, setCopiedSubmittalId] = useState("");
+  const [presalesTier, setPresalesTier] = useState("");
+  const [presalesNodeCount, setPresalesNodeCount] = useState(1);
+  const [presalesCloudSync, setPresalesCloudSync] = useState(false);
+  const [bomImportRows, setBomImportRows] = useState<Array<{ item: string; qty: number }>>([]);
+  const [bomImportStatus, setBomImportStatus] = useState("");
   const [showBomModal, setShowBomModal] = useState(false);
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
@@ -4715,8 +5026,11 @@ function Projects({
 
   useEffect(() => {
     onLoadSubmittals(selectedProject.name);
+    onLoadHandovers(selectedProject.name);
     setSubmittalClientName(selectedProject.client);
     setSubmittalClientEmail("");
+    setBomImportRows([]);
+    setBomImportStatus("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject.name]);
   const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
@@ -4842,6 +5156,71 @@ function Projects({
     setEditingBomIndex(null);
     setBomDraft({ item: parts[0].name, qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
     setShowBomModal(true);
+  }
+
+  // Phase 19: spreadsheet BOM import. Parses entirely in the browser via
+  // SheetJS -- no upload endpoint, no server round-trip. Preview first,
+  // commit only on confirmation, straight into the same blob-backed
+  // project.bom the manual "Add Material" flow already writes to.
+  async function handleBomFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    setBomImportStatus("Parsing...");
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      const parsed = rawRows
+        .map((row) => {
+          const keys = Object.keys(row);
+          const findKey = (...candidates: string[]) => keys.find((key) => candidates.includes(key.trim().toLowerCase()));
+          const itemKey = findKey("item", "model", "model type", "hardware", "name");
+          const qtyKey = findKey("qty", "quantity");
+          const item = itemKey ? String(row[itemKey]).trim() : "";
+          const qty = qtyKey ? Number(row[qtyKey]) || 1 : 1;
+          return { item, qty };
+        })
+        .filter((row) => row.item);
+      setBomImportRows(parsed);
+      setBomImportStatus(
+        parsed.length
+          ? `Parsed ${parsed.length} row(s) -- review below, then commit.`
+          : "No recognizable rows found -- check column headers (Item/Model, Qty).",
+      );
+    } catch (error) {
+      setBomImportStatus("Could not parse that file. Make sure it's a valid .xlsx or .csv.");
+    }
+  }
+
+  function commitBomImport() {
+    if (bomImportRows.length === 0) {
+      return;
+    }
+    setProjectSites((current) =>
+      current.map((project) =>
+        project.ref === selectedProject.ref
+          ? {
+              ...project,
+              bom: [
+                ...project.bom,
+                ...bomImportRows.map((row) => ({
+                  item: row.item,
+                  qty: row.qty,
+                  status: "Not started" as BomLine["status"],
+                  requestSpeed: "Standard" as BomLine["requestSpeed"],
+                  notes: "Imported from spreadsheet.",
+                })),
+              ],
+            }
+          : project,
+      ),
+    );
+    setBomImportStatus(`Added ${bomImportRows.length} line(s) to the BOM.`);
+    setBomImportRows([]);
   }
 
   function openEditBomModal(line: BomLine, index: number) {
@@ -5278,6 +5657,98 @@ function Projects({
       </section>
 
       <section className="panel full">
+        <PanelHeader title="Pre-Sales Quick Estimate" label="Derive a baseline hardware BOM from tier, node count, and connectivity" />
+        {presalesStatus && <small className="muted">{presalesStatus}</small>}
+        <div className="submittal-create-row">
+          <select value={presalesTier} onChange={(event) => setPresalesTier(event.target.value)}>
+            <option value="">Select tier...</option>
+            {Array.from(new Set(presalesRules.map((rule) => rule.tier))).map((tier) => (
+              <option key={tier} value={tier}>{tier}</option>
+            ))}
+          </select>
+          <input type="number" min={1} value={presalesNodeCount} onChange={(event) => setPresalesNodeCount(Number(event.target.value))} placeholder="Node count" />
+          <label className="checkbox-inline-field">
+            <input type="checkbox" checked={presalesCloudSync} onChange={(event) => setPresalesCloudSync(event.target.checked)} />
+            Cloud sync required
+          </label>
+          <button
+            className="primary-action mini-action"
+            type="button"
+            disabled={!presalesTier}
+            onClick={() => onGenerateBaselineBom(selectedProject.ref, presalesTier, presalesNodeCount, presalesCloudSync)}
+          >
+            Generate Baseline BOM
+          </button>
+        </div>
+      </section>
+
+      <section className="panel full handover-panel">
+        <div className="panel-title-row">
+          <div>
+            <h2>After-Sales Handover</h2>
+            <p>Site requirements captured at sales-to-operations handoff.</p>
+          </div>
+          <button className="primary-action mini-action" type="button" onClick={() => onCreateHandover(selectedProject)}>
+            <Plus size={14} /> New Handover
+          </button>
+        </div>
+        {handoverStatus && <small className="muted">{handoverStatus}</small>}
+        {handovers.length === 0 && <div className="empty-compact-state">No handovers yet for this project.</div>}
+        {handovers.map((handover) => (
+          <div className="handover-block" key={handover.id}>
+            <div className="submittal-row-head">
+              <span className={`status-pill submittal-status-${handover.status === "submitted" ? "approved" : "draft"}`}>{handover.status}</span>
+              {handover.submittedAt && <span className="muted">Submitted {new Date(handover.submittedAt).toLocaleDateString()} by {handover.submittedByEmail}</span>}
+            </div>
+            {handoverSchema && (
+              <div className="form-grid">
+                {[...handoverSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field) => (
+                  <label key={field.id} className={field.fieldType === "textarea" ? "span-2" : undefined}>
+                    {field.label}{field.isRequired ? " *" : ""}
+                    {field.fieldType === "select" ? (
+                      <select
+                        value={handover.responses[field.fieldKey] ?? ""}
+                        disabled={handover.status === "submitted"}
+                        onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.value })}
+                      >
+                        <option value="">Select...</option>
+                        {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                    ) : field.fieldType === "textarea" ? (
+                      <textarea
+                        value={handover.responses[field.fieldKey] ?? ""}
+                        disabled={handover.status === "submitted"}
+                        placeholder={field.placeholder}
+                        onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.value })}
+                      />
+                    ) : field.fieldType === "checkbox" ? (
+                      <input
+                        type="checkbox"
+                        checked={handover.responses[field.fieldKey] === "true"}
+                        disabled={handover.status === "submitted"}
+                        onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.checked ? "true" : "false" })}
+                      />
+                    ) : (
+                      <input
+                        type={field.fieldType === "date" ? "date" : field.fieldType === "number" ? "number" : "text"}
+                        value={handover.responses[field.fieldKey] ?? ""}
+                        disabled={handover.status === "submitted"}
+                        placeholder={field.placeholder}
+                        onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.value })}
+                      />
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
+            {handover.status === "draft" && (
+              <button className="secondary-action mini-action" type="button" onClick={() => onSubmitHandover(handover.id)}>Submit Handover</button>
+            )}
+          </div>
+        ))}
+      </section>
+
+      <section className="panel full">
         <div className="panel-title-row">
           <div>
             <h2>Project Details</h2>
@@ -5337,8 +5808,29 @@ function Projects({
             <h2>BOM - Bill of Material</h2>
             <p>Add, edit, pull from inventory, or request Purchasing orders.</p>
           </div>
-          <button className="primary-action" type="button" onClick={openAddBomModal}><Plus size={17} /> Add Material</button>
+          <div className="report-filter-row">
+            <label className="secondary-action mini-action project-doc-upload">
+              <Upload size={15} /> Import Spreadsheet
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleBomFileSelect} />
+            </label>
+            <button className="primary-action" type="button" onClick={openAddBomModal}><Plus size={17} /> Add Material</button>
+          </div>
         </div>
+        {bomImportStatus && <small className="muted">{bomImportStatus}</small>}
+        {bomImportRows.length > 0 && (
+          <div className="bom-import-preview">
+            <table>
+              <thead><tr><th>Item</th><th>Qty</th></tr></thead>
+              <tbody>
+                {bomImportRows.map((row, index) => <tr key={index}><td>{row.item}</td><td>{row.qty}</td></tr>)}
+              </tbody>
+            </table>
+            <div className="report-filter-row">
+              <button className="primary-action mini-action" type="button" onClick={commitBomImport}>Commit {bomImportRows.length} Line(s) to BOM</button>
+              <button className="secondary-action mini-action" type="button" onClick={() => { setBomImportRows([]); setBomImportStatus(""); }}>Discard</button>
+            </div>
+          </div>
+        )}
         <table>
           <thead>
             <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th><th></th></tr>
@@ -5959,6 +6451,16 @@ function AdminPage({
   onCreateScheduleTemplate,
   onAddSchedulePhase,
   onDeleteSchedulePhase,
+  handoverSchema,
+  formBuilderStatus,
+  onAddFormField,
+  onUpdateFormField,
+  onDeleteFormField,
+  onReorderFormField,
+  presalesRules,
+  presalesStatus,
+  onAddPresalesRule,
+  onDeletePresalesRule,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -5988,11 +6490,23 @@ function AdminPage({
   onCreateScheduleTemplate: (name: string, description: string) => void;
   onAddSchedulePhase: (templateId: string, phase: Omit<ScheduleTemplatePhase, "id" | "templateId">) => void;
   onDeleteSchedulePhase: (templateId: string, phaseId: string) => void;
+  handoverSchema: FormSchema | null;
+  formBuilderStatus: string;
+  onAddFormField: (field: Omit<FormSchemaField, "id" | "formSchemaId">) => void;
+  onUpdateFormField: (id: string, patch: Partial<Omit<FormSchemaField, "id" | "formSchemaId">>) => void;
+  onDeleteFormField: (id: string) => void;
+  onReorderFormField: (id: string, direction: "up" | "down") => void;
+  presalesRules: PresalesHardwareRule[];
+  presalesStatus: string;
+  onAddPresalesRule: (rule: Omit<PresalesHardwareRule, "id">) => void;
+  onDeletePresalesRule: (id: string) => void;
 }) {
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", roleTitle: "" });
   const [timeDraft, setTimeDraft] = useState({ category: "", hoursPerUnit: 0, notes: "" });
   const [templateNameDraft, setTemplateNameDraft] = useState("");
   const [phaseDrafts, setPhaseDrafts] = useState<Record<string, { phaseName: string; durationMode: "fixed_hours" | "per_bom_unit"; fixedHours: number; bomCategoryFilter: string; defaultRole: string }>>({});
+  const [formFieldDraft, setFormFieldDraft] = useState({ section: "site_requirements", label: "", fieldType: "text" as FormSchemaField["fieldType"], placeholder: "", isRequired: false, optionsRaw: "" });
+  const [presalesRuleDraft, setPresalesRuleDraft] = useState({ tier: "", baseItemName: "", quantityMode: "fixed" as PresalesHardwareRule["quantityMode"], fixedQty: 1, perNodeDivisor: 16, requiresCloudSync: "any" as "any" | "yes" | "no" });
 
   function phaseDraftFor(templateId: string) {
     return phaseDrafts[templateId] ?? { phaseName: "", durationMode: "fixed_hours" as const, fixedHours: 4, bomCategoryFilter: "", defaultRole: "" };
@@ -6219,6 +6733,140 @@ function AdminPage({
             );
           })}
           {scheduleTemplates.length === 0 && <div className="empty-compact-state">No templates yet. Create one above, then add phases to it.</div>}
+        </section>
+
+        <section className="panel wide">
+          <PanelHeader title="Form Builder - After-Sales Handover" label="Add, edit, reorder, or remove handover questions with no code change" />
+          {formBuilderStatus && <small className="muted">{formBuilderStatus}</small>}
+          {!handoverSchema ? (
+            <div className="empty-compact-state">Loading form schema...</div>
+          ) : (
+            <>
+              <table>
+                <thead><tr><th>#</th><th>Section</th><th>Label</th><th>Type</th><th>Required</th><th></th></tr></thead>
+                <tbody>
+                  {[...handoverSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field, index, sorted) => (
+                    <tr key={field.id}>
+                      <td>{field.sequenceOrder}</td>
+                      <td>{field.section}</td>
+                      <td>{field.label}{field.fieldType === "select" && field.options.length > 0 ? ` [${field.options.join(" | ")}]` : ""}</td>
+                      <td>{field.fieldType}</td>
+                      <td>
+                        <label className="checkbox-inline">
+                          <input type="checkbox" checked={field.isRequired} onChange={(event) => onUpdateFormField(field.id, { isRequired: event.target.checked })} />
+                        </label>
+                      </td>
+                      <td>
+                        <button className="secondary-action mini-action" type="button" disabled={index === 0} onClick={() => onReorderFormField(field.id, "up")}>&uarr;</button>{" "}
+                        <button className="secondary-action mini-action" type="button" disabled={index === sorted.length - 1} onClick={() => onReorderFormField(field.id, "down")}>&darr;</button>{" "}
+                        <button className="secondary-action mini-action" type="button" onClick={() => onDeleteFormField(field.id)}>Remove</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {handoverSchema.fields.length === 0 && <tr><td colSpan={6} className="empty-compact-state">No questions yet.</td></tr>}
+                </tbody>
+              </table>
+              <div className="roster-add-row">
+                <input value={formFieldDraft.section} onChange={(event) => setFormFieldDraft((current) => ({ ...current, section: event.target.value }))} placeholder="Section (e.g. site_requirements)" />
+                <input value={formFieldDraft.label} onChange={(event) => setFormFieldDraft((current) => ({ ...current, label: event.target.value }))} placeholder="Question label" />
+                <select value={formFieldDraft.fieldType} onChange={(event) => setFormFieldDraft((current) => ({ ...current, fieldType: event.target.value as FormSchemaField["fieldType"] }))}>
+                  <option value="text">Text</option>
+                  <option value="textarea">Paragraph</option>
+                  <option value="number">Number</option>
+                  <option value="select">Dropdown</option>
+                  <option value="checkbox">Checkbox</option>
+                  <option value="date">Date</option>
+                </select>
+                {formFieldDraft.fieldType === "select" ? (
+                  <input value={formFieldDraft.optionsRaw} onChange={(event) => setFormFieldDraft((current) => ({ ...current, optionsRaw: event.target.value }))} placeholder="Option A, Option B, Option C" />
+                ) : (
+                  <input value={formFieldDraft.placeholder} onChange={(event) => setFormFieldDraft((current) => ({ ...current, placeholder: event.target.value }))} placeholder="Placeholder text" />
+                )}
+                <label className="checkbox-inline-field">
+                  <input type="checkbox" checked={formFieldDraft.isRequired} onChange={(event) => setFormFieldDraft((current) => ({ ...current, isRequired: event.target.checked }))} />
+                  Required
+                </label>
+                <button
+                  className="primary-action mini-action"
+                  type="button"
+                  disabled={!formFieldDraft.label.trim()}
+                  onClick={() => {
+                    onAddFormField({
+                      section: formFieldDraft.section || "general",
+                      fieldKey: `field_${Date.now().toString(36)}`,
+                      label: formFieldDraft.label,
+                      fieldType: formFieldDraft.fieldType,
+                      placeholder: formFieldDraft.placeholder,
+                      isRequired: formFieldDraft.isRequired,
+                      options: formFieldDraft.fieldType === "select" ? formFieldDraft.optionsRaw.split(",").map((option) => option.trim()).filter(Boolean) : [],
+                      sequenceOrder: handoverSchema.fields.length,
+                    });
+                    setFormFieldDraft({ section: formFieldDraft.section, label: "", fieldType: "text", placeholder: "", isRequired: false, optionsRaw: "" });
+                  }}
+                >
+                  <Plus size={14} /> Add Question
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="panel wide">
+          <PanelHeader title="Pre-Sales Rules" label="Baseline hardware derived from tier, node count, and cloud sync at the quoting stage" />
+          {presalesStatus && <small className="muted">{presalesStatus}</small>}
+          <table>
+            <thead><tr><th>Tier</th><th>Item</th><th>Quantity</th><th>Cloud Sync</th><th></th></tr></thead>
+            <tbody>
+              {presalesRules.map((rule) => (
+                <tr key={rule.id}>
+                  <td>{rule.tier}</td>
+                  <td>{rule.baseItemName}</td>
+                  <td>{rule.quantityMode === "per_node_ceil" ? `ceil(nodes / ${rule.perNodeDivisor})` : `${rule.fixedQty} fixed`}</td>
+                  <td>{rule.requiresCloudSync === null ? "Any" : rule.requiresCloudSync ? "Required" : "No"}</td>
+                  <td><button className="secondary-action mini-action" type="button" onClick={() => onDeletePresalesRule(rule.id)}>Remove</button></td>
+                </tr>
+              ))}
+              {presalesRules.length === 0 && <tr><td colSpan={5} className="empty-compact-state">No rules yet.</td></tr>}
+            </tbody>
+          </table>
+          <div className="roster-add-row">
+            <input value={presalesRuleDraft.tier} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, tier: event.target.value }))} placeholder="Tier (e.g. Commercial Office)" />
+            <input value={presalesRuleDraft.baseItemName} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, baseItemName: event.target.value }))} placeholder="Inventory item name" />
+            <select value={presalesRuleDraft.quantityMode} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, quantityMode: event.target.value as PresalesHardwareRule["quantityMode"] }))}>
+              <option value="fixed">Fixed quantity</option>
+              <option value="per_node_ceil">Per node (rounded up)</option>
+            </select>
+            {presalesRuleDraft.quantityMode === "fixed" ? (
+              <input type="number" min={1} value={presalesRuleDraft.fixedQty} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, fixedQty: Number(event.target.value) }))} />
+            ) : (
+              <input type="number" min={1} value={presalesRuleDraft.perNodeDivisor} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, perNodeDivisor: Number(event.target.value) }))} placeholder="Nodes per unit" />
+            )}
+            <select value={presalesRuleDraft.requiresCloudSync} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, requiresCloudSync: event.target.value as "any" | "yes" | "no" }))}>
+              <option value="any">Cloud sync: any</option>
+              <option value="yes">Cloud sync: required</option>
+              <option value="no">Cloud sync: no</option>
+            </select>
+            <button
+              className="primary-action mini-action"
+              type="button"
+              disabled={!presalesRuleDraft.tier.trim() || !presalesRuleDraft.baseItemName.trim()}
+              onClick={() => {
+                onAddPresalesRule({
+                  tier: presalesRuleDraft.tier,
+                  baseItemName: presalesRuleDraft.baseItemName,
+                  quantityMode: presalesRuleDraft.quantityMode,
+                  fixedQty: presalesRuleDraft.fixedQty,
+                  perNodeDivisor: presalesRuleDraft.quantityMode === "per_node_ceil" ? presalesRuleDraft.perNodeDivisor : null,
+                  requiresCloudSync: presalesRuleDraft.requiresCloudSync === "any" ? null : presalesRuleDraft.requiresCloudSync === "yes",
+                  sequenceOrder: presalesRules.length,
+                  isActive: true,
+                });
+                setPresalesRuleDraft({ tier: presalesRuleDraft.tier, baseItemName: "", quantityMode: "fixed", fixedQty: 1, perNodeDivisor: 16, requiresCloudSync: "any" });
+              }}
+            >
+              <Plus size={14} /> Add Rule
+            </button>
+          </div>
         </section>
         </>
       )}
@@ -6535,6 +7183,7 @@ const EMPTY_TASK_DRAFT = {
   impactAreas: [] as string[],
   assigneeUserId: null as string | null,
   assigneeEmail: "",
+  startDate: "",
   dueDate: "",
 };
 
@@ -6607,6 +7256,10 @@ function TaskEditorModal({
   onClose,
   lockSection,
   lockProjectRef,
+  taskDependencies,
+  inventoryItems,
+  onAddDependency,
+  onDeleteDependency,
 }: {
   draft: TaskDraft;
   setDraft: Dispatch<SetStateAction<TaskDraft>>;
@@ -6617,7 +7270,13 @@ function TaskEditorModal({
   onClose: () => void;
   lockSection?: boolean;
   lockProjectRef?: boolean;
+  taskDependencies?: TaskHardwareDependency[];
+  inventoryItems?: Part[];
+  onAddDependency?: (sku: string, qty: number) => void;
+  onDeleteDependency?: (id: string) => void;
 }) {
+  const [depSku, setDepSku] = useState("");
+  const [depQty, setDepQty] = useState(1);
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
@@ -6669,6 +7328,7 @@ function TaskEditorModal({
             </select></label>
           )}
           <label>Assignee<AssigneeSelect value={draft.assigneeEmail} teamMembers={teamMembers} onChange={(email) => setDraft((current) => ({ ...current, assigneeEmail: email }))} /></label>
+          <label>Start date<input type="date" value={draft.startDate} onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))} /></label>
           <label>Due date<input type="date" value={draft.dueDate} onChange={(event) => setDraft((current) => ({ ...current, dueDate: event.target.value }))} /></label>
           <label className="span-2">Description<textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Details, links, context" /></label>
           <div className="span-2">
@@ -6697,6 +7357,46 @@ function TaskEditorModal({
             </div>
           </div>
         </div>
+
+        {editingId && onAddDependency && (
+          <div className="linked-hardware-block">
+            <span className="muted">Linked hardware -- reserved or queued for purchase automatically when this task moves to In Progress</span>
+            <div className="submittal-list">
+              {(taskDependencies ?? []).map((dep) => (
+                <div className="submittal-row" key={dep.id}>
+                  <div className="submittal-row-head">
+                    <strong>Qty {dep.quantityRequired}</strong>
+                    <span className={`status-pill submittal-status-${dep.fulfillmentStatus === "allocated" ? "approved" : dep.fulfillmentStatus === "procurement_queued" ? "sent" : "draft"}`}>
+                      {dep.fulfillmentStatus.replace(/_/g, " ")}
+                    </span>
+                  </div>
+                  {onDeleteDependency && (
+                    <button className="secondary-action mini-action" type="button" onClick={() => onDeleteDependency(dep.id)}>Remove</button>
+                  )}
+                </div>
+              ))}
+              {(taskDependencies ?? []).length === 0 && <div className="empty-compact-state">No hardware linked yet.</div>}
+            </div>
+            <div className="submittal-create-row">
+              <select value={depSku} onChange={(event) => setDepSku(event.target.value)}>
+                <option value="">Select inventory item...</option>
+                {(inventoryItems ?? []).map((item) => (
+                  <option key={item.ref} value={item.ref}>{item.name} ({item.ref})</option>
+                ))}
+              </select>
+              <input type="number" min={1} value={depQty} onChange={(event) => setDepQty(Number(event.target.value))} placeholder="Qty" />
+              <button
+                className="secondary-action mini-action"
+                type="button"
+                disabled={!depSku}
+                onClick={() => { onAddDependency(depSku, depQty); setDepSku(""); setDepQty(1); }}
+              >
+                Link Hardware
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="modal-actions">
           <button className="secondary-action" type="button" onClick={onClose}>Cancel</button>
           <button className="primary-action" type="button" onClick={onSubmit} disabled={!draft.title.trim()}>{editingId ? "Save Task" : "Add Task"}</button>
@@ -6805,6 +7505,70 @@ function TaskCalendar({ tasks, teamMembers, onSelectTask }: { tasks: EOTask[]; t
   );
 }
 
+function TaskGantt({ tasks, onSelectTask }: { tasks: EOTask[]; onSelectTask: (task: EOTask) => void }) {
+  const datedTasks = tasks.filter((task) => task.dueDate);
+
+  if (datedTasks.length === 0) {
+    return <div className="empty-compact-state">No tasks with due dates yet -- generate a schedule or set dates to see a timeline.</div>;
+  }
+
+  const allTimes = datedTasks.flatMap((task) => [task.startDate || task.dueDate, task.dueDate]).map((date) => new Date(`${date}T00:00:00`).getTime());
+  const minTime = Math.min(...allTimes);
+  const maxTime = Math.max(...allTimes);
+  const spanDays = Math.max(1, Math.round((maxTime - minTime) / 86400000) + 1);
+
+  function dayOffset(dateStr: string) {
+    return (new Date(`${dateStr}T00:00:00`).getTime() - minTime) / 86400000;
+  }
+
+  const markerCount = Math.min(6, spanDays);
+  const markers = Array.from({ length: markerCount }, (_, index) => {
+    const dayIndex = Math.round((index / Math.max(1, markerCount - 1)) * (spanDays - 1));
+    return {
+      leftPct: (dayIndex / spanDays) * 100,
+      label: new Date(minTime + dayIndex * 86400000).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+    };
+  });
+
+  return (
+    <div className="task-gantt">
+      <div className="task-gantt-header">
+        <div className="task-gantt-label-col">Task</div>
+        <div className="task-gantt-track-col">
+          {markers.map((marker, index) => (
+            <span key={index} className="task-gantt-marker" style={{ left: `${marker.leftPct}%` }}>{marker.label}</span>
+          ))}
+        </div>
+      </div>
+      <div className="task-gantt-rows">
+        {datedTasks.map((task) => {
+          const start = task.startDate || task.dueDate;
+          const startOffset = dayOffset(start);
+          const endOffset = dayOffset(task.dueDate);
+          const leftPct = (startOffset / spanDays) * 100;
+          const widthPct = Math.max(2, ((endOffset - startOffset + 1) / spanDays) * 100);
+          return (
+            <div className="task-gantt-row" key={task.id}>
+              <div className="task-gantt-label-col" title={task.title}>{task.title}</div>
+              <div className="task-gantt-track-col">
+                <button
+                  type="button"
+                  className={`task-gantt-bar status-${task.status}`}
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                  onClick={() => onSelectTask(task)}
+                  title={`${task.title} (${start} -> ${task.dueDate})`}
+                >
+                  {task.title}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function WorkloadStrip({ tasks, teamMembers, onSelectPerson }: { tasks: EOTask[]; teamMembers: TeamMember[]; onSelectPerson: (email: string) => void }) {
   const today = new Date().toISOString().slice(0, 10);
   const rows = teamMembers
@@ -6843,6 +7607,10 @@ function TasksBoard({
   onUpdate,
   onDelete,
   onRefresh,
+  inventoryItems,
+  taskHardwareDependencies,
+  onAddTaskDependency,
+  onDeleteTaskDependency,
 }: {
   tasks: EOTask[];
   projectSites: ProjectSite[];
@@ -6852,13 +7620,17 @@ function TasksBoard({
   onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
   onDelete: (id: string) => void;
   onRefresh: () => void;
+  inventoryItems?: Part[];
+  taskHardwareDependencies?: TaskHardwareDependency[];
+  onAddTaskDependency?: (taskId: string, sku: string, qty: number) => void;
+  onDeleteTaskDependency?: (id: string) => void;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(EMPTY_TASK_DRAFT);
   const [sectionFilter, setSectionFilter] = useState<"all" | TaskSection>("all");
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
-  const [viewMode, setViewMode] = useState<"list" | "board" | "calendar">("list");
+  const [viewMode, setViewMode] = useState<"list" | "board" | "calendar" | "gantt">("list");
   const [groupBy, setGroupBy] = useState<TaskGroupBy>("status");
   const [personFilter, setPersonFilter] = useState("");
 
@@ -6888,6 +7660,7 @@ function TasksBoard({
       impactAreas: task.impactAreas,
       assigneeUserId: task.assigneeUserId,
       assigneeEmail: task.assigneeEmail,
+      startDate: task.startDate,
       dueDate: task.dueDate,
     });
     setModalOpen(true);
@@ -6925,6 +7698,7 @@ function TasksBoard({
             <button className={`view-mode-tab ${viewMode === "list" ? "active" : ""}`} type="button" onClick={() => setViewMode("list")}>List</button>
             <button className={`view-mode-tab ${viewMode === "board" ? "active" : ""}`} type="button" onClick={() => setViewMode("board")}>Board</button>
             <button className={`view-mode-tab ${viewMode === "calendar" ? "active" : ""}`} type="button" onClick={() => setViewMode("calendar")}>Calendar</button>
+            <button className={`view-mode-tab ${viewMode === "gantt" ? "active" : ""}`} type="button" onClick={() => setViewMode("gantt")}>Gantt</button>
           </div>
           <label className="inline-filter-field">Section
             <select value={sectionFilter} onChange={(event) => setSectionFilter(event.target.value as "all" | TaskSection)}>
@@ -6934,7 +7708,7 @@ function TasksBoard({
               ))}
             </select>
           </label>
-          {viewMode !== "calendar" && (
+          {viewMode !== "calendar" && viewMode !== "gantt" && (
             <label className="inline-filter-field">Group by
               <select value={groupBy} onChange={(event) => setGroupBy(event.target.value as TaskGroupBy)}>
                 <option value="status">Status</option>
@@ -6948,6 +7722,10 @@ function TasksBoard({
 
         {viewMode === "calendar" && (
           <TaskCalendar tasks={filteredTasks} teamMembers={teamMembers} onSelectTask={openEditModal} />
+        )}
+
+        {viewMode === "gantt" && (
+          <TaskGantt tasks={filteredTasks} onSelectTask={openEditModal} />
         )}
 
         {viewMode === "list" && groups.map((group) => {
@@ -7053,6 +7831,10 @@ function TasksBoard({
           teamMembers={teamMembers}
           onSubmit={submitDraft}
           onClose={() => setModalOpen(false)}
+          taskDependencies={(taskHardwareDependencies ?? []).filter((dep) => dep.taskId === editingId)}
+          inventoryItems={inventoryItems}
+          onAddDependency={editingId && onAddTaskDependency ? (sku, qty) => onAddTaskDependency(editingId, sku, qty) : undefined}
+          onDeleteDependency={onDeleteTaskDependency}
         />
       )}
     </div>
@@ -7111,6 +7893,7 @@ function TaskMiniPanel({
       impactAreas: task.impactAreas,
       assigneeUserId: task.assigneeUserId,
       assigneeEmail: task.assigneeEmail,
+      startDate: task.startDate,
       dueDate: task.dueDate,
     });
     setModalOpen(true);

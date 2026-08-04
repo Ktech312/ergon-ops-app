@@ -1390,6 +1390,141 @@ Acceptance criteria:
   immediately in the existing BOM panel.
 - No file or row data leaves the browser except to Supabase directly.
 
+Addendum (Aug 2026): should a successful import also auto-trigger schedule
+generation (Phase 11) instead of waiting for the PM to click "Generate
+Schedule" separately? Decided: keep it an explicit second click. Auto-firing
+task creation the instant a spreadsheet lands felt more likely to surprise a
+PM than help them -- the button already exists and takes one click once the
+BOM is in place.
+
+### Phase 20 - Pre-Sales Hardware Rules Engine
+
+Context (Aug 2026): distinct from Phase 18's after-sales handover -- this is
+upstream, at the sales-questionnaire stage, before a project even has a firm
+BOM. Goal: derive a baseline hardware list automatically from a few
+high-level answers (site/environment type, node count, connectivity),
+so a sales engineer isn't starting every quote's BOM from a blank page.
+
+Data model (new migration):
+
+- `presales_hardware_rules` (id, tier text -- e.g. "Commercial Office",
+  "Industrial Plant", "Marine/Outdoor" --, base_item_name text matching an
+  `inventory_items.item_name` where possible, quantity_mode text check in
+  ('fixed', 'per_node_ceil') -- fixed uses `fixed_qty`, per_node_ceil
+  computes `CEIL(node_count / per_node_divisor)` --, fixed_qty numeric,
+  per_node_divisor numeric, requires_cloud_sync boolean default null (null
+  = applies regardless), sequence_order, is_active, created_at, updated_at).
+  RLS: authenticated read, pm/admin write (same `has_role()` pattern as
+  everything else added tonight).
+- No new table for the questionnaire itself -- the three inputs (tier
+  select, node count number, cloud-sync checkbox) are just local component
+  state on a new "Quick Hardware Estimate" panel; there's nothing to
+  persist about the questionnaire itself, only its output.
+
+UI: a small panel on the Sales/Catalog view (or a project's detail page,
+for a project that's still in Draft/Planning) with the three inputs and a
+"Generate Baseline BOM" button. Evaluates the active `presales_hardware_rules`
+rows against the answers and inserts the resulting rows straight into
+`project_bom_lines` -- same table Phase 18 and Phase 19 write to, same table
+the existing manual "Add Material" button writes to. A sales engineer or PM
+can edit/remove any auto-generated line afterward exactly like a manually
+typed one; nothing is locked.
+
+Admin UI: a "Pre-Sales Rules" section (same add/edit/delete/reorder pattern
+as Schedule Templates and the Phase 18 Form Builder) so a PM can adjust
+tiers, quantities, and the node-count formula without a code change.
+
+Acceptance criteria:
+
+- Filling in tier + node count + cloud-sync and clicking Generate creates
+  BOM lines on the target project, visible immediately in the existing BOM
+  panel.
+- An admin can add, edit, or remove a rule without a deploy.
+- Generated lines are ordinary `project_bom_lines` rows -- no separate
+  "derived" table or locked state.
+
+### Phase 21 - Task-Linked Inventory Automation
+
+Context (Aug 2026): the pasted proposal's version of this wanted a Supabase
+Edge Function that fires when a task's kanban column changes, checking
+stock and reserving or queuing a PO with a full audit ledger. The Edge
+Function part of that isn't actually necessary here -- this app already
+does every multi-step write as sequential client-side calls (schedule
+generation, Submittal creation, etc.), the same pattern this can follow
+without deploying anything new to Supabase. What's actually missing is the
+data model: today a task has no concept of which BOM line/inventory item it
+depends on or how many units.
+
+Data model (new migration):
+
+- `task_hardware_dependencies` (id, task_id fk `tasks(id)` on delete
+  cascade, project_bom_line_id fk `project_bom_lines(id)`, inventory_item_id
+  fk `inventory_items(id)` nullable -- resolved by item name where possible,
+  same best-effort match Phase 10's backfills already use --, quantity_required
+  numeric, fulfillment_status text check in ('pending', 'allocated',
+  'procurement_queued') default 'pending', created_at). RLS matches `tasks`
+  (currently deliberately unrestricted per migration 023's comments).
+
+Client-side logic: extend `handleUpdateTask` -- when a task's status
+changes to `in_progress` and it has one or more
+`task_hardware_dependencies` rows still `pending`, check each dependency's
+inventory balance (reusing the same balance-lookup already used by the
+Inventory tab), and either (a) write an inventory movement/allocation
+reserving the stock and mark the dependency `allocated`, using the same
+functions the existing "Pull from Inventory" action already calls, or (b)
+if short, queue a purchase request via the existing
+`queueProjectBomPurchaseRequest` and mark the dependency
+`procurement_queued`. No new backend, no service-role key -- same
+authenticated client calls every other write in this app already makes.
+
+UI: a small "Linked Hardware" list inside `TaskEditorModal` to attach one or
+more BOM lines (with quantity) to a task -- optional, defaults to none.
+
+Acceptance criteria:
+
+- A task with linked hardware, when moved to In Progress, either reserves
+  available stock or creates a purchase request automatically -- one or
+  the other, never silently doing nothing.
+- A task with no linked hardware behaves exactly as it does today.
+- The fulfillment_status per dependency is visible on the task.
+
+### Phase 22 - Inventory Automation Regression Test Suite
+
+Goal: a repeatable test script that seeds controlled inventory/task data,
+exercises Phase 21's allocate-or-queue logic, and asserts the resulting
+balances and statuses are correct -- so this can be checked before/after
+future changes rather than by hand every time.
+
+Important constraint: this cannot be run from inside this session. The
+sandbox this app is developed in cannot resolve Supabase's hostnames at all
+(confirmed earlier this session -- not just the Postgres pooler, the main
+REST/API domain too), and a test run needs a service-role key, which should
+never be pasted into this sandbox in the first place (it bypasses every RLS
+policy in the database). This script gets written for you to run from your
+own machine or a CI runner, the same way you run migrations today.
+
+Design:
+
+- Node/ts-node script using `@supabase/supabase-js` with the service-role
+  key read from a local environment variable, never hardcoded.
+- Seeds two `inventory_items` rows (one with plenty of stock, one scarce),
+  two `taskboard`-equivalent `tasks` rows, and matching
+  `task_hardware_dependencies`.
+- Triggers the same status-change path Phase 21 uses (calls the same
+  persistence functions, or issues the equivalent REST calls directly).
+- Asserts: the well-stocked task's dependency ends up `allocated` and
+  `inventory_balances` decremented by the right amount; the scarce task's
+  dependency ends up `procurement_queued` and a `purchase_requests` row
+  exists; nothing else in the database was touched.
+- Cleans up its own seeded rows on both success and failure.
+
+Acceptance criteria:
+
+- Running the script against a real (ideally staging, not production)
+  Supabase project prints a clear pass/fail per assertion.
+- The service-role key only ever lives in the runner's own environment
+  variable, never committed, never pasted into this sandbox.
+
 ## Suggested Next Development Sprint
 
 If continuing immediately, build in this order:
