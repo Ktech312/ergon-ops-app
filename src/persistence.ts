@@ -1097,6 +1097,177 @@ export async function updateTeamMember(id: string, member: Partial<Omit<TeamMemb
   return mapTeamMemberRow(rows[0]);
 }
 
+export type NotificationItem = {
+  id: string;
+  recipientEmail: string;
+  eventType: string;
+  title: string;
+  body: string;
+  relatedEntityType: string;
+  relatedEntityId: string;
+  isRead: boolean;
+  createdAt: string;
+};
+
+type NotificationRow = {
+  id: string;
+  recipient_email: string;
+  event_type: string;
+  title: string;
+  body: string | null;
+  related_entity_type: string | null;
+  related_entity_id: string | null;
+  is_read: boolean;
+  created_at: string;
+};
+
+function mapNotificationRow(row: NotificationRow): NotificationItem {
+  return {
+    id: row.id,
+    recipientEmail: row.recipient_email,
+    eventType: row.event_type,
+    title: row.title,
+    body: row.body ?? "",
+    relatedEntityType: row.related_entity_type ?? "",
+    relatedEntityId: row.related_entity_id ?? "",
+    isRead: row.is_read,
+    createdAt: row.created_at,
+  };
+}
+
+export async function loadNotifications(email: string, accessToken?: string): Promise<NotificationItem[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !email) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl(`notifications?recipient_email=eq.${encodeURIComponent(email)}&select=*&order=created_at.desc&limit=50`), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as NotificationRow[];
+  return rows.map(mapNotificationRow);
+}
+
+export async function createNotification(
+  notification: { recipientEmail: string; eventType: string; title: string; body: string; relatedEntityType?: string; relatedEntityId?: string; dedupeKey?: string },
+  accessToken?: string,
+) {
+  if (!isRemotePersistenceConfigured() || !accessToken || !notification.recipientEmail) {
+    return;
+  }
+
+  await fetch(supabaseUrl("notifications"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "resolution=ignore-duplicates",
+    },
+    body: JSON.stringify({
+      recipient_email: notification.recipientEmail,
+      event_type: notification.eventType,
+      title: notification.title,
+      body: notification.body,
+      related_entity_type: notification.relatedEntityType ?? null,
+      related_entity_id: notification.relatedEntityId ?? null,
+      dedupe_key: notification.dedupeKey ?? null,
+    }),
+  });
+}
+
+export async function markNotificationRead(id: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  await fetch(supabaseUrl(`notifications?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ is_read: true }),
+  });
+}
+
+export async function markAllNotificationsRead(email: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken || !email) {
+    return;
+  }
+
+  await fetch(supabaseUrl(`notifications?recipient_email=eq.${encodeURIComponent(email)}&is_read=eq.false`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ is_read: true }),
+  });
+}
+
+export type NotificationRule = {
+  id: string;
+  eventType: string;
+  channels: string[];
+  isActive: boolean;
+};
+
+type NotificationRuleRow = {
+  id: string;
+  event_type: string;
+  channels: string[] | null;
+  is_active: boolean;
+};
+
+function mapNotificationRuleRow(row: NotificationRuleRow): NotificationRule {
+  return {
+    id: row.id,
+    eventType: row.event_type,
+    channels: row.channels ?? [],
+    isActive: row.is_active,
+  };
+}
+
+export async function loadNotificationRules(accessToken?: string): Promise<NotificationRule[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("notification_rules?select=*&order=event_type.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as NotificationRuleRow[];
+  return rows.map(mapNotificationRuleRow);
+}
+
+export async function updateNotificationRule(id: string, patch: Partial<Pick<NotificationRule, "channels" | "isActive">>, accessToken?: string): Promise<NotificationRule> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const payload: Record<string, unknown> = {};
+  if (patch.channels !== undefined) payload.channels = patch.channels;
+  if (patch.isActive !== undefined) payload.is_active = patch.isActive;
+
+  const response = await fetch(supabaseUrl(`notification_rules?id=eq.${id}`), {
+    method: "PATCH",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "return=representation",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not update notification rule: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as NotificationRuleRow[];
+  return mapNotificationRuleRow(rows[0]);
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;

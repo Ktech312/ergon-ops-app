@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useState, type Dispatch, type SetStateAction } f
 import { createRoot } from "react-dom/client";
 import {
   BarChart3,
+  Bell,
   Boxes,
   Building2,
   CalendarDays,
@@ -28,6 +29,7 @@ import {
   checkIsAdmin,
   consumeOAuthRedirectSession,
   createCatalogItem,
+  createNotification,
   createTask,
   createTeamMember,
   deleteTask,
@@ -43,11 +45,15 @@ import {
   loadLocalAppState,
   loadOwnAllowedViews,
   loadOwnApprovalStatus,
+  loadNotificationRules,
+  loadNotifications,
   loadRemoteAppState,
   loadTasks,
   loadTeamMembers,
   loadUserRoleMode,
   makeCatalogNumber,
+  markAllNotificationsRead,
+  markNotificationRead,
   refreshAuthSession,
   reviewUserApproval,
   revokeAdmin,
@@ -63,6 +69,7 @@ import {
   signOut,
   signUpWithPassword,
   updateCatalogItem,
+  updateNotificationRule,
   updateTask,
   updateTeamMember,
   upsertKnownUser,
@@ -71,6 +78,8 @@ import {
   type CatalogItem,
   type EOTask,
   type KnownUser,
+  type NotificationItem,
+  type NotificationRule,
   type PersistedAppState,
   type TaskPriority,
   type TaskSection,
@@ -975,6 +984,9 @@ function App() {
   const [taskStatusMessage, setTaskStatusMessage] = useState("");
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [teamMemberStatus, setTeamMemberStatus] = useState("");
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [notificationRules, setNotificationRules] = useState<NotificationRule[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -1311,6 +1323,9 @@ function App() {
       const created = await createTask(task, authSession.userId, authSession.accessToken);
       setTasks((current) => [created, ...current]);
       setTaskStatusMessage(`${created.title} added.`);
+      if (created.assigneeEmail) {
+        notify("task_assigned", created.assigneeEmail, "New task assigned", `"${created.title}" was assigned to you.`, "task", created.id, `task_assigned:${created.id}:${created.assigneeEmail}`);
+      }
     } catch (error) {
       setTaskStatusMessage(error instanceof Error ? error.message : "Could not create task.");
     }
@@ -1321,9 +1336,13 @@ function App() {
       return;
     }
     try {
+      const previous = tasks.find((existing) => existing.id === id);
       const updated = await updateTask(id, task, authSession.accessToken);
       setTasks((current) => current.map((existing) => (existing.id === id ? updated : existing)));
       setTaskStatusMessage(`${updated.title} updated.`);
+      if (updated.assigneeEmail && updated.assigneeEmail !== previous?.assigneeEmail) {
+        notify("task_assigned", updated.assigneeEmail, "Task assigned", `"${updated.title}" was assigned to you.`, "task", updated.id, `task_assigned:${updated.id}:${updated.assigneeEmail}`);
+      }
     } catch (error) {
       setTaskStatusMessage(error instanceof Error ? error.message : "Could not update task.");
     }
@@ -1376,6 +1395,87 @@ function App() {
       setTeamMemberStatus(error instanceof Error ? error.message : "Could not update team member.");
     }
   }
+
+  function reloadNotifications(email: string, accessToken: string) {
+    loadNotifications(email, accessToken).then(setNotifications).catch(() => {});
+  }
+
+  useEffect(() => {
+    if (!authSession || !authSession.email || !isRemotePersistenceConfigured()) {
+      setNotifications([]);
+      setNotificationRules([]);
+      return;
+    }
+    reloadNotifications(authSession.email, authSession.accessToken);
+    loadNotificationRules(authSession.accessToken).then(setNotificationRules).catch(() => {});
+  }, [authSession]);
+
+  function ruleActive(eventType: string, channel: string) {
+    const rule = notificationRules.find((entry) => entry.eventType === eventType);
+    return Boolean(rule?.isActive && rule.channels.includes(channel));
+  }
+
+  async function notify(eventType: string, recipientEmail: string, title: string, body: string, relatedEntityType: string, relatedEntityId: string, dedupeKey?: string) {
+    if (!authSession || !recipientEmail || !ruleActive(eventType, "in_app")) {
+      return;
+    }
+    await createNotification({ recipientEmail, eventType, title, body, relatedEntityType, relatedEntityId, dedupeKey }, authSession.accessToken).catch(() => {});
+    if (recipientEmail.toLowerCase() === authSession.email?.toLowerCase()) {
+      reloadNotifications(authSession.email, authSession.accessToken);
+    }
+  }
+
+  async function handleMarkNotificationRead(id: string) {
+    if (!authSession) {
+      return;
+    }
+    setNotifications((current) => current.map((entry) => (entry.id === id ? { ...entry, isRead: true } : entry)));
+    await markNotificationRead(id, authSession.accessToken).catch(() => {});
+  }
+
+  async function handleMarkAllNotificationsRead() {
+    if (!authSession || !authSession.email) {
+      return;
+    }
+    setNotifications((current) => current.map((entry) => ({ ...entry, isRead: true })));
+    await markAllNotificationsRead(authSession.email, authSession.accessToken).catch(() => {});
+  }
+
+  async function handleUpdateNotificationRule(id: string, patch: Partial<Pick<NotificationRule, "channels" | "isActive">>) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const updated = await updateNotificationRule(id, patch, authSession.accessToken);
+      setNotificationRules((current) => current.map((entry) => (entry.id === id ? updated : entry)));
+    } catch {
+      // Non-critical -- rule edit failures don't need a user-facing status line.
+    }
+  }
+
+  // Daily-deduped overdue-task check: runs client-side whenever tasks load
+  // or change, no cron/service key needed. Each overdue task fires at most
+  // once per day per assignee thanks to the dedupe_key unique index.
+  useEffect(() => {
+    if (!authSession || tasks.length === 0 || notificationRules.length === 0 || !ruleActive("task_overdue", "in_app")) {
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    tasks
+      .filter((task) => task.status !== "done" && task.dueDate && task.dueDate < today && task.assigneeEmail)
+      .forEach((task) => {
+        notify(
+          "task_overdue",
+          task.assigneeEmail,
+          "Task overdue",
+          `"${task.title}" was due ${task.dueDate}.`,
+          "task",
+          task.id,
+          `task_overdue:${task.id}:${today}`,
+        );
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, notificationRules, authSession]);
 
   useEffect(() => {
     if (!window.location.hash) {
@@ -2292,6 +2392,30 @@ function App() {
             <div className={`sync-status ${syncStatus}`}>
               <span>{syncStatus === "local" ? "Setup required" : syncStatus === "auth" ? "Sign in required" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
             </div>
+            <div className="notification-bell">
+              <button className="notification-bell-trigger" type="button" onClick={() => setNotificationsOpen((open) => !open)} aria-label="Notifications">
+                <Bell size={17} />
+                {notifications.some((entry) => !entry.isRead) && <span className="notification-dot" />}
+              </button>
+              {notificationsOpen && (
+                <div className="notification-panel">
+                  <div className="notification-panel-header">
+                    <strong>Notifications</strong>
+                    <button className="secondary-action mini-action" type="button" onClick={handleMarkAllNotificationsRead}>Mark all read</button>
+                  </div>
+                  <div className="notification-list">
+                    {notifications.map((entry) => (
+                      <button key={entry.id} className={`notification-row ${entry.isRead ? "" : "is-unread"}`} type="button" onClick={() => handleMarkNotificationRead(entry.id)}>
+                        <strong>{entry.title}</strong>
+                        <span>{entry.body}</span>
+                        <small>{new Date(entry.createdAt).toLocaleString()}</small>
+                      </button>
+                    ))}
+                    {notifications.length === 0 && <div className="empty-compact-state">No notifications yet.</div>}
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="account-menu">
               <button className="account-menu-trigger" type="button" onClick={() => setAccountMenuOpen((open) => !open)}>
                 <User size={16} />
@@ -2406,6 +2530,8 @@ function App() {
             teamMemberStatus={teamMemberStatus}
             onAddTeamMember={handleAddTeamMember}
             onUpdateTeamMember={handleUpdateTeamMember}
+            notificationRules={notificationRules}
+            onUpdateNotificationRule={handleUpdateNotificationRule}
             onRefresh={() => {
               if (!authSession) {
                 return;
@@ -5527,6 +5653,8 @@ function AdminPage({
   teamMemberStatus,
   onAddTeamMember,
   onUpdateTeamMember,
+  notificationRules,
+  onUpdateNotificationRule,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -5548,6 +5676,8 @@ function AdminPage({
   teamMemberStatus: string;
   onAddTeamMember: (member: Omit<TeamMember, "id">) => void;
   onUpdateTeamMember: (id: string, member: Partial<Omit<TeamMember, "id">>) => void;
+  notificationRules: NotificationRule[];
+  onUpdateNotificationRule: (id: string, patch: Partial<Pick<NotificationRule, "channels" | "isActive">>) => void;
 }) {
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", roleTitle: "" });
 
@@ -5605,6 +5735,7 @@ function AdminPage({
       </section>
 
       {(isAdmin || isManagerRole) && (
+        <>
         <section className="panel wide">
           <PanelHeader title="Team Roster" label="People who can be assigned tasks, whether or not they've ever logged in" />
           <div className="report-filter-row">
@@ -5648,6 +5779,38 @@ function AdminPage({
             </tbody>
           </table>
         </section>
+
+        <section className="panel wide">
+          <PanelHeader title="Notification Rules" label="Which channel(s) fire for each event -- programmable, no code change needed" />
+          <table>
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>In-app bell</th>
+                <th>Email</th>
+                <th>Slack / Teams</th>
+                <th>Active</th>
+              </tr>
+            </thead>
+            <tbody>
+              {notificationRules.map((rule) => (
+                <tr key={rule.id}>
+                  <td>{rule.eventType.replace(/_/g, " ")}</td>
+                  <td><input type="checkbox" checked={rule.channels.includes("in_app")} onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "in_app"] : rule.channels.filter((c) => c !== "in_app") })} /></td>
+                  <td><input type="checkbox" checked={rule.channels.includes("email")} disabled title="Needs an email provider secret -- not configured yet" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "email"] : rule.channels.filter((c) => c !== "email") })} /></td>
+                  <td><input type="checkbox" checked={rule.channels.includes("slack")} disabled title="Needs a Slack/Teams webhook -- not configured yet" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "slack"] : rule.channels.filter((c) => c !== "slack") })} /></td>
+                  <td><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateNotificationRule(rule.id, { isActive: event.target.checked })} /></td>
+                </tr>
+              ))}
+              {notificationRules.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="empty-compact-state">No notification rules loaded.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+        </>
       )}
 
       {isAdmin && (
@@ -6232,6 +6395,35 @@ function TaskCalendar({ tasks, teamMembers, onSelectTask }: { tasks: EOTask[]; t
   );
 }
 
+function WorkloadStrip({ tasks, teamMembers, onSelectPerson }: { tasks: EOTask[]; teamMembers: TeamMember[]; onSelectPerson: (email: string) => void }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = teamMembers
+    .filter((member) => member.isActive && member.email)
+    .map((member) => {
+      const ownTasks = tasks.filter((task) => task.assigneeEmail && task.assigneeEmail.toLowerCase() === member.email.toLowerCase());
+      const open = ownTasks.filter((task) => task.status !== "done").length;
+      const overdue = ownTasks.filter((task) => task.status !== "done" && task.dueDate && task.dueDate < today).length;
+      return { member, open, overdue };
+    })
+    .filter((row) => row.open > 0)
+    .sort((a, b) => b.open - a.open);
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="workload-strip">
+      {rows.map(({ member, open, overdue }) => (
+        <button key={member.id} className={`workload-chip ${overdue > 0 ? "has-overdue" : ""}`} type="button" onClick={() => onSelectPerson(member.email)}>
+          <strong>{member.fullName}</strong>
+          <span>{open} open{overdue > 0 ? `, ${overdue} overdue` : ""}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TasksBoard({
   tasks,
   projectSites,
@@ -6258,8 +6450,12 @@ function TasksBoard({
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [viewMode, setViewMode] = useState<"list" | "board" | "calendar">("list");
   const [groupBy, setGroupBy] = useState<TaskGroupBy>("status");
+  const [personFilter, setPersonFilter] = useState("");
 
-  const filteredTasks = sectionFilter === "all" ? tasks : tasks.filter((task) => task.section === sectionFilter);
+  const filteredTasks = tasks.filter((task) =>
+    (sectionFilter === "all" || task.section === sectionFilter) &&
+    (!personFilter || (task.assigneeEmail && task.assigneeEmail.toLowerCase() === personFilter.toLowerCase()))
+  );
   const groups = taskGroupDefs(groupBy, teamMembers, filteredTasks);
 
   function openAddModal() {
@@ -6303,6 +6499,13 @@ function TasksBoard({
     <div className="content-grid">
       <section className="panel wide">
         <PanelHeader title="Tasks" label="Work items across every section, by status, person, or group" />
+        <WorkloadStrip tasks={tasks} teamMembers={teamMembers} onSelectPerson={(email) => { setPersonFilter(email); setGroupBy("assignee"); }} />
+        {personFilter && (
+          <div className="report-filter-row">
+            <span className="muted">Showing only: {assigneeLabel(personFilter, teamMembers)}</span>
+            <button className="secondary-action mini-action" type="button" onClick={() => setPersonFilter("")}>Clear person filter</button>
+          </div>
+        )}
         <div className="report-filter-row">
           <button className="primary-action mini-action" type="button" onClick={openAddModal}>
             <Plus size={14} /> Add Task
