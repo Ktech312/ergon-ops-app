@@ -1267,6 +1267,100 @@ td small {
   }
 }
 
+.project-top-row {
+  display: grid;
+  gap: 18px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 1.15fr);
+}
+
+@media (max-width: 1100px) {
+  .project-top-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .project-top-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.compact-card {
+  padding: 14px;
+}
+
+.sales-dropzone.compact {
+  min-height: 64px;
+  padding: 10px;
+}
+
+.sales-dropzone.compact strong {
+  font-size: 13px;
+}
+
+.project-progress-body {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+}
+
+.progress-ring {
+  aspect-ratio: 1;
+  background: conic-gradient(#123f6b calc(var(--pct) * 1%), #eef1f5 0);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+  width: 64px;
+}
+
+.progress-ring::before {
+  background: #fff;
+  border-radius: 50%;
+  content: "";
+  inset: 7px;
+  position: absolute;
+}
+
+.progress-ring span {
+  color: #123f6b;
+  font-size: 13px;
+  font-weight: 800;
+  position: relative;
+}
+
+.progress-points {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.progress-points div {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.progress-points span {
+  color: #756d62;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.progress-points strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .table-action {
   background: #123f6b;
   border: 1px solid #123f6b;

@@ -4662,46 +4662,62 @@ function Projects({
         </div>
       </div>
 
-      <section className="panel">
-        <PanelHeader title="Build Sales BOM and Scope" label="Upload a sales quote PDF to fill this project" />
-        <label className={`sales-dropzone ${isExtractingQuote ? "is-working" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
-          <Upload size={26} />
-          <strong>{isExtractingQuote ? "Reading sales quote..." : "Drag sales quote PDF here"}</strong>
-          <span>{isExtractingQuote ? "Extracting project details, SOW sections, totals, and BOM lines." : "or choose a file to extract it into Project Details, SOW, and BOM."}</span>
-          <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} disabled={isExtractingQuote} />
-        </label>
-        {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
-      </section>
-
-      <section className="panel">
-        <div className="panel-title-row">
-          <div>
-            <h2>Project Documents</h2>
-            <p>Backups and reference files for this project workspace.</p>
-          </div>
-          <label className="secondary-action mini-action project-doc-upload">
-            <Upload size={15} /> Upload Docs
-            <input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx,.csv" multiple onChange={handleProjectDocumentSelect} />
+      <div className="project-top-row">
+        <section className="panel compact-card">
+          <PanelHeader title="Build Sales BOM and Scope" label="One-time setup: upload a sales quote PDF" />
+          <label className={`sales-dropzone compact ${isExtractingQuote ? "is-working" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
+            <Upload size={18} />
+            <strong>{isExtractingQuote ? "Reading sales quote..." : "Drag or choose sales quote PDF"}</strong>
+            <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} disabled={isExtractingQuote} />
           </label>
-        </div>
-        <div className="project-doc-list">
-          {selectedProjectDocuments.map((doc) => (
-            <div className="document-row" key={`${doc.id}-${doc.name}`}>
-              <div>
-                <strong>{doc.name}</strong>
-                <span>{doc.type ?? "Project"} - {doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.storage ?? "Browser"}</span>
-              </div>
-              <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
-                <option>Uploaded</option>
-                <option>Ready to review</option>
-                <option>Backed up</option>
-                <option>Archived</option>
-              </select>
+          {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
+        </section>
+
+        <section className="panel compact-card">
+          <div className="panel-title-row">
+            <div>
+              <h2>Project Documents</h2>
+              <p>Backups and reference files.</p>
             </div>
-          ))}
-          {selectedProjectDocuments.length === 0 && <div className="empty-compact-state">No project documents attached yet. Upload sales quotes, SOWs, BOM sheets, delivery docs, or photos here.</div>}
-        </div>
-      </section>
+            <label className="secondary-action mini-action project-doc-upload">
+              <Upload size={15} /> Upload
+              <input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx,.csv" multiple onChange={handleProjectDocumentSelect} />
+            </label>
+          </div>
+          <div className="project-doc-list">
+            {selectedProjectDocuments.map((doc) => (
+              <div className="document-row" key={`${doc.id}-${doc.name}`}>
+                <div>
+                  <strong>{doc.name}</strong>
+                  <span>{doc.type ?? "Project"} - {doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.storage ?? "Browser"}</span>
+                </div>
+                <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
+                  <option>Uploaded</option>
+                  <option>Ready to review</option>
+                  <option>Backed up</option>
+                  <option>Archived</option>
+                </select>
+              </div>
+            ))}
+            {selectedProjectDocuments.length === 0 && <div className="empty-compact-state">No documents yet.</div>}
+          </div>
+        </section>
+
+        <section className="panel compact-card project-progress-card">
+          <PanelHeader title="Project Progress" label="Completion and key points" />
+          <div className="project-progress-body">
+            <div className="progress-ring" style={{ "--pct": projectCompletion(selectedProject) } as React.CSSProperties}>
+              <span>{projectCompletion(selectedProject)}%</span>
+            </div>
+            <div className="progress-points">
+              <div><span>Status</span><strong className={`status ${selectedProject.status === "Purchasing" ? "warn" : selectedProject.status === "Install Ready" ? "ok" : ""}`}>{selectedProject.status}</strong></div>
+              <div><span>Target</span><strong>{selectedProject.due}</strong></div>
+              <div><span>Allocated</span><strong>{money(selectedProject.allocated)}</strong></div>
+              <div><span>Open BOM</span><strong>{openBomLines}</strong></div>
+            </div>
+          </div>
+        </section>
+      </div>
 
       <section className="panel full">
         <div className="panel-title-row">
