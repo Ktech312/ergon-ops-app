@@ -683,6 +683,17 @@ Acceptance criteria:
 - Tasks can be tied to project material readiness.
 - Managers can view schedules and blockers.
 
+Scoping note (Aug 2026): Gantt is the one view in this list still unbuilt.
+Phase 11's schedule generation already computes a due date per phase
+(cumulative standard-hours / 8, per phase in template order) but doesn't
+persist a start date, so there's nothing to draw a bar from yet. Fix: have
+`generateScheduleTasks` also write the start of that cumulative window (add
+a `start_date` column to `tasks`), then add a "Gantt" tab alongside the
+existing List/Board/Calendar tabs on the Tasks view and each project's
+embedded task panel, rendering `start_date -> due_date` as a horizontal bar
+per task, grouped by project or by phase. No new tables, no new backend --
+same `tasks` rows the other views already read.
+
 ### Phase 7 - Field Media Capture And Offline Mode
 
 Goal:
@@ -1263,6 +1274,121 @@ Acceptance criteria:
 - Uploading a new version of a document doesn't lose the previous version.
 - A document's approval (or rejection) is attributable to a person and
   timestamp, not just a label.
+
+### Phase 18 - Fluid Admin-Configurable Forms Engine + After-Sales Hardware Handover
+
+Context (Aug 2026): E asked for an after-sales hardware handover form
+(project ref, site requirements, hardware BOM, attachments) and was explicit
+that the question list can't be hardcoded -- a PM should be able to add,
+remove, reorder, or re-require a question from Admin without asking for a
+code change every time. A generic AI tool sketched this out with its own
+parallel schema (`project_tasks`, `hardware_allocations`,
+`inventory_catalog`, an Express backend with multer/exceljs, a Deno Edge
+Function). None of that gets reused here -- it invents tables that
+duplicate `tasks`/`project_bom_lines`/`inventory_items`, and assumes a
+server this app doesn't have. This phase gets the same "fluid form"
+capability using only what's already in this database and this app.
+
+Goal: a reusable, admin-configurable form schema engine, applied first to
+the After-Sales Handover form, that requires zero code changes to add,
+remove, reorder, or re-require a field.
+
+Data model (new migration):
+
+- `form_schemas` (id, form_key text unique, name, description, is_active,
+  created_at, updated_at). `form_key` is a stable string like
+  `after_sales_handover` -- this table is generic on purpose so a second
+  admin-configurable form later (if one comes up) doesn't need new tables,
+  just a new row here.
+- `form_schema_fields` (id, form_schema_id fk, section text, field_key
+  text, label, field_type text check in ('text','textarea','number',
+  'select','checkbox','date'), placeholder, is_required boolean,
+  options jsonb default '[]' -- for selects --, sequence_order int,
+  created_at). Unique on (form_schema_id, field_key).
+- RLS: authenticated read; pm/admin write, same `has_role()` pattern as
+  `project_schedule_templates` (migration 023).
+- Seed one `form_schemas` row (`after_sales_handover`) with a starter field
+  set (mounting environment, power spec, network dependency, special
+  instructions) so the form isn't empty on first use -- an admin edits
+  from there, nothing is hardcoded in the app after that.
+- `project_handovers` (id, project_id fk `projects(id)` via the same
+  `resolveProjectId` bridge Submittals uses, form_schema_id fk, status
+  text check('draft','submitted'), responses jsonb default '{}' --
+  field_key -> value, exactly the fluid pattern that was proposed, just
+  tied to a real project instead of a made-up one --, submitted_by_email,
+  submitted_at, created_at, updated_at).
+
+Explicitly reused, not reinvented:
+
+- Hardware BOM lines entered on the handover write straight into the
+  existing `project_bom_lines` table (Phase 10f) -- no `hardware_allocations`
+  table. A line added here shows up immediately in the project's existing
+  BOM panel, because it's the same rows.
+- The stock-vs-direct-PO decision the proposal wanted as a new state
+  machine and Edge Function already exists as the Purchasing
+  `procurement_track` / `queueProjectBomPurchaseRequest` flow -- the
+  handover's BOM submission calls that, it doesn't need new logic.
+- Attachments (signed quote PDF, site photos) go through Phase 7's offline
+  media queue into `project_documents` (`document_type = 'handover'`) --
+  no new attachment table or upload endpoint.
+- Notifying the PM on submission reuses the Phase 15 rules engine (`notify()`
+  + `notification_rules`) -- add `handover_submitted` to that table's
+  `event_type` check constraint, nothing else new.
+
+Admin UI: a "Form Builder" section in Admin (same interaction pattern as
+Schedule Templates -- add/edit/delete a field row, up/down reorder buttons,
+required toggle, comma-separated options for selects). Generic over
+`form_key` so it isn't hand-tied to this one form.
+
+Handover UI: a screen (reachable from a project's detail page) that loads
+the active schema's fields and renders them in a loop (text/select/textarea/
+number/date/checkbox), plus the existing BOM add-row UI and Phase 7's
+attachment slot, both already built rather than rebuilt here.
+
+Explicitly not needed for this: a Node/Express server, a new Edge Function,
+a service-role key, or any table named after "taskboard" or "inventory
+catalog" -- everything routes through tables and RLS that already exist.
+
+Acceptance criteria:
+
+- An admin can add, edit, reorder, or delete a handover question from
+  Admin, and it appears (or disappears) on the next handover opened, with
+  no deploy.
+- Submitting a handover updates the same `project_bom_lines` and
+  `project_documents` rows the rest of the app already reads.
+- Zero new tables duplicate data that already lives in `tasks`,
+  `project_bom_lines`, `inventory_items`, or `project_documents`.
+
+### Phase 19 - In-Browser Spreadsheet BOM Import
+
+Goal: let a PM drop an `.xlsx`/`.csv` of hardware line items and bulk-fill a
+project's BOM instead of typing each row by hand -- without adding a
+backend server.
+
+Design:
+
+- Add a client-side parsing library (SheetJS `xlsx` covers both `.xlsx`
+  and `.csv`) and parse the dropped file entirely in the browser via the
+  File API. No upload endpoint, no multer, no server round-trip --
+  consistent with this app having no backend beyond Supabase.
+- Case-insensitive header matching for Item/Model, Category, Qty, and
+  Procurement Track columns, same flexible-header idea the research
+  suggested, just done client-side instead of in an Express handler.
+- Preview the parsed rows in a table before committing anything (matches
+  the "probe before you build" caution used elsewhere this session) --
+  PM reviews, then confirms.
+- Confirming calls the same persistence functions the manual "Add
+  Material" BOM row already uses to insert into `project_bom_lines` --
+  existing status values (Need Quote/Not started/Ordered/etc.) and
+  request-speed values (ASAP/Standard/Future), no new enum values.
+
+Acceptance criteria:
+
+- Dropping a correctly-headed spreadsheet shows a preview grid before any
+  database write happens.
+- Confirming writes rows into the project's real BOM table, visible
+  immediately in the existing BOM panel.
+- No file or row data leaves the browser except to Supabase directly.
 
 ## Suggested Next Development Sprint
 
