@@ -772,32 +772,192 @@ Acceptance criteria:
 - User role is assigned by admin/owner.
 - Sensitive actions are blocked for unauthorized users.
 
+Scoping note (Aug 2026): no new secret/credential is needed to start Phase 9 —
+unlike email invites, this is pure SQL + RLS policy work using role data that
+already exists (`app_user_roles.role_key`, `is_app_admin()`, `is_app_manager()`).
+What's actually needed is E's sign-off on the specific permission matrix, since
+that's a business decision, not a technical one. A starter matrix already
+exists, seeded in migration `003` into `app_role_modes.permissions` and never
+enforced:
+  - warehouse: inventory write, projects read
+  - purchasing: purchasing write, inventory read
+  - pm: projects write, inventory read
+  - manager: reports/inventory/projects read
+This is coarse (whole-area read/write, not per-action rules like "can adjust
+stock but not retire an item"). Two honest options:
+1. Enforce this coarse matrix now as real RLS policies. Fast, no dependencies,
+   meaningfully better than UI-only hiding.
+2. Wait and pair it with Phase 10. Real fine-grained enforcement (per-project,
+   per-action) isn't fully possible yet regardless, because Projects/
+   Inventory/Purchasing still live in one JSON blob per collection
+   (`app_records`) — RLS can only gate at the whole-collection level against
+   that table (e.g. "can this role write to the `projectSites` blob row at
+   all"), not at the level of an individual project or BOM line. True
+   row/action-level rules need Phase 10's relational tables to exist first.
+Needs a decision from E: go coarse now, or bundle with Phase 10.
+
 ### Phase 10 - Move From JSON App Records To Relational CRUD
 
 Goal:
 
-Use relational Supabase tables as the primary production data model.
+Use relational Supabase tables as the primary production data model instead
+of `app_records` (one JSON array per collection, whole-array replace on every
+save).
 
-Current state:
+Major finding when scoping this (Aug 2026): **a full relational schema
+already exists in the database and is currently unused.** Migrations `001`
+through `008` built out `projects`, `inventory_items`, `inventory_balances`,
+`inventory_movements`, `inventory_transactions`, `equipment_types`,
+`equipment_bom_components`, `build_transactions`, `project_allocation_history`,
+`purchase_requests`, `purchase_order_lines`, `project_documents`,
+`sales_quote_extractions`, `vendors`, `locations`, `app_role_modes`, and more
+— then migration `009` pivoted the live app to write everything into the
+`app_records` JSON blob instead, as a fast bridge to get persistence working.
+That relational schema was never removed; it just sits idle. **Phase 10 is
+therefore mostly "finish wiring the app to tables that already exist," plus
+gap-filling ALTERs and one net-new table pair (project SOW + BOM lines),
+rather than designing a schema from zero.**
 
-- `app_records` is a production persistence bridge.
-- It is acceptable while the data model is still moving.
+How exactly the current schema exists is documented per-entity below.
 
-Target:
+Current state (how `app_records` actually works):
 
-- Inventory items use `inventory_items`.
-- Inventory quantities use `inventory_balances`.
-- Movements use `inventory_movements`.
-- Projects use `projects`.
+- One row per collection, not per business record: `app_records(workspace_key,
+  record_key, data jsonb)` with `record_key` one of `inventoryItems`,
+  `projectSites`, `deviceRecipes`, `inventoryMovements`, `buildTransactions`,
+  `projectAllocations`, `purchaseRequests`, `projectDocuments`, `roleMode`.
+- `persistence.ts` (`saveRemoteAppState`) upserts all 9 rows on every save,
+  each containing the ENTIRE array for that collection as one JSON value.
+  Editing a single inventory item's stock count re-serializes and re-uploads
+  every inventory item, every project, every recipe, etc.
+- The save fires from one `useEffect` in `main.tsx` (~line 1054) whenever any
+  of the 9 top-level React state arrays changes, debounced 650ms. No partial
+  saves, no per-record concurrency control, no audit trail beyond the blob's
+  single `updated_at`.
+- Single global workspace (`workspace_key = "default"`) — not per-tenant, not
+  per-user. This is fine for Ergon today (one company) but worth naming as a
+  design choice, not an oversight.
+
+Per-entity readiness (existing table vs. what the app's TypeScript types need):
+
+- **Purchase requests — closest to ready.** `purchase_requests` (migration
+  `005`, extended in `006`/`007`/`011`) already has nearly every field the
+  app's `PurchaseRequest` type needs: `inventory_item_id`, snapshots, quantity,
+  reason, source, project link, vendor, cost, status, `po_number`,
+  `expected_date`, `procurement_track`, `project_name`. Gap: the `reason`
+  check constraint doesn't yet include `'project_bom'` (the app added that
+  reason later) — one small ALTER. Best candidate to cut over first: lowest
+  schema risk, good test of the whole migration pattern.
+- **Project documents — also close.** `project_documents` (migration `002`,
+  extended in `008`) has `document_type`, `storage_provider`/`storage_status`,
+  `local_document_id`, `project_name`, `file_size_bytes`. Naming differs
+  slightly from the app's `UploadedDoc.type`/`.storage` values — needs a
+  mapping table/enum reconciliation, not new columns.
+- **Inventory items — solid, small gaps.** `inventory_items` (migration `001`,
+  extended in `004`) already has `sku`, `item_name`, `category`,
+  `default_unit_cost`, `reorder_point`, `barcode_value`, `image_url`,
+  `manufacturer`, `purchase_sources` (jsonb, matches `Part.purchaseUrls`),
+  `inventory_tags`, `retired_at`. Two real gaps: (1) no price-history table
+  yet (`Part.priceHistory` needs a new `inventory_item_price_history` child
+  table); (2) stock is modeled via `inventory_balances(item, location)` rather
+  than a flat number — the app's UI has no location/bin concept yet (that's
+  the still-open "Inventory location/bin UI" item). Plan: create one default
+  "Main Warehouse" location row and always read/write balances against it, so
+  the app keeps working as a single flat stock number today while the schema
+  is already ready for real bin/location UI later without another migration.
+- **Equipment recipes — solid, needs a stable ID.** `equipment_types` +
+  `equipment_bom_components` (migration `003`) map cleanly to the app's
+  `BuildRecipe`/`BuildComponent`, except the app's `BuildRecipe` has **no id
+  field at all** — it uses `name` as its de facto primary key everywhere.
+  Migration needs to assign each recipe a real `id`, backfill
+  `equipment_number`, and rewrite every `equipmentName`/`itemName` string
+  lookup in `main.tsx` to use the id instead (this touches many call sites —
+  flagged as the fiddliest part of this entity).
+- **Movements / build transactions / allocations — schema is already ahead of
+  the app.** `inventory_transactions`, `inventory_movements`,
+  `build_transactions`, `project_allocation_history` (migration `003`/`004`)
+  already support things the app's flat types don't track yet (from/to
+  location, unit cost, balance before/after, undo linkage, workflow stages
+  matching the app's planned/kitting/assembled/tested/complete exactly). Good
+  foundation; mostly straightforward mapping, some new columns just stay null
+  until location UI exists.
+- **Projects — the biggest lift.** `projects` (migration `001`, extended in
+  `002`) has `project_name` (unique), `customer_name`, a `status` enum
+  (planning/active/on_hold/completed/cancelled — doesn't match the app's
+  Draft/Planning/Purchasing/Staging/Install Ready), `department_id`/
+  `owner_id` (FKs to an unused `profiles`/`departments` concept the app
+  doesn't have), `start_date`/`target_date`/`completed_date`, `budget_amount`,
+  `google_drive_url`, `notes`, `project_number` (nullable, not in the app's
+  `PRJ-2026-####` ref format). Missing entirely and needing new columns/
+  tables: `type` (Parking Garage/Surface Lot/etc), `package`, `cameras`,
+  `allocated`, site `address`, `sales_quote_file`, and — the two real net-new
+  pieces — a **Scope of Work** (currently 8 embedded text fields, needs a 1:1
+  `project_scope_of_work` table) and **BOM lines** (currently an embedded
+  array, needs a new `project_bom_lines` table with `project_id` FK and a
+  nullable `inventory_item_id` FK, since BOM line item names are free text
+  today and won't all resolve cleanly to a real inventory row on day one).
+- **Legacy/dead schema to formally retire, not resurrect:** `departments`,
+  `profiles`, `vendors` (unused — `Part.vendorUrl` is just a text field, not a
+  vendor relationship), `locations` beyond one default row, `purchase_orders`/
+  `purchase_order_lines` (the app's model is request-based, not full PO/line
+  based), `activity_log`, `app_state_snapshots` (superseded by `app_records`
+  itself), `app_role_modes` (superseded by `app_user_roles`/`app_admins`/
+  `app_user_status` from migrations `010`/`012`/`014`, though its seeded
+  `permissions` jsonb is a reasonable starting point for Phase 9's matrix).
+
+Known messy data to reconcile during migration (not blockers, just need a
+one-time cleanup pass, likely with a "review unmatched rows" step rather than
+a silent auto-migration):
+
+- BOM line item names (`BomLine.item`) are matched to inventory by exact name
+  string at read time today — some won't match any real `Part.name` and will
+  need manual reconciliation or will migrate as unlinked (`inventory_item_id
+  = null`) rows.
+- At least one known name mismatch: a document's default project field
+  ("Straud Medical") doesn't match the actual seed project name ("Straub
+  Medical HI") — a pre-existing typo/data-quality bug, not something this
+  migration introduces.
+- Legacy record IDs (`makeId("...")` strings like `build-1690000000-ab12cd`)
+  are not UUIDs — plan to keep them as a `legacy_id` column on the new tables
+  for traceability rather than discarding them.
+
+Target (unchanged from original scope, now grounded in what already exists):
+
+- Inventory items use `inventory_items` + `inventory_balances`.
+- Movements use `inventory_movements` / `inventory_transactions`.
+- Projects use `projects` + new `project_scope_of_work` + new
+  `project_bom_lines`.
 - Documents use `project_documents`.
 - Equipment definitions use `equipment_types` and `equipment_bom_components`.
 - Builds use `build_transactions`.
-- Purchase requests/orders use normalized purchasing tables.
+- Purchase requests use `purchase_requests`.
+
+Recommended cutover order (lowest risk first, each step keeps `app_records` as
+a read fallback until confirmed solid, then drops that collection's key from
+the blob):
+
+1. Purchase requests (schema nearly ready, well-isolated feature).
+2. Project documents (schema nearly ready).
+3. Inventory items + one default location/balance row.
+4. Equipment recipes (needs the surrogate-id rewrite).
+5. Movements / build transactions / allocations (depend on inventory items +
+   recipes already being cut over).
+6. Projects, including new SOW + BOM line tables (biggest lift, do last so the
+   pattern is proven on lower-risk entities first).
+
+Each step also requires rewriting `persistence.ts` from "upsert the whole
+array" to real per-record CRUD functions (following the pattern already used
+for `product_catalog`/`tasks`), and a one-time data-migration script per
+entity to copy existing blob rows into the new tables before cutting the app
+over to read/write them directly.
 
 Acceptance criteria:
 
 - Major records can be queried, filtered, audited, and secured at table level.
 - No important production workflow depends only on a single JSON state blob.
+- Legacy/unused tables from the original schema pass (`departments`,
+  `profiles`, `purchase_orders`, etc.) are either formally adopted or dropped,
+  not left in an ambiguous half-used state.
 
 ## Suggested Next Development Sprint
 
