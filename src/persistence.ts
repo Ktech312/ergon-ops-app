@@ -6,7 +6,9 @@ export type PersistedAppState = {
   buildTransactions: unknown[];
   projectAllocations: unknown[];
   purchaseRequests: unknown[];
-  projectDocuments: unknown[];
+  // projectDocuments intentionally removed (Phase 10b cutover, Aug 2026) --
+  // that entity now lives exclusively in the real `project_documents` table
+  // via loadProjectDocuments/createProjectDocuments, not this blob.
   roleMode: string;
 };
 
@@ -29,7 +31,6 @@ const STATE_KEYS: Array<keyof PersistedAppState> = [
   "buildTransactions",
   "projectAllocations",
   "purchaseRequests",
-  "projectDocuments",
   "roleMode",
 ];
 
@@ -73,7 +74,6 @@ function asPersistedState(records: Array<{ record_key: string; data: unknown }>)
     buildTransactions: Array.isArray(byKey.get("buildTransactions")) ? (byKey.get("buildTransactions") as unknown[]) : [],
     projectAllocations: Array.isArray(byKey.get("projectAllocations")) ? (byKey.get("projectAllocations") as unknown[]) : [],
     purchaseRequests: Array.isArray(byKey.get("purchaseRequests")) ? (byKey.get("purchaseRequests") as unknown[]) : [],
-    projectDocuments: Array.isArray(byKey.get("projectDocuments")) ? (byKey.get("projectDocuments") as unknown[]) : [],
     roleMode: typeof byKey.get("roleMode") === "string" ? (byKey.get("roleMode") as string) : "manager",
   };
 }
@@ -2174,6 +2174,162 @@ export async function deleteTaskHardwareDependency(id: string, accessToken?: str
   });
 }
 
+// --- Phase 10b: Project Documents cutover ----------------------------------
+// First Phase 10 entity actually cut over from the app_records blob to its
+// real table. The Postgres `id` (uuid) is now the canonical document id --
+// creation is a real round trip (insert, then use the returned row) instead
+// of the old client-generated `makeId("doc")` + optimistic local update.
+
+export type ProjectDocument = {
+  id: string;
+  name: string;
+  project: string;
+  size: number;
+  status: "Uploaded" | "Ready to review" | "Backed up" | "Archived";
+  type?: "Purchasing" | "Sales Quote" | "SOW" | "BOM" | "Project";
+  storage?: "Browser" | "Google Drive" | "Supabase Storage";
+  uploadedAt?: string;
+};
+
+type ProjectDocumentRow = {
+  id: string;
+  project_name: string | null;
+  file_name: string;
+  file_size_bytes: number | string;
+  status: string;
+  document_type: string;
+  storage_status: string;
+  uploaded_at: string | null;
+};
+
+function appDocumentType(type: ProjectDocument["type"]): string {
+  switch (type) {
+    case "Purchasing": return "purchasing";
+    case "Sales Quote": return "sales_quote";
+    case "SOW": return "sow";
+    case "BOM": return "bom";
+    case "Project": return "project";
+    default: return "other";
+  }
+}
+
+function pgDocumentType(documentType: string): ProjectDocument["type"] {
+  switch (documentType) {
+    case "purchasing": return "Purchasing";
+    case "sales_quote": return "Sales Quote";
+    case "sow": return "SOW";
+    case "bom": return "BOM";
+    case "project": return "Project";
+    default: return undefined;
+  }
+}
+
+function appDocumentStatus(status: string): ProjectDocument["status"] {
+  switch (status) {
+    case "ready_to_review": case "extracting": return "Ready to review";
+    case "backed_up": case "approved": return "Backed up";
+    case "archived": case "rejected": return "Archived";
+    default: return "Uploaded";
+  }
+}
+
+function pgDocumentStatus(status: ProjectDocument["status"]): string {
+  switch (status) {
+    case "Ready to review": return "ready_to_review";
+    case "Backed up": return "backed_up";
+    case "Archived": return "archived";
+    default: return "uploaded";
+  }
+}
+
+function appDocumentStorage(storageStatus: string): ProjectDocument["storage"] {
+  switch (storageStatus) {
+    case "google_drive": return "Google Drive";
+    case "supabase_storage": return "Supabase Storage";
+    default: return "Browser";
+  }
+}
+
+function pgDocumentStorage(storage: ProjectDocument["storage"]): string {
+  switch (storage) {
+    case "Google Drive": return "google_drive";
+    case "Supabase Storage": return "supabase_storage";
+    default: return "browser";
+  }
+}
+
+function mapProjectDocumentRow(row: ProjectDocumentRow): ProjectDocument {
+  return {
+    id: row.id,
+    name: row.file_name,
+    project: row.project_name ?? "",
+    size: Number(row.file_size_bytes),
+    status: appDocumentStatus(row.status),
+    type: pgDocumentType(row.document_type),
+    storage: appDocumentStorage(row.storage_status),
+    uploadedAt: row.uploaded_at ?? undefined,
+  };
+}
+
+export async function loadProjectDocuments(accessToken?: string): Promise<ProjectDocument[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at&order=uploaded_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ProjectDocumentRow[];
+  return rows.map(mapProjectDocumentRow);
+}
+
+export async function createProjectDocuments(
+  docs: Array<Omit<ProjectDocument, "id">>,
+  accessToken?: string,
+): Promise<ProjectDocument[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || docs.length === 0) {
+    return [];
+  }
+  const payload = docs.map((doc, index) => ({
+    document_number: `DOC-${Date.now().toString(36).toUpperCase()}-${index}`,
+    project_name: doc.project || null,
+    document_type: appDocumentType(doc.type),
+    file_name: doc.name,
+    file_size_bytes: doc.size,
+    status: pgDocumentStatus(doc.status),
+    storage_status: pgDocumentStorage(doc.storage),
+    storage_provider: "browser",
+    uploaded_at: doc.uploadedAt ?? new Date().toISOString(),
+  }));
+  const response = await fetch(supabaseUrl("project_documents"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not save document(s): ${response.status}`);
+  }
+  const rows = (await response.json()) as ProjectDocumentRow[];
+  return rows.map(mapProjectDocumentRow);
+}
+
+export async function updateProjectDocumentStatusRemote(
+  id: string,
+  status: ProjectDocument["status"],
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`project_documents?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ status: pgDocumentStatus(status) }),
+  });
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;
@@ -2245,7 +2401,6 @@ export async function saveRemoteAppState(state: PersistedAppState, accessToken?:
         movements: state.inventoryMovements.length,
         builds: state.buildTransactions.length,
         purchase_requests: state.purchaseRequests.length,
-        project_documents: state.projectDocuments.length,
       },
     }),
   }).catch(() => {

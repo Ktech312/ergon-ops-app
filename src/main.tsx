@@ -36,6 +36,7 @@ import {
   createHandover,
   createNotification,
   createPresalesRule,
+  createProjectDocuments,
   createScheduleTemplate,
   createSubmittal,
   createSubmittalShareToken,
@@ -65,6 +66,7 @@ import {
   loadNotificationRules,
   loadNotifications,
   loadPresalesRules,
+  loadProjectDocuments,
   loadRemoteAppState,
   loadScheduleTemplates,
   loadStandardInstallTimes,
@@ -98,6 +100,7 @@ import {
   updateFormSchemaField,
   updateHandoverResponses,
   updateNotificationRule,
+  updateProjectDocumentStatusRemote,
   updateTask,
   updateTaskHardwareDependencyStatus,
   updateTeamMember,
@@ -114,6 +117,7 @@ import {
   type NotificationRule,
   type PersistedAppState,
   type PresalesHardwareRule,
+  type ProjectDocument,
   type ProjectHandover,
   type ProjectSubmittal,
   type PublicSubmittalView,
@@ -326,16 +330,11 @@ type PurchaseRequest = {
   notes: string;
 };
 
-type UploadedDoc = {
-  id: string | number;
-  name: string;
-  project: string;
-  size: number;
-  status: "Uploaded" | "Ready to review" | "Backed up" | "Archived";
-  type?: "Purchasing" | "Sales Quote" | "SOW" | "BOM" | "Project";
-  storage?: "Browser" | "Google Drive" | "Supabase Storage";
-  uploadedAt?: string;
-};
+// UploadedDoc used to be a locally-defined blob shape; as of Phase 10b it's
+// just an alias for the real ProjectDocument row shape from persistence.ts
+// (see the import block above) so every existing UploadedDoc reference in
+// this file keeps working unchanged.
+type UploadedDoc = ProjectDocument;
 
 type BomLine = {
   item: string;
@@ -1000,7 +999,9 @@ function App() {
   const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>(() => isArray<BuildTransaction>(localState?.buildTransactions, []));
   const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>(() => isArray<ProjectAllocationHistory>(localState?.projectAllocations, []));
   const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(() => isArray<PurchaseRequest>(localState?.purchaseRequests, []));
-  const [projectDocuments, setProjectDocuments] = useState<UploadedDoc[]>(() => isArray<UploadedDoc>(localState?.projectDocuments, []));
+  // Phase 10b: Project Documents no longer lives in the local/blob state --
+  // it's always loaded fresh from the real table (see the effect below).
+  const [projectDocuments, setProjectDocuments] = useState<UploadedDoc[]>([]);
   const [roleMode, setRoleMode] = useState<RoleMode>(() => ((localState?.roleMode as RoleMode | undefined) ?? "manager"));
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
   const [authEmail, setAuthEmail] = useState("");
@@ -1109,7 +1110,6 @@ function App() {
         setBuildTransactions(isArray<BuildTransaction>(remoteState.buildTransactions, []));
         setProjectAllocations(isArray<ProjectAllocationHistory>(remoteState.projectAllocations, []));
         setPurchaseRequests(isArray<PurchaseRequest>(remoteState.purchaseRequests, []));
-        setProjectDocuments(isArray<UploadedDoc>(remoteState.projectDocuments, []));
         setRoleMode((remoteState.roleMode as RoleMode | undefined) ?? "manager");
         setSyncStatus("synced");
       })
@@ -1132,7 +1132,6 @@ function App() {
       buildTransactions,
       projectAllocations,
       purchaseRequests,
-      projectDocuments,
       roleMode,
     };
     saveLocalAppState(state);
@@ -1155,7 +1154,35 @@ function App() {
         });
     }, 650);
     return () => window.clearTimeout(syncTimer);
-  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, purchaseRequests, projectDocuments, roleMode, authSession]);
+  }, [inventoryItems, projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, purchaseRequests, roleMode, authSession]);
+
+  // Phase 10b: Project Documents now lives in its own real table, loaded and
+  // saved independently of the blob-based state above.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadProjectDocuments(authSession.accessToken).then(setProjectDocuments).catch(() => {});
+  }, [authSession]);
+
+  async function handleCreateProjectDocuments(docs: Array<Omit<UploadedDoc, "id">>) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const created = await createProjectDocuments(docs, authSession.accessToken);
+      setProjectDocuments((current) => [...created, ...current]);
+    } catch (error) {
+      setSyncStatus("error");
+    }
+  }
+
+  async function handleUpdateProjectDocumentStatus(id: UploadedDoc["id"], status: UploadedDoc["status"]) {
+    setProjectDocuments((current) => current.map((doc) => (doc.id === id ? { ...doc, status } : doc)));
+    if (authSession) {
+      await updateProjectDocumentStatusRemote(id, status, authSession.accessToken);
+    }
+  }
 
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured() || !isAdmin) {
@@ -2669,7 +2696,6 @@ function App() {
       buildTransactions,
       projectAllocations,
       purchaseRequests,
-      projectDocuments,
       roleMode,
     };
   }
@@ -2700,7 +2726,6 @@ function App() {
         setBuildTransactions(isArray<BuildTransaction>(importedState.buildTransactions, buildTransactions));
         setProjectAllocations(isArray<ProjectAllocationHistory>(importedState.projectAllocations, projectAllocations));
         setPurchaseRequests(isArray<PurchaseRequest>(importedState.purchaseRequests, purchaseRequests));
-        setProjectDocuments(isArray<UploadedDoc>(importedState.projectDocuments, projectDocuments));
         if (["warehouse", "purchasing", "pm", "manager"].includes(String(importedState.roleMode))) {
           setRoleMode(importedState.roleMode as RoleMode);
         }
@@ -2935,9 +2960,9 @@ function App() {
         </div>
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
-        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
+        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} setProjectDocuments={setProjectDocuments} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesCatalog
             catalogItems={catalogItems}
@@ -3256,7 +3281,8 @@ function Purchasing({
   inventoryItems,
   purchaseRequests,
   projectDocuments,
-  setProjectDocuments,
+  onCreateDocuments,
+  onUpdateDocumentStatus,
   lowStock,
   buildTransactions,
   onQueueReorderRequests,
@@ -3277,7 +3303,8 @@ function Purchasing({
   inventoryItems: Part[];
   purchaseRequests: PurchaseRequest[];
   projectDocuments: UploadedDoc[];
-  setProjectDocuments: Dispatch<SetStateAction<UploadedDoc[]>>;
+  onCreateDocuments: (docs: Array<Omit<UploadedDoc, "id">>) => void;
+  onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
   lowStock: Part[];
   buildTransactions: BuildTransaction[];
   onQueueReorderRequests: () => void;
@@ -3339,7 +3366,6 @@ function Purchasing({
   function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     const newDocs = files.map((file, index) => ({
-      id: makeId("doc"),
       name: file.name,
       project: selectedProject,
       size: file.size,
@@ -3348,12 +3374,12 @@ function Purchasing({
       storage: "Browser" as const,
       uploadedAt: new Date(Date.now() + index).toISOString(),
     }));
-    setProjectDocuments((current) => [...newDocs, ...current]);
+    onCreateDocuments(newDocs);
     event.target.value = "";
   }
 
   function updateProjectDocumentStatus(docId: UploadedDoc["id"], status: UploadedDoc["status"]) {
-    setProjectDocuments((current) => current.map((doc) => (doc.id === docId ? { ...doc, status } : doc)));
+    onUpdateDocumentStatus(docId, status);
   }
 
   function submitManualRequest() {
@@ -3641,7 +3667,7 @@ function Purchasing({
         </div>
         <div className="document-queue">
           {(activeProjectDocuments.length ? activeProjectDocuments : purchaseOrders.slice(0, 3).map((order, index) => ({
-            id: index,
+            id: `sample-${index}`,
             name: order.sourceFile,
             project: order.projectRef,
             size: 0,
@@ -3654,7 +3680,7 @@ function Purchasing({
                 <strong>{doc.name}</strong>
                 <span>{doc.project}{doc.size ? ` - ${formatBytes(doc.size)}` : " - imported sample"}{doc.storage ? ` - ${doc.storage}` : ""}</span>
               </div>
-              <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])} disabled={typeof doc.id === "number"}>
+              <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])} disabled={doc.id.startsWith("sample-")}>
                 <option>Uploaded</option>
                 <option>Ready to review</option>
                 <option>Backed up</option>
@@ -4939,7 +4965,8 @@ function Projects({
   setProjectSites,
   inventoryItems,
   projectDocuments,
-  setProjectDocuments,
+  onCreateDocuments,
+  onUpdateDocumentStatus,
   onInventoryPull,
   onQueueProjectBomPurchaseRequest,
   tasks,
@@ -4970,7 +4997,8 @@ function Projects({
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
   inventoryItems: Part[];
   projectDocuments: UploadedDoc[];
-  setProjectDocuments: Dispatch<SetStateAction<UploadedDoc[]>>;
+  onCreateDocuments: (docs: Array<Omit<UploadedDoc, "id">>) => void;
+  onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
   onInventoryPull: (itemName: string, qty: number, projectName?: string, notes?: string) => void;
   onQueueProjectBomPurchaseRequest: (partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) => boolean;
   tasks: EOTask[];
@@ -5328,9 +5356,8 @@ function Projects({
     const projectRef = selectedProject.ref;
 
     updateProjectField("salesQuoteFile", file.name);
-    setProjectDocuments((current) => [
+    onCreateDocuments([
       {
-        id: makeId("doc"),
         name: file.name,
         project: projectName,
         size: file.size,
@@ -5339,7 +5366,6 @@ function Projects({
         storage: "Browser",
         uploadedAt: new Date().toISOString(),
       },
-      ...current,
     ]);
     setIsExtractingQuote(true);
     setActionStatus(`Reading ${file.name} for ${projectRef}. Extracting PDF text in the browser...`);
@@ -5411,7 +5437,6 @@ function Projects({
     }
 
     const docs = files.map((file, index) => ({
-      id: makeId("doc"),
       name: file.name,
       project: selectedProject.name,
       size: file.size,
@@ -5420,13 +5445,13 @@ function Projects({
       storage: "Browser" as const,
       uploadedAt: new Date(Date.now() + index).toISOString(),
     }));
-    setProjectDocuments((current) => [...docs, ...current]);
+    onCreateDocuments(docs);
     setActionStatus(`${files.length} document${files.length === 1 ? "" : "s"} attached to ${selectedProject.ref}.`);
     event.target.value = "";
   }
 
   function updateProjectDocumentStatus(docId: UploadedDoc["id"], status: UploadedDoc["status"]) {
-    setProjectDocuments((current) => current.map((doc) => (doc.id === docId ? { ...doc, status } : doc)));
+    onUpdateDocumentStatus(docId, status);
   }
 
   function openProject(projectName: string) {
