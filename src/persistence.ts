@@ -1,6 +1,5 @@
 export type PersistedAppState = {
   projectSites: unknown[];
-  deviceRecipes: unknown[];
   inventoryMovements: unknown[];
   buildTransactions: unknown[];
   projectAllocations: unknown[];
@@ -14,6 +13,10 @@ export type PersistedAppState = {
   // inventoryItems intentionally removed (Phase 10c cutover, Aug 2026) -- that
   // entity now lives exclusively in the real `inventory_items` /
   // `inventory_balances` tables via loadInventoryItems/saveInventoryItems,
+  // not this blob.
+  // deviceRecipes intentionally removed (Phase 10d cutover, Aug 2026) -- that
+  // entity now lives exclusively in the real `equipment_types` /
+  // `equipment_bom_components` tables via loadDeviceRecipes/saveDeviceRecipes,
   // not this blob.
   roleMode: string;
 };
@@ -31,7 +34,6 @@ const AUTH_SESSION_KEY = "ergon:auth-session:v1";
 const WORKSPACE_KEY = "default";
 const STATE_KEYS: Array<keyof PersistedAppState> = [
   "projectSites",
-  "deviceRecipes",
   "inventoryMovements",
   "buildTransactions",
   "projectAllocations",
@@ -72,7 +74,6 @@ function asPersistedState(records: Array<{ record_key: string; data: unknown }>)
   const byKey = new Map(records.map((record) => [record.record_key, record.data]));
   return {
     projectSites: Array.isArray(byKey.get("projectSites")) ? (byKey.get("projectSites") as unknown[]) : [],
-    deviceRecipes: Array.isArray(byKey.get("deviceRecipes")) ? (byKey.get("deviceRecipes") as unknown[]) : [],
     inventoryMovements: Array.isArray(byKey.get("inventoryMovements")) ? (byKey.get("inventoryMovements") as unknown[]) : [],
     buildTransactions: Array.isArray(byKey.get("buildTransactions")) ? (byKey.get("buildTransactions") as unknown[]) : [],
     projectAllocations: Array.isArray(byKey.get("projectAllocations")) ? (byKey.get("projectAllocations") as unknown[]) : [],
@@ -2708,6 +2709,168 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
   });
 }
 
+// --- Phase 10d: Equipment Recipes (cut over from the app_records blob to the
+// relational `equipment_types` + `equipment_bom_components` tables,
+// migration 020) ------------------------------------------------------------
+//
+// Unlike Inventory Items, this can't be a single blind bulk upsert: BOM
+// component lines can be removed in the app, and a naive upsert would only
+// ever add/update rows, never delete the ones a user took out. So saving
+// walks each recipe (there are only ever a handful of these, unlike
+// inventory SKUs) and reconciles its component set explicitly.
+
+export type BuildComponent = { itemName: string; qty: number };
+
+export type BuildRecipe = {
+  name: string;
+  outputName: string;
+  description: string;
+  imageUrl?: string;
+  components: BuildComponent[];
+  retired?: boolean;
+};
+
+type EquipmentTypeRow = {
+  equipment_name: string;
+  description: string | null;
+  image_url: string | null;
+  is_retired: boolean;
+  output_item: { item_name: string } | null;
+  equipment_bom_components: Array<{ quantity_required: number | string; item: { item_name: string } | null }>;
+};
+
+const EQUIPMENT_TYPE_SELECT =
+  "equipment_name,description,image_url,is_retired,output_item:inventory_items!output_inventory_item_id(item_name),equipment_bom_components(quantity_required,item:inventory_items(item_name))";
+
+function mapEquipmentTypeRow(row: EquipmentTypeRow): BuildRecipe {
+  return {
+    name: row.equipment_name,
+    outputName: row.output_item?.item_name ?? row.equipment_name,
+    description: row.description ?? "",
+    imageUrl: row.image_url ?? undefined,
+    components: (row.equipment_bom_components ?? [])
+      .filter((component) => component.item)
+      .map((component) => ({ itemName: component.item!.item_name, qty: Number(component.quantity_required) || 0 })),
+    retired: row.is_retired,
+  };
+}
+
+export async function loadDeviceRecipes(accessToken?: string): Promise<BuildRecipe[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`equipment_types?select=${EQUIPMENT_TYPE_SELECT}&order=equipment_name.asc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as EquipmentTypeRow[];
+  return rows.map(mapEquipmentTypeRow);
+}
+
+export async function saveDeviceRecipes(recipes: BuildRecipe[], accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken || recipes.length === 0) {
+    return;
+  }
+
+  // One query resolves every item name (recipe outputs + component lines)
+  // referenced anywhere in the current recipe set to its inventory_items.id.
+  const itemNames = new Set<string>();
+  recipes.forEach((recipe) => {
+    itemNames.add(recipe.outputName);
+    recipe.components.forEach((component) => itemNames.add(component.itemName));
+  });
+  const namesParam = Array.from(itemNames)
+    .map((name) => `"${name.replace(/"/g, '\\"')}"`)
+    .join(",");
+  const itemsResponse = await fetch(supabaseUrl(`inventory_items?select=id,item_name&item_name=in.(${namesParam})`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  const itemRows = itemsResponse.ok ? ((await itemsResponse.json()) as Array<{ id: string; item_name: string }>) : [];
+  const itemIdByName = new Map(itemRows.map((row) => [row.item_name, row.id]));
+
+  // Which recipes already exist (by equipment_name, the natural key)?
+  const existingResponse = await fetch(supabaseUrl("equipment_types?select=id,equipment_name"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  const existingRows = existingResponse.ok ? ((await existingResponse.json()) as Array<{ id: string; equipment_name: string }>) : [];
+  const equipmentIdByName = new Map(existingRows.map((row) => [row.equipment_name, row.id]));
+
+  for (const recipe of recipes) {
+    const outputInventoryItemId = itemIdByName.get(recipe.outputName) ?? null;
+    const fields = {
+      description: recipe.description || null,
+      image_url: recipe.imageUrl || null,
+      output_inventory_item_id: outputInventoryItemId,
+      is_retired: Boolean(recipe.retired),
+      retired_at: recipe.retired ? new Date().toISOString() : null,
+    };
+
+    let equipmentTypeId = equipmentIdByName.get(recipe.name);
+    if (equipmentTypeId) {
+      await fetch(supabaseUrl(`equipment_types?id=eq.${equipmentTypeId}`), {
+        method: "PATCH",
+        headers: supabaseHeaders(accessToken),
+        body: JSON.stringify(fields),
+      });
+    } else {
+      const insertResponse = await fetch(supabaseUrl("equipment_types"), {
+        method: "POST",
+        headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+        body: JSON.stringify({
+          equipment_number: `EQ-${Date.now().toString(36).toUpperCase()}-${Math.round(Math.random() * 999)}`,
+          equipment_name: recipe.name,
+          ...fields,
+        }),
+      });
+      if (!insertResponse.ok) {
+        continue;
+      }
+      const created = (await insertResponse.json()) as Array<{ id: string }>;
+      equipmentTypeId = created[0]?.id;
+      if (!equipmentTypeId) {
+        continue;
+      }
+    }
+
+    // Reconcile BOM component lines: upsert current ones, delete removed ones.
+    const desiredComponentIds = recipe.components
+      .map((component) => itemIdByName.get(component.itemName))
+      .filter((id): id is string => Boolean(id));
+
+    const componentPayload = recipe.components
+      .map((component, index) => {
+        const inventoryItemId = itemIdByName.get(component.itemName);
+        return inventoryItemId
+          ? { equipment_type_id: equipmentTypeId, inventory_item_id: inventoryItemId, quantity_required: Math.max(0.01, component.qty), line_sort: index, is_active: true }
+          : null;
+      })
+      .filter((row): row is { equipment_type_id: string; inventory_item_id: string; quantity_required: number; line_sort: number; is_active: boolean } => row !== null);
+
+    if (componentPayload.length > 0) {
+      await fetch(supabaseUrl("equipment_bom_components?on_conflict=equipment_type_id,inventory_item_id"), {
+        method: "POST",
+        headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify(componentPayload),
+      });
+    }
+
+    const existingComponentsResponse = await fetch(
+      supabaseUrl(`equipment_bom_components?equipment_type_id=eq.${equipmentTypeId}&select=inventory_item_id`),
+      { headers: supabaseHeaders(accessToken) },
+    );
+    const existingComponentRows = existingComponentsResponse.ok ? ((await existingComponentsResponse.json()) as Array<{ inventory_item_id: string }>) : [];
+    const toRemove = existingComponentRows.map((row) => row.inventory_item_id).filter((id) => !desiredComponentIds.includes(id));
+    if (toRemove.length > 0) {
+      await fetch(
+        supabaseUrl(`equipment_bom_components?equipment_type_id=eq.${equipmentTypeId}&inventory_item_id=in.(${toRemove.join(",")})`),
+        { method: "DELETE", headers: supabaseHeaders(accessToken) },
+      );
+    }
+  }
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;
@@ -2774,7 +2937,6 @@ export async function saveRemoteAppState(state: PersistedAppState, accessToken?:
       entity_ref: WORKSPACE_KEY,
       payload: {
         projects: state.projectSites.length,
-        equipment_recipes: state.deviceRecipes.length,
         movements: state.inventoryMovements.length,
         builds: state.buildTransactions.length,
       },

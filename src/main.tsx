@@ -59,6 +59,7 @@ import {
   loadAuthSession,
   loadCatalogItems,
   loadFormSchema,
+  loadDeviceRecipes,
   loadHandoversForProject,
   loadInventoryItems,
   loadInventoryItemSkusByIds,
@@ -87,6 +88,7 @@ import {
   respondToPublicSubmittal,
   reviewUserApproval,
   revokeAdmin,
+  saveDeviceRecipes,
   saveInventoryItems,
   saveLocalAppState,
   saveRemoteAppState,
@@ -113,6 +115,8 @@ import {
   upsertStandardInstallTime,
   type ApprovalStatus,
   type AuthSession,
+  type BuildComponent,
+  type BuildRecipe,
   type CatalogItem,
   type EOTask,
   type FormSchema,
@@ -152,19 +156,10 @@ type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "t
 
 const inventoryTags = ["VPU Part", "Edge Box Part", "Solar Part", "Server Part", "Network Part", "Power Part", "Field Hardware"];
 
-type BuildComponent = {
-  itemName: string;
-  qty: number;
-};
-
-type BuildRecipe = {
-  name: string;
-  outputName: string;
-  description: string;
-  imageUrl?: string;
-  components: BuildComponent[];
-  retired?: boolean;
-};
+// BuildComponent and BuildRecipe used to be defined locally; as of Phase 10d
+// they're imported from persistence.ts (see the import block above) since
+// equipment recipes are now backed by the real `equipment_types` /
+// `equipment_bom_components` tables instead of the app_records blob.
 
 type RoleMode = "warehouse" | "purchasing" | "pm" | "manager";
 
@@ -962,7 +957,9 @@ function App() {
   // it's always loaded fresh from the real table (see the effect below).
   const [inventoryItems, setInventoryItems] = useState<Part[]>([]);
   const [projectSites, setProjectSites] = useState<ProjectSite[]>(() => isArray<ProjectSite>(localState?.projectSites, projects));
-  const [deviceRecipes, setDeviceRecipes] = useState<BuildRecipe[]>(() => isArray<BuildRecipe>(localState?.deviceRecipes, buildRecipes));
+  // Phase 10d: Equipment Recipes no longer lives in the local/blob state --
+  // it's always loaded fresh from the real table (see the effect below).
+  const [deviceRecipes, setDeviceRecipes] = useState<BuildRecipe[]>([]);
   const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>(() => isArray<InventoryMovement>(localState?.inventoryMovements, []));
   const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>(() => isArray<BuildTransaction>(localState?.buildTransactions, []));
   const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>(() => isArray<ProjectAllocationHistory>(localState?.projectAllocations, []));
@@ -1080,7 +1077,6 @@ function App() {
           return;
         }
         setProjectSites(isArray<ProjectSite>(remoteState.projectSites, projects));
-        setDeviceRecipes(isArray<BuildRecipe>(remoteState.deviceRecipes, buildRecipes));
         setInventoryMovements(isArray<InventoryMovement>(remoteState.inventoryMovements, []));
         setBuildTransactions(isArray<BuildTransaction>(remoteState.buildTransactions, []));
         setProjectAllocations(isArray<ProjectAllocationHistory>(remoteState.projectAllocations, []));
@@ -1100,7 +1096,6 @@ function App() {
   useEffect(() => {
     const state: PersistedAppState = {
       projectSites,
-      deviceRecipes,
       inventoryMovements,
       buildTransactions,
       projectAllocations,
@@ -1126,7 +1121,32 @@ function App() {
         });
     }, 650);
     return () => window.clearTimeout(syncTimer);
-  }, [projectSites, deviceRecipes, inventoryMovements, buildTransactions, projectAllocations, roleMode, authSession]);
+  }, [projectSites, inventoryMovements, buildTransactions, projectAllocations, roleMode, authSession]);
+
+  // Phase 10d: Equipment Recipes now lives in its own real tables
+  // (equipment_types + equipment_bom_components), loaded once per session and
+  // then debounce-saved as a whole array on every change -- the same shape
+  // the blob used, so none of the add/edit/retire-recipe logic in the
+  // Inventory component below needed to change, only where it's persisted.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadDeviceRecipes(authSession.accessToken).then(setDeviceRecipes).catch(() => {});
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured() || deviceRecipes.length === 0) {
+      return;
+    }
+    const syncTimer = window.setTimeout(() => {
+      saveDeviceRecipes(deviceRecipes, authSession.accessToken).catch(() => {
+        setSyncStatus("error");
+        setAuthStatus("Cloud save failed for equipment recipes. Check login, RLS policies, or Supabase env vars.");
+      });
+    }, 650);
+    return () => window.clearTimeout(syncTimer);
+  }, [deviceRecipes, authSession]);
 
   // Phase 10c: Inventory Items now lives in its own real tables
   // (inventory_items + inventory_balances), loaded once per session and then
@@ -2763,7 +2783,6 @@ function App() {
   function currentPersistedState(): PersistedAppState {
     return {
       projectSites,
-      deviceRecipes,
       inventoryMovements,
       buildTransactions,
       projectAllocations,
@@ -2791,7 +2810,6 @@ function App() {
       try {
         const importedState = JSON.parse(String(reader.result ?? "{}")) as Partial<PersistedAppState>;
         setProjectSites(isArray<ProjectSite>(importedState.projectSites, projectSites));
-        setDeviceRecipes(isArray<BuildRecipe>(importedState.deviceRecipes, deviceRecipes));
         setInventoryMovements(isArray<InventoryMovement>(importedState.inventoryMovements, inventoryMovements));
         setBuildTransactions(isArray<BuildTransaction>(importedState.buildTransactions, buildTransactions));
         setProjectAllocations(isArray<ProjectAllocationHistory>(importedState.projectAllocations, projectAllocations));
