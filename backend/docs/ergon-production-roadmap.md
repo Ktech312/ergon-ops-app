@@ -395,6 +395,7 @@ Existing Supabase migrations include:
 - `012_admin_roles_and_user_directory.sql`
 - `013_product_catalog.sql`
 - `014_user_approval_and_tab_permissions.sql`
+- `015_tasks.sql`
 
 Important concepts already represented:
 
@@ -863,6 +864,25 @@ If continuing immediately, build in this order:
 18. [ ] Email invite from the Admin page. Needs a new Vercel secret
     (`SUPABASE_SERVICE_ROLE_KEY`) and a serverless function — get E's
     explicit sign-off before adding this secret; it bypasses all RLS.
+19a. [x] Task management (migration `015_tasks.sql`).
+   - New "Tasks" nav tab, `TasksBoard` component in `src/main.tsx`, grouped by
+     status (To Do / In Progress / Ready for Review / Done / Blocked) similar
+     in spirit to a ClickUp task list, scoped down to what Ergon needed rather
+     than a full clone.
+   - Each task has a section (warehouse/purchasing/inventory/projects/sales/
+     engineering/general), can be marked internal or tied to a specific
+     project (`project_ref`, free-text pointer for the same reason
+     `product_catalog.linked_reference` is free text — projects live in
+     `app_records`, not a relational table, so a strict FK isn't reliable yet),
+     priority, category, assignee email, due date, and optional "impact areas"
+     tags (Inventory/Purchasing/Sales/Projects/Reports/Other).
+   - Honest caveat: completing a task does NOT automatically trigger changes
+     elsewhere in the app yet (e.g., marking a "reorder" task done does not
+     create a purchase request). E asked for completions to "affect multiple
+     aspects of the business" — the impact-area tags capture *intent* today,
+     not automation. Real automation needs specific rules defined per impact
+     type (what exactly should happen when an Inventory-tagged task is marked
+     done?) before it can be built safely.
 19. [ ] Receiving proof/photo flow for purchase requests.
 20. [ ] Project document/media model cleanup (real Supabase Storage instead of
     browser-only references).

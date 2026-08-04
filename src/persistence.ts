@@ -823,6 +823,182 @@ export async function reviewUserApproval(
   }
 }
 
+export type TaskSection = "warehouse" | "purchasing" | "inventory" | "projects" | "sales" | "engineering" | "general";
+export type TaskStatus = "to_do" | "in_progress" | "ready_for_review" | "done" | "blocked";
+export type TaskPriority = "low" | "normal" | "high" | "urgent";
+
+export type EOTask = {
+  id: string;
+  taskNumber: string;
+  title: string;
+  description: string;
+  section: TaskSection;
+  projectRef: string;
+  isInternal: boolean;
+  status: TaskStatus;
+  priority: TaskPriority;
+  category: string;
+  impactAreas: string[];
+  assigneeUserId: string | null;
+  assigneeEmail: string;
+  dueDate: string;
+  createdBy: string | null;
+  createdAt: string;
+  completedAt: string | null;
+};
+
+type TaskRow = {
+  id: string;
+  task_number: string;
+  title: string;
+  description: string | null;
+  section: TaskSection;
+  project_ref: string | null;
+  is_internal: boolean;
+  status: TaskStatus;
+  priority: TaskPriority;
+  category: string | null;
+  impact_areas: string[] | null;
+  assignee_user_id: string | null;
+  assignee_email: string | null;
+  due_date: string | null;
+  created_by: string | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
+function mapTaskRow(row: TaskRow): EOTask {
+  return {
+    id: row.id,
+    taskNumber: row.task_number,
+    title: row.title,
+    description: row.description ?? "",
+    section: row.section,
+    projectRef: row.project_ref ?? "",
+    isInternal: row.is_internal,
+    status: row.status,
+    priority: row.priority,
+    category: row.category ?? "",
+    impactAreas: row.impact_areas ?? [],
+    assigneeUserId: row.assignee_user_id,
+    assigneeEmail: row.assignee_email ?? "",
+    dueDate: row.due_date ?? "",
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  };
+}
+
+export function makeTaskNumber() {
+  return `TASK-${Date.now().toString(36).toUpperCase()}`;
+}
+
+export async function loadTasks(accessToken?: string): Promise<EOTask[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("tasks?select=*&order=created_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as TaskRow[];
+  return rows.map(mapTaskRow);
+}
+
+export async function createTask(
+  task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">,
+  createdBy: string,
+  accessToken?: string,
+): Promise<EOTask> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const response = await fetch(supabaseUrl("tasks"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "return=representation",
+    },
+    body: JSON.stringify({
+      task_number: makeTaskNumber(),
+      title: task.title,
+      description: task.description,
+      section: task.section,
+      project_ref: task.projectRef || null,
+      is_internal: task.isInternal,
+      status: task.status,
+      priority: task.priority,
+      category: task.category,
+      impact_areas: task.impactAreas,
+      assignee_email: task.assigneeEmail || null,
+      due_date: task.dueDate || null,
+      created_by: createdBy,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not create task: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as TaskRow[];
+  return mapTaskRow(rows[0]);
+}
+
+export async function updateTask(id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>, accessToken?: string): Promise<EOTask> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const payload: Record<string, unknown> = {};
+  if (task.title !== undefined) payload.title = task.title;
+  if (task.description !== undefined) payload.description = task.description;
+  if (task.section !== undefined) payload.section = task.section;
+  if (task.projectRef !== undefined) payload.project_ref = task.projectRef || null;
+  if (task.isInternal !== undefined) payload.is_internal = task.isInternal;
+  if (task.status !== undefined) {
+    payload.status = task.status;
+    payload.completed_at = task.status === "done" ? new Date().toISOString() : null;
+  }
+  if (task.priority !== undefined) payload.priority = task.priority;
+  if (task.category !== undefined) payload.category = task.category;
+  if (task.impactAreas !== undefined) payload.impact_areas = task.impactAreas;
+  if (task.assigneeEmail !== undefined) payload.assignee_email = task.assigneeEmail || null;
+  if (task.dueDate !== undefined) payload.due_date = task.dueDate || null;
+
+  const response = await fetch(supabaseUrl(`tasks?id=eq.${id}`), {
+    method: "PATCH",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "return=representation",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not update task: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as TaskRow[];
+  return mapTaskRow(rows[0]);
+}
+
+export async function deleteTask(id: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  await fetch(supabaseUrl(`tasks?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;

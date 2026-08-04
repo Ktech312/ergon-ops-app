@@ -12,6 +12,7 @@ import {
   FolderOpen,
   Image,
   LayoutDashboard,
+  ListChecks,
   MapPin,
   Plus,
   Search,
@@ -27,6 +28,8 @@ import {
   checkIsAdmin,
   consumeOAuthRedirectSession,
   createCatalogItem,
+  createTask,
+  deleteTask,
   ensureOwnApprovalRequest,
   grantAdmin,
   loadAllAdmins,
@@ -40,6 +43,7 @@ import {
   loadOwnAllowedViews,
   loadOwnApprovalStatus,
   loadRemoteAppState,
+  loadTasks,
   loadUserRoleMode,
   makeCatalogNumber,
   refreshAuthSession,
@@ -57,17 +61,22 @@ import {
   signOut,
   signUpWithPassword,
   updateCatalogItem,
+  updateTask,
   upsertKnownUser,
   type ApprovalStatus,
   type AuthSession,
   type CatalogItem,
+  type EOTask,
   type KnownUser,
   type PersistedAppState,
+  type TaskPriority,
+  type TaskSection,
+  type TaskStatus,
   type UserStatus,
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "reports" | "admin";
+type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "tasks" | "reports" | "admin";
 
 type PurchaseUrl = {
   id: number;
@@ -119,7 +128,7 @@ type BuildRecipe = {
 
 type RoleMode = "warehouse" | "purchasing" | "pm" | "manager";
 
-const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "projects", "sales", "reports"];
+const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports"];
 
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
@@ -127,6 +136,7 @@ const TAB_LABELS: Record<View, string> = {
   inventory: "Inventory",
   projects: "Projects",
   sales: "Sales",
+  tasks: "Tasks",
   reports: "Reports",
   admin: "Admin",
 };
@@ -135,11 +145,38 @@ const TAB_LABELS: Record<View, string> = {
 // can grant/restrict any individual user's exact tab list from the Admin page
 // regardless of these defaults.
 const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
-  warehouse: ["dashboard", "inventory", "projects"],
-  purchasing: ["dashboard", "purchasing", "inventory", "reports"],
-  pm: ["dashboard", "projects", "inventory", "sales", "reports"],
-  manager: ["dashboard", "purchasing", "inventory", "projects", "sales", "reports"],
+  warehouse: ["dashboard", "inventory", "projects", "tasks"],
+  purchasing: ["dashboard", "purchasing", "inventory", "tasks", "reports"],
+  pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports"],
+  manager: ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports"],
 };
+
+const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
+  { value: "warehouse", label: "Warehouse" },
+  { value: "purchasing", label: "Purchasing" },
+  { value: "inventory", label: "Inventory" },
+  { value: "projects", label: "Projects" },
+  { value: "sales", label: "Sales" },
+  { value: "engineering", label: "Engineering" },
+  { value: "general", label: "General / Internal" },
+];
+
+const TASK_STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
+  { value: "to_do", label: "To Do" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "ready_for_review", label: "Ready for Review" },
+  { value: "done", label: "Done" },
+  { value: "blocked", label: "Blocked" },
+];
+
+const TASK_PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string }> = [
+  { value: "low", label: "Low" },
+  { value: "normal", label: "Normal" },
+  { value: "high", label: "High" },
+  { value: "urgent", label: "Urgent" },
+];
+
+const IMPACT_AREA_OPTIONS = ["Inventory", "Purchasing", "Sales", "Projects", "Reports", "Other"];
 type SyncStatus = "local" | "auth" | "loading" | "saving" | "synced" | "error";
 
 type InventoryMovement = {
@@ -845,7 +882,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "projects", "sales", "reports", "admin"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "admin"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -930,6 +967,8 @@ function App() {
   const [approvalStatuses, setApprovalStatuses] = useState<UserStatus[]>([]);
   const [allowedViewsMap, setAllowedViewsMap] = useState<Record<string, string[] | null>>({});
   const [approvalReviewStatus, setApprovalReviewStatus] = useState("");
+  const [tasks, setTasks] = useState<EOTask[]>([]);
+  const [taskStatusMessage, setTaskStatusMessage] = useState("");
   const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -1242,6 +1281,54 @@ function App() {
     }
     await setCatalogItemRetired(id, retired, authSession.accessToken);
     setCatalogItems((current) => current.map((item) => (item.id === id ? { ...item, isRetired: retired } : item)));
+  }
+
+  function reloadTasks(accessToken: string) {
+    loadTasks(accessToken)
+      .then(setTasks)
+      .catch(() => setTaskStatusMessage("Could not load tasks."));
+  }
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setTasks([]);
+      return;
+    }
+    reloadTasks(authSession.accessToken);
+  }, [authSession]);
+
+  async function handleCreateTask(task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const created = await createTask(task, authSession.userId, authSession.accessToken);
+      setTasks((current) => [created, ...current]);
+      setTaskStatusMessage(`${created.title} added.`);
+    } catch (error) {
+      setTaskStatusMessage(error instanceof Error ? error.message : "Could not create task.");
+    }
+  }
+
+  async function handleUpdateTask(id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const updated = await updateTask(id, task, authSession.accessToken);
+      setTasks((current) => current.map((existing) => (existing.id === id ? updated : existing)));
+      setTaskStatusMessage(`${updated.title} updated.`);
+    } catch (error) {
+      setTaskStatusMessage(error instanceof Error ? error.message : "Could not update task.");
+    }
+  }
+
+  async function handleDeleteTask(id: string) {
+    if (!authSession) {
+      return;
+    }
+    await deleteTask(id, authSession.accessToken);
+    setTasks((current) => current.filter((task) => task.id !== id));
   }
 
   useEffect(() => {
@@ -2152,6 +2239,7 @@ function App() {
             {allowedTabs.includes("inventory") && <NavButton icon={<Boxes size={16} />} label="Inventory" active={view === "inventory"} onClick={() => navigateToView("inventory")} />}
             {allowedTabs.includes("projects") && <NavButton icon={<ClipboardList size={16} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />}
             {allowedTabs.includes("sales") && <NavButton icon={<DollarSign size={16} />} label="Sales" active={view === "sales"} onClick={() => navigateToView("sales")} />}
+            {allowedTabs.includes("tasks") && <NavButton icon={<ListChecks size={16} />} label="Tasks" active={view === "tasks"} onClick={() => navigateToView("tasks")} />}
             {allowedTabs.includes("reports") && <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />}
           </nav>
           <div className="top-nav-actions">
@@ -2231,6 +2319,17 @@ function App() {
             onRefresh={() => authSession && reloadCatalog(authSession.accessToken)}
           />
         )}
+        {view === "tasks" && allowedTabs.includes("tasks") && (
+          <TasksBoard
+            tasks={tasks}
+            projectSites={projectSites}
+            status={taskStatusMessage}
+            onCreate={handleCreateTask}
+            onUpdate={handleUpdateTask}
+            onDelete={handleDeleteTask}
+            onRefresh={() => authSession && reloadTasks(authSession.accessToken)}
+          />
+        )}
         {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} />}
         {view === "admin" && canReviewApprovals && (
           <AdminPage
@@ -2279,6 +2378,7 @@ function pageTitle(view: View) {
     inventory: "Inventory",
     projects: "Projects",
     sales: "Sales",
+    tasks: "Tasks",
     reports: "Reports",
     admin: "Admin",
   };
@@ -5606,6 +5706,263 @@ function SalesCatalog({
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setModalOpen(false)}>Cancel</button>
               <button className="primary-action" type="button" onClick={submitDraft} disabled={!draft.productName.trim()}>{editingId ? "Save Product" : "Add Product"}</button>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const EMPTY_TASK_DRAFT = {
+  title: "",
+  description: "",
+  section: "general" as TaskSection,
+  projectRef: "",
+  isInternal: true,
+  status: "to_do" as TaskStatus,
+  priority: "normal" as TaskPriority,
+  category: "",
+  impactAreas: [] as string[],
+  assigneeUserId: null as string | null,
+  assigneeEmail: "",
+  dueDate: "",
+};
+
+function priorityBadgeClass(priority: TaskPriority) {
+  return `priority-pill priority-${priority}`;
+}
+
+function TasksBoard({
+  tasks,
+  projectSites,
+  status,
+  onCreate,
+  onUpdate,
+  onDelete,
+  onRefresh,
+}: {
+  tasks: EOTask[];
+  projectSites: ProjectSite[];
+  status: string;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onDelete: (id: string) => void;
+  onRefresh: () => void;
+}) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState(EMPTY_TASK_DRAFT);
+  const [sectionFilter, setSectionFilter] = useState<"all" | TaskSection>("all");
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  const filteredTasks = sectionFilter === "all" ? tasks : tasks.filter((task) => task.section === sectionFilter);
+
+  function openAddModal() {
+    setEditingId(null);
+    setDraft(EMPTY_TASK_DRAFT);
+    setModalOpen(true);
+  }
+
+  function openEditModal(task: EOTask) {
+    setEditingId(task.id);
+    setDraft({
+      title: task.title,
+      description: task.description,
+      section: task.section,
+      projectRef: task.projectRef,
+      isInternal: task.isInternal,
+      status: task.status,
+      priority: task.priority,
+      category: task.category,
+      impactAreas: task.impactAreas,
+      assigneeUserId: task.assigneeUserId,
+      assigneeEmail: task.assigneeEmail,
+      dueDate: task.dueDate,
+    });
+    setModalOpen(true);
+  }
+
+  function submitDraft() {
+    if (!draft.title.trim()) {
+      return;
+    }
+    if (editingId) {
+      onUpdate(editingId, draft);
+    } else {
+      onCreate(draft);
+    }
+    setModalOpen(false);
+  }
+
+  return (
+    <div className="content-grid">
+      <section className="panel wide">
+        <PanelHeader title="Tasks" label="Work items grouped by status across every section" />
+        <div className="report-filter-row">
+          <button className="primary-action mini-action" type="button" onClick={openAddModal}>
+            <Plus size={14} /> Add Task
+          </button>
+          <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
+          <label className="inline-filter-field">Section
+            <select value={sectionFilter} onChange={(event) => setSectionFilter(event.target.value as "all" | TaskSection)}>
+              <option value="all">All sections</option>
+              {TASK_SECTION_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          {status && <span className="muted">{status}</span>}
+        </div>
+
+        {TASK_STATUS_OPTIONS.map((statusOption) => {
+          const groupTasks = filteredTasks.filter((task) => task.status === statusOption.value);
+          const isCollapsed = collapsedGroups[statusOption.value] ?? false;
+          return (
+            <div className="task-status-group" key={statusOption.value}>
+              <button
+                className="task-status-group-header"
+                type="button"
+                onClick={() => setCollapsedGroups((current) => ({ ...current, [statusOption.value]: !isCollapsed }))}
+              >
+                <span className={`status-pill status-${statusOption.value}`}>{statusOption.label}</span>
+                <span className="muted">{groupTasks.length}</span>
+              </button>
+              {!isCollapsed && (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Section</th>
+                      <th>Priority</th>
+                      <th>Category</th>
+                      <th>Impact</th>
+                      <th>Assignee</th>
+                      <th>Due</th>
+                      <th>Source</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupTasks.map((task) => (
+                      <tr key={task.id}>
+                        <td>{task.title}</td>
+                        <td>{TASK_SECTION_OPTIONS.find((option) => option.value === task.section)?.label ?? task.section}</td>
+                        <td><span className={priorityBadgeClass(task.priority)}>{task.priority}</span></td>
+                        <td>{task.category}</td>
+                        <td>
+                          {task.impactAreas.length > 0 ? (
+                            <div className="tag-chip-row">{task.impactAreas.map((tag) => <span key={tag}>{tag}</span>)}</div>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                        <td>{task.assigneeEmail || "Unassigned"}</td>
+                        <td>{task.dueDate || "-"}</td>
+                        <td>{task.isInternal ? "Internal" : task.projectRef || "External"}</td>
+                        <td>
+                          <select
+                            value={task.status}
+                            onChange={(event) => onUpdate(task.id, { status: event.target.value as TaskStatus })}
+                          >
+                            {TASK_STATUS_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                          <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(task)}>Edit</button>
+                          <button className="secondary-action mini-action" type="button" onClick={() => onDelete(task.id)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                    {groupTasks.length === 0 && (
+                      <tr>
+                        <td colSpan={9} className="empty-compact-state">No tasks in this status.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        })}
+      </section>
+
+      {modalOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="task-editor-title">{editingId ? "Edit Task" : "Add Task"}</h2>
+                <p>Track work across sections and, when relevant, a specific project.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setModalOpen(false)} aria-label="Close task editor">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">Title<input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Task title" /></label>
+              <label>Section<select value={draft.section} onChange={(event) => setDraft((current) => ({ ...current, section: event.target.value as TaskSection }))}>
+                {TASK_SECTION_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select></label>
+              <label>Priority<select value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value as TaskPriority }))}>
+                {TASK_PRIORITY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select></label>
+              <label>Status<select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as TaskStatus }))}>
+                {TASK_STATUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select></label>
+              <label>Category<input value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="e.g. API, Portal, FLI" /></label>
+              <label className="checkbox-inline-field">
+                <input
+                  type="checkbox"
+                  checked={draft.isInternal}
+                  onChange={(event) => setDraft((current) => ({ ...current, isInternal: event.target.checked, projectRef: event.target.checked ? "" : current.projectRef }))}
+                />
+                Internal (not tied to a client project)
+              </label>
+              {!draft.isInternal && (
+                <label>Project<select value={draft.projectRef} onChange={(event) => setDraft((current) => ({ ...current, projectRef: event.target.value }))}>
+                  <option value="">Select a project</option>
+                  {projectSites.map((project) => (
+                    <option key={project.ref} value={project.ref}>{project.ref} - {project.name}</option>
+                  ))}
+                </select></label>
+              )}
+              <label>Assignee email<input value={draft.assigneeEmail} onChange={(event) => setDraft((current) => ({ ...current, assigneeEmail: event.target.value }))} placeholder="name@company.com" /></label>
+              <label>Due date<input type="date" value={draft.dueDate} onChange={(event) => setDraft((current) => ({ ...current, dueDate: event.target.value }))} /></label>
+              <label className="span-2">Description<textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Details, links, context" /></label>
+              <div className="span-2">
+                <span className="muted">Affects (optional): which parts of the business this task touches when complete</span>
+                <div className="tag-picker-grid">
+                  {IMPACT_AREA_OPTIONS.map((tag) => {
+                    const checked = draft.impactAreas.includes(tag);
+                    return (
+                      <label key={tag} className="checkbox-inline">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => {
+                            setDraft((current) => ({
+                              ...current,
+                              impactAreas: event.target.checked
+                                ? [...current.impactAreas, tag]
+                                : current.impactAreas.filter((existing) => existing !== tag),
+                            }));
+                          }}
+                        />
+                        {tag}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setModalOpen(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={submitDraft} disabled={!draft.title.trim()}>{editingId ? "Save Task" : "Add Task"}</button>
             </div>
           </section>
         </div>

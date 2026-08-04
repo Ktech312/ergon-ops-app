@@ -27,6 +27,80 @@ button {
   min-height: 100vh;
 }
 
+.inline-filter-field {
+  align-items: center;
+  color: #514b43;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.inline-filter-field select {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 7px;
+  color: #174c43;
+  font: inherit;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+.checkbox-inline-field {
+  align-items: center;
+  color: #514b43;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+}
+
+.task-status-group {
+  margin-top: 14px;
+}
+
+.task-status-group-header {
+  align-items: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  width: 100%;
+}
+
+.status-pill,
+.priority-pill {
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 10px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status-pill {
+  background: #eef2f0;
+  color: #345d55;
+}
+
+.status-to_do { background: #eef0f2; color: #4a5568; }
+.status-in_progress { background: #fff1d6; color: #906313; }
+.status-ready_for_review { background: #e6effa; color: #1d5fa3; }
+.status-done { background: #dff1ea; color: #174c43; }
+.status-blocked { background: #fbe3df; color: #9a2f20; }
+
+.priority-pill {
+  background: #eef2f0;
+  color: #4a5568;
+}
+
+.priority-low { background: #eef0f2; color: #63748a; }
+.priority-normal { background: #eef2f0; color: #4a5568; }
+.priority-high { background: #fff1d6; color: #906313; }
+.priority-urgent { background: #fbe3df; color: #9a2f20; }
+
 .tab-permission-grid {
   display: flex;
   flex-wrap: wrap;
