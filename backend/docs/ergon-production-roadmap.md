@@ -961,6 +961,15 @@ dropzones) are oversized and waste vertical/horizontal space. When doing UI
 passes, tighten these down: padding should feel intentional, not like filler.
 This applies sitewide, not just to the examples above.
 
+## Deferred Idea: Change Order Uploads (Aug 2026)
+
+The "Build Sales BOM and Scope" upload on a project's detail page was
+intentionally shrunk (Aug 3 session) since it's realistically a one-time
+setup step per project. E raised the idea of adding a separate upload path
+for change orders after the initial quote, which would need its own flow
+(so it doesn't overwrite the original scope/BOM). Not built yet — scope it
+as its own feature when picked up.
+
 ## Known Risks
 
 - Navigation moved from a left sidebar to a top bar with a horizontally
