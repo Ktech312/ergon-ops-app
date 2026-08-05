@@ -30,6 +30,7 @@ import {
   addFormSchemaField,
   addScheduleTemplatePhase,
   addTaskHardwareDependency,
+  buildDocumentStoragePath,
   checkIsAdmin,
   consumeOAuthRedirectSession,
   createCatalogItem,
@@ -50,6 +51,7 @@ import {
   deleteTaskHardwareDependency,
   ensureOwnApprovalRequest,
   fetchPublicSubmittal,
+  getDocumentDownloadUrl,
   grantAdmin,
   loadAllAdmins,
   loadAllAllowedViews,
@@ -121,6 +123,7 @@ import {
   updateTeamMember,
   upsertKnownUser,
   upsertStandardInstallTime,
+  uploadDocumentFile,
   type ApprovalStatus,
   type AuthSession,
   type BomLine,
@@ -1199,16 +1202,43 @@ function App() {
     loadProjectDocuments(authSession.accessToken).then(setProjectDocuments).catch(() => {});
   }, [authSession]);
 
-  async function handleCreateProjectDocuments(docs: Array<Omit<UploadedDoc, "id">>) {
+  // Each entry can carry the actual File that was picked -- if it does, the
+  // bytes get uploaded to the private "project-documents" Storage bucket
+  // before the row is created, so the document record actually points at a
+  // retrievable file instead of only a name and size.
+  async function handleCreateProjectDocuments(entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) {
     if (!authSession) {
       return;
     }
     try {
+      const docs = await Promise.all(
+        entries.map(async ({ doc, file }) => {
+          if (!file) {
+            return doc;
+          }
+          const storagePath = buildDocumentStoragePath(doc.project, doc.name);
+          const uploaded = await uploadDocumentFile(file, storagePath, authSession.accessToken);
+          return uploaded ? { ...doc, storage: "Supabase Storage" as const, storagePath } : doc;
+        }),
+      );
       const created = await createProjectDocuments(docs, authSession.accessToken);
       setProjectDocuments((current) => [...created, ...current]);
     } catch (error) {
       setSyncStatus("error");
     }
+  }
+
+  async function handleDownloadDocument(doc: UploadedDoc) {
+    if (!authSession || !doc.storagePath) {
+      setAuthStatus("This document doesn't have a stored file to download (it may predate real file storage).");
+      return;
+    }
+    const url = await getDocumentDownloadUrl(doc.storagePath, authSession.accessToken);
+    if (!url) {
+      setAuthStatus("Could not generate a download link for this file.");
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   async function handleUpdateProjectDocumentStatus(id: UploadedDoc["id"], status: UploadedDoc["status"]) {
@@ -3098,9 +3128,9 @@ function App() {
         </div>
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
-        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
+        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesCatalog
             catalogItems={catalogItems}
@@ -3421,6 +3451,7 @@ function Purchasing({
   projectDocuments,
   onCreateDocuments,
   onUpdateDocumentStatus,
+  onDownloadDocument,
   lowStock,
   buildTransactions,
   onQueueReorderRequests,
@@ -3441,8 +3472,9 @@ function Purchasing({
   inventoryItems: Part[];
   purchaseRequests: PurchaseRequest[];
   projectDocuments: UploadedDoc[];
-  onCreateDocuments: (docs: Array<Omit<UploadedDoc, "id">>) => void;
+  onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
   onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
+  onDownloadDocument: (doc: UploadedDoc) => void;
   lowStock: Part[];
   buildTransactions: BuildTransaction[];
   onQueueReorderRequests: () => void;
@@ -3503,16 +3535,19 @@ function Purchasing({
 
   function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
-    const newDocs = files.map((file, index) => ({
-      name: file.name,
-      project: selectedProject,
-      size: file.size,
-      status: "Ready to review" as const,
-      type: "Purchasing" as const,
-      storage: "Browser" as const,
-      uploadedAt: new Date(Date.now() + index).toISOString(),
+    const entries = files.map((file, index) => ({
+      doc: {
+        name: file.name,
+        project: selectedProject,
+        size: file.size,
+        status: "Ready to review" as const,
+        type: "Purchasing" as const,
+        storage: "Browser" as const,
+        uploadedAt: new Date(Date.now() + index).toISOString(),
+      },
+      file,
     }));
-    onCreateDocuments(newDocs);
+    onCreateDocuments(entries);
     event.target.value = "";
   }
 
@@ -3824,6 +3859,9 @@ function Purchasing({
                 <option>Backed up</option>
                 <option>Archived</option>
               </select>
+              {"storagePath" in doc && doc.storagePath && (
+                <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc as UploadedDoc)}>Download</button>
+              )}
             </div>
           ))}
         </div>
@@ -5105,6 +5143,7 @@ function Projects({
   projectDocuments,
   onCreateDocuments,
   onUpdateDocumentStatus,
+  onDownloadDocument,
   onInventoryPull,
   onQueueProjectBomPurchaseRequest,
   tasks,
@@ -5135,8 +5174,9 @@ function Projects({
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
   inventoryItems: Part[];
   projectDocuments: UploadedDoc[];
-  onCreateDocuments: (docs: Array<Omit<UploadedDoc, "id">>) => void;
+  onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
   onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
+  onDownloadDocument: (doc: UploadedDoc) => void;
   onInventoryPull: (itemName: string, qty: number, projectName?: string, notes?: string) => void;
   onQueueProjectBomPurchaseRequest: (partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) => Promise<boolean>;
   tasks: EOTask[];
@@ -5496,13 +5536,16 @@ function Projects({
     updateProjectField("salesQuoteFile", file.name);
     onCreateDocuments([
       {
-        name: file.name,
-        project: projectName,
-        size: file.size,
-        status: "Ready to review",
-        type: "Sales Quote",
-        storage: "Browser",
-        uploadedAt: new Date().toISOString(),
+        doc: {
+          name: file.name,
+          project: projectName,
+          size: file.size,
+          status: "Ready to review",
+          type: "Sales Quote",
+          storage: "Browser",
+          uploadedAt: new Date().toISOString(),
+        },
+        file,
       },
     ]);
     setIsExtractingQuote(true);
@@ -5574,16 +5617,19 @@ function Projects({
       return;
     }
 
-    const docs = files.map((file, index) => ({
-      name: file.name,
-      project: selectedProject.name,
-      size: file.size,
-      status: "Uploaded" as const,
-      type: "Project" as const,
-      storage: "Browser" as const,
-      uploadedAt: new Date(Date.now() + index).toISOString(),
+    const entries = files.map((file, index) => ({
+      doc: {
+        name: file.name,
+        project: selectedProject.name,
+        size: file.size,
+        status: "Uploaded" as const,
+        type: "Project" as const,
+        storage: "Browser" as const,
+        uploadedAt: new Date(Date.now() + index).toISOString(),
+      },
+      file,
     }));
-    onCreateDocuments(docs);
+    onCreateDocuments(entries);
     setActionStatus(`${files.length} document${files.length === 1 ? "" : "s"} attached to ${selectedProject.ref}.`);
     event.target.value = "";
   }
@@ -5704,6 +5750,9 @@ function Projects({
                   <option>Backed up</option>
                   <option>Archived</option>
                 </select>
+                {doc.storagePath && (
+                  <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc)}>Download</button>
+                )}
               </div>
             ))}
             {selectedProjectDocuments.length === 0 && <div className="empty-compact-state">No documents yet.</div>}

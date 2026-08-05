@@ -2172,6 +2172,10 @@ export type ProjectDocument = {
   type?: "Purchasing" | "Sales Quote" | "SOW" | "BOM" | "Project";
   storage?: "Browser" | "Google Drive" | "Supabase Storage";
   uploadedAt?: string;
+  // Path inside the private "project-documents" Storage bucket -- present
+  // once the real file bytes were actually uploaded (Phase: real file
+  // storage). Resolve it to a usable link with getDocumentDownloadUrl.
+  storagePath?: string;
 };
 
 type ProjectDocumentRow = {
@@ -2183,6 +2187,7 @@ type ProjectDocumentRow = {
   document_type: string;
   storage_status: string;
   uploaded_at: string | null;
+  file_url: string | null;
 };
 
 function appDocumentType(type: ProjectDocument["type"]): string {
@@ -2251,6 +2256,7 @@ function mapProjectDocumentRow(row: ProjectDocumentRow): ProjectDocument {
     type: pgDocumentType(row.document_type),
     storage: appDocumentStorage(row.storage_status),
     uploadedAt: row.uploaded_at ?? undefined,
+    storagePath: row.file_url ?? undefined,
   };
 }
 
@@ -2258,7 +2264,7 @@ export async function loadProjectDocuments(accessToken?: string): Promise<Projec
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at&order=uploaded_at.desc"), {
+  const response = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,file_url&order=uploaded_at.desc"), {
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok) {
@@ -2283,7 +2289,8 @@ export async function createProjectDocuments(
     file_size_bytes: doc.size,
     status: pgDocumentStatus(doc.status),
     storage_status: pgDocumentStorage(doc.storage),
-    storage_provider: "browser",
+    storage_provider: doc.storage === "Supabase Storage" ? "supabase_storage" : "browser",
+    file_url: doc.storagePath ?? null,
     uploaded_at: doc.uploadedAt ?? new Date().toISOString(),
   }));
   const response = await fetch(supabaseUrl("project_documents"), {
@@ -2311,6 +2318,70 @@ export async function updateProjectDocumentStatusRemote(
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ status: pgDocumentStatus(status) }),
   });
+}
+
+// Real Storage: "Uploaded" used to only mean "we recorded the name and
+// size" -- the file itself was never sent anywhere, so it was gone the
+// moment the tab closed. This actually puts the bytes in a private
+// Supabase Storage bucket (see migration 031) and returns a storage path to
+// save alongside the document row (project_documents.file_url).
+const DOCUMENT_STORAGE_BUCKET = "project-documents";
+
+function sanitizeStoragePathSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_.-]+/g, "_").slice(0, 120) || "file";
+}
+
+export function buildDocumentStoragePath(projectName: string, fileName: string): string {
+  const stamp = Date.now().toString(36);
+  return `${sanitizeStoragePathSegment(projectName || "unassigned")}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
+}
+
+export async function uploadDocumentFile(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  const response = await fetch(
+    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${DOCUMENT_STORAGE_BUCKET}/${storagePath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": file.type || "application/octet-stream",
+        "x-upsert": "true",
+      },
+      body: file,
+    },
+  );
+  return response.ok;
+}
+
+export async function getDocumentDownloadUrl(storagePath: string, accessToken?: string): Promise<string | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !storagePath) {
+    return null;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  const response = await fetch(
+    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/sign/${DOCUMENT_STORAGE_BUCKET}/${storagePath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ expiresIn: 3600 }),
+    },
+  );
+  if (!response.ok) {
+    return null;
+  }
+  const body = (await response.json()) as { signedURL?: string };
+  if (!body.signedURL) {
+    return null;
+  }
+  return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1${body.signedURL}`;
 }
 
 // --- Phase 10a: Purchase Requests (cut over from the app_records blob to the
@@ -3722,7 +3793,8 @@ async function saveRestoredProjectDocuments(docs: ProjectDocument[], accessToken
     file_size_bytes: doc.size,
     status: pgDocumentStatus(doc.status),
     storage_status: pgDocumentStorage(doc.storage),
-    storage_provider: "browser",
+    storage_provider: doc.storage === "Supabase Storage" ? "supabase_storage" : "browser",
+    file_url: doc.storagePath ?? null,
     uploaded_at: doc.uploadedAt ?? new Date().toISOString(),
   }));
   await fetch(supabaseUrl("project_documents?on_conflict=id"), {
