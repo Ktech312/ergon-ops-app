@@ -226,7 +226,8 @@ const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
   { value: "purchasing", label: "Purchasing" },
   { value: "inventory", label: "Inventory" },
   { value: "projects", label: "Projects" },
-  { value: "sales", label: "Sales" },
+  { value: "sales_catalog", label: "Sales - Product Catalog" },
+  { value: "sales_quotes", label: "Sales - Quote Builder" },
   { value: "engineering", label: "Engineering" },
   { value: "general", label: "General / Internal" },
 ];
@@ -7599,11 +7600,11 @@ function SalesCatalog({
   return (
     <>
       <TaskMiniPanel
-        title="Sales Tasks"
-        tasks={tasks.filter((task) => task.section === "sales")}
+        title="Product Catalog Tasks"
+        tasks={tasks.filter((task) => task.section === "sales_catalog")}
         teamMembers={teamMembers}
         projectSites={projectSites}
-        section="sales"
+        section="sales_catalog"
         isInternal
         onCreate={onCreateTask}
         onUpdate={onUpdateTask}
@@ -7794,11 +7795,11 @@ function SalesQuoteBuilder({
   return (
     <>
       <TaskMiniPanel
-        title="Sales Tasks"
-        tasks={tasks.filter((task) => task.section === "sales")}
+        title="Quote Builder Tasks"
+        tasks={tasks.filter((task) => task.section === "sales_quotes")}
         teamMembers={teamMembers}
         projectSites={projectSites}
-        section="sales"
+        section="sales_quotes"
         isInternal
         onCreate={onCreateTask}
         onUpdate={onUpdateTask}
@@ -8667,7 +8668,24 @@ function TaskMiniPanel({
   const [draft, setDraft] = useState<TaskDraft>(EMPTY_TASK_DRAFT);
   const [showAll, setShowAll] = useState(false);
   const openTasks = tasks.filter((task) => task.status !== "done");
-  const visibleTasks = showAll ? tasks : openTasks.slice(0, 5);
+  const priorityRank: Record<TaskPriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+  const sortedOpenTasks = [...openTasks].sort((a, b) => {
+    const priorityDiff = (priorityRank[a.priority] ?? 2) - (priorityRank[b.priority] ?? 2);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+    if (a.dueDate && b.dueDate) {
+      return a.dueDate.localeCompare(b.dueDate);
+    }
+    if (a.dueDate) {
+      return -1;
+    }
+    if (b.dueDate) {
+      return 1;
+    }
+    return 0;
+  });
+  const visibleTasks = showAll ? sortedOpenTasks : sortedOpenTasks.slice(0, 5);
 
   function openAddModal() {
     setEditingId(null);
@@ -8728,9 +8746,9 @@ function TaskMiniPanel({
             {task.dueDate && <span className="muted">{task.dueDate}</span>}
           </button>
         ))}
-        {visibleTasks.length === 0 && <div className="empty-compact-state">No tasks yet.</div>}
+        {visibleTasks.length === 0 && <div className="empty-compact-state">No open tasks.</div>}
         {!showAll && openTasks.length > 5 && (
-          <button className="secondary-action mini-action" type="button" onClick={() => setShowAll(true)}>Show all ({tasks.length})</button>
+          <button className="secondary-action mini-action" type="button" onClick={() => setShowAll(true)}>Show all open ({openTasks.length})</button>
         )}
       </div>
       {modalOpen && (
