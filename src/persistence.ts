@@ -1086,6 +1086,40 @@ export async function updateTeamMember(id: string, member: Partial<Omit<TeamMemb
   return mapTeamMemberRow(rows[0]);
 }
 
+// The team roster (migration 019) is intentionally admin-maintained and NOT
+// auto-populated from auth.users -- someone can be assigned tasks before
+// they've ever logged in. That also means an admin who signs in for the
+// first time has an empty Assignee dropdown, including for themselves,
+// until someone manually adds them. This closes that gap: on every admin
+// sign-in, check whether their own email is already on the roster and add
+// it (with a best-effort display name from their email) only if it's
+// missing -- never overwrites a name/title an admin already edited.
+export async function ensureTeamMemberForSelf(email: string, fullNameGuess: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !email) {
+    return;
+  }
+  try {
+    const existingResponse = await fetch(supabaseUrl(`team_members?select=id&email=ilike.${encodeURIComponent(email)}&limit=1`), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (existingResponse.ok) {
+      const rows = (await existingResponse.json()) as Array<{ id: string }>;
+      if (rows.length > 0) {
+        return;
+      }
+    }
+    await fetch(supabaseUrl("team_members"), {
+      method: "POST",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ full_name: fullNameGuess, email, role_title: null, is_active: true }),
+    });
+  } catch {
+    // Best-effort convenience only -- if this fails (e.g. a race with
+    // another tab, or RLS denies a non-admin/manager), the person can
+    // still be added manually from Team Roster.
+  }
+}
+
 export type NotificationItem = {
   id: string;
   recipientEmail: string;

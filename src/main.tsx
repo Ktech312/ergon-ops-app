@@ -49,6 +49,7 @@ import {
   createSubmittalShareToken,
   createTask,
   createTeamMember,
+  ensureTeamMemberForSelf,
   deleteFormSchemaField,
   deletePresalesRule,
   deleteScheduleTemplatePhase,
@@ -1222,6 +1223,15 @@ function App() {
       }
       if (adminFlag || resolvedRole === "manager") {
         reloadApprovalQueue(authSession.accessToken);
+      }
+      if (adminFlag || resolvedRole === "manager") {
+        const guessedName = authSession.email
+          .split("@")[0]
+          .replace(/[._-]+/g, " ")
+          .replace(/\b\w/g, (letter) => letter.toUpperCase());
+        ensureTeamMemberForSelf(authSession.email, guessedName, authSession.accessToken).then(() =>
+          reloadTeamMembers(authSession.accessToken),
+        );
       }
     });
 
