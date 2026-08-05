@@ -73,7 +73,7 @@ select
   data.po_number,
   v.id,
   data.app_status,
-  data.pg_status,
+  data.pg_status::purchase_order_status,
   data.requested_date,
   data.subtotal,
   data.tax_amount,
