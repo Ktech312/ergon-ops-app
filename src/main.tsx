@@ -8,6 +8,8 @@ import {
   Building2,
   CalendarDays,
   Camera,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   DollarSign,
   ExternalLink,
@@ -1226,15 +1228,18 @@ function App() {
       if (adminFlag || resolvedRole === "manager") {
         reloadApprovalQueue(authSession.accessToken);
       }
-      if (adminFlag || resolvedRole === "manager") {
-        const guessedName = authSession.email
-          .split("@")[0]
-          .replace(/[._-]+/g, " ")
-          .replace(/\b\w/g, (letter) => letter.toUpperCase());
-        ensureTeamMemberForSelf(authSession.email, guessedName, authSession.accessToken).then(() =>
-          reloadTeamMembers(authSession.accessToken),
-        );
-      }
+      // Every signed-in user gets a shot at ensuring their own roster row
+      // exists (migration 035 lets anyone write only their own row by
+      // email) -- not just Admins/Managers, so everyone shows up in their
+      // own Assignee dropdown even if RLS still blocks them from touching
+      // anyone else's roster entry.
+      const guessedName = authSession.email
+        .split("@")[0]
+        .replace(/[._-]+/g, " ")
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+      ensureTeamMemberForSelf(authSession.email, guessedName, authSession.accessToken).then(() =>
+        reloadTeamMembers(authSession.accessToken),
+      );
     });
 
     return () => {
@@ -3790,6 +3795,7 @@ function Purchasing({
         projectSites={projectSites}
         section="purchasing"
         isInternal
+        hideAdd
         onCreate={onCreateTask}
         onUpdate={onUpdateTask}
         onDelete={onDeleteTask}
@@ -3806,6 +3812,7 @@ function Purchasing({
             <button className="secondary-action" type="button" onClick={exportPurchaseRequestQueue} disabled={filteredPurchaseRequests.length === 0}><FileText size={16} /> Export CSV</button>
             <button className="secondary-action" type="button" onClick={onQueueReorderRequests} disabled={lowStock.length === 0}><Plus size={16} /> Queue Reorders</button>
             <button className="primary-action" type="button" onClick={onQueuePlannedBuildShortageRequests} disabled={plannedBuilds === 0}><ShoppingCart size={16} /> Queue Build Shortages</button>
+            <RequestTaskButton section="purchasing" teamMembers={teamMembers} projectSites={projectSites} onCreate={onCreateTask} />
           </div>
         </div>
         <div className="request-queue">
@@ -4767,6 +4774,7 @@ function Inventory({
         projectSites={projectSites}
         section="inventory"
         isInternal
+        hideAdd
         onCreate={onCreateTask}
         onUpdate={onUpdateTask}
         onDelete={onDeleteTask}
@@ -4784,6 +4792,7 @@ function Inventory({
             <button className="secondary-action" type="button" onClick={() => openReceiveModal()}><Truck size={16} /> Receive Stock</button>
             <button className="secondary-action" type="button" onClick={() => openAdjustModal()}><ClipboardList size={16} /> Adjust Count</button>
             <button className="primary-action" type="button" onClick={openAddItemModal}><Plus size={17} /> Add New Item</button>
+            <RequestTaskButton section="inventory" teamMembers={teamMembers} projectSites={projectSites} onCreate={onCreateTask} />
           </div>
         </div>
         <div className={`role-workbench ${roleMode}`}>
@@ -5867,12 +5876,23 @@ function Projects({
   if (projectMode === "list") {
     return (
       <div className="content-grid projects-layout">
+        <TaskMiniPanel
+          title="Projects Tasks"
+          tasks={tasks.filter((task) => task.section === "projects" && !task.projectRef)}
+          teamMembers={teamMembers}
+          projectSites={projectSites}
+          section="projects"
+          isInternal
+          hideAdd
+          onCreate={onCreateTask}
+          onUpdate={onUpdateTask}
+          onDelete={onDeleteTask}
+          onOpenFull={onOpenTasksView}
+        />
+
         <section className="panel wide">
           <div className="action-header">
             <PanelHeader title="Projects" label="Project list, completion, and PM handoff status" />
-            <div className="action-row">
-              <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
-            </div>
           </div>
         </section>
 
@@ -5884,7 +5904,13 @@ function Projects({
         </section>
 
         <section className="panel full">
-          <PanelHeader title="Project List" label="Open a project to edit site info, SOW, and BOM" />
+          <div className="action-header">
+            <PanelHeader title="Project List" label="Open a project to edit site info, SOW, and BOM" />
+            <div className="action-row">
+              <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
+              <RequestTaskButton section="projects" teamMembers={teamMembers} projectSites={projectSites} onCreate={onCreateTask} />
+            </div>
+          </div>
           <table>
             <thead>
               <tr><th>Ref</th><th>Project</th><th>Client</th><th>Status</th><th>Completion</th><th>Open BOM</th><th>Target</th><th>Allocated</th><th></th></tr>
@@ -7459,10 +7485,26 @@ function SalesHome({
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
 }) {
-  const [salesTab, setSalesTab] = useState<"catalog" | "quotes">("catalog");
+  // One combined review panel for both Catalog and Quote Builder tasks --
+  // no Add here (that lives inside each area below, see RequestTaskButton),
+  // this is purely "what's still open, across Sales, for a quick reference."
+  const combinedSalesTasks = tasks.filter((task) => task.section === "sales_catalog" || task.section === "sales_quotes");
 
   return (
     <div className="content-grid">
+      <TaskMiniPanel
+        title="Sales Tasks"
+        tasks={combinedSalesTasks}
+        teamMembers={teamMembers}
+        projectSites={projectSites}
+        isInternal
+        hideAdd
+        onCreate={onCreateTask}
+        onUpdate={onUpdateTask}
+        onDelete={onDeleteTask}
+        onOpenFull={onOpenTasksView}
+      />
+
       <section className="panel wide">
         <div className="panel-title-row">
           <div>
@@ -7470,52 +7512,36 @@ function SalesHome({
             <p>Product catalog reference and quote design for parking garage/lot sites.</p>
           </div>
         </div>
-        <div className="segmented-tabs report-tabs">
-          <button className={salesTab === "catalog" ? "active" : ""} type="button" onClick={() => setSalesTab("catalog")}>Product Catalog</button>
-          <button className={salesTab === "quotes" ? "active" : ""} type="button" onClick={() => setSalesTab("quotes")}>Quote Builder</button>
-        </div>
       </section>
 
-      {salesTab === "catalog" && (
-        <SalesCatalog
-          catalogItems={catalogItems}
-          status={catalogStatus}
-          isConfigured={isConfigured}
-          canManage={canManageCatalog}
-          onCreate={onCreateCatalogItem}
-          onUpdate={onUpdateCatalogItem}
-          onSetRetired={onSetCatalogItemRetired}
-          onBulkImport={onBulkImportCatalogItems}
-          onRefresh={onRefreshCatalog}
-          projectSites={projectSites}
-          tasks={tasks}
-          teamMembers={teamMembers}
-          onCreateTask={onCreateTask}
-          onUpdateTask={onUpdateTask}
-          onDeleteTask={onDeleteTask}
-          onOpenTasksView={onOpenTasksView}
-        />
-      )}
+      <SalesCatalog
+        catalogItems={catalogItems}
+        status={catalogStatus}
+        isConfigured={isConfigured}
+        canManage={canManageCatalog}
+        onCreate={onCreateCatalogItem}
+        onUpdate={onUpdateCatalogItem}
+        onSetRetired={onSetCatalogItemRetired}
+        onBulkImport={onBulkImportCatalogItems}
+        onRefresh={onRefreshCatalog}
+        projectSites={projectSites}
+        teamMembers={teamMembers}
+        onCreateTask={onCreateTask}
+      />
 
-      {salesTab === "quotes" && (
-        <SalesQuoteBuilder
-          salesQuotes={salesQuotes}
-          status={salesQuoteStatus}
-          isConfigured={isConfigured}
-          onCreateQuote={onCreateSalesQuote}
-          onAddLocation={onAddSalesQuoteLocation}
-          onUpdateLocation={onUpdateSalesQuoteLocation}
-          onUploadImage={onUploadSalesQuoteImage}
-          onDownloadImage={onDownloadSalesQuoteImage}
-          projectSites={projectSites}
-          tasks={tasks}
-          teamMembers={teamMembers}
-          onCreateTask={onCreateTask}
-          onUpdateTask={onUpdateTask}
-          onDeleteTask={onDeleteTask}
-          onOpenTasksView={onOpenTasksView}
-        />
-      )}
+      <SalesQuoteBuilder
+        salesQuotes={salesQuotes}
+        status={salesQuoteStatus}
+        isConfigured={isConfigured}
+        onCreateQuote={onCreateSalesQuote}
+        onAddLocation={onAddSalesQuoteLocation}
+        onUpdateLocation={onUpdateSalesQuoteLocation}
+        onUploadImage={onUploadSalesQuoteImage}
+        onDownloadImage={onDownloadSalesQuoteImage}
+        projectSites={projectSites}
+        teamMembers={teamMembers}
+        onCreateTask={onCreateTask}
+      />
     </div>
   );
 }
@@ -7546,12 +7572,8 @@ function SalesCatalog({
   onBulkImport,
   onRefresh,
   projectSites,
-  tasks,
   teamMembers,
   onCreateTask,
-  onUpdateTask,
-  onDeleteTask,
-  onOpenTasksView,
 }: {
   catalogItems: CatalogItem[];
   status: string;
@@ -7563,12 +7585,8 @@ function SalesCatalog({
   onBulkImport: (items: Array<Omit<CatalogItem, "id" | "catalogNumber">>) => Promise<number>;
   onRefresh: () => void;
   projectSites: ProjectSite[];
-  tasks: EOTask[];
   teamMembers: TeamMember[];
   onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
-  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
-  onDeleteTask: (id: string) => void;
-  onOpenTasksView: () => void;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -7578,6 +7596,7 @@ function SalesCatalog({
   const [importRows, setImportRows] = useState<Array<Omit<CatalogItem, "id" | "catalogNumber">>>([]);
   const [importStatus, setImportStatus] = useState("");
   const [isCommittingImport, setIsCommittingImport] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const visibleItems = catalogItems.filter((item) => showRetired || !item.isRetired);
 
@@ -7700,82 +7719,79 @@ function SalesCatalog({
 
   return (
     <>
-      <TaskMiniPanel
-        title="Product Catalog Tasks"
-        tasks={tasks.filter((task) => task.section === "sales_catalog")}
-        teamMembers={teamMembers}
-        projectSites={projectSites}
-        section="sales_catalog"
-        isInternal
-        onCreate={onCreateTask}
-        onUpdate={onUpdateTask}
-        onDelete={onDeleteTask}
-        onOpenFull={onOpenTasksView}
-      />
-
       <section className="panel wide">
-        <PanelHeader title="Product Catalog" label="Reference info: datasheets and actively sold products" />
-        <div className="report-filter-row">
-          {canManage && (
-            <button className="primary-action mini-action" type="button" onClick={openAddModal} disabled={!isConfigured}>
-              <Plus size={14} /> Add Product
-            </button>
-          )}
-          {canManage && (
-            <button className="secondary-action mini-action" type="button" onClick={openImportModal} disabled={!isConfigured}>
-              <Upload size={14} /> Upload list
-            </button>
-          )}
-          <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
-          <label className="checkbox-inline"><input type="checkbox" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} /> Show retired</label>
-          {!isConfigured && <span className="muted">Set Supabase env vars to manage the catalog.</span>}
-          {!canManage && <span className="muted">Only Admins and Managers can add, edit, or retire catalog items.</span>}
-          {status && <span className="muted">{status}</span>}
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Catalog #</th>
-              <th>Product</th>
-              <th>Category</th>
-              <th>Manufacturer</th>
-              <th>Sell Price</th>
-              <th>Linked Ref</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleItems.map((item) => (
-              <tr key={item.id} className={item.isRetired ? "muted-row" : ""}>
-                <td>{item.catalogNumber}</td>
-                <td>{item.productName}</td>
-                <td>{item.category}</td>
-                <td>{item.manufacturer}</td>
-                <td>{money(item.defaultSellPrice)}</td>
-                <td>{item.linkedReference}</td>
-                <td>{item.isRetired ? "Retired" : "Active"}</td>
-                <td>
-                  {canManage && (
-                    <>
-                      <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(item)}>Edit</button>
-                      <button className="secondary-action mini-action" type="button" onClick={() => onSetRetired(item.id, !item.isRetired)}>
-                        {item.isRetired ? "Reactivate" : "Retire"}
-                      </button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {visibleItems.length === 0 && (
-              <tr>
-                <td colSpan={8} className="empty-compact-state">
-                  No catalog items yet. Add a product to start building the sales catalog.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        <PanelHeader
+          title="Product Catalog"
+          label="Reference info: datasheets and actively sold products"
+          collapsed={isCollapsed}
+          onToggleCollapse={() => setIsCollapsed((current) => !current)}
+        />
+        {!isCollapsed && (
+          <>
+            <div className="report-filter-row">
+              {canManage && (
+                <button className="primary-action mini-action" type="button" onClick={openAddModal} disabled={!isConfigured}>
+                  <Plus size={14} /> Add Product
+                </button>
+              )}
+              {canManage && (
+                <button className="secondary-action mini-action" type="button" onClick={openImportModal} disabled={!isConfigured}>
+                  <Upload size={14} /> Upload list
+                </button>
+              )}
+              <RequestTaskButton section="sales_catalog" teamMembers={teamMembers} projectSites={projectSites} onCreate={onCreateTask} />
+              <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
+              <label className="checkbox-inline"><input type="checkbox" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} /> Show retired</label>
+              {!isConfigured && <span className="muted">Set Supabase env vars to manage the catalog.</span>}
+              {!canManage && <span className="muted">Only Admins and Managers can add, edit, or retire catalog items.</span>}
+              {status && <span className="muted">{status}</span>}
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Catalog #</th>
+                  <th>Product</th>
+                  <th>Category</th>
+                  <th>Manufacturer</th>
+                  <th>Sell Price</th>
+                  <th>Linked Ref</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleItems.map((item) => (
+                  <tr key={item.id} className={item.isRetired ? "muted-row" : ""}>
+                    <td>{item.catalogNumber}</td>
+                    <td>{item.productName}</td>
+                    <td>{item.category}</td>
+                    <td>{item.manufacturer}</td>
+                    <td>{money(item.defaultSellPrice)}</td>
+                    <td>{item.linkedReference}</td>
+                    <td>{item.isRetired ? "Retired" : "Active"}</td>
+                    <td>
+                      {canManage && (
+                        <>
+                          <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(item)}>Edit</button>
+                          <button className="secondary-action mini-action" type="button" onClick={() => onSetRetired(item.id, !item.isRetired)}>
+                            {item.isRetired ? "Reactivate" : "Retire"}
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {visibleItems.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="empty-compact-state">
+                      No catalog items yet. Add a product to start building the sales catalog.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </>
+        )}
       </section>
 
       {modalOpen && (
@@ -7886,12 +7902,8 @@ function SalesQuoteBuilder({
   onUploadImage,
   onDownloadImage,
   projectSites,
-  tasks,
   teamMembers,
   onCreateTask,
-  onUpdateTask,
-  onDeleteTask,
-  onOpenTasksView,
 }: {
   salesQuotes: SalesQuote[];
   status: string;
@@ -7906,18 +7918,15 @@ function SalesQuoteBuilder({
   onUploadImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File) => void;
   onDownloadImage: (image: SalesQuoteLocationImage) => void;
   projectSites: ProjectSite[];
-  tasks: EOTask[];
   teamMembers: TeamMember[];
   onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
-  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
-  onDeleteTask: (id: string) => void;
-  onOpenTasksView: () => void;
 }) {
   const [mode, setMode] = useState<"list" | "detail">("list");
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
   const [newQuoteDraft, setNewQuoteDraft] = useState(EMPTY_NEW_QUOTE_DRAFT);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const selectedQuote = salesQuotes.find((quote) => quote.id === selectedQuoteId) ?? null;
   const selectedLocation = selectedQuote?.locations.find((location) => location.id === selectedLocationId) ?? null;
@@ -7951,25 +7960,23 @@ function SalesQuoteBuilder({
 
   return (
     <>
-      <TaskMiniPanel
-        title="Quote Builder Tasks"
-        tasks={tasks.filter((task) => task.section === "sales_quotes")}
-        teamMembers={teamMembers}
-        projectSites={projectSites}
-        section="sales_quotes"
-        isInternal
-        onCreate={onCreateTask}
-        onUpdate={onUpdateTask}
-        onDelete={onDeleteTask}
-        onOpenFull={onOpenTasksView}
-      />
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <div>
+            <h2>Quote Builder</h2>
+            <p>Scope a client's garages and parking lots, then build a hardware quote.</p>
+          </div>
+          <button className="icon-button" type="button" onClick={() => setIsCollapsed((current) => !current)} aria-label={isCollapsed ? "Expand section" : "Collapse section"}>
+            {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+          </button>
+        </div>
+      </section>
 
-      {mode === "list" && (
+      {!isCollapsed && mode === "list" && (
         <section className="panel wide">
           <div className="panel-title-row">
             <div>
-              <h2>Sale Design and Quote Builder</h2>
-              <p>Scope a client's garages and parking lots, then build a hardware quote.</p>
+              <p>Sale Design and Quote Builder</p>
             </div>
             <button className="primary-action mini-action" type="button" onClick={() => setShowNewQuoteModal(true)} disabled={!isConfigured}>
               <Plus size={14} /> Add New
@@ -7999,7 +8006,7 @@ function SalesQuoteBuilder({
         </section>
       )}
 
-      {mode === "detail" && selectedQuote && (
+      {!isCollapsed && mode === "detail" && selectedQuote && (
         <section className="panel wide">
           <div className="panel-title-row">
             <div>
@@ -8010,6 +8017,13 @@ function SalesQuoteBuilder({
             <div className="report-filter-row">
               <button className="secondary-action mini-action" type="button" onClick={() => onAddLocation(selectedQuote.id, "garage")}>+ Garage</button>
               <button className="secondary-action mini-action" type="button" onClick={() => onAddLocation(selectedQuote.id, "lot")}>+ Lot</button>
+              <RequestTaskButton
+                section="sales_quotes"
+                contextNote={`Regarding quote: ${selectedQuote.siteName} (${selectedQuote.clientName})`}
+                teamMembers={teamMembers}
+                projectSites={projectSites}
+                onCreate={onCreateTask}
+              />
             </div>
           </div>
           <table>
@@ -8143,6 +8157,63 @@ const EMPTY_TASK_DRAFT = {
 
 function priorityBadgeClass(priority: TaskPriority) {
   return `priority-pill priority-${priority}`;
+}
+
+// Small inline "Request" trigger for the Product Catalog toolbar and each
+// Quote Builder detail page -- opens the same task form as everywhere else,
+// pre-scoped to the calling area's section, without duplicating a whole
+// TaskMiniPanel (list + Open in Tasks + its own Add) in every sub-view. The
+// single combined "Sales Tasks" review panel at the top of the Sales page is
+// where those tasks actually get reviewed/worked; this is just how they get
+// created from wherever the need comes up.
+function RequestTaskButton({
+  section,
+  contextNote,
+  teamMembers,
+  projectSites,
+  onCreate,
+}: {
+  section: TaskSection;
+  contextNote?: string;
+  teamMembers: TeamMember[];
+  projectSites: ProjectSite[];
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<TaskDraft>(EMPTY_TASK_DRAFT);
+
+  function openModal() {
+    setDraft({ ...EMPTY_TASK_DRAFT, section, isInternal: true, description: contextNote ?? "" });
+    setOpen(true);
+  }
+
+  function submit() {
+    if (!draft.title.trim()) {
+      return;
+    }
+    onCreate(draft);
+    setOpen(false);
+  }
+
+  return (
+    <>
+      <button className="secondary-action mini-action" type="button" onClick={openModal}>
+        <Plus size={14} /> Request
+      </button>
+      {open && (
+        <TaskEditorModal
+          draft={draft}
+          setDraft={setDraft}
+          editingId={null}
+          projectSites={projectSites}
+          teamMembers={teamMembers}
+          onSubmit={submit}
+          onClose={() => setOpen(false)}
+          lockSection
+        />
+      )}
+    </>
+  );
 }
 
 type TaskGroupBy = "status" | "assignee" | "section";
@@ -8803,6 +8874,7 @@ function TaskMiniPanel({
   section,
   projectRef,
   isInternal,
+  hideAdd,
   onCreate,
   onUpdate,
   onDelete,
@@ -8812,9 +8884,10 @@ function TaskMiniPanel({
   tasks: EOTask[];
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
-  section: TaskSection;
+  section?: TaskSection;
   projectRef?: string;
   isInternal?: boolean;
+  hideAdd?: boolean;
   onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
   onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
   onDelete: (id: string) => void;
@@ -8846,7 +8919,7 @@ function TaskMiniPanel({
 
   function openAddModal() {
     setEditingId(null);
-    setDraft({ ...EMPTY_TASK_DRAFT, section, projectRef: projectRef ?? "", isInternal: isInternal ?? true });
+    setDraft({ ...EMPTY_TASK_DRAFT, section: section ?? EMPTY_TASK_DRAFT.section, projectRef: projectRef ?? "", isInternal: isInternal ?? true });
     setModalOpen(true);
   }
 
@@ -8891,7 +8964,9 @@ function TaskMiniPanel({
         </div>
         <div className="action-row">
           <button className="secondary-action mini-action" type="button" onClick={onOpenFull}>Open in Tasks</button>
-          <button className="primary-action mini-action" type="button" onClick={openAddModal}><Plus size={14} /> Add</button>
+          {!hideAdd && (
+            <button className="primary-action mini-action" type="button" onClick={openAddModal}><Plus size={14} /> Add</button>
+          )}
         </div>
       </div>
       <div className="task-mini-list">
@@ -8929,8 +9004,29 @@ function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; 
   return <section className="metric"><div>{icon}</div><span>{label}</span><strong>{value}</strong></section>;
 }
 
-function PanelHeader({ title, label }: { title: string; label: string }) {
-  return <header className="panel-header"><div><h2>{title}</h2><p>{label}</p></div><FileText size={18} /></header>;
+function PanelHeader({
+  title,
+  label,
+  collapsed,
+  onToggleCollapse,
+}: {
+  title: string;
+  label: string;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+}) {
+  return (
+    <header className="panel-header">
+      <div><h2>{title}</h2><p>{label}</p></div>
+      {onToggleCollapse ? (
+        <button className="icon-button" type="button" onClick={onToggleCollapse} aria-label={collapsed ? "Expand section" : "Collapse section"}>
+          {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        </button>
+      ) : (
+        <FileText size={18} />
+      )}
+    </header>
+  );
 }
 
 // Public, no-login client view for a single Submittal. Reached via
