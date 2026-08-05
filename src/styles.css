@@ -1385,6 +1385,23 @@ td small {
   width: 1px;
 }
 
+.hidden-file-label {
+  cursor: pointer;
+  position: relative;
+  white-space: nowrap;
+}
+
+.hidden-file-label input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+
+.quote-location-row-name {
+  min-width: 140px;
+}
+
 .status {
   background: #ebe5d8;
   border-radius: 999px;

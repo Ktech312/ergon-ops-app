@@ -7,6 +7,7 @@ import {
   Boxes,
   Building2,
   CalendarDays,
+  Camera,
   ClipboardList,
   DollarSign,
   ExternalLink,
@@ -37,9 +38,12 @@ import {
   createHandover,
   createNotification,
   createPresalesRule,
+  addSalesQuoteLocation,
+  addSalesQuoteLocationImage,
   createProjectDocuments,
   createPurchaseOrder,
   createPurchaseRequestRemote,
+  createSalesQuote,
   createScheduleTemplate,
   createSubmittal,
   createSubmittalShareToken,
@@ -53,6 +57,7 @@ import {
   ensureOwnApprovalRequest,
   fetchPublicSubmittal,
   getDocumentDownloadUrl,
+  getQuoteImageDownloadUrl,
   grantAdmin,
   loadAllAdmins,
   loadAllAllowedViews,
@@ -80,6 +85,7 @@ import {
   loadProjectSites,
   loadPurchaseOrders,
   loadPurchaseRequests,
+  loadSalesQuotes,
   loadRemoteAppState,
   loadScheduleTemplates,
   loadStandardInstallTimes,
@@ -121,6 +127,7 @@ import {
   updateProjectDocumentStatusRemote,
   updatePurchaseOrderStatus,
   updatePurchaseRequestRemote,
+  updateSalesQuoteLocation,
   updateTask,
   updateTaskHardwareDependencyStatus,
   updateTeamMember,
@@ -157,6 +164,9 @@ import {
   type PurchaseOrderLine,
   type PurchaseRequest,
   type PurchaseUrl,
+  type SalesQuote,
+  type SalesQuoteLocation,
+  type SalesQuoteLocationImage,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
   type ScopeOfWork,
@@ -812,6 +822,8 @@ function App() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [catalogStatus, setCatalogStatus] = useState("");
+  const [salesQuotes, setSalesQuotes] = useState<SalesQuote[]>([]);
+  const [salesQuoteStatus, setSalesQuoteStatus] = useState("");
   const [authChecksReady, setAuthChecksReady] = useState(false);
   const [userApprovalStatus, setUserApprovalStatus] = useState<UserStatus | null>(null);
   const [ownAllowedViews, setOwnAllowedViews] = useState<string[] | null>(null);
@@ -1344,6 +1356,96 @@ function App() {
     }
     await setCatalogItemRetired(id, retired, authSession.accessToken);
     setCatalogItems((current) => current.map((item) => (item.id === id ? { ...item, isRetired: retired } : item)));
+  }
+
+  // Sales Quote Builder (migration 033). Loaded once per session, same
+  // per-row create/update pattern as Purchase Orders/Requests.
+  function reloadSalesQuotes(accessToken: string) {
+    loadSalesQuotes(accessToken)
+      .then(setSalesQuotes)
+      .catch(() => setSalesQuoteStatus("Could not load sales quotes."));
+  }
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setSalesQuotes([]);
+      return;
+    }
+    reloadSalesQuotes(authSession.accessToken);
+  }, [authSession]);
+
+  async function handleCreateSalesQuote(input: { clientName: string; siteName: string; city: string; garageCount: number; lotCount: number }) {
+    if (!authSession) {
+      setSalesQuoteStatus("Sign in to create a quote.");
+      return;
+    }
+    try {
+      const created = await createSalesQuote({ ...input, createdByEmail: authSession.email }, authSession.accessToken);
+      if (created) {
+        setSalesQuotes((current) => [created, ...current]);
+        setSalesQuoteStatus(`Quote for ${created.siteName} created with ${created.locations.length} location${created.locations.length === 1 ? "" : "s"}.`);
+      }
+    } catch (error) {
+      setSalesQuoteStatus(error instanceof Error ? error.message : "Could not create the quote.");
+    }
+  }
+
+  async function handleAddSalesQuoteLocation(quoteId: string, locationType: "garage" | "lot") {
+    if (!authSession) {
+      return;
+    }
+    const quote = salesQuotes.find((entry) => entry.id === quoteId);
+    if (!quote) {
+      return;
+    }
+    const nextLineSort = quote.locations.length;
+    const created = await addSalesQuoteLocation(quoteId, locationType, nextLineSort, authSession.accessToken);
+    if (created) {
+      setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, locations: [...entry.locations, created] } : entry)));
+    }
+  }
+
+  async function handleUpdateSalesQuoteLocation(
+    quoteId: string,
+    locationId: string,
+    updates: Parameters<typeof updateSalesQuoteLocation>[1],
+  ) {
+    setSalesQuotes((current) =>
+      current.map((entry) =>
+        entry.id === quoteId
+          ? { ...entry, locations: entry.locations.map((location) => (location.id === locationId ? { ...location, ...updates } : location)) }
+          : entry,
+      ),
+    );
+    if (authSession) {
+      await updateSalesQuoteLocation(locationId, updates, authSession.accessToken);
+    }
+  }
+
+  async function handleUploadSalesQuoteImage(quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File) {
+    if (!authSession) {
+      return;
+    }
+    const image = await addSalesQuoteLocationImage(locationId, imageType, file, authSession.accessToken);
+    if (image) {
+      setSalesQuotes((current) =>
+        current.map((entry) =>
+          entry.id === quoteId
+            ? { ...entry, locations: entry.locations.map((location) => (location.id === locationId ? { ...location, images: [...location.images, image] } : location)) }
+            : entry,
+        ),
+      );
+    }
+  }
+
+  async function handleDownloadSalesQuoteImage(image: SalesQuoteLocationImage) {
+    if (!authSession) {
+      return;
+    }
+    const url = await getQuoteImageDownloadUrl(image.storagePath, authSession.accessToken);
+    if (url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
   }
 
   function reloadTasks(accessToken: string) {
@@ -3054,14 +3156,22 @@ function App() {
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
         {view === "sales" && allowedTabs.includes("sales") && (
-          <SalesCatalog
+          <SalesHome
             catalogItems={catalogItems}
-            status={catalogStatus}
+            catalogStatus={catalogStatus}
             isConfigured={isRemotePersistenceConfigured()}
-            onCreate={handleCreateCatalogItem}
-            onUpdate={handleUpdateCatalogItem}
-            onSetRetired={handleSetCatalogItemRetired}
-            onRefresh={() => authSession && reloadCatalog(authSession.accessToken)}
+            canManageCatalog={isAdmin || roleMode === "manager"}
+            onCreateCatalogItem={handleCreateCatalogItem}
+            onUpdateCatalogItem={handleUpdateCatalogItem}
+            onSetCatalogItemRetired={handleSetCatalogItemRetired}
+            onRefreshCatalog={() => authSession && reloadCatalog(authSession.accessToken)}
+            salesQuotes={salesQuotes}
+            salesQuoteStatus={salesQuoteStatus}
+            onCreateSalesQuote={handleCreateSalesQuote}
+            onAddSalesQuoteLocation={handleAddSalesQuoteLocation}
+            onUpdateSalesQuoteLocation={handleUpdateSalesQuoteLocation}
+            onUploadSalesQuoteImage={handleUploadSalesQuoteImage}
+            onDownloadSalesQuoteImage={handleDownloadSalesQuoteImage}
             projectSites={projectSites}
             tasks={tasks}
             teamMembers={teamMembers}
@@ -7270,6 +7380,120 @@ function AdminPage({
   );
 }
 
+// Sales page host: splits Product Catalog (an admin/manager-maintained
+// reference list) from the Quote Builder (a sales-authored workflow) into
+// sub-tabs, same segmented-tabs pattern Reports uses for its own sub-views.
+function SalesHome({
+  catalogItems,
+  catalogStatus,
+  isConfigured,
+  canManageCatalog,
+  onCreateCatalogItem,
+  onUpdateCatalogItem,
+  onSetCatalogItemRetired,
+  onRefreshCatalog,
+  salesQuotes,
+  salesQuoteStatus,
+  onCreateSalesQuote,
+  onAddSalesQuoteLocation,
+  onUpdateSalesQuoteLocation,
+  onUploadSalesQuoteImage,
+  onDownloadSalesQuoteImage,
+  projectSites,
+  tasks,
+  teamMembers,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteTask,
+  onOpenTasksView,
+}: {
+  catalogItems: CatalogItem[];
+  catalogStatus: string;
+  isConfigured: boolean;
+  canManageCatalog: boolean;
+  onCreateCatalogItem: (item: Omit<CatalogItem, "id" | "catalogNumber">) => void;
+  onUpdateCatalogItem: (id: string, item: Omit<CatalogItem, "id">) => void;
+  onSetCatalogItemRetired: (id: string, retired: boolean) => void;
+  onRefreshCatalog: () => void;
+  salesQuotes: SalesQuote[];
+  salesQuoteStatus: string;
+  onCreateSalesQuote: (input: { clientName: string; siteName: string; city: string; garageCount: number; lotCount: number }) => void;
+  onAddSalesQuoteLocation: (quoteId: string, locationType: "garage" | "lot") => void;
+  onUpdateSalesQuoteLocation: (
+    quoteId: string,
+    locationId: string,
+    updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
+  ) => void;
+  onUploadSalesQuoteImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File) => void;
+  onDownloadSalesQuoteImage: (image: SalesQuoteLocationImage) => void;
+  projectSites: ProjectSite[];
+  tasks: EOTask[];
+  teamMembers: TeamMember[];
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onDeleteTask: (id: string) => void;
+  onOpenTasksView: () => void;
+}) {
+  const [salesTab, setSalesTab] = useState<"catalog" | "quotes">("catalog");
+
+  return (
+    <div className="content-grid">
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <div>
+            <h2>Sales</h2>
+            <p>Product catalog reference and quote design for parking garage/lot sites.</p>
+          </div>
+        </div>
+        <div className="segmented-tabs report-tabs">
+          <button className={salesTab === "catalog" ? "active" : ""} type="button" onClick={() => setSalesTab("catalog")}>Product Catalog</button>
+          <button className={salesTab === "quotes" ? "active" : ""} type="button" onClick={() => setSalesTab("quotes")}>Quote Builder</button>
+        </div>
+      </section>
+
+      {salesTab === "catalog" && (
+        <SalesCatalog
+          catalogItems={catalogItems}
+          status={catalogStatus}
+          isConfigured={isConfigured}
+          canManage={canManageCatalog}
+          onCreate={onCreateCatalogItem}
+          onUpdate={onUpdateCatalogItem}
+          onSetRetired={onSetCatalogItemRetired}
+          onRefresh={onRefreshCatalog}
+          projectSites={projectSites}
+          tasks={tasks}
+          teamMembers={teamMembers}
+          onCreateTask={onCreateTask}
+          onUpdateTask={onUpdateTask}
+          onDeleteTask={onDeleteTask}
+          onOpenTasksView={onOpenTasksView}
+        />
+      )}
+
+      {salesTab === "quotes" && (
+        <SalesQuoteBuilder
+          salesQuotes={salesQuotes}
+          status={salesQuoteStatus}
+          isConfigured={isConfigured}
+          onCreateQuote={onCreateSalesQuote}
+          onAddLocation={onAddSalesQuoteLocation}
+          onUpdateLocation={onUpdateSalesQuoteLocation}
+          onUploadImage={onUploadSalesQuoteImage}
+          onDownloadImage={onDownloadSalesQuoteImage}
+          projectSites={projectSites}
+          tasks={tasks}
+          teamMembers={teamMembers}
+          onCreateTask={onCreateTask}
+          onUpdateTask={onUpdateTask}
+          onDeleteTask={onDeleteTask}
+          onOpenTasksView={onOpenTasksView}
+        />
+      )}
+    </div>
+  );
+}
+
 const EMPTY_CATALOG_DRAFT = {
   catalogNumber: "",
   productName: "",
@@ -7289,6 +7513,7 @@ function SalesCatalog({
   catalogItems,
   status,
   isConfigured,
+  canManage,
   onCreate,
   onUpdate,
   onSetRetired,
@@ -7304,6 +7529,7 @@ function SalesCatalog({
   catalogItems: CatalogItem[];
   status: string;
   isConfigured: boolean;
+  canManage: boolean;
   onCreate: (item: Omit<CatalogItem, "id" | "catalogNumber">) => void;
   onUpdate: (id: string, item: Omit<CatalogItem, "id">) => void;
   onSetRetired: (id: string, retired: boolean) => void;
@@ -7361,7 +7587,7 @@ function SalesCatalog({
   }
 
   return (
-    <div className="content-grid">
+    <>
       <TaskMiniPanel
         title="Sales Tasks"
         tasks={tasks.filter((task) => task.section === "sales")}
@@ -7376,14 +7602,17 @@ function SalesCatalog({
       />
 
       <section className="panel wide">
-        <PanelHeader title="Product Catalog" label="Sellable products and specs, separate from physical inventory" />
+        <PanelHeader title="Product Catalog" label="Reference info: datasheets and actively sold products" />
         <div className="report-filter-row">
-          <button className="primary-action mini-action" type="button" onClick={openAddModal} disabled={!isConfigured}>
-            <Plus size={14} /> Add Product
-          </button>
+          {canManage && (
+            <button className="primary-action mini-action" type="button" onClick={openAddModal} disabled={!isConfigured}>
+              <Plus size={14} /> Add Product
+            </button>
+          )}
           <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
           <label className="checkbox-inline"><input type="checkbox" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} /> Show retired</label>
           {!isConfigured && <span className="muted">Set Supabase env vars to manage the catalog.</span>}
+          {!canManage && <span className="muted">Only Admins and Managers can add, edit, or retire catalog items.</span>}
           {status && <span className="muted">{status}</span>}
         </div>
         <table>
@@ -7410,10 +7639,14 @@ function SalesCatalog({
                 <td>{item.linkedReference}</td>
                 <td>{item.isRetired ? "Retired" : "Active"}</td>
                 <td>
-                  <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(item)}>Edit</button>
-                  <button className="secondary-action mini-action" type="button" onClick={() => onSetRetired(item.id, !item.isRetired)}>
-                    {item.isRetired ? "Reactivate" : "Retire"}
-                  </button>
+                  {canManage && (
+                    <>
+                      <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(item)}>Edit</button>
+                      <button className="secondary-action mini-action" type="button" onClick={() => onSetRetired(item.id, !item.isRetired)}>
+                        {item.isRetired ? "Reactivate" : "Retire"}
+                      </button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
@@ -7461,7 +7694,266 @@ function SalesCatalog({
           </section>
         </div>
       )}
-    </div>
+    </>
+  );
+}
+
+const EMPTY_NEW_QUOTE_DRAFT = { clientName: "", siteName: "", city: "", garageCount: 1, lotCount: 0 };
+
+// Sale Design and Quote Builder. A quote starts with a client/site and a
+// count of garages and parking lots -- entering those counts generates one
+// location line item per garage/lot (see onCreateQuote/handleCreateSalesQuote
+// in the App component) for the sales person to name and detail. The
+// "Recommended Hardware" block per location is a deliberate placeholder: E
+// asked for the inputs (FLI/LPR/people counting, entries/exits/levels) to
+// exist now, with the rules engine that turns them into a camera/sign count
+// built next -- it is not decorative, it is explicitly staged.
+function SalesQuoteBuilder({
+  salesQuotes,
+  status,
+  isConfigured,
+  onCreateQuote,
+  onAddLocation,
+  onUpdateLocation,
+  onUploadImage,
+  onDownloadImage,
+  projectSites,
+  tasks,
+  teamMembers,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteTask,
+  onOpenTasksView,
+}: {
+  salesQuotes: SalesQuote[];
+  status: string;
+  isConfigured: boolean;
+  onCreateQuote: (input: { clientName: string; siteName: string; city: string; garageCount: number; lotCount: number }) => void;
+  onAddLocation: (quoteId: string, locationType: "garage" | "lot") => void;
+  onUpdateLocation: (
+    quoteId: string,
+    locationId: string,
+    updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
+  ) => void;
+  onUploadImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File) => void;
+  onDownloadImage: (image: SalesQuoteLocationImage) => void;
+  projectSites: ProjectSite[];
+  tasks: EOTask[];
+  teamMembers: TeamMember[];
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onDeleteTask: (id: string) => void;
+  onOpenTasksView: () => void;
+}) {
+  const [mode, setMode] = useState<"list" | "detail">("list");
+  const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
+  const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
+  const [newQuoteDraft, setNewQuoteDraft] = useState(EMPTY_NEW_QUOTE_DRAFT);
+
+  const selectedQuote = salesQuotes.find((quote) => quote.id === selectedQuoteId) ?? null;
+  const selectedLocation = selectedQuote?.locations.find((location) => location.id === selectedLocationId) ?? null;
+
+  function openQuote(id: string) {
+    setSelectedQuoteId(id);
+    setMode("detail");
+  }
+
+  function backToList() {
+    setMode("list");
+    setSelectedLocationId(null);
+  }
+
+  function submitNewQuote() {
+    if (!newQuoteDraft.clientName.trim() || !newQuoteDraft.siteName.trim()) {
+      return;
+    }
+    onCreateQuote(newQuoteDraft);
+    setNewQuoteDraft(EMPTY_NEW_QUOTE_DRAFT);
+    setShowNewQuoteModal(false);
+  }
+
+  function handleImageSelect(locationId: string, imageType: "photo" | "drawing", event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file && selectedQuote) {
+      onUploadImage(selectedQuote.id, locationId, imageType, file);
+    }
+    event.target.value = "";
+  }
+
+  return (
+    <>
+      <TaskMiniPanel
+        title="Sales Tasks"
+        tasks={tasks.filter((task) => task.section === "sales")}
+        teamMembers={teamMembers}
+        projectSites={projectSites}
+        section="sales"
+        isInternal
+        onCreate={onCreateTask}
+        onUpdate={onUpdateTask}
+        onDelete={onDeleteTask}
+        onOpenFull={onOpenTasksView}
+      />
+
+      {mode === "list" && (
+        <section className="panel wide">
+          <div className="panel-title-row">
+            <div>
+              <h2>Sale Design and Quote Builder</h2>
+              <p>Scope a client's garages and parking lots, then build a hardware quote.</p>
+            </div>
+            <button className="primary-action mini-action" type="button" onClick={() => setShowNewQuoteModal(true)} disabled={!isConfigured}>
+              <Plus size={14} /> Add New
+            </button>
+          </div>
+          {!isConfigured && <span className="muted">Set Supabase env vars to manage quotes.</span>}
+          {status && <small className="muted">{status}</small>}
+          <table>
+            <thead>
+              <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th></th></tr>
+            </thead>
+            <tbody>
+              {salesQuotes.map((quote) => (
+                <tr key={quote.id}>
+                  <td><strong>{quote.siteName}</strong><small>{quote.clientName}</small></td>
+                  <td>{quote.city || "-"}</td>
+                  <td>{quote.createdByEmail || "-"}</td>
+                  <td>{quote.locations.length}</td>
+                  <td><button className="table-action" type="button" onClick={() => openQuote(quote.id)}>Open</button></td>
+                </tr>
+              ))}
+              {salesQuotes.length === 0 && (
+                <tr><td colSpan={5} className="empty-compact-state">No quotes yet. Add New to start scoping a site.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {mode === "detail" && selectedQuote && (
+        <section className="panel wide">
+          <div className="panel-title-row">
+            <div>
+              <button className="secondary-action mini-action" type="button" onClick={backToList}>&larr; Back to quotes</button>
+              <h2>{selectedQuote.siteName}</h2>
+              <p>{selectedQuote.clientName} - {selectedQuote.city || "No city set"} - Started by {selectedQuote.createdByEmail || "Unknown"}</p>
+            </div>
+            <div className="report-filter-row">
+              <button className="secondary-action mini-action" type="button" onClick={() => onAddLocation(selectedQuote.id, "garage")}>+ Garage</button>
+              <button className="secondary-action mini-action" type="button" onClick={() => onAddLocation(selectedQuote.id, "lot")}>+ Lot</button>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Type</th><th>Name</th><th>Photos / Drawings</th><th></th></tr>
+            </thead>
+            <tbody>
+              {selectedQuote.locations.map((location) => (
+                <tr key={location.id}>
+                  <td><span className={`status ${location.locationType === "garage" ? "ok" : ""}`}>{location.locationType === "garage" ? "Garage" : "Lot"}</span></td>
+                  <td>
+                    <input
+                      className="quote-location-row-name"
+                      value={location.name}
+                      onChange={(event) => onUpdateLocation(selectedQuote.id, location.id, { name: event.target.value })}
+                      placeholder={location.locationType === "garage" ? "Garage name" : "Lot name"}
+                    />
+                  </td>
+                  <td>
+                    <label className="secondary-action mini-action hidden-file-label">
+                      <Camera size={14} /> Take Photo
+                      <input type="file" accept="image/*" capture="environment" onChange={(event) => handleImageSelect(location.id, "photo", event)} />
+                    </label>
+                    <label className="secondary-action mini-action hidden-file-label">
+                      <Upload size={14} /> Upload
+                      <input type="file" accept="image/*,.pdf" onChange={(event) => handleImageSelect(location.id, "drawing", event)} />
+                    </label>
+                    <small>{location.images.length} file{location.images.length === 1 ? "" : "s"}</small>
+                  </td>
+                  <td><button className="table-action" type="button" onClick={() => setSelectedLocationId(location.id)}>Details</button></td>
+                </tr>
+              ))}
+              {selectedQuote.locations.length === 0 && (
+                <tr><td colSpan={4} className="empty-compact-state">No garages or lots yet. Use + Garage / + Lot above.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {selectedLocation && selectedQuote && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="quote-location-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="quote-location-title">{selectedLocation.name || (selectedLocation.locationType === "garage" ? "Garage" : "Lot")}</h2>
+                <p>Site details the hardware rules engine will use.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setSelectedLocationId(null)} aria-label="Close location details">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="checkbox-inline span-2">
+                <input type="checkbox" checked={selectedLocation.fli} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { fli: event.target.checked })} /> FLI
+              </label>
+              <label className="checkbox-inline span-2">
+                <input type="checkbox" checked={selectedLocation.lpr} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { lpr: event.target.checked })} /> LPR
+              </label>
+              <label className="checkbox-inline span-2">
+                <input type="checkbox" checked={selectedLocation.peopleCounting} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { peopleCounting: event.target.checked })} /> People counting
+              </label>
+              <label>Entries<input type="number" min={0} value={selectedLocation.entriesCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { entriesCount: Number(event.target.value) || 0 })} /></label>
+              <label>Exits<input type="number" min={0} value={selectedLocation.exitsCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { exitsCount: Number(event.target.value) || 0 })} /></label>
+              <label>Levels<input type="number" min={0} value={selectedLocation.levelsCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { levelsCount: Number(event.target.value) || 0 })} /></label>
+            </div>
+            <div className="note-list">
+              <p><strong>Recommended Hardware</strong> -- rules engine coming next. Once built, this will size cameras, signs, and related hardware from the checkboxes and counts above.</p>
+            </div>
+            {selectedLocation.images.length > 0 && (
+              <div className="line-list">
+                {selectedLocation.images.map((image) => (
+                  <div className="line-item" key={image.id}>
+                    <div>
+                      <strong>{image.fileName || (image.imageType === "photo" ? "Photo" : "Drawing")}</strong>
+                      <span>{image.imageType === "photo" ? "Photo" : "Drawing"}</span>
+                    </div>
+                    <button className="secondary-action mini-action" type="button" onClick={() => onDownloadImage(image)}>View</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setSelectedLocationId(null)}>Close</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {showNewQuoteModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-quote-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="new-quote-title">New Quote</h2>
+                <p>Garage/lot counts create line items below to name individually after creating.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowNewQuoteModal(false)} aria-label="Close new quote form">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">Client name<input value={newQuoteDraft.clientName} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, clientName: event.target.value }))} placeholder="Client name" /></label>
+              <label className="span-2">Site name<input value={newQuoteDraft.siteName} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, siteName: event.target.value }))} placeholder="Site name" /></label>
+              <label>City<input value={newQuoteDraft.city} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, city: event.target.value }))} placeholder="City" /></label>
+              <label>Garages<input type="number" min={0} value={newQuoteDraft.garageCount} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, garageCount: Number(event.target.value) || 0 }))} /></label>
+              <label>Parking lots<input type="number" min={0} value={newQuoteDraft.lotCount} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, lotCount: Number(event.target.value) || 0 }))} /></label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowNewQuoteModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={submitNewQuote} disabled={!newQuoteDraft.clientName.trim() || !newQuoteDraft.siteName.trim()}>Create Quote</button>
+            </div>
+          </section>
+        </div>
+      )}
+    </>
   );
 }
 

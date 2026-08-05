@@ -4042,3 +4042,326 @@ export async function updatePurchaseOrderStatus(id: string, status: PurchaseOrde
     body: JSON.stringify({ app_status: status, status: pgPoStatus(status) }),
   });
 }
+
+// Sales Quote Builder (migration 033). A quote starts with a client/site and
+// a count of garages and parking lots -- those counts generate one location
+// row per garage/lot (see createSalesQuote) for the sales person to name and
+// detail. The hardware rules engine that will size cameras/signs per
+// location from these answers is a deliberate placeholder in the UI only;
+// there's no rules table yet.
+export type SalesQuoteLocationImage = {
+  id: string;
+  imageType: "photo" | "drawing";
+  storagePath: string;
+  fileName: string;
+  uploadedAt: string;
+};
+
+export type SalesQuoteLocation = {
+  id: string;
+  quoteId: string;
+  locationType: "garage" | "lot";
+  name: string;
+  lineSort: number;
+  fli: boolean;
+  lpr: boolean;
+  peopleCounting: boolean;
+  entriesCount: number;
+  exitsCount: number;
+  levelsCount: number;
+  images: SalesQuoteLocationImage[];
+};
+
+export type SalesQuote = {
+  id: string;
+  clientName: string;
+  siteName: string;
+  city: string;
+  createdByEmail: string;
+  createdAt: string;
+  locations: SalesQuoteLocation[];
+};
+
+type SalesQuoteLocationImageRow = {
+  id: string;
+  image_type: string;
+  storage_path: string;
+  file_name: string | null;
+  uploaded_at: string;
+};
+
+type SalesQuoteLocationRow = {
+  id: string;
+  quote_id: string;
+  location_type: string;
+  name: string;
+  line_sort: number;
+  fli: boolean;
+  lpr: boolean;
+  people_counting: boolean;
+  entries_count: number | string;
+  exits_count: number | string;
+  levels_count: number | string;
+  sales_quote_location_images: SalesQuoteLocationImageRow[];
+};
+
+type SalesQuoteRow = {
+  id: string;
+  client_name: string;
+  site_name: string;
+  city: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  sales_quote_locations: SalesQuoteLocationRow[];
+};
+
+function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQuoteLocationImage {
+  return {
+    id: row.id,
+    imageType: row.image_type === "drawing" ? "drawing" : "photo",
+    storagePath: row.storage_path,
+    fileName: row.file_name ?? "",
+    uploadedAt: row.uploaded_at,
+  };
+}
+
+function mapSalesQuoteLocationRow(row: SalesQuoteLocationRow): SalesQuoteLocation {
+  return {
+    id: row.id,
+    quoteId: row.quote_id,
+    locationType: row.location_type === "lot" ? "lot" : "garage",
+    name: row.name,
+    lineSort: row.line_sort,
+    fli: row.fli,
+    lpr: row.lpr,
+    peopleCounting: row.people_counting,
+    entriesCount: Number(row.entries_count) || 0,
+    exitsCount: Number(row.exits_count) || 0,
+    levelsCount: Number(row.levels_count) || 0,
+    images: (row.sales_quote_location_images ?? []).map(mapSalesQuoteLocationImageRow),
+  };
+}
+
+function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
+  return {
+    id: row.id,
+    clientName: row.client_name,
+    siteName: row.site_name,
+    city: row.city ?? "",
+    createdByEmail: row.created_by_email ?? "",
+    createdAt: row.created_at,
+    locations: (row.sales_quote_locations ?? [])
+      .map(mapSalesQuoteLocationRow)
+      .sort((a, b) => a.lineSort - b.lineSort),
+  };
+}
+
+const SALES_QUOTE_SELECT =
+  "id,client_name,site_name,city,created_by_email,created_at,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,uploaded_at))";
+
+export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`sales_quotes?select=${SALES_QUOTE_SELECT}&order=created_at.desc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as SalesQuoteRow[];
+  return rows.map(mapSalesQuoteRow);
+}
+
+export async function createSalesQuote(
+  input: { clientName: string; siteName: string; city: string; createdByEmail: string; garageCount: number; lotCount: number },
+  accessToken?: string,
+): Promise<SalesQuote | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const quoteResponse = await fetch(supabaseUrl("sales_quotes"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      client_name: input.clientName,
+      site_name: input.siteName,
+      city: input.city || null,
+      created_by_email: input.createdByEmail || null,
+    }),
+  });
+  if (!quoteResponse.ok) {
+    throw new Error(`Could not save the quote: ${quoteResponse.status}`);
+  }
+  const quoteRows = (await quoteResponse.json()) as Array<{ id: string }>;
+  const quoteId = quoteRows[0]?.id;
+  if (!quoteId) {
+    return null;
+  }
+
+  const garageCount = Math.max(0, Math.floor(input.garageCount) || 0);
+  const lotCount = Math.max(0, Math.floor(input.lotCount) || 0);
+  const locationPayload: Array<Record<string, unknown>> = [];
+  for (let index = 0; index < garageCount; index += 1) {
+    locationPayload.push({ quote_id: quoteId, location_type: "garage", name: `Garage ${index + 1}`, line_sort: index });
+  }
+  for (let index = 0; index < lotCount; index += 1) {
+    locationPayload.push({ quote_id: quoteId, location_type: "lot", name: `Lot ${index + 1}`, line_sort: garageCount + index });
+  }
+
+  let locationRows: SalesQuoteLocationRow[] = [];
+  if (locationPayload.length > 0) {
+    const locationResponse = await fetch(supabaseUrl("sales_quote_locations"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+      body: JSON.stringify(locationPayload),
+    });
+    if (locationResponse.ok) {
+      locationRows = (await locationResponse.json()) as SalesQuoteLocationRow[];
+    }
+  }
+
+  return {
+    id: quoteId,
+    clientName: input.clientName,
+    siteName: input.siteName,
+    city: input.city,
+    createdByEmail: input.createdByEmail,
+    createdAt: new Date().toISOString(),
+    locations: locationRows.map((row) => mapSalesQuoteLocationRow({ ...row, sales_quote_location_images: [] })),
+  };
+}
+
+export async function addSalesQuoteLocation(
+  quoteId: string,
+  locationType: "garage" | "lot",
+  nextLineSort: number,
+  accessToken?: string,
+): Promise<SalesQuoteLocation | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const label = locationType === "garage" ? "Garage" : "Lot";
+  const response = await fetch(supabaseUrl("sales_quote_locations"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ quote_id: quoteId, location_type: locationType, name: `${label} ${nextLineSort + 1}`, line_sort: nextLineSort }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as SalesQuoteLocationRow[];
+  return rows[0] ? mapSalesQuoteLocationRow({ ...rows[0], sales_quote_location_images: [] }) : null;
+}
+
+export async function updateSalesQuoteLocation(
+  id: string,
+  updates: Partial<{
+    name: string;
+    fli: boolean;
+    lpr: boolean;
+    peopleCounting: boolean;
+    entriesCount: number;
+    exitsCount: number;
+    levelsCount: number;
+  }>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.fli !== undefined) payload.fli = updates.fli;
+  if (updates.lpr !== undefined) payload.lpr = updates.lpr;
+  if (updates.peopleCounting !== undefined) payload.people_counting = updates.peopleCounting;
+  if (updates.entriesCount !== undefined) payload.entries_count = updates.entriesCount;
+  if (updates.exitsCount !== undefined) payload.exits_count = updates.exitsCount;
+  if (updates.levelsCount !== undefined) payload.levels_count = updates.levelsCount;
+  await fetch(supabaseUrl(`sales_quote_locations?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+const SALES_QUOTE_IMAGE_BUCKET = "sales-quote-images";
+
+export function buildQuoteImageStoragePath(quoteLocationId: string, fileName: string): string {
+  const stamp = Date.now().toString(36);
+  return `${quoteLocationId}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
+}
+
+export async function uploadQuoteImageFile(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  const response = await fetch(
+    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${SALES_QUOTE_IMAGE_BUCKET}/${storagePath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": file.type || "application/octet-stream",
+        "x-upsert": "true",
+      },
+      body: file,
+    },
+  );
+  return response.ok;
+}
+
+export async function getQuoteImageDownloadUrl(storagePath: string, accessToken?: string): Promise<string | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !storagePath) {
+    return null;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  const response = await fetch(
+    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/sign/${SALES_QUOTE_IMAGE_BUCKET}/${storagePath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ expiresIn: 3600 }),
+    },
+  );
+  if (!response.ok) {
+    return null;
+  }
+  const body = (await response.json()) as { signedURL?: string };
+  if (!body.signedURL) {
+    return null;
+  }
+  return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1${body.signedURL}`;
+}
+
+export async function addSalesQuoteLocationImage(
+  quoteLocationId: string,
+  imageType: "photo" | "drawing",
+  file: File,
+  accessToken?: string,
+): Promise<SalesQuoteLocationImage | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const storagePath = buildQuoteImageStoragePath(quoteLocationId, file.name);
+  const uploaded = await uploadQuoteImageFile(file, storagePath, accessToken);
+  if (!uploaded) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("sales_quote_location_images"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ quote_location_id: quoteLocationId, image_type: imageType, storage_path: storagePath, file_name: file.name }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as SalesQuoteLocationImageRow[];
+  return rows[0] ? mapSalesQuoteLocationImageRow(rows[0]) : null;
+}
