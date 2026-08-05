@@ -879,8 +879,11 @@ export type EOTask = {
   startDate: string;
   dueDate: string;
   createdBy: string | null;
+  createdByEmail: string;
   createdAt: string;
   completedAt: string | null;
+  closedByEmail: string;
+  closedAt: string;
 };
 
 type TaskRow = {
@@ -900,8 +903,11 @@ type TaskRow = {
   start_date: string | null;
   due_date: string | null;
   created_by: string | null;
+  created_by_email: string | null;
   created_at: string;
   completed_at: string | null;
+  closed_by_email: string | null;
+  closed_at: string | null;
 };
 
 function mapTaskRow(row: TaskRow): EOTask {
@@ -922,8 +928,11 @@ function mapTaskRow(row: TaskRow): EOTask {
     startDate: row.start_date ?? "",
     dueDate: row.due_date ?? "",
     createdBy: row.created_by,
+    createdByEmail: row.created_by_email ?? "",
     createdAt: row.created_at,
     completedAt: row.completed_at,
+    closedByEmail: row.closed_by_email ?? "",
+    closedAt: row.closed_at ?? "",
   };
 }
 
@@ -949,8 +958,9 @@ export async function loadTasks(accessToken?: string): Promise<EOTask[]> {
 }
 
 export async function createTask(
-  task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">,
+  task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">,
   createdBy: string,
+  createdByEmail: string,
   accessToken?: string,
 ): Promise<EOTask> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -978,6 +988,7 @@ export async function createTask(
       start_date: task.startDate || null,
       due_date: task.dueDate || null,
       created_by: createdBy,
+      created_by_email: createdByEmail || null,
     }),
   });
 
@@ -1010,6 +1021,8 @@ export async function updateTask(id: string, task: Partial<Omit<EOTask, "id" | "
   if (task.assigneeEmail !== undefined) payload.assignee_email = task.assigneeEmail || null;
   if (task.startDate !== undefined) payload.start_date = task.startDate || null;
   if (task.dueDate !== undefined) payload.due_date = task.dueDate || null;
+  if (task.closedByEmail !== undefined) payload.closed_by_email = task.closedByEmail || null;
+  if (task.closedAt !== undefined) payload.closed_at = task.closedAt || null;
 
   const response = await fetch(supabaseUrl(`tasks?id=eq.${id}`), {
     method: "PATCH",
@@ -1037,6 +1050,90 @@ export async function deleteTask(id: string, accessToken?: string) {
     method: "DELETE",
     headers: supabaseHeaders(accessToken),
   });
+}
+
+// Task audit trail (migration 036). One row per create/update/close/reopen,
+// loaded per-task on demand when the Edit Task modal opens for an existing
+// task -- append-only from the client (no update/delete policy), so this is
+// a genuine, tamper-resistant "who changed what, when" log.
+export type TaskActivityEntry = {
+  id: string;
+  taskId: string;
+  actorEmail: string;
+  message: string;
+  createdAt: string;
+};
+
+type TaskActivityRow = {
+  id: string;
+  task_id: string;
+  actor_email: string | null;
+  message: string;
+  created_at: string;
+};
+
+function mapTaskActivityRow(row: TaskActivityRow): TaskActivityEntry {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    actorEmail: row.actor_email ?? "",
+    message: row.message,
+    createdAt: row.created_at,
+  };
+}
+
+export async function loadTaskActivity(taskId: string, accessToken?: string): Promise<TaskActivityEntry[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !taskId) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl(`task_activity_log?select=*&task_id=eq.${taskId}&order=created_at.desc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as TaskActivityRow[];
+  return rows.map(mapTaskActivityRow);
+}
+
+// Loads the entire log (every task) in one call -- simplest way to make
+// per-task activity available to every place the Edit Task modal can be
+// opened from (mini-panels across Sales/Purchasing/Inventory/Projects plus
+// the full Tasks page) without a per-modal-open network round trip.
+export async function loadAllTaskActivity(accessToken?: string): Promise<TaskActivityEntry[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("task_activity_log?select=*&order=created_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as TaskActivityRow[];
+  return rows.map(mapTaskActivityRow);
+}
+
+export async function addTaskActivity(taskId: string, actorEmail: string, message: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !taskId) {
+    return;
+  }
+
+  try {
+    await fetch(supabaseUrl("task_activity_log"), {
+      method: "POST",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ task_id: taskId, actor_email: actorEmail || null, message }),
+    });
+  } catch {
+    // Best-effort -- a logging failure should never block the actual save.
+  }
 }
 
 export type TeamMember = {

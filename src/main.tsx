@@ -32,6 +32,7 @@ import {
   acquireTransactionLock,
   addFormSchemaField,
   addScheduleTemplatePhase,
+  addTaskActivity,
   addTaskHardwareDependency,
   buildDocumentStoragePath,
   checkIsAdmin,
@@ -91,6 +92,7 @@ import {
   loadPurchaseRequests,
   loadSalesQuotes,
   loadRemoteAppState,
+  loadAllTaskActivity,
   loadScheduleTemplates,
   loadStandardInstallTimes,
   loadSubmittalsForProject,
@@ -171,6 +173,7 @@ import {
   type SalesQuote,
   type SalesQuoteLocation,
   type SalesQuoteLocationImage,
+  type TaskActivityEntry,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
   type ScopeOfWork,
@@ -837,6 +840,7 @@ function App() {
   const [approvalReviewStatus, setApprovalReviewStatus] = useState("");
   const [tasks, setTasks] = useState<EOTask[]>([]);
   const [taskStatusMessage, setTaskStatusMessage] = useState("");
+  const [taskActivity, setTaskActivity] = useState<TaskActivityEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [teamMemberStatus, setTeamMemberStatus] = useState("");
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -1479,24 +1483,40 @@ function App() {
     loadTasks(accessToken)
       .then(setTasks)
       .catch(() => setTaskStatusMessage("Could not load tasks."));
+    loadAllTaskActivity(accessToken)
+      .then(setTaskActivity)
+      .catch(() => undefined);
   }
 
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setTasks([]);
+      setTaskActivity([]);
       return;
     }
     reloadTasks(authSession.accessToken);
   }, [authSession]);
 
-  async function handleCreateTask(task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) {
+  function logTaskActivityLocally(taskId: string, message: string) {
+    if (!authSession) {
+      return;
+    }
+    void addTaskActivity(taskId, authSession.email, message, authSession.accessToken);
+    setTaskActivity((current) => [
+      { id: makeId("activity"), taskId, actorEmail: authSession.email, message, createdAt: new Date().toISOString() },
+      ...current,
+    ]);
+  }
+
+  async function handleCreateTask(task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) {
     if (!authSession) {
       return;
     }
     try {
-      const created = await createTask(task, authSession.userId, authSession.accessToken);
+      const created = await createTask(task, authSession.userId, authSession.email, authSession.accessToken);
       setTasks((current) => [created, ...current]);
       setTaskStatusMessage(`${created.title} added.`);
+      logTaskActivityLocally(created.id, "Created the task.");
       if (created.assigneeEmail) {
         notify("task_assigned", created.assigneeEmail, "New task assigned", `"${created.title}" was assigned to you.`, "task", created.id, `task_assigned:${created.id}:${created.assigneeEmail}`);
       }
@@ -1511,9 +1531,25 @@ function App() {
     }
     try {
       const previous = tasks.find((existing) => existing.id === id);
-      const updated = await updateTask(id, task, authSession.accessToken);
+      // Close/Reopen is just a status change to/from "done", but it's always
+      // stamped here -- the one place that actually knows who's signed in --
+      // rather than relying on whatever triggered the status change (a
+      // dropdown pick or the modal's dedicated Close/Reopen button) to also
+      // know the current user's email.
+      const payload: Partial<Omit<EOTask, "id" | "taskNumber">> = { ...task };
+      if (task.status === "done" && previous?.status !== "done") {
+        payload.closedByEmail = authSession.email;
+        payload.closedAt = new Date().toISOString();
+      } else if (task.status !== undefined && task.status !== "done" && previous?.status === "done") {
+        payload.closedByEmail = "";
+        payload.closedAt = "";
+      }
+      const updated = await updateTask(id, payload, authSession.accessToken);
       setTasks((current) => current.map((existing) => (existing.id === id ? updated : existing)));
       setTaskStatusMessage(`${updated.title} updated.`);
+      if (previous) {
+        logTaskActivityLocally(id, describeTaskChanges(previous, updated));
+      }
       if (updated.assigneeEmail && updated.assigneeEmail !== previous?.assigneeEmail) {
         notify("task_assigned", updated.assigneeEmail, "Task assigned", `"${updated.title}" was assigned to you.`, "task", updated.id, `task_assigned:${updated.id}:${updated.assigneeEmail}`);
       }
@@ -1717,7 +1753,7 @@ function App() {
   // 8-hour work day, does not currently skip weekends -- a reasonable v1).
   // No AI call in this path at all, per E's decision to keep the actual
   // date math deterministic and auditable.
-  function generateScheduleTasks(project: ProjectSite, template: ScheduleTemplate): Array<Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">> {
+  function generateScheduleTasks(project: ProjectSite, template: ScheduleTemplate): Array<Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">> {
     const bomQtyByCategory = new Map<string, number>();
     project.bom.forEach((line) => {
       const part = inventoryItems.find((item) => item.name === line.item);
@@ -3179,9 +3215,9 @@ function App() {
         </div>
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
-        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
+        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
+        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -3202,6 +3238,7 @@ function App() {
             onDownloadSalesQuoteImage={handleDownloadSalesQuoteImage}
             projectSites={projectSites}
             tasks={tasks}
+            taskActivity={taskActivity}
             teamMembers={teamMembers}
             onCreateTask={handleCreateTask}
             onUpdateTask={handleUpdateTask}
@@ -3212,6 +3249,7 @@ function App() {
         {view === "tasks" && allowedTabs.includes("tasks") && (
           <TasksBoard
             tasks={tasks}
+            taskActivity={taskActivity}
             projectSites={projectSites}
             teamMembers={teamMembers}
             status={taskStatusMessage}
@@ -3527,6 +3565,7 @@ function Purchasing({
   onCancelPurchaseRequest,
   onReceivePurchaseRequest,
   tasks,
+  taskActivity,
   teamMembers,
   onCreateTask,
   onUpdateTask,
@@ -3566,8 +3605,9 @@ function Purchasing({
   onCancelPurchaseRequest: (requestId: string) => void;
   onReceivePurchaseRequest: (requestId: string, quantityReceived: number, unitCost: number, notes: string) => void;
   tasks: EOTask[];
+  taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
@@ -3791,6 +3831,7 @@ function Purchasing({
       <TaskMiniPanel
         title="Purchasing Tasks"
         tasks={tasks.filter((task) => task.section === "purchasing")}
+        taskActivity={taskActivity}
         teamMembers={teamMembers}
         projectSites={projectSites}
         section="purchasing"
@@ -4194,6 +4235,7 @@ function Inventory({
   onCancelPlannedBuild,
   onQueueBuildShortageRequests,
   tasks,
+  taskActivity,
   teamMembers,
   onCreateTask,
   onUpdateTask,
@@ -4220,8 +4262,9 @@ function Inventory({
   onCancelPlannedBuild: (buildId: string) => void;
   onQueueBuildShortageRequests: (buildId: string) => void;
   tasks: EOTask[];
+  taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
@@ -4770,6 +4813,7 @@ function Inventory({
       <TaskMiniPanel
         title="Inventory Tasks"
         tasks={tasks.filter((task) => task.section === "inventory" || task.section === "warehouse")}
+        taskActivity={taskActivity}
         teamMembers={teamMembers}
         projectSites={projectSites}
         section="inventory"
@@ -5369,6 +5413,7 @@ function Projects({
   onInventoryPull,
   onQueueProjectBomPurchaseRequest,
   tasks,
+  taskActivity,
   teamMembers,
   onCreateTask,
   onUpdateTask,
@@ -5402,8 +5447,9 @@ function Projects({
   onInventoryPull: (itemName: string, qty: number, projectName?: string, notes?: string) => void;
   onQueueProjectBomPurchaseRequest: (partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) => Promise<boolean>;
   tasks: EOTask[];
+  taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
@@ -5879,6 +5925,7 @@ function Projects({
         <TaskMiniPanel
           title="Projects Tasks"
           tasks={tasks.filter((task) => task.section === "projects" && !task.projectRef)}
+          taskActivity={taskActivity}
           teamMembers={teamMembers}
           projectSites={projectSites}
           section="projects"
@@ -6034,6 +6081,7 @@ function Projects({
       <TaskMiniPanel
         title="Project Tasks"
         tasks={tasks.filter((task) => task.projectRef === selectedProject.ref)}
+        taskActivity={taskActivity}
         teamMembers={teamMembers}
         projectSites={projectSites}
         section="projects"
@@ -7451,6 +7499,7 @@ function SalesHome({
   onDownloadSalesQuoteImage,
   projectSites,
   tasks,
+  taskActivity,
   teamMembers,
   onCreateTask,
   onUpdateTask,
@@ -7479,8 +7528,9 @@ function SalesHome({
   onDownloadSalesQuoteImage: (image: SalesQuoteLocationImage) => void;
   projectSites: ProjectSite[];
   tasks: EOTask[];
+  taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
@@ -7495,6 +7545,7 @@ function SalesHome({
       <TaskMiniPanel
         title="Sales Tasks"
         tasks={combinedSalesTasks}
+        taskActivity={taskActivity}
         teamMembers={teamMembers}
         projectSites={projectSites}
         isInternal
@@ -7577,7 +7628,7 @@ function SalesCatalog({
   onRefresh: () => void;
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -7910,7 +7961,7 @@ function SalesQuoteBuilder({
   onDownloadImage: (image: SalesQuoteLocationImage) => void;
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
 }) {
   const [mode, setMode] = useState<"list" | "detail">("list");
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
@@ -8175,7 +8226,7 @@ function RequestTaskButton({
   contextNote?: string;
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
-  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<TaskDraft>(EMPTY_TASK_DRAFT);
@@ -8222,6 +8273,62 @@ function assigneeLabel(email: string, teamMembers: TeamMember[]) {
     return "Unassigned";
   }
   return teamMembers.find((member) => member.email && member.email.toLowerCase() === email.toLowerCase())?.fullName ?? email;
+}
+
+function formatTaskFieldValue(value: string) {
+  return value ? value : "(none)";
+}
+
+// Builds a human-readable summary of what changed between two saves of the
+// same task, for the activity log (see handleUpdateTask). Close/Reopen are
+// called out explicitly rather than shown as a raw status diff, since those
+// are the two actions E specifically asked to have tracked by who and when.
+function describeTaskChanges(previous: EOTask, updated: EOTask): string {
+  const changes: string[] = [];
+
+  if (previous.status !== updated.status) {
+    const wasClosed = previous.status === "done";
+    const isClosed = updated.status === "done";
+    if (!wasClosed && isClosed && updated.closedAt) {
+      changes.push("Closed the task.");
+    } else if (wasClosed && !isClosed && !updated.closedAt) {
+      changes.push("Reopened the task.");
+    } else {
+      changes.push(`Status: ${previous.status} -> ${updated.status}`);
+    }
+  }
+  if (previous.title !== updated.title) {
+    changes.push(`Title: "${previous.title}" -> "${updated.title}"`);
+  }
+  if (previous.priority !== updated.priority) {
+    changes.push(`Priority: ${previous.priority} -> ${updated.priority}`);
+  }
+  if (previous.assigneeEmail !== updated.assigneeEmail) {
+    changes.push(`Assignee: ${formatTaskFieldValue(previous.assigneeEmail)} -> ${formatTaskFieldValue(updated.assigneeEmail)}`);
+  }
+  if (previous.dueDate !== updated.dueDate) {
+    changes.push(`Due date: ${formatTaskFieldValue(previous.dueDate)} -> ${formatTaskFieldValue(updated.dueDate)}`);
+  }
+  if (previous.startDate !== updated.startDate) {
+    changes.push(`Start date: ${formatTaskFieldValue(previous.startDate)} -> ${formatTaskFieldValue(updated.startDate)}`);
+  }
+  if (previous.section !== updated.section) {
+    changes.push(`Section: ${previous.section} -> ${updated.section}`);
+  }
+  if (previous.category !== updated.category) {
+    changes.push(`Category: ${formatTaskFieldValue(previous.category)} -> ${formatTaskFieldValue(updated.category)}`);
+  }
+  if (previous.description !== updated.description) {
+    changes.push("Updated the description.");
+  }
+  if (JSON.stringify(previous.impactAreas) !== JSON.stringify(updated.impactAreas)) {
+    changes.push(`Affects: ${updated.impactAreas.join(", ") || "(none)"}`);
+  }
+  if (previous.isInternal !== updated.isInternal) {
+    changes.push(`Internal: ${previous.isInternal ? "yes" : "no"} -> ${updated.isInternal ? "yes" : "no"}`);
+  }
+
+  return changes.length > 0 ? changes.join("; ") : "Updated the task.";
 }
 
 function taskGroupDefs(groupBy: TaskGroupBy, teamMembers: TeamMember[], tasks: EOTask[]): Array<{ key: string; label: string; pillClass?: string }> {
@@ -8273,6 +8380,9 @@ function TaskEditorModal({
   draft,
   setDraft,
   editingId,
+  editingTask,
+  activityLog,
+  onQuickStatusChange,
   projectSites,
   teamMembers,
   onSubmit,
@@ -8287,6 +8397,9 @@ function TaskEditorModal({
   draft: TaskDraft;
   setDraft: Dispatch<SetStateAction<TaskDraft>>;
   editingId: string | null;
+  editingTask?: EOTask | null;
+  activityLog?: TaskActivityEntry[];
+  onQuickStatusChange?: (status: TaskStatus) => void;
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
   onSubmit: () => void;
@@ -8300,6 +8413,7 @@ function TaskEditorModal({
 }) {
   const [depSku, setDepSku] = useState("");
   const [depQty, setDepQty] = useState(1);
+  const isClosed = editingTask?.status === "done" && Boolean(editingTask?.closedAt);
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
@@ -8307,6 +8421,11 @@ function TaskEditorModal({
           <div>
             <h2 id="task-editor-title">{editingId ? "Edit Task" : "Add Task"}</h2>
             <p>Track work across sections and, when relevant, a specific project.</p>
+            {editingTask && (
+              <div className="task-audit-meta">
+                <span>Created by {editingTask.createdByEmail || "Unknown"} on {new Date(editingTask.createdAt).toLocaleString()}</span>
+              </div>
+            )}
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="Close task editor">x</button>
         </div>
@@ -8420,9 +8539,37 @@ function TaskEditorModal({
           </div>
         )}
 
-        <div className="modal-actions">
-          <button className="secondary-action" type="button" onClick={onClose}>Cancel</button>
-          <button className="primary-action" type="button" onClick={onSubmit} disabled={!draft.title.trim()}>{editingId ? "Save Task" : "Add Task"}</button>
+        <div className="task-modal-footer">
+          {editingId && onQuickStatusChange && (
+            <div className="task-modal-footer-left">
+              {isClosed ? (
+                <button className="secondary-action mini-action" type="button" onClick={() => onQuickStatusChange("to_do")}>Reopen Task</button>
+              ) : (
+                <button className="secondary-action mini-action" type="button" onClick={() => onQuickStatusChange("done")}>Close Task</button>
+              )}
+              {isClosed && editingTask && (
+                <span className="muted">Closed by {editingTask.closedByEmail || "Unknown"} on {new Date(editingTask.closedAt).toLocaleString()}</span>
+              )}
+            </div>
+          )}
+          {editingId && (
+            <div className="task-activity-log">
+              <span className="task-activity-log-label">Activity Log</span>
+              <div className="task-activity-log-scroll">
+                {(activityLog ?? []).length === 0 && <div className="empty-compact-state">No activity yet.</div>}
+                {(activityLog ?? []).map((entry) => (
+                  <div className="task-activity-entry" key={entry.id}>
+                    <span><strong>{entry.actorEmail || "Unknown"}</strong> {entry.message}</span>
+                    <small>{new Date(entry.createdAt).toLocaleString()}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="modal-actions">
+            <button className="secondary-action" type="button" onClick={onClose}>Cancel</button>
+            <button className="primary-action" type="button" onClick={onSubmit} disabled={!draft.title.trim()}>{editingId ? "Save Task" : "Add Task"}</button>
+          </div>
         </div>
       </section>
     </div>
@@ -8623,6 +8770,7 @@ function WorkloadStrip({ tasks, teamMembers, onSelectPerson }: { tasks: EOTask[]
 
 function TasksBoard({
   tasks,
+  taskActivity,
   projectSites,
   teamMembers,
   status,
@@ -8636,10 +8784,11 @@ function TasksBoard({
   onDeleteTaskDependency,
 }: {
   tasks: EOTask[];
+  taskActivity: TaskActivityEntry[];
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
   status: string;
-  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
   onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
   onDelete: (id: string) => void;
   onRefresh: () => void;
@@ -8850,6 +8999,9 @@ function TasksBoard({
           draft={draft}
           setDraft={setDraft}
           editingId={editingId}
+          editingTask={tasks.find((task) => task.id === editingId) ?? null}
+          activityLog={taskActivity.filter((entry) => entry.taskId === editingId)}
+          onQuickStatusChange={editingId ? (status) => onUpdate(editingId, { status }) : undefined}
           projectSites={projectSites}
           teamMembers={teamMembers}
           onSubmit={submitDraft}
@@ -8867,6 +9019,7 @@ function TasksBoard({
 function TaskMiniPanel({
   title,
   tasks,
+  taskActivity,
   teamMembers,
   projectSites,
   section,
@@ -8880,13 +9033,14 @@ function TaskMiniPanel({
 }: {
   title: string;
   tasks: EOTask[];
+  taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
   section?: TaskSection;
   projectRef?: string;
   isInternal?: boolean;
   hideAdd?: boolean;
-  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdAt" | "completedAt">) => void;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
   onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
   onDelete: (id: string) => void;
   onOpenFull: () => void;
@@ -8985,6 +9139,9 @@ function TaskMiniPanel({
           draft={draft}
           setDraft={setDraft}
           editingId={editingId}
+          editingTask={tasks.find((task) => task.id === editingId) ?? null}
+          activityLog={taskActivity.filter((entry) => entry.taskId === editingId)}
+          onQuickStatusChange={editingId ? (status) => onUpdate(editingId, { status }) : undefined}
           projectSites={projectSites}
           teamMembers={teamMembers}
           onSubmit={submitDraft}
