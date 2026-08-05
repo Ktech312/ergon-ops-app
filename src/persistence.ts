@@ -3072,6 +3072,56 @@ export async function saveBuildTransactions(builds: BuildTransaction[], accessTo
   });
 }
 
+type ProjectAllocationRow = {
+  legacy_id: string;
+  action: string;
+  quantity: number | string;
+  project_name_snapshot: string | null;
+  sku_snapshot: string | null;
+  item_name_snapshot: string | null;
+  notes: string | null;
+  created_at: string;
+  movement: { legacy_id: string } | null;
+  project: { project_number: string | null } | null;
+};
+
+const PROJECT_ALLOCATION_SELECT =
+  "legacy_id,action,quantity,project_name_snapshot,sku_snapshot,item_name_snapshot,notes,created_at,movement:inventory_movements(legacy_id),project:projects(project_number)";
+
+function mapProjectAllocationRow(row: ProjectAllocationRow): ProjectAllocationHistory {
+  return {
+    id: row.legacy_id,
+    projectName: row.project_name_snapshot ?? "",
+    projectRef: row.project?.project_number ?? undefined,
+    sku: row.sku_snapshot ?? "",
+    itemName: row.item_name_snapshot ?? "",
+    quantity: Number(row.quantity) || 0,
+    movementId: row.movement?.legacy_id ?? "",
+    action: (row.action as ProjectAllocationHistory["action"]) ?? "allocated",
+    notes: row.notes ?? "",
+    createdAt: row.created_at,
+  };
+}
+
+// NOTE: this loader was missing entirely through the first pass of the
+// Phase 10e cutover -- builds and movements got reloaded on refresh, but
+// allocation history didn't, so it silently reset to empty every session
+// even though the rows were safe in Postgres the whole time. Fixed here.
+export async function loadProjectAllocations(accessToken?: string): Promise<ProjectAllocationHistory[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`project_allocation_history?select=${PROJECT_ALLOCATION_SELECT}&legacy_id=not.is.null&order=created_at.desc&limit=2000`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ProjectAllocationRow[];
+  return rows.map(mapProjectAllocationRow);
+}
+
 export async function saveInventoryMovements(movements: InventoryMovement[], accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken || movements.length === 0) {
     return;
@@ -3527,5 +3577,157 @@ export async function saveRemoteAppState(state: PersistedAppState, accessToken?:
     }),
   }).catch(() => {
     // Snapshot save already succeeded; event logging should not block the app.
+  });
+}
+
+// --- Real full-data backup/restore ------------------------------------------
+//
+// Export/Import Backup used to just round-trip the app_records blob, which
+// meant it only ever covered roleMode once Phase 10 moved everything else
+// into real tables -- clicking "Export Backup" produced a JSON file with
+// almost nothing in it. This pulls (and restores) every entity from its
+// real table instead, so the file is an actual usable snapshot: before a
+// risky change, as a recovery point after a mistake, or to seed a second
+// (e.g. staging) Supabase project.
+//
+// Restore is a merge, not a wipe-and-replace: every entity below already has
+// an upsert-by-natural-key save function (from the Phase 10 cutover), so
+// importing a backup adds/updates rows by their real key (sku, request
+// number, project name, etc.) without touching or deleting anything that
+// exists now but didn't exist in the backup. That's deliberately the safer
+// default -- a destructive "replace everything" mode is a bigger, riskier
+// feature and not something to default to silently.
+
+export type FullBackupSnapshot = {
+  version: 1;
+  exportedAt: string;
+  roleMode: string;
+  projectSites: ProjectSite[];
+  inventoryItems: Part[];
+  deviceRecipes: BuildRecipe[];
+  purchaseRequests: PurchaseRequest[];
+  projectDocuments: ProjectDocument[];
+  buildTransactions: BuildTransaction[];
+  inventoryMovements: InventoryMovement[];
+  projectAllocations: ProjectAllocationHistory[];
+};
+
+export async function loadFullBackupSnapshot(roleMode: string, accessToken?: string): Promise<FullBackupSnapshot | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const [projectSites, inventoryItems, deviceRecipes, purchaseRequests, projectDocuments, buildTransactions, inventoryMovements, projectAllocations] =
+    await Promise.all([
+      loadProjectSites(accessToken),
+      loadInventoryItems(accessToken),
+      loadDeviceRecipes(accessToken),
+      loadPurchaseRequests(accessToken),
+      loadProjectDocuments(accessToken),
+      loadBuildTransactions(accessToken),
+      loadInventoryMovements(accessToken),
+      loadProjectAllocations(accessToken),
+    ]);
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    roleMode,
+    projectSites,
+    inventoryItems,
+    deviceRecipes,
+    purchaseRequests,
+    projectDocuments,
+    buildTransactions,
+    inventoryMovements,
+    projectAllocations,
+  };
+}
+
+export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnapshot>, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  // Order matters, same dependency chain as the live debounce-save effects:
+  // inventory items and equipment recipes first (BOM lines/components
+  // resolve item names against them), then projects (BOM lines resolve
+  // against inventory items too), then purchase requests and documents
+  // (independent of the above), then builds -> movements -> allocations
+  // last (each resolves ids from the one before it).
+  if (snapshot.inventoryItems?.length) {
+    await saveInventoryItems(snapshot.inventoryItems, accessToken);
+  }
+  if (snapshot.deviceRecipes?.length) {
+    await saveDeviceRecipes(snapshot.deviceRecipes, accessToken);
+  }
+  if (snapshot.projectSites?.length) {
+    await saveProjectSites(snapshot.projectSites, accessToken);
+  }
+  if (snapshot.purchaseRequests?.length) {
+    await saveRestoredPurchaseRequests(snapshot.purchaseRequests, accessToken);
+  }
+  if (snapshot.projectDocuments?.length) {
+    await saveRestoredProjectDocuments(snapshot.projectDocuments, accessToken);
+  }
+  if (snapshot.buildTransactions?.length || snapshot.inventoryMovements?.length || snapshot.projectAllocations?.length) {
+    await saveMovementsBuildsAllocations(
+      snapshot.buildTransactions ?? [],
+      snapshot.inventoryMovements ?? [],
+      snapshot.projectAllocations ?? [],
+      accessToken,
+    );
+  }
+}
+
+// Purchase Requests and Project Documents don't have a bulk upsert function
+// (their live persistence is per-row create/update, not whole-array
+// debounce-save), so restore gets its own small bulk path for each, keyed
+// on `id` -- which, for both of these, already is the real Postgres row id
+// (there's no separate client-side legacy id for either entity), so
+// upserting by id is exactly right for a restore.
+async function saveRestoredPurchaseRequests(requests: PurchaseRequest[], accessToken: string): Promise<void> {
+  const payload = requests.map((request) => ({
+    id: request.id,
+    request_number: request.requestNumber,
+    sku_snapshot: request.sku,
+    item_name_snapshot: request.itemName,
+    quantity_requested: request.quantity,
+    reason: pgPurchaseReason(request.reason),
+    source_type: pgPurchaseSourceType(request.reason),
+    source_ref: request.sourceRef ?? null,
+    project_name: request.projectName ?? null,
+    procurement_track: request.procurementTrack ?? "warehouse_stock",
+    preferred_vendor: request.preferredVendor ?? null,
+    po_number: request.poNumber ?? null,
+    expected_date: request.expectedDate ?? null,
+    estimated_unit_cost: request.estimatedUnitCost,
+    quantity_received: request.receivedQuantity ?? 0,
+    status: pgPurchaseStatus(request.status),
+    notes: request.notes,
+    created_at: request.createdAt,
+  }));
+  await fetch(supabaseUrl("purchase_requests?on_conflict=id"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function saveRestoredProjectDocuments(docs: ProjectDocument[], accessToken: string): Promise<void> {
+  const payload = docs.map((doc, index) => ({
+    id: doc.id,
+    document_number: `DOC-RESTORE-${Date.now().toString(36).toUpperCase()}-${index}`,
+    project_name: doc.project || null,
+    document_type: appDocumentType(doc.type),
+    file_name: doc.name,
+    file_size_bytes: doc.size,
+    status: pgDocumentStatus(doc.status),
+    storage_status: pgDocumentStorage(doc.storage),
+    storage_provider: "browser",
+    uploaded_at: doc.uploadedAt ?? new Date().toISOString(),
+  }));
+  await fetch(supabaseUrl("project_documents?on_conflict=id"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(payload),
   });
 }

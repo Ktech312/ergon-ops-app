@@ -60,12 +60,14 @@ import {
   loadBuildTransactions,
   loadCatalogItems,
   loadFormSchema,
+  loadFullBackupSnapshot,
   loadDeviceRecipes,
   loadHandoversForProject,
   loadInventoryItems,
   loadInventoryItemSkusByIds,
   loadInventoryMovements,
   loadLocalAppState,
+  loadProjectAllocations,
   loadOwnAllowedViews,
   loadOwnApprovalStatus,
   loadNotificationRules,
@@ -89,6 +91,7 @@ import {
   resolveInventoryItemIdBySku,
   resolveProjectId,
   respondToPublicSubmittal,
+  restoreFullBackupSnapshot,
   reviewUserApproval,
   revokeAdmin,
   saveDeviceRecipes,
@@ -128,6 +131,7 @@ import {
   type EOTask,
   type FormSchema,
   type FormSchemaField,
+  type FullBackupSnapshot,
   type InventoryMovement,
   type KnownUser,
   type NotificationItem,
@@ -1103,6 +1107,7 @@ function App() {
     }
     loadBuildTransactions(authSession.accessToken).then(setBuildTransactions).catch(() => {});
     loadInventoryMovements(authSession.accessToken).then(setInventoryMovements).catch(() => {});
+    loadProjectAllocations(authSession.accessToken).then(setProjectAllocations).catch(() => {});
   }, [authSession]);
 
   useEffect(() => {
@@ -2784,31 +2789,87 @@ function App() {
     };
   }
 
-  function exportBackup() {
-    const blob = new Blob([JSON.stringify(currentPersistedState(), null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `ergon-ops-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+  // Export/Import Backup pull a real snapshot of every entity from its own
+  // table (not just the roleMode sliver left in the app_records blob) --
+  // see loadFullBackupSnapshot/restoreFullBackupSnapshot in persistence.ts
+  // for why, and why restore merges by natural key rather than wiping
+  // anything that exists now but isn't in the file.
+  async function exportBackup() {
+    if (!authSession) {
+      setAuthStatus("Sign in before exporting a backup.");
+      return;
+    }
+    setAuthStatus("Building backup snapshot...");
+    try {
+      const snapshot = await loadFullBackupSnapshot(roleMode, authSession.accessToken);
+      if (!snapshot) {
+        setAuthStatus("Could not build a backup snapshot.");
+        return;
+      }
+      const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `ergon-ops-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setAuthStatus("Backup downloaded.");
+    } catch {
+      setAuthStatus("Backup export failed.");
+    }
   }
 
   function importBackup(file: File | undefined) {
-    if (!file) {
+    if (!file || !authSession) {
       return;
     }
 
     const reader = new FileReader();
     reader.onload = () => {
-      try {
-        const importedState = JSON.parse(String(reader.result ?? "{}")) as Partial<PersistedAppState>;
-        if (["warehouse", "purchasing", "pm", "manager"].includes(String(importedState.roleMode))) {
-          setRoleMode(importedState.roleMode as RoleMode);
+      void (async () => {
+        try {
+          const snapshot = JSON.parse(String(reader.result ?? "{}")) as Partial<FullBackupSnapshot>;
+          if (["warehouse", "purchasing", "pm", "manager"].includes(String(snapshot.roleMode))) {
+            setRoleMode(snapshot.roleMode as RoleMode);
+          }
+          setAuthStatus("Restoring backup -- this can take a moment for larger snapshots...");
+          await restoreFullBackupSnapshot(snapshot, authSession.accessToken);
+          // Reload every entity from the tables so the UI reflects the
+          // merged result rather than the raw (possibly stale) file contents.
+          const [
+            reloadedProjectSites,
+            reloadedInventoryItems,
+            reloadedDeviceRecipes,
+            reloadedPurchaseRequests,
+            reloadedProjectDocuments,
+            reloadedBuildTransactions,
+            reloadedInventoryMovements,
+            reloadedProjectAllocations,
+          ] = await Promise.all([
+            loadProjectSites(authSession.accessToken),
+            loadInventoryItems(authSession.accessToken),
+            loadDeviceRecipes(authSession.accessToken),
+            loadPurchaseRequests(authSession.accessToken),
+            loadProjectDocuments(authSession.accessToken),
+            loadBuildTransactions(authSession.accessToken),
+            loadInventoryMovements(authSession.accessToken),
+            loadProjectAllocations(authSession.accessToken),
+          ]);
+          setProjectSites(reloadedProjectSites);
+          setInventoryItems(reloadedInventoryItems);
+          setDeviceRecipes(reloadedDeviceRecipes);
+          setPurchaseRequests(reloadedPurchaseRequests);
+          purchaseRequestsRef.current = reloadedPurchaseRequests;
+          setProjectDocuments(reloadedProjectDocuments);
+          setBuildTransactions(reloadedBuildTransactions);
+          setInventoryMovements(reloadedInventoryMovements);
+          setProjectAllocations(reloadedProjectAllocations);
+          setAuthStatus("Backup restored.");
+        } catch {
+          setSyncStatus("error");
+          setAuthStatus("Backup restore failed.");
         }
-      } catch {
-        setSyncStatus("error");
-      }
+      })();
     };
     reader.readAsText(file);
   }
