@@ -350,9 +350,9 @@ button {
 .status-pill,
 .priority-pill {
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
-  padding: 4px 10px;
+  padding: 2px 8px;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -1408,13 +1408,12 @@ td small {
   color: #443c2d;
   display: inline-flex;
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   justify-content: center;
   line-height: 1.1;
   max-width: max-content;
-  min-height: 24px;
-  padding: 5px 9px;
+  padding: 3px 8px;
   white-space: nowrap;
   width: fit-content;
 }
@@ -1440,9 +1439,9 @@ td small {
   border-radius: 999px;
   color: #443c2d;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  padding: 5px 9px;
+  padding: 3px 8px;
 }
 
 .status-select.warn {
@@ -2389,6 +2388,35 @@ td small {
   resize: vertical;
 }
 
+/* Checkboxes inside a .bom-modal-grid (or .form-grid/.sow-grid below) would
+   otherwise inherit the text-input styling above -- a checkbox getting
+   min-height:42px + padding + a bordered background renders as a large
+   bordered square instead of a normal checkbox. The label itself also
+   inherits `label { display: grid }` from these grids, which stacks the
+   checkbox and its text on separate lines instead of side by side. Both
+   overridden here for any checkbox-style label found inside these grids. */
+.bom-modal-grid input[type="checkbox"],
+.form-grid input[type="checkbox"],
+.sow-grid input[type="checkbox"] {
+  background: none;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  width: 16px;
+}
+
+.bom-modal-grid label.checkbox-inline,
+.bom-modal-grid label.checkbox-inline-field,
+.form-grid label.checkbox-inline,
+.form-grid label.checkbox-inline-field,
+.sow-grid label.checkbox-inline,
+.sow-grid label.checkbox-inline-field {
+  align-items: center;
+  display: inline-flex;
+}
+
 .compact-edit-section {
   border-top: 1px solid #e8e1d5;
   display: grid;
@@ -2542,11 +2570,11 @@ td.empty-compact-state {
   color: #514b43;
   cursor: pointer;
   display: inline-flex;
-  font-size: 12px;
-  font-weight: 900;
-  gap: 7px;
-  min-height: 34px;
-  padding: 0 11px;
+  font-size: 11px;
+  font-weight: 800;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 9px;
 }
 
 .tag-toggle input {
