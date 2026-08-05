@@ -1,8 +1,5 @@
 export type PersistedAppState = {
   projectSites: unknown[];
-  inventoryMovements: unknown[];
-  buildTransactions: unknown[];
-  projectAllocations: unknown[];
   // projectDocuments intentionally removed (Phase 10b cutover, Aug 2026) --
   // that entity now lives exclusively in the real `project_documents` table
   // via loadProjectDocuments/createProjectDocuments, not this blob.
@@ -18,6 +15,11 @@ export type PersistedAppState = {
   // entity now lives exclusively in the real `equipment_types` /
   // `equipment_bom_components` tables via loadDeviceRecipes/saveDeviceRecipes,
   // not this blob.
+  // inventoryMovements/buildTransactions/projectAllocations intentionally
+  // removed (Phase 10e cutover, Aug 2026) -- those entities now live
+  // exclusively in the real `inventory_movements` / `build_transactions` /
+  // `project_allocation_history` tables via loadInventoryMovements /
+  // loadBuildTransactions / saveMovementsBuildsAllocations, not this blob.
   roleMode: string;
 };
 
@@ -34,9 +36,6 @@ const AUTH_SESSION_KEY = "ergon:auth-session:v1";
 const WORKSPACE_KEY = "default";
 const STATE_KEYS: Array<keyof PersistedAppState> = [
   "projectSites",
-  "inventoryMovements",
-  "buildTransactions",
-  "projectAllocations",
   "roleMode",
 ];
 
@@ -74,9 +73,6 @@ function asPersistedState(records: Array<{ record_key: string; data: unknown }>)
   const byKey = new Map(records.map((record) => [record.record_key, record.data]));
   return {
     projectSites: Array.isArray(byKey.get("projectSites")) ? (byKey.get("projectSites") as unknown[]) : [],
-    inventoryMovements: Array.isArray(byKey.get("inventoryMovements")) ? (byKey.get("inventoryMovements") as unknown[]) : [],
-    buildTransactions: Array.isArray(byKey.get("buildTransactions")) ? (byKey.get("buildTransactions") as unknown[]) : [],
-    projectAllocations: Array.isArray(byKey.get("projectAllocations")) ? (byKey.get("projectAllocations") as unknown[]) : [],
     roleMode: typeof byKey.get("roleMode") === "string" ? (byKey.get("roleMode") as string) : "manager",
   };
 }
@@ -2871,6 +2867,342 @@ export async function saveDeviceRecipes(recipes: BuildRecipe[], accessToken?: st
   }
 }
 
+// --- Phase 10e: Inventory Movements, Build Transactions, Project Allocation
+// History (cut over from the app_records blob to the relational
+// inventory_movements / build_transactions / project_allocation_history
+// tables, migration 021 -- also needs migration 030, which relaxes two
+// check constraints on inventory_movements the original schema had that
+// don't match how this app actually posts movements: retire/reactivate
+// movements carry a 0 quantity, and this app has no from/to-location
+// concept at all.) ------------------------------------------------------
+//
+// Like Inventory Items and Equipment Recipes, this keeps the "load once,
+// debounce-save the whole array" shape rather than converting every
+// append call site (pull/receive/transfer/build-consume/build-complete/
+// undo/retire/reactivate) into its own network call. Save order matters:
+// build transactions first (so movements can resolve build_transaction_id
+// by build_number), then movements (so allocations can resolve movement_id
+// by legacy_id), then allocations -- same order the migration itself used.
+
+export type InventoryMovement = {
+  id: string;
+  type: "receive" | "transfer" | "build_consume" | "build_complete" | "adjust" | "retire" | "reactivate" | "undo";
+  sku: string;
+  itemName: string;
+  quantity: number;
+  quantityBefore: number;
+  quantityAfter: number;
+  projectName?: string;
+  poNumber?: string;
+  buildNumber?: string;
+  source: "inventory" | "project" | "purchasing" | "equipment";
+  notes: string;
+  createdAt: string;
+};
+
+export type BuildTransaction = {
+  id: string;
+  buildNumber: string;
+  equipmentName: string;
+  quantityBuilt: number;
+  componentMovements: InventoryMovement[];
+  completionMovement?: InventoryMovement;
+  status: "planned" | "posted" | "undone" | "cancelled";
+  stage?: "planned" | "kitting" | "assembled" | "tested" | "complete";
+  createdAt: string;
+  undoneAt?: string;
+};
+
+export type ProjectAllocationHistory = {
+  id: string;
+  projectName: string;
+  projectRef?: string;
+  sku: string;
+  itemName: string;
+  quantity: number;
+  movementId: string;
+  action: "allocated" | "returned" | "adjusted" | "undone";
+  notes: string;
+  createdAt: string;
+};
+
+function appMovementType(type: string): InventoryMovement["type"] {
+  switch (type) {
+    case "receipt": return "receive";
+    case "adjustment": return "adjust";
+    case "transfer": return "transfer";
+    case "build_consume": return "build_consume";
+    case "build_complete": return "build_complete";
+    case "retire": return "retire";
+    case "reactivate": return "reactivate";
+    case "undo": return "undo";
+    default: return "adjust";
+  }
+}
+
+function pgMovementType(type: InventoryMovement["type"]): string {
+  switch (type) {
+    case "receive": return "receipt";
+    case "adjust": return "adjustment";
+    default: return type;
+  }
+}
+
+type InventoryMovementRow = {
+  legacy_id: string;
+  movement_type: string;
+  quantity: number | string;
+  balance_before: number | string;
+  balance_after: number | string;
+  reference_number: string | null;
+  notes: string | null;
+  created_at: string;
+  inventory_item: { sku: string; item_name: string } | null;
+  project: { project_name: string } | null;
+  build_transaction: { build_number: string } | null;
+};
+
+const INVENTORY_MOVEMENT_SELECT =
+  "legacy_id,movement_type,quantity,balance_before,balance_after,reference_number,notes,created_at,inventory_item:inventory_items(sku,item_name),project:projects(project_name),build_transaction:build_transactions(build_number)";
+
+function mapInventoryMovementRow(row: InventoryMovementRow): InventoryMovement {
+  const type = appMovementType(row.movement_type);
+  const projectName = row.project?.project_name ?? undefined;
+  const buildNumber = row.build_transaction?.build_number ?? undefined;
+  const poNumber = row.reference_number ?? undefined;
+  let source: InventoryMovement["source"] = "inventory";
+  if (type === "build_consume" || type === "build_complete" || buildNumber) {
+    source = "equipment";
+  } else if (projectName) {
+    source = "project";
+  } else if (poNumber || type === "receive") {
+    source = "purchasing";
+  }
+  return {
+    id: row.legacy_id,
+    type,
+    sku: row.inventory_item?.sku ?? "",
+    itemName: row.inventory_item?.item_name ?? "",
+    quantity: Number(row.quantity) || 0,
+    quantityBefore: Number(row.balance_before) || 0,
+    quantityAfter: Number(row.balance_after) || 0,
+    projectName,
+    poNumber,
+    buildNumber,
+    source,
+    notes: row.notes ?? "",
+    createdAt: row.created_at,
+  };
+}
+
+export async function loadInventoryMovements(accessToken?: string): Promise<InventoryMovement[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`inventory_movements?select=${INVENTORY_MOVEMENT_SELECT}&legacy_id=not.is.null&order=created_at.desc&limit=2000`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as InventoryMovementRow[];
+  return rows.map(mapInventoryMovementRow);
+}
+
+type BuildTransactionRow = {
+  build_number: string;
+  quantity_built: number | string;
+  status: string;
+  workflow_stage: string | null;
+  created_at: string;
+  undone_at: string | null;
+  equipment_type: { equipment_name: string } | null;
+};
+
+const BUILD_TRANSACTION_SELECT = "build_number,quantity_built,status,workflow_stage,created_at,undone_at,equipment_type:equipment_types(equipment_name)";
+
+export async function loadBuildTransactions(accessToken?: string): Promise<BuildTransaction[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const [buildsResponse, movements] = await Promise.all([
+    fetch(supabaseUrl(`build_transactions?select=${BUILD_TRANSACTION_SELECT}&order=created_at.desc&limit=2000`), { headers: supabaseHeaders(accessToken) }),
+    loadInventoryMovements(accessToken),
+  ]);
+  if (!buildsResponse.ok) {
+    return [];
+  }
+  const rows = (await buildsResponse.json()) as BuildTransactionRow[];
+  const movementsByBuild = new Map<string, InventoryMovement[]>();
+  movements.forEach((movement) => {
+    if (!movement.buildNumber) {
+      return;
+    }
+    const list = movementsByBuild.get(movement.buildNumber) ?? [];
+    list.push(movement);
+    movementsByBuild.set(movement.buildNumber, list);
+  });
+  return rows.map((row) => {
+    const buildMovements = movementsByBuild.get(row.build_number) ?? [];
+    return {
+      id: row.build_number,
+      buildNumber: row.build_number,
+      equipmentName: row.equipment_type?.equipment_name ?? "",
+      quantityBuilt: Number(row.quantity_built) || 0,
+      componentMovements: buildMovements.filter((movement) => movement.type === "build_consume"),
+      completionMovement: buildMovements.find((movement) => movement.type === "build_complete"),
+      status: (row.status as BuildTransaction["status"]) ?? "posted",
+      stage: (row.workflow_stage as BuildTransaction["stage"]) ?? undefined,
+      createdAt: row.created_at,
+      undoneAt: row.undone_at ?? undefined,
+    };
+  });
+}
+
+export async function saveBuildTransactions(builds: BuildTransaction[], accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken || builds.length === 0) {
+    return;
+  }
+  const equipmentResponse = await fetch(supabaseUrl("equipment_types?select=equipment_name,output_inventory_item_id"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  const equipmentRows = equipmentResponse.ok ? ((await equipmentResponse.json()) as Array<{ equipment_name: string; output_inventory_item_id: string | null }>) : [];
+  const equipmentByName = new Map(equipmentRows.map((row) => [row.equipment_name, row]));
+
+  const payload = builds.map((build) => ({
+    build_number: build.buildNumber,
+    equipment_type_id: null,
+    finished_inventory_item_id: equipmentByName.get(build.equipmentName)?.output_inventory_item_id ?? null,
+    quantity_built: build.quantityBuilt,
+    status: build.status,
+    workflow_stage: build.stage ?? "complete",
+    created_at: build.createdAt,
+    undone_at: build.undoneAt ?? null,
+  }));
+  await fetch(supabaseUrl("build_transactions?on_conflict=build_number"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function saveInventoryMovements(movements: InventoryMovement[], accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken || movements.length === 0) {
+    return;
+  }
+  const skus = Array.from(new Set(movements.map((m) => m.sku).filter(Boolean)));
+  const projectNames = Array.from(new Set(movements.map((m) => m.projectName).filter((name): name is string => Boolean(name))));
+  const buildNumbers = Array.from(new Set(movements.map((m) => m.buildNumber).filter((n): n is string => Boolean(n))));
+
+  const [itemRows, projectRows, buildRows] = await Promise.all([
+    skus.length
+      ? fetch(supabaseUrl(`inventory_items?select=id,sku&sku=in.(${skus.map((s) => `"${s}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; sku: string }>>) : []))
+      : Promise.resolve([]),
+    projectNames.length
+      ? fetch(supabaseUrl(`projects?select=id,project_name&project_name=in.(${projectNames.map((n) => `"${n.replace(/"/g, '\\"')}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; project_name: string }>>) : []))
+      : Promise.resolve([]),
+    buildNumbers.length
+      ? fetch(supabaseUrl(`build_transactions?select=id,build_number&build_number=in.(${buildNumbers.map((n) => `"${n}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; build_number: string }>>) : []))
+      : Promise.resolve([]),
+  ]);
+
+  const itemIdBySku = new Map(itemRows.map((row) => [row.sku, row.id]));
+  const projectIdByName = new Map(projectRows.map((row) => [row.project_name, row.id]));
+  const buildIdByNumber = new Map(buildRows.map((row) => [row.build_number, row.id]));
+
+  const payload = movements
+    .map((movement) => {
+      const inventoryItemId = itemIdBySku.get(movement.sku);
+      if (!inventoryItemId) {
+        return null;
+      }
+      return {
+        legacy_id: movement.id,
+        movement_type: pgMovementType(movement.type),
+        inventory_item_id: inventoryItemId,
+        quantity: movement.quantity,
+        project_id: movement.projectName ? projectIdByName.get(movement.projectName) ?? null : null,
+        reference_number: movement.poNumber ?? null,
+        build_transaction_id: movement.buildNumber ? buildIdByNumber.get(movement.buildNumber) ?? null : null,
+        movement_date: movement.createdAt,
+        balance_before: movement.quantityBefore,
+        balance_after: movement.quantityAfter,
+        notes: movement.notes,
+        created_at: movement.createdAt,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  if (payload.length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl("inventory_movements?on_conflict=legacy_id"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function saveProjectAllocations(allocations: ProjectAllocationHistory[], accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken || allocations.length === 0) {
+    return;
+  }
+  const skus = Array.from(new Set(allocations.map((a) => a.sku).filter(Boolean)));
+  const projectNames = Array.from(new Set(allocations.map((a) => a.projectName).filter(Boolean)));
+  const movementLegacyIds = Array.from(new Set(allocations.map((a) => a.movementId).filter(Boolean)));
+
+  const [itemRows, projectRows, movementRows] = await Promise.all([
+    skus.length
+      ? fetch(supabaseUrl(`inventory_items?select=id,sku&sku=in.(${skus.map((s) => `"${s}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; sku: string }>>) : []))
+      : Promise.resolve([]),
+    projectNames.length
+      ? fetch(supabaseUrl(`projects?select=id,project_name&project_name=in.(${projectNames.map((n) => `"${n.replace(/"/g, '\\"')}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; project_name: string }>>) : []))
+      : Promise.resolve([]),
+    movementLegacyIds.length
+      ? fetch(supabaseUrl(`inventory_movements?select=id,legacy_id&legacy_id=in.(${movementLegacyIds.map((id) => `"${id}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; legacy_id: string }>>) : []))
+      : Promise.resolve([]),
+  ]);
+
+  const itemIdBySku = new Map(itemRows.map((row) => [row.sku, row.id]));
+  const projectIdByName = new Map(projectRows.map((row) => [row.project_name, row.id]));
+  const movementIdByLegacyId = new Map(movementRows.map((row) => [row.legacy_id, row.id]));
+
+  const payload = allocations.map((allocation) => ({
+    legacy_id: allocation.id,
+    allocation_number: `ALLOC-${allocation.id}`,
+    project_id: projectIdByName.get(allocation.projectName) ?? null,
+    inventory_item_id: itemIdBySku.get(allocation.sku) ?? null,
+    movement_id: movementIdByLegacyId.get(allocation.movementId) ?? null,
+    action: allocation.action,
+    quantity: allocation.quantity,
+    project_name_snapshot: allocation.projectName,
+    sku_snapshot: allocation.sku,
+    item_name_snapshot: allocation.itemName,
+    notes: allocation.notes,
+    created_at: allocation.createdAt,
+  }));
+  await fetch(supabaseUrl("project_allocation_history?on_conflict=legacy_id"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(payload),
+  });
+}
+
+// Orchestrates the three saves above in the order their foreign keys
+// require: builds, then movements (needs build ids), then allocations
+// (needs movement ids).
+export async function saveMovementsBuildsAllocations(
+  builds: BuildTransaction[],
+  movements: InventoryMovement[],
+  allocations: ProjectAllocationHistory[],
+  accessToken?: string,
+): Promise<void> {
+  await saveBuildTransactions(builds, accessToken);
+  await saveInventoryMovements(movements, accessToken);
+  await saveProjectAllocations(allocations, accessToken);
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;
@@ -2937,8 +3269,6 @@ export async function saveRemoteAppState(state: PersistedAppState, accessToken?:
       entity_ref: WORKSPACE_KEY,
       payload: {
         projects: state.projectSites.length,
-        movements: state.inventoryMovements.length,
-        builds: state.buildTransactions.length,
       },
     }),
   }).catch(() => {

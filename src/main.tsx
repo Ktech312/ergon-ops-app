@@ -57,12 +57,14 @@ import {
   loadAllKnownUsers,
   loadAllUserRoles,
   loadAuthSession,
+  loadBuildTransactions,
   loadCatalogItems,
   loadFormSchema,
   loadDeviceRecipes,
   loadHandoversForProject,
   loadInventoryItems,
   loadInventoryItemSkusByIds,
+  loadInventoryMovements,
   loadLocalAppState,
   loadOwnAllowedViews,
   loadOwnApprovalStatus,
@@ -91,6 +93,7 @@ import {
   saveDeviceRecipes,
   saveInventoryItems,
   saveLocalAppState,
+  saveMovementsBuildsAllocations,
   saveRemoteAppState,
   saveUserRoleMode,
   releaseTransactionLock,
@@ -117,10 +120,12 @@ import {
   type AuthSession,
   type BuildComponent,
   type BuildRecipe,
+  type BuildTransaction,
   type CatalogItem,
   type EOTask,
   type FormSchema,
   type FormSchemaField,
+  type InventoryMovement,
   type KnownUser,
   type NotificationItem,
   type NotificationRule,
@@ -128,6 +133,7 @@ import {
   type PersistedAppState,
   type PresalesHardwareRule,
   type PriceHistoryEntry,
+  type ProjectAllocationHistory,
   type ProjectDocument,
   type ProjectHandover,
   type ProjectSubmittal,
@@ -214,47 +220,11 @@ const TASK_PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string }> = [
 const IMPACT_AREA_OPTIONS = ["Inventory", "Purchasing", "Sales", "Projects", "Reports", "Other"];
 type SyncStatus = "local" | "auth" | "loading" | "saving" | "synced" | "error";
 
-type InventoryMovement = {
-  id: string;
-  type: "receive" | "transfer" | "build_consume" | "build_complete" | "adjust" | "retire" | "reactivate" | "undo";
-  sku: string;
-  itemName: string;
-  quantity: number;
-  quantityBefore: number;
-  quantityAfter: number;
-  projectName?: string;
-  poNumber?: string;
-  buildNumber?: string;
-  source: "inventory" | "project" | "purchasing" | "equipment";
-  notes: string;
-  createdAt: string;
-};
-
-type BuildTransaction = {
-  id: string;
-  buildNumber: string;
-  equipmentName: string;
-  quantityBuilt: number;
-  componentMovements: InventoryMovement[];
-  completionMovement?: InventoryMovement;
-  status: "planned" | "posted" | "undone" | "cancelled";
-  stage?: "planned" | "kitting" | "assembled" | "tested" | "complete";
-  createdAt: string;
-  undoneAt?: string;
-};
-
-type ProjectAllocationHistory = {
-  id: string;
-  projectName: string;
-  projectRef?: string;
-  sku: string;
-  itemName: string;
-  quantity: number;
-  movementId: string;
-  action: "allocated" | "returned" | "adjusted" | "undone";
-  notes: string;
-  createdAt: string;
-};
+// InventoryMovement, BuildTransaction, and ProjectAllocationHistory used to
+// be defined locally; as of Phase 10e they're imported from persistence.ts
+// (see the import block above) since these are now backed by the real
+// inventory_movements / build_transactions / project_allocation_history
+// tables instead of the app_records blob.
 
 type PackageOption = {
   name: string;
@@ -960,9 +930,12 @@ function App() {
   // Phase 10d: Equipment Recipes no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [deviceRecipes, setDeviceRecipes] = useState<BuildRecipe[]>([]);
-  const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>(() => isArray<InventoryMovement>(localState?.inventoryMovements, []));
-  const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>(() => isArray<BuildTransaction>(localState?.buildTransactions, []));
-  const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>(() => isArray<ProjectAllocationHistory>(localState?.projectAllocations, []));
+  // Phase 10e: Inventory Movements, Build Transactions, and Project
+  // Allocation History no longer live in the local/blob state -- they're
+  // always loaded fresh from the real tables (see the effect below).
+  const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>([]);
+  const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>([]);
+  const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>([]);
   // Phase 10a: Purchase Requests no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   // purchaseRequestsRef mirrors this state synchronously (updated at the
@@ -1077,9 +1050,6 @@ function App() {
           return;
         }
         setProjectSites(isArray<ProjectSite>(remoteState.projectSites, projects));
-        setInventoryMovements(isArray<InventoryMovement>(remoteState.inventoryMovements, []));
-        setBuildTransactions(isArray<BuildTransaction>(remoteState.buildTransactions, []));
-        setProjectAllocations(isArray<ProjectAllocationHistory>(remoteState.projectAllocations, []));
         setRoleMode((remoteState.roleMode as RoleMode | undefined) ?? "manager");
         setSyncStatus("synced");
       })
@@ -1096,9 +1066,6 @@ function App() {
   useEffect(() => {
     const state: PersistedAppState = {
       projectSites,
-      inventoryMovements,
-      buildTransactions,
-      projectAllocations,
       roleMode,
     };
     saveLocalAppState(state);
@@ -1121,7 +1088,40 @@ function App() {
         });
     }, 650);
     return () => window.clearTimeout(syncTimer);
-  }, [projectSites, inventoryMovements, buildTransactions, projectAllocations, roleMode, authSession]);
+  }, [projectSites, roleMode, authSession]);
+
+  // Phase 10e: Inventory Movements, Build Transactions, and Project
+  // Allocation History now live in their own real tables, loaded once per
+  // session and then debounce-saved as whole arrays on every change -- the
+  // same shape the blob used, so none of the pull/receive/transfer/
+  // build/undo/retire append logic elsewhere in this file needed to change,
+  // only where it's persisted. Movements depend on knowing build ids
+  // (resolved by build_number) and allocations depend on knowing movement
+  // ids (resolved by legacy_id), so saveMovementsBuildsAllocations always
+  // saves builds, then movements, then allocations, in that order.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadBuildTransactions(authSession.accessToken).then(setBuildTransactions).catch(() => {});
+    loadInventoryMovements(authSession.accessToken).then(setInventoryMovements).catch(() => {});
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    if (buildTransactions.length === 0 && inventoryMovements.length === 0 && projectAllocations.length === 0) {
+      return;
+    }
+    const syncTimer = window.setTimeout(() => {
+      saveMovementsBuildsAllocations(buildTransactions, inventoryMovements, projectAllocations, authSession.accessToken).catch(() => {
+        setSyncStatus("error");
+        setAuthStatus("Cloud save failed for movements/builds/allocations. Check login, RLS policies, or Supabase env vars.");
+      });
+    }, 650);
+    return () => window.clearTimeout(syncTimer);
+  }, [buildTransactions, inventoryMovements, projectAllocations, authSession]);
 
   // Phase 10d: Equipment Recipes now lives in its own real tables
   // (equipment_types + equipment_bom_components), loaded once per session and
@@ -2783,9 +2783,6 @@ function App() {
   function currentPersistedState(): PersistedAppState {
     return {
       projectSites,
-      inventoryMovements,
-      buildTransactions,
-      projectAllocations,
       roleMode,
     };
   }
@@ -2810,9 +2807,6 @@ function App() {
       try {
         const importedState = JSON.parse(String(reader.result ?? "{}")) as Partial<PersistedAppState>;
         setProjectSites(isArray<ProjectSite>(importedState.projectSites, projectSites));
-        setInventoryMovements(isArray<InventoryMovement>(importedState.inventoryMovements, inventoryMovements));
-        setBuildTransactions(isArray<BuildTransaction>(importedState.buildTransactions, buildTransactions));
-        setProjectAllocations(isArray<ProjectAllocationHistory>(importedState.projectAllocations, projectAllocations));
         if (["warehouse", "purchasing", "pm", "manager"].includes(String(importedState.roleMode))) {
           setRoleMode(importedState.roleMode as RoleMode);
         }
