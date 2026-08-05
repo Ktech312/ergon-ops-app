@@ -72,6 +72,7 @@ import {
   loadNotifications,
   loadPresalesRules,
   loadProjectDocuments,
+  loadProjectSites,
   loadPurchaseRequests,
   loadRemoteAppState,
   loadScheduleTemplates,
@@ -94,6 +95,7 @@ import {
   saveInventoryItems,
   saveLocalAppState,
   saveMovementsBuildsAllocations,
+  saveProjectSites,
   saveRemoteAppState,
   saveUserRoleMode,
   releaseTransactionLock,
@@ -118,6 +120,7 @@ import {
   upsertStandardInstallTime,
   type ApprovalStatus,
   type AuthSession,
+  type BomLine,
   type BuildComponent,
   type BuildRecipe,
   type BuildTransaction,
@@ -136,12 +139,14 @@ import {
   type ProjectAllocationHistory,
   type ProjectDocument,
   type ProjectHandover,
+  type ProjectSite,
   type ProjectSubmittal,
   type PublicSubmittalView,
   type PurchaseRequest,
   type PurchaseUrl,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
+  type ScopeOfWork,
   type StandardInstallTime,
   type SubmittalSnapshot,
   type TaskHardwareDependency,
@@ -267,43 +272,11 @@ type PurchaseOrder = {
 // this file keeps working unchanged.
 type UploadedDoc = ProjectDocument;
 
-type BomLine = {
-  item: string;
-  qty: number;
-  status: "Need Quote" | "Not started" | "Ordered" | "Completed" | "From Inventory" | "Delivered to Office" | "Delivered to Client";
-  requestSpeed: "ASAP" | "Standard" | "Future";
-  po?: string;
-  notes?: string;
-};
-
-type ScopeOfWork = {
-  summary: string;
-  preparation: string;
-  infrastructure: string;
-  installation: string;
-  commissioning: string;
-  fineTuning: string;
-  assumptions: string;
-  exclusions: string;
-};
-
-type ProjectSite = {
-  ref: string;
-  name: string;
-  client: string;
-  type: "Parking Garage" | "Surface Lot" | "Campus Parking" | "Mixed Parking";
-  address: string;
-  owner: string;
-  status: "Draft" | "Planning" | "Purchasing" | "Staging" | "Install Ready";
-  due: string;
-  package: string;
-  cameras: number;
-  allocated: number;
-  siteNotes: string;
-  salesQuoteFile?: string;
-  sow: ScopeOfWork;
-  bom: BomLine[];
-};
+// BomLine, ScopeOfWork, and ProjectSite used to be defined locally; as of
+// Phase 10f they're imported from persistence.ts (see the import block
+// above) since projects are now backed by the real `projects` /
+// `project_scope_of_work` / `project_bom_lines` tables instead of the
+// app_records blob.
 
 type BomMaterialAction = "pull" | "order" | "direct";
 
@@ -926,7 +899,9 @@ function App() {
   // Phase 10c: Inventory Items no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [inventoryItems, setInventoryItems] = useState<Part[]>([]);
-  const [projectSites, setProjectSites] = useState<ProjectSite[]>(() => isArray<ProjectSite>(localState?.projectSites, projects));
+  // Phase 10f: Projects no longer lives in the local/blob state -- it's
+  // always loaded fresh from the real table (see the effect below).
+  const [projectSites, setProjectSites] = useState<ProjectSite[]>([]);
   // Phase 10d: Equipment Recipes no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [deviceRecipes, setDeviceRecipes] = useState<BuildRecipe[]>([]);
@@ -1049,7 +1024,6 @@ function App() {
           }
           return;
         }
-        setProjectSites(isArray<ProjectSite>(remoteState.projectSites, projects));
         setRoleMode((remoteState.roleMode as RoleMode | undefined) ?? "manager");
         setSyncStatus("synced");
       })
@@ -1065,7 +1039,6 @@ function App() {
 
   useEffect(() => {
     const state: PersistedAppState = {
-      projectSites,
       roleMode,
     };
     saveLocalAppState(state);
@@ -1088,7 +1061,32 @@ function App() {
         });
     }, 650);
     return () => window.clearTimeout(syncTimer);
-  }, [projectSites, roleMode, authSession]);
+  }, [roleMode, authSession]);
+
+  // Phase 10f: Projects (plus Scope of Work and BOM lines) now live in their
+  // own real tables, loaded once per session and then debounce-saved as a
+  // whole array on every change -- the same shape the blob used, so none of
+  // the add-project/edit-SOW/edit-BOM-line logic in the Projects component
+  // needed to change, only where it's persisted.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadProjectSites(authSession.accessToken).then(setProjectSites).catch(() => {});
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured() || projectSites.length === 0) {
+      return;
+    }
+    const syncTimer = window.setTimeout(() => {
+      saveProjectSites(projectSites, authSession.accessToken).catch(() => {
+        setSyncStatus("error");
+        setAuthStatus("Cloud save failed for projects. Check login, RLS policies, or Supabase env vars.");
+      });
+    }, 650);
+    return () => window.clearTimeout(syncTimer);
+  }, [projectSites, authSession]);
 
   // Phase 10e: Inventory Movements, Build Transactions, and Project
   // Allocation History now live in their own real tables, loaded once per
@@ -2782,7 +2780,6 @@ function App() {
 
   function currentPersistedState(): PersistedAppState {
     return {
-      projectSites,
       roleMode,
     };
   }
@@ -2806,7 +2803,6 @@ function App() {
     reader.onload = () => {
       try {
         const importedState = JSON.parse(String(reader.result ?? "{}")) as Partial<PersistedAppState>;
-        setProjectSites(isArray<ProjectSite>(importedState.projectSites, projectSites));
         if (["warehouse", "purchasing", "pm", "manager"].includes(String(importedState.roleMode))) {
           setRoleMode(importedState.roleMode as RoleMode);
         }

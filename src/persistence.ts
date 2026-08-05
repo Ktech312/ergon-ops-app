@@ -1,25 +1,14 @@
+// As of the Phase 10f cutover (Aug 2026), every entity that used to live in
+// this JSON blob (inventoryItems, deviceRecipes, inventoryMovements,
+// buildTransactions, projectAllocations, projectDocuments,
+// purchaseRequests, projectSites) has its own real relational table, loaded
+// and saved independently -- see loadInventoryItems/saveInventoryItems,
+// loadDeviceRecipes/saveDeviceRecipes, saveMovementsBuildsAllocations,
+// loadProjectDocuments/createProjectDocuments,
+// loadPurchaseRequests/createPurchaseRequestRemote/updatePurchaseRequestRemote,
+// and loadProjectSites/saveProjectSites. All that's left in the blob is
+// roleMode, a single per-workspace UI preference.
 export type PersistedAppState = {
-  projectSites: unknown[];
-  // projectDocuments intentionally removed (Phase 10b cutover, Aug 2026) --
-  // that entity now lives exclusively in the real `project_documents` table
-  // via loadProjectDocuments/createProjectDocuments, not this blob.
-  // purchaseRequests intentionally removed (Phase 10a cutover, Aug 2026) --
-  // that entity now lives exclusively in the real `purchase_requests` table
-  // via loadPurchaseRequests/createPurchaseRequestRemote/updatePurchaseRequestRemote,
-  // not this blob.
-  // inventoryItems intentionally removed (Phase 10c cutover, Aug 2026) -- that
-  // entity now lives exclusively in the real `inventory_items` /
-  // `inventory_balances` tables via loadInventoryItems/saveInventoryItems,
-  // not this blob.
-  // deviceRecipes intentionally removed (Phase 10d cutover, Aug 2026) -- that
-  // entity now lives exclusively in the real `equipment_types` /
-  // `equipment_bom_components` tables via loadDeviceRecipes/saveDeviceRecipes,
-  // not this blob.
-  // inventoryMovements/buildTransactions/projectAllocations intentionally
-  // removed (Phase 10e cutover, Aug 2026) -- those entities now live
-  // exclusively in the real `inventory_movements` / `build_transactions` /
-  // `project_allocation_history` tables via loadInventoryMovements /
-  // loadBuildTransactions / saveMovementsBuildsAllocations, not this blob.
   roleMode: string;
 };
 
@@ -34,10 +23,7 @@ export type AuthSession = {
 const LOCAL_STATE_KEY = "ergon:app-state:v1";
 const AUTH_SESSION_KEY = "ergon:auth-session:v1";
 const WORKSPACE_KEY = "default";
-const STATE_KEYS: Array<keyof PersistedAppState> = [
-  "projectSites",
-  "roleMode",
-];
+const STATE_KEYS: Array<keyof PersistedAppState> = ["roleMode"];
 
 function envValue(key: "VITE_SUPABASE_URL" | "VITE_SUPABASE_ANON_KEY") {
   const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
@@ -72,7 +58,6 @@ function asPersistedState(records: Array<{ record_key: string; data: unknown }>)
 
   const byKey = new Map(records.map((record) => [record.record_key, record.data]));
   return {
-    projectSites: Array.isArray(byKey.get("projectSites")) ? (byKey.get("projectSites") as unknown[]) : [],
     roleMode: typeof byKey.get("roleMode") === "string" ? (byKey.get("roleMode") as string) : "manager",
   };
 }
@@ -3203,6 +3188,275 @@ export async function saveMovementsBuildsAllocations(
   await saveProjectAllocations(allocations, accessToken);
 }
 
+// --- Phase 10f: Projects, Scope of Work, and BOM lines (cut over from the
+// app_records blob to the relational `projects` table plus two new tables,
+// `project_scope_of_work` and `project_bom_lines`, migration 022) ----------
+//
+// Same "load once, debounce-save the whole array" shape as Inventory Items
+// and Equipment Recipes: none of the add-project/edit-SOW/edit-BOM-line
+// logic in the Projects component needs to change, only where it's
+// persisted. BOM lines have no natural per-line key (same as the original
+// migration's own comment), so saving wholesale replaces a project's line
+// set rather than trying to reconcile it row by row.
+
+export type ScopeOfWork = {
+  summary: string;
+  preparation: string;
+  infrastructure: string;
+  installation: string;
+  commissioning: string;
+  fineTuning: string;
+  assumptions: string;
+  exclusions: string;
+};
+
+export type BomLine = {
+  item: string;
+  qty: number;
+  status: "Need Quote" | "Not started" | "Ordered" | "Completed" | "From Inventory" | "Delivered to Office" | "Delivered to Client";
+  requestSpeed: "ASAP" | "Standard" | "Future";
+  po?: string;
+  notes?: string;
+};
+
+export type ProjectSite = {
+  ref: string;
+  name: string;
+  client: string;
+  type: "Parking Garage" | "Surface Lot" | "Campus Parking" | "Mixed Parking";
+  address: string;
+  owner: string;
+  status: "Draft" | "Planning" | "Purchasing" | "Staging" | "Install Ready";
+  due: string;
+  package: string;
+  cameras: number;
+  allocated: number;
+  siteNotes: string;
+  salesQuoteFile?: string;
+  sow: ScopeOfWork;
+  bom: BomLine[];
+};
+
+const EMPTY_SCOPE_OF_WORK: ScopeOfWork = {
+  summary: "",
+  preparation: "",
+  infrastructure: "",
+  installation: "",
+  commissioning: "",
+  fineTuning: "",
+  assumptions: "",
+  exclusions: "",
+};
+
+type ProjectScopeRow = {
+  summary: string;
+  preparation: string;
+  infrastructure: string;
+  installation: string;
+  commissioning: string;
+  fine_tuning: string;
+  assumptions: string;
+  exclusions: string;
+};
+
+type ProjectBomLineRow = {
+  item_name: string;
+  qty: number | string;
+  status: string;
+  request_speed: string;
+  po: string | null;
+  notes: string | null;
+  line_sort: number;
+};
+
+type ProjectSiteRow = {
+  project_name: string;
+  project_number: string | null;
+  customer_name: string | null;
+  site_type: string | null;
+  site_address: string | null;
+  owner_name: string | null;
+  app_status: string | null;
+  target_date_display: string | null;
+  solution_package: string | null;
+  camera_count: number | string | null;
+  allocated_amount: number | string | null;
+  sales_quote_file: string | null;
+  notes: string | null;
+  project_scope_of_work: ProjectScopeRow | ProjectScopeRow[] | null;
+  project_bom_lines: ProjectBomLineRow[] | null;
+};
+
+const PROJECT_SITE_SELECT =
+  "project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort)";
+
+function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
+  const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
+  const sow: ScopeOfWork = scopeRaw
+    ? {
+        summary: scopeRaw.summary ?? "",
+        preparation: scopeRaw.preparation ?? "",
+        infrastructure: scopeRaw.infrastructure ?? "",
+        installation: scopeRaw.installation ?? "",
+        commissioning: scopeRaw.commissioning ?? "",
+        fineTuning: scopeRaw.fine_tuning ?? "",
+        assumptions: scopeRaw.assumptions ?? "",
+        exclusions: scopeRaw.exclusions ?? "",
+      }
+    : { ...EMPTY_SCOPE_OF_WORK };
+  const bom: BomLine[] = (row.project_bom_lines ?? [])
+    .slice()
+    .sort((a, b) => a.line_sort - b.line_sort)
+    .map((line) => ({
+      item: line.item_name,
+      qty: Number(line.qty) || 0,
+      status: (line.status as BomLine["status"]) ?? "Not started",
+      requestSpeed: (line.request_speed as BomLine["requestSpeed"]) ?? "Standard",
+      po: line.po ?? undefined,
+      notes: line.notes ?? undefined,
+    }));
+  return {
+    ref: row.project_number ?? "",
+    name: row.project_name,
+    client: row.customer_name ?? "",
+    type: (row.site_type as ProjectSite["type"]) ?? "Parking Garage",
+    address: row.site_address ?? "",
+    owner: row.owner_name ?? "",
+    status: (row.app_status as ProjectSite["status"]) ?? "Draft",
+    due: row.target_date_display ?? "",
+    package: row.solution_package ?? "",
+    cameras: Number(row.camera_count) || 0,
+    allocated: Number(row.allocated_amount) || 0,
+    siteNotes: row.notes ?? "",
+    salesQuoteFile: row.sales_quote_file ?? undefined,
+    sow,
+    bom,
+  };
+}
+
+export async function loadProjectSites(accessToken?: string): Promise<ProjectSite[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`projects?select=${PROJECT_SITE_SELECT}&order=project_name.asc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ProjectSiteRow[];
+  return rows.map(mapProjectSiteRow);
+}
+
+export async function saveProjectSites(sites: ProjectSite[], accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken || sites.length === 0) {
+    return;
+  }
+
+  const projectPayload = sites.map((site) => ({
+    project_name: site.name,
+    project_number: site.ref || null,
+    customer_name: site.client || null,
+    site_type: site.type,
+    site_address: site.address || null,
+    owner_name: site.owner || null,
+    app_status: site.status,
+    target_date: /^\d{4}-\d{2}-\d{2}$/.test(site.due) ? site.due : null,
+    target_date_display: site.due || null,
+    solution_package: site.package || null,
+    camera_count: site.cameras,
+    allocated_amount: site.allocated,
+    sales_quote_file: site.salesQuoteFile || null,
+    notes: site.siteNotes,
+  }));
+
+  const projectResponse = await fetch(supabaseUrl("projects?on_conflict=project_name"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify(projectPayload),
+  });
+  if (!projectResponse.ok) {
+    throw new Error(`Could not save projects: ${projectResponse.status}`);
+  }
+  const savedRows = (await projectResponse.json()) as Array<{ id: string; project_name: string }>;
+  const idByName = new Map(savedRows.map((row) => [row.project_name, row.id]));
+
+  const scopePayload = sites
+    .map((site) => {
+      const projectId = idByName.get(site.name);
+      return projectId
+        ? {
+            project_id: projectId,
+            summary: site.sow.summary,
+            preparation: site.sow.preparation,
+            infrastructure: site.sow.infrastructure,
+            installation: site.sow.installation,
+            commissioning: site.sow.commissioning,
+            fine_tuning: site.sow.fineTuning,
+            assumptions: site.sow.assumptions,
+            exclusions: site.sow.exclusions,
+          }
+        : null;
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  if (scopePayload.length > 0) {
+    await fetch(supabaseUrl("project_scope_of_work?on_conflict=project_id"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(scopePayload),
+    });
+  }
+
+  // BOM lines have no natural per-line key to reconcile against (same
+  // limitation the original migration noted), so each save wholesale
+  // replaces a project's line set: resolve item names to inventory_item_id
+  // in bulk, delete the project's existing lines, then re-insert current ones.
+  const itemNames = new Set<string>();
+  sites.forEach((site) => site.bom.forEach((line) => itemNames.add(line.item)));
+  const itemRows = itemNames.size
+    ? await fetch(
+        supabaseUrl(`inventory_items?select=id,item_name&item_name=in.(${Array.from(itemNames).map((n) => `"${n.replace(/"/g, '\\"')}"`).join(",")})`),
+        { headers: supabaseHeaders(accessToken) },
+      ).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; item_name: string }>>) : []))
+    : [];
+  const itemIdByName = new Map(itemRows.map((row) => [row.item_name, row.id]));
+
+  const projectIds = sites.map((site) => idByName.get(site.name)).filter((id): id is string => Boolean(id));
+  if (projectIds.length > 0) {
+    await fetch(supabaseUrl(`project_bom_lines?project_id=in.(${projectIds.join(",")})`), {
+      method: "DELETE",
+      headers: supabaseHeaders(accessToken),
+    });
+  }
+
+  const bomPayload = sites.flatMap((site) => {
+    const projectId = idByName.get(site.name);
+    if (!projectId) {
+      return [];
+    }
+    return site.bom.map((line, index) => ({
+      project_id: projectId,
+      item_name: line.item,
+      inventory_item_id: itemIdByName.get(line.item) ?? null,
+      qty: line.qty,
+      status: line.status,
+      request_speed: line.requestSpeed,
+      po: line.po || null,
+      notes: line.notes || null,
+      line_sort: index,
+    }));
+  });
+
+  if (bomPayload.length > 0) {
+    await fetch(supabaseUrl("project_bom_lines"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
+      body: JSON.stringify(bomPayload),
+    });
+  }
+}
+
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
   if (!isRemotePersistenceConfigured()) {
     return null;
@@ -3268,7 +3522,7 @@ export async function saveRemoteAppState(state: PersistedAppState, accessToken?:
       entity_type: "app_state",
       entity_ref: WORKSPACE_KEY,
       payload: {
-        projects: state.projectSites.length,
+        role_mode: state.roleMode,
       },
     }),
   }).catch(() => {
