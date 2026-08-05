@@ -682,6 +682,52 @@ export async function updateCatalogItem(id: string, item: Omit<CatalogItem, "id"
   return mapCatalogRow(rows[0]);
 }
 
+// Bulk import from a spreadsheet (Phase 19-style, parsed entirely in the
+// browser -- see SalesCatalog's handleCatalogFileSelect). One batched POST
+// with an array body instead of one request per row.
+export async function bulkCreateCatalogItems(
+  items: Array<Omit<CatalogItem, "id" | "catalogNumber"> & { catalogNumber?: string }>,
+  accessToken?: string,
+): Promise<CatalogItem[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  if (items.length === 0) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("product_catalog"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "return=representation",
+    },
+    body: JSON.stringify(
+      items.map((item) => ({
+        catalog_number: item.catalogNumber || makeCatalogNumber(),
+        product_name: item.productName,
+        sales_description: item.salesDescription,
+        technical_description: item.technicalDescription,
+        category: item.category,
+        manufacturer: item.manufacturer,
+        default_sell_price: item.defaultSellPrice,
+        cost_source: item.costSource,
+        linked_reference: item.linkedReference,
+        datasheet_url: item.datasheetUrl,
+        image_url: item.imageUrl,
+        is_retired: item.isRetired,
+      })),
+    ),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not import catalog items: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as CatalogItemRow[];
+  return rows.map(mapCatalogRow);
+}
+
 export async function setCatalogItemRetired(id: string, retired: boolean, accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;

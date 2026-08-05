@@ -34,6 +34,7 @@ import {
   buildDocumentStoragePath,
   checkIsAdmin,
   consumeOAuthRedirectSession,
+  bulkCreateCatalogItems,
   createCatalogItem,
   createHandover,
   createNotification,
@@ -1367,6 +1368,16 @@ function App() {
     }
     await setCatalogItemRetired(id, retired, authSession.accessToken);
     setCatalogItems((current) => current.map((item) => (item.id === id ? { ...item, isRetired: retired } : item)));
+  }
+
+  async function handleBulkCreateCatalogItems(items: Array<Omit<CatalogItem, "id" | "catalogNumber">>): Promise<number> {
+    if (!authSession || items.length === 0) {
+      return 0;
+    }
+    const created = await bulkCreateCatalogItems(items, authSession.accessToken);
+    setCatalogItems((current) => [...current, ...created].sort((a, b) => a.productName.localeCompare(b.productName)));
+    setCatalogStatus(`Imported ${created.length} catalog item(s).`);
+    return created.length;
   }
 
   // Sales Quote Builder (migration 033). Loaded once per session, same
@@ -3175,6 +3186,7 @@ function App() {
             onCreateCatalogItem={handleCreateCatalogItem}
             onUpdateCatalogItem={handleUpdateCatalogItem}
             onSetCatalogItemRetired={handleSetCatalogItemRetired}
+            onBulkImportCatalogItems={handleBulkCreateCatalogItems}
             onRefreshCatalog={() => authSession && reloadCatalog(authSession.accessToken)}
             salesQuotes={salesQuotes}
             salesQuoteStatus={salesQuoteStatus}
@@ -7402,6 +7414,7 @@ function SalesHome({
   onCreateCatalogItem,
   onUpdateCatalogItem,
   onSetCatalogItemRetired,
+  onBulkImportCatalogItems,
   onRefreshCatalog,
   salesQuotes,
   salesQuoteStatus,
@@ -7425,6 +7438,7 @@ function SalesHome({
   onCreateCatalogItem: (item: Omit<CatalogItem, "id" | "catalogNumber">) => void;
   onUpdateCatalogItem: (id: string, item: Omit<CatalogItem, "id">) => void;
   onSetCatalogItemRetired: (id: string, retired: boolean) => void;
+  onBulkImportCatalogItems: (items: Array<Omit<CatalogItem, "id" | "catalogNumber">>) => Promise<number>;
   onRefreshCatalog: () => void;
   salesQuotes: SalesQuote[];
   salesQuoteStatus: string;
@@ -7471,6 +7485,7 @@ function SalesHome({
           onCreate={onCreateCatalogItem}
           onUpdate={onUpdateCatalogItem}
           onSetRetired={onSetCatalogItemRetired}
+          onBulkImport={onBulkImportCatalogItems}
           onRefresh={onRefreshCatalog}
           projectSites={projectSites}
           tasks={tasks}
@@ -7528,6 +7543,7 @@ function SalesCatalog({
   onCreate,
   onUpdate,
   onSetRetired,
+  onBulkImport,
   onRefresh,
   projectSites,
   tasks,
@@ -7544,6 +7560,7 @@ function SalesCatalog({
   onCreate: (item: Omit<CatalogItem, "id" | "catalogNumber">) => void;
   onUpdate: (id: string, item: Omit<CatalogItem, "id">) => void;
   onSetRetired: (id: string, retired: boolean) => void;
+  onBulkImport: (items: Array<Omit<CatalogItem, "id" | "catalogNumber">>) => Promise<number>;
   onRefresh: () => void;
   projectSites: ProjectSite[];
   tasks: EOTask[];
@@ -7557,6 +7574,10 @@ function SalesCatalog({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState(EMPTY_CATALOG_DRAFT);
   const [showRetired, setShowRetired] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importRows, setImportRows] = useState<Array<Omit<CatalogItem, "id" | "catalogNumber">>>([]);
+  const [importStatus, setImportStatus] = useState("");
+  const [isCommittingImport, setIsCommittingImport] = useState(false);
 
   const visibleItems = catalogItems.filter((item) => showRetired || !item.isRetired);
 
@@ -7597,6 +7618,86 @@ function SalesCatalog({
     setModalOpen(false);
   }
 
+  function openImportModal() {
+    setImportRows([]);
+    setImportStatus("");
+    setImportModalOpen(true);
+  }
+
+  // Bulk catalog import: same in-browser, parse-then-preview-then-commit
+  // pattern as the Phase 19 BOM spreadsheet import (see handleBomFileSelect
+  // above) -- SheetJS reads the file client-side, header names are matched
+  // loosely (case/spacing-insensitive), nothing is written until commit.
+  async function handleCatalogFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    setImportStatus("Parsing...");
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      const parsed = rawRows
+        .map((row) => {
+          const keys = Object.keys(row);
+          const findKey = (...candidates: string[]) => keys.find((key) => candidates.includes(key.trim().toLowerCase()));
+          const asText = (key: string | undefined) => (key ? String(row[key]).trim() : "");
+          const productName = asText(findKey("product name", "product", "name", "item"));
+          const category = asText(findKey("category"));
+          const manufacturer = asText(findKey("manufacturer", "brand", "vendor"));
+          const priceKey = findKey("default sell price", "sell price", "price");
+          const defaultSellPrice = priceKey ? Number(row[priceKey]) || 0 : 0;
+          const linkedReference = asText(findKey("linked reference", "linked sku", "sku", "equipment"));
+          const datasheetUrl = asText(findKey("datasheet url", "datasheet", "datasheet link"));
+          const imageUrl = asText(findKey("image url", "image", "image link"));
+          const salesDescription = asText(findKey("sales description", "description"));
+          const technicalDescription = asText(findKey("technical description", "specs", "technical notes"));
+          const item: Omit<CatalogItem, "id" | "catalogNumber"> = {
+            productName,
+            category,
+            manufacturer,
+            defaultSellPrice,
+            costSource: "manual",
+            linkedReference,
+            datasheetUrl,
+            imageUrl,
+            salesDescription,
+            technicalDescription,
+            isRetired: false,
+          };
+          return item;
+        })
+        .filter((row) => row.productName);
+      setImportRows(parsed);
+      setImportStatus(
+        parsed.length
+          ? `Parsed ${parsed.length} row(s) -- review below, then commit.`
+          : "No recognizable rows found -- check column headers (Product Name is required).",
+      );
+    } catch (error) {
+      setImportStatus("Could not parse that file. Make sure it's a valid .xlsx or .csv.");
+    }
+  }
+
+  async function commitImport() {
+    if (importRows.length === 0) {
+      return;
+    }
+    setIsCommittingImport(true);
+    try {
+      const count = await onBulkImport(importRows);
+      setImportStatus(`Added ${count} item(s) to the catalog.`);
+      setImportRows([]);
+    } catch (error) {
+      setImportStatus(error instanceof Error ? error.message : "Could not import catalog items.");
+    } finally {
+      setIsCommittingImport(false);
+    }
+  }
+
   return (
     <>
       <TaskMiniPanel
@@ -7618,6 +7719,11 @@ function SalesCatalog({
           {canManage && (
             <button className="primary-action mini-action" type="button" onClick={openAddModal} disabled={!isConfigured}>
               <Plus size={14} /> Add Product
+            </button>
+          )}
+          {canManage && (
+            <button className="secondary-action mini-action" type="button" onClick={openImportModal} disabled={!isConfigured}>
+              <Upload size={14} /> Upload list
             </button>
           )}
           <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
@@ -7702,6 +7808,57 @@ function SalesCatalog({
               <button className="secondary-action" type="button" onClick={() => setModalOpen(false)}>Cancel</button>
               <button className="primary-action" type="button" onClick={submitDraft} disabled={!draft.productName.trim()}>{editingId ? "Save Product" : "Add Product"}</button>
             </div>
+          </section>
+        </div>
+      )}
+
+      {importModalOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-import-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="catalog-import-title">Upload a list of items</h2>
+                <p>Import a .xlsx or .csv with columns like Product Name, Category, Manufacturer, Sell Price, Linked Reference, Datasheet URL.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setImportModalOpen(false)} aria-label="Close catalog import">x</button>
+            </div>
+            <label className="hidden-file-label secondary-action mini-action">
+              <Upload size={14} /> Choose file
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleCatalogFileSelect} />
+            </label>
+            {importStatus && <small className="muted">{importStatus}</small>}
+            {importRows.length > 0 && (
+              <>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>Category</th>
+                      <th>Manufacturer</th>
+                      <th>Sell Price</th>
+                      <th>Linked Ref</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importRows.map((row, index) => (
+                      <tr key={index}>
+                        <td>{row.productName}</td>
+                        <td>{row.category}</td>
+                        <td>{row.manufacturer}</td>
+                        <td>{money(row.defaultSellPrice)}</td>
+                        <td>{row.linkedReference}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="modal-actions">
+                  <button className="secondary-action" type="button" onClick={() => { setImportRows([]); setImportStatus(""); }}>Discard</button>
+                  <button className="primary-action" type="button" onClick={commitImport} disabled={isCommittingImport}>
+                    {isCommittingImport ? "Importing..." : `Commit ${importRows.length} Item(s) to Catalog`}
+                  </button>
+                </div>
+              </>
+            )}
           </section>
         </div>
       )}
