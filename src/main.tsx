@@ -7505,15 +7505,6 @@ function SalesHome({
         onOpenFull={onOpenTasksView}
       />
 
-      <section className="panel wide">
-        <div className="panel-title-row">
-          <div>
-            <h2>Sales</h2>
-            <p>Product catalog reference and quote design for parking garage/lot sites.</p>
-          </div>
-        </div>
-      </section>
-
       <SalesCatalog
         catalogItems={catalogItems}
         status={catalogStatus}
@@ -7960,53 +7951,60 @@ function SalesQuoteBuilder({
 
   return (
     <>
-      <section className="panel wide">
-        <div className="panel-title-row">
-          <div>
-            <h2>Quote Builder</h2>
-            <p>Scope a client's garages and parking lots, then build a hardware quote.</p>
-          </div>
-          <button className="icon-button" type="button" onClick={() => setIsCollapsed((current) => !current)} aria-label={isCollapsed ? "Expand section" : "Collapse section"}>
-            {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-          </button>
-        </div>
-      </section>
-
-      {!isCollapsed && mode === "list" && (
+      {mode === "list" && (
         <section className="panel wide">
           <div className="panel-title-row">
             <div>
-              <p>Sale Design and Quote Builder</p>
+              <h2>Quote Builder</h2>
+              <p>Scope a client's garages and parking lots, then build a hardware quote.</p>
             </div>
-            <button className="primary-action mini-action" type="button" onClick={() => setShowNewQuoteModal(true)} disabled={!isConfigured}>
-              <Plus size={14} /> Add New
-            </button>
+            <div className="action-row">
+              <button className="primary-action mini-action" type="button" onClick={() => setShowNewQuoteModal(true)} disabled={!isConfigured}>
+                <Plus size={14} /> Add New
+              </button>
+              <button className="icon-button" type="button" onClick={() => setIsCollapsed((current) => !current)} aria-label={isCollapsed ? "Expand section" : "Collapse section"}>
+                {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+              </button>
+            </div>
           </div>
-          {!isConfigured && <span className="muted">Set Supabase env vars to manage quotes.</span>}
-          {status && <small className="muted">{status}</small>}
-          <table>
-            <thead>
-              <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th></th></tr>
-            </thead>
-            <tbody>
-              {salesQuotes.map((quote) => (
-                <tr key={quote.id}>
-                  <td><strong>{quote.siteName}</strong><small>{quote.clientName}</small></td>
-                  <td>{quote.city || "-"}</td>
-                  <td>{quote.createdByEmail || "-"}</td>
-                  <td>{quote.locations.length}</td>
-                  <td><button className="table-action" type="button" onClick={() => openQuote(quote.id)}>Open</button></td>
-                </tr>
-              ))}
-              {salesQuotes.length === 0 && (
-                <tr><td colSpan={5} className="empty-compact-state">No quotes yet. Add New to start scoping a site.</td></tr>
-              )}
-            </tbody>
-          </table>
+          {!isCollapsed && (
+            <>
+              {!isConfigured && <span className="muted">Set Supabase env vars to manage quotes.</span>}
+              {status && <small className="muted">{status}</small>}
+              <table>
+                <thead>
+                  <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th>Tasks</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {salesQuotes.map((quote) => (
+                    <tr key={quote.id}>
+                      <td><strong>{quote.siteName}</strong><small>{quote.clientName}</small></td>
+                      <td>{quote.city || "-"}</td>
+                      <td>{quote.createdByEmail || "-"}</td>
+                      <td>{quote.locations.length}</td>
+                      <td>
+                        <RequestTaskButton
+                          section="sales_quotes"
+                          contextNote={`Regarding quote: ${quote.siteName} (${quote.clientName})`}
+                          teamMembers={teamMembers}
+                          projectSites={projectSites}
+                          onCreate={onCreateTask}
+                        />
+                      </td>
+                      <td><button className="table-action" type="button" onClick={() => openQuote(quote.id)}>Open</button></td>
+                    </tr>
+                  ))}
+                  {salesQuotes.length === 0 && (
+                    <tr><td colSpan={6} className="empty-compact-state">No quotes yet. Add New to start scoping a site.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </>
+          )}
         </section>
       )}
 
-      {!isCollapsed && mode === "detail" && selectedQuote && (
+      {mode === "detail" && selectedQuote && (
         <section className="panel wide">
           <div className="panel-title-row">
             <div>
@@ -8962,12 +8960,11 @@ function TaskMiniPanel({
           <h2>{title}</h2>
           <p>{openTasks.length} open{tasks.length !== openTasks.length ? `, ${tasks.length - openTasks.length} done` : ""}</p>
         </div>
-        <div className="action-row">
-          <button className="secondary-action mini-action" type="button" onClick={onOpenFull}>Open in Tasks</button>
-          {!hideAdd && (
+        {!hideAdd && (
+          <div className="action-row">
             <button className="primary-action mini-action" type="button" onClick={openAddModal}><Plus size={14} /> Add</button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
       <div className="task-mini-list">
         {visibleTasks.map((task) => (
