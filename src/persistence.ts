@@ -3803,3 +3803,242 @@ async function saveRestoredProjectDocuments(docs: ProjectDocument[], accessToken
     body: JSON.stringify(payload),
   });
 }
+
+// Purchase Orders (migration 032). Before this, the Purchasing page's
+// "Imported Purchase Queue" / "Order Line Items" / "Spend By Project"
+// sections all read from a hardcoded array of 7 historical vendor orders --
+// there was no way to add a new order or change a status, and nothing was
+// ever actually saved. This is a real per-row create/update (like Purchase
+// Requests), not a whole-array debounce-save, since there's no complex
+// synchronous mutation logic that needs it.
+export type PurchaseLineCategory = "Compute" | "Storage" | "Network" | "Power" | "Enclosure" | "Hardware" | "Rack" | "Other";
+
+export type PurchaseOrderLine = {
+  name: string;
+  category: PurchaseLineCategory;
+  qty: number;
+  unitCost: number;
+  lineTotal?: number;
+};
+
+export type PurchaseOrder = {
+  id: string;
+  number: string;
+  vendor: string;
+  date: string;
+  projectRef: string;
+  status: "Imported" | "In Processing" | "On Hold";
+  subtotal: number;
+  tax: number;
+  shipping: number;
+  total: number;
+  sourceFile: string;
+  shipTo: string;
+  paymentNote: string;
+  lines: PurchaseOrderLine[];
+};
+
+type PurchaseOrderLineRow = {
+  item_name: string;
+  category: string | null;
+  quantity_ordered: number | string;
+  unit_cost: number | string;
+  line_total: number | string | null;
+};
+
+type PurchaseOrderRow = {
+  id: string;
+  po_number: string;
+  app_status: string;
+  requested_date: string;
+  subtotal: number | string;
+  tax_amount: number | string;
+  shipping_amount: number | string;
+  total_amount: number | string | null;
+  project_name: string | null;
+  ship_to: string | null;
+  payment_note: string | null;
+  source_file: string | null;
+  vendor: { name: string } | null;
+  purchase_order_lines: PurchaseOrderLineRow[];
+};
+
+function appPoCategory(category: string | null): PurchaseLineCategory {
+  const allowed: PurchaseLineCategory[] = ["Compute", "Storage", "Network", "Power", "Enclosure", "Hardware", "Rack", "Other"];
+  return (allowed as string[]).includes(category ?? "") ? (category as PurchaseLineCategory) : "Other";
+}
+
+function pgPoStatus(status: PurchaseOrder["status"]): string {
+  switch (status) {
+    case "In Processing": return "ordered";
+    case "On Hold": return "submitted";
+    default: return "received";
+  }
+}
+
+function mapPurchaseOrderLineRow(row: PurchaseOrderLineRow): PurchaseOrderLine {
+  return {
+    name: row.item_name,
+    category: appPoCategory(row.category),
+    qty: Number(row.quantity_ordered) || 0,
+    unitCost: Number(row.unit_cost) || 0,
+    lineTotal: row.line_total !== null ? Number(row.line_total) || undefined : undefined,
+  };
+}
+
+function mapPurchaseOrderRow(row: PurchaseOrderRow): PurchaseOrder {
+  const subtotal = Number(row.subtotal) || 0;
+  const tax = Number(row.tax_amount) || 0;
+  const shipping = Number(row.shipping_amount) || 0;
+  return {
+    id: row.id,
+    number: row.po_number,
+    vendor: row.vendor?.name ?? "Unknown vendor",
+    date: row.requested_date,
+    projectRef: row.project_name ?? "",
+    status: row.app_status === "In Processing" || row.app_status === "On Hold" ? row.app_status : "Imported",
+    subtotal,
+    tax,
+    shipping,
+    total: row.total_amount !== null && row.total_amount !== undefined ? Number(row.total_amount) || subtotal + tax + shipping : subtotal + tax + shipping,
+    sourceFile: row.source_file ?? "",
+    shipTo: row.ship_to ?? "",
+    paymentNote: row.payment_note ?? "",
+    lines: (row.purchase_order_lines ?? []).map(mapPurchaseOrderLineRow),
+  };
+}
+
+const PURCHASE_ORDER_SELECT =
+  "id,po_number,app_status,requested_date,subtotal,tax_amount,shipping_amount,total_amount,project_name,ship_to,payment_note,source_file,vendor:vendors(name),purchase_order_lines(item_name,category,quantity_ordered,unit_cost,line_total)";
+
+export async function loadPurchaseOrders(accessToken?: string): Promise<PurchaseOrder[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT}&order=requested_date.desc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as PurchaseOrderRow[];
+  return rows.map(mapPurchaseOrderRow);
+}
+
+async function getOrCreateVendorId(name: string, accessToken: string): Promise<string | null> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("vendors?on_conflict=name"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify({ name: trimmed }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as Array<{ id: string }>;
+  return rows[0]?.id ?? null;
+}
+
+export async function createPurchaseOrder(
+  input: {
+    number: string;
+    vendor: string;
+    date: string;
+    projectRef: string;
+    status: PurchaseOrder["status"];
+    subtotal: number;
+    tax: number;
+    shipping: number;
+    sourceFile: string;
+    shipTo: string;
+    paymentNote: string;
+    lines: Array<{ name: string; category: PurchaseLineCategory; qty: number; unitCost: number }>;
+  },
+  accessToken?: string,
+): Promise<PurchaseOrder | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const vendorId = await getOrCreateVendorId(input.vendor, accessToken);
+  if (!vendorId) {
+    return null;
+  }
+  const orderPayload = {
+    po_number: input.number,
+    vendor_id: vendorId,
+    app_status: input.status,
+    status: pgPoStatus(input.status),
+    requested_date: input.date,
+    subtotal: input.subtotal,
+    tax_amount: input.tax,
+    shipping_amount: input.shipping,
+    project_name: input.projectRef || null,
+    ship_to: input.shipTo || null,
+    payment_note: input.paymentNote || null,
+    source_file: input.sourceFile || null,
+  };
+  const orderResponse = await fetch(supabaseUrl("purchase_orders"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify(orderPayload),
+  });
+  if (!orderResponse.ok) {
+    throw new Error(`Could not save purchase order: ${orderResponse.status}`);
+  }
+  const orderRows = (await orderResponse.json()) as Array<{ id: string }>;
+  const orderId = orderRows[0]?.id;
+  if (!orderId) {
+    return null;
+  }
+
+  const linePayload = input.lines.map((line, index) => ({
+    purchase_order_id: orderId,
+    item_name: line.name,
+    category: line.category,
+    quantity_ordered: line.qty,
+    unit_cost: line.unitCost,
+    line_sort: index,
+  }));
+  let lineRows: PurchaseOrderLineRow[] = [];
+  if (linePayload.length > 0) {
+    const lineResponse = await fetch(supabaseUrl("purchase_order_lines"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+      body: JSON.stringify(linePayload),
+    });
+    if (lineResponse.ok) {
+      lineRows = (await lineResponse.json()) as PurchaseOrderLineRow[];
+    }
+  }
+
+  return {
+    id: orderId,
+    number: input.number,
+    vendor: input.vendor,
+    date: input.date,
+    projectRef: input.projectRef,
+    status: input.status,
+    subtotal: input.subtotal,
+    tax: input.tax,
+    shipping: input.shipping,
+    total: input.subtotal + input.tax + input.shipping,
+    sourceFile: input.sourceFile,
+    shipTo: input.shipTo,
+    paymentNote: input.paymentNote,
+    lines: lineRows.length > 0 ? lineRows.map(mapPurchaseOrderLineRow) : input.lines.map((line) => ({ ...line })),
+  };
+}
+
+export async function updatePurchaseOrderStatus(id: string, status: PurchaseOrder["status"], accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`purchase_orders?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ app_status: status, status: pgPoStatus(status) }),
+  });
+}

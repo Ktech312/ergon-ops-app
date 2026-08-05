@@ -38,6 +38,7 @@ import {
   createNotification,
   createPresalesRule,
   createProjectDocuments,
+  createPurchaseOrder,
   createPurchaseRequestRemote,
   createScheduleTemplate,
   createSubmittal,
@@ -77,6 +78,7 @@ import {
   loadPresalesRules,
   loadProjectDocuments,
   loadProjectSites,
+  loadPurchaseOrders,
   loadPurchaseRequests,
   loadRemoteAppState,
   loadScheduleTemplates,
@@ -117,6 +119,7 @@ import {
   updateHandoverResponses,
   updateNotificationRule,
   updateProjectDocumentStatusRemote,
+  updatePurchaseOrderStatus,
   updatePurchaseRequestRemote,
   updateTask,
   updateTaskHardwareDependencyStatus,
@@ -149,6 +152,9 @@ import {
   type ProjectSite,
   type ProjectSubmittal,
   type PublicSubmittalView,
+  type PurchaseLineCategory,
+  type PurchaseOrder,
+  type PurchaseOrderLine,
   type PurchaseRequest,
   type PurchaseUrl,
   type ScheduleTemplate,
@@ -245,29 +251,12 @@ type PackageOption = {
   items: string[];
 };
 
-type PurchaseLine = {
-  name: string;
-  category: "Compute" | "Storage" | "Network" | "Power" | "Enclosure" | "Hardware" | "Rack" | "Other";
-  qty: number;
-  unitCost: number;
-  lineTotal?: number;
-};
-
-type PurchaseOrder = {
-  number: string;
-  vendor: "Amazon" | "NeweggBusiness";
-  date: string;
-  projectRef: "Straud Medical" | "Newport News" | "Newport News 37th St.";
-  status: "Imported" | "In Processing" | "On Hold";
-  subtotal: number;
-  tax: number;
-  shipping: number;
-  total: number;
-  sourceFile: string;
-  shipTo: string;
-  paymentNote: string;
-  lines: PurchaseLine[];
-};
+// PurchaseOrder and PurchaseOrderLine used to be defined locally with a
+// fixed vendor/project union, backing a hardcoded array of 7 historical
+// orders that couldn't be added to or changed; as of the Phase
+// purchase-orders cutover they're imported from persistence.ts since
+// they're now backed by the real `purchase_orders` / `purchase_order_lines`
+// / `vendors` tables (see the import block above).
 
 // PurchaseRequest used to be defined locally; as of Phase 10a it's imported
 // from persistence.ts (see the import block above) since it's now backed by
@@ -494,144 +483,11 @@ const packageOptions: PackageOption[] = [
   },
 ];
 
-const purchaseOrders: PurchaseOrder[] = [
-  {
-    number: "1304622160",
-    vendor: "NeweggBusiness",
-    date: "Jul 15, 2026",
-    projectRef: "Straud Medical",
-    status: "In Processing",
-    subtotal: 22436.95,
-    tax: 1738.87,
-    shipping: 0,
-    total: 24175.82,
-    sourceFile: "$24,175.82 NeweggBusiness.pdf",
-    shipTo: "EnSight Technologies, Santee CA",
-    paymentNote: "Visa ending 0950, payment verification pending",
-    lines: [
-      { name: "ASRock Z890 Taichi motherboard", category: "Compute", qty: 13, unitCost: 199.99, lineTotal: 2599.87 },
-      { name: "Intel Core Ultra 7 270K Plus processor", category: "Compute", qty: 17, unitCost: 311.5, lineTotal: 5295.5 },
-      { name: "CORSAIR RM1000x ATX power supply", category: "Power", qty: 14, unitCost: 217.99, lineTotal: 3051.86 },
-      { name: "Rosewill 2U rackmount server chassis", category: "Rack", qty: 13, unitCost: 149.99, lineTotal: 1949.87 },
-      { name: "GIGABYTE WindForce RTX 5070 graphics card", category: "Compute", qty: 15, unitCost: 635.99, lineTotal: 9539.85 },
-    ],
-  },
-  {
-    number: "1304622180",
-    vendor: "NeweggBusiness",
-    date: "Jul 15, 2026",
-    projectRef: "Straud Medical",
-    status: "In Processing",
-    subtotal: 3112.72,
-    tax: 241.24,
-    shipping: 0,
-    total: 3353.96,
-    sourceFile: "3,353.96 NeweggBusiness.pdf",
-    shipTo: "EnSight Technologies, Santee CA",
-    paymentNote: "Visa ending 0950, payment verification pending",
-    lines: [
-      { name: "Samsung 990 PRO SSD 1TB M.2 drive", category: "Storage", qty: 13, unitCost: 239.44, lineTotal: 3112.72 },
-    ],
-  },
-  {
-    number: "1304622200",
-    vendor: "NeweggBusiness",
-    date: "Jul 15, 2026",
-    projectRef: "Straud Medical",
-    status: "On Hold",
-    subtotal: 1040,
-    tax: 80.6,
-    shipping: 0,
-    total: 1120.6,
-    sourceFile: "1,120.60 NeweggBusiness.pdf",
-    shipTo: "EnSight Technologies, Santee CA",
-    paymentNote: "Visa ending 0950, order hold",
-    lines: [
-      { name: "Seagate Desktop HDD 2TB SATA internal drive", category: "Storage", qty: 13, unitCost: 80, lineTotal: 1040 },
-    ],
-  },
-  {
-    number: "112-0918552-2711412",
-    vendor: "Amazon",
-    date: "Jul 13, 2026",
-    projectRef: "Newport News",
-    status: "Imported",
-    subtotal: 3178.84,
-    tax: 246.35,
-    shipping: 0,
-    total: 3425.19,
-    sourceFile: "AMZ $3,286.24 and 138.pdf",
-    shipTo: "10225 Prospect Ave, Santee CA",
-    paymentNote: "Visa ending 0950 split transactions",
-    lines: [
-      { name: "AC Infinity AXIAL 8038 cooling fan", category: "Enclosure", qty: 7, unitCost: 18.42 },
-      { name: "Bud Industries IPV-1116 air vent", category: "Enclosure", qty: 20, unitCost: 11.99 },
-      { name: "VEVOR NEMA 4X steel electrical enclosure", category: "Enclosure", qty: 19, unitCost: 147.9 },
-    ],
-  },
-  {
-    number: "112-5785858-5127443",
-    vendor: "Amazon",
-    date: "Jun 4, 2026",
-    projectRef: "Newport News 37th St.",
-    status: "Imported",
-    subtotal: 1298.51,
-    tax: 107.13,
-    shipping: 0,
-    total: 1405.64,
-    sourceFile: "AMZ $790.20 and 615.pdf",
-    shipTo: "971 Laguna Ave, El Cajon CA",
-    paymentNote: "Visa ending 0950 split transactions",
-    lines: [
-      { name: "Self-drilling screw assortment kit", category: "Hardware", qty: 1, unitCost: 7.59 },
-      { name: "OM4 LC to LC fiber patch cable", category: "Network", qty: 1, unitCost: 6.83 },
-      { name: "ICC CAT6 wall mount patch panel", category: "Network", qty: 1, unitCost: 53.1 },
-      { name: "Outdoor electrical box with fan and thermostat", category: "Enclosure", qty: 1, unitCost: 169.99 },
-      { name: "Aluminum DIN rails, 30 piece pack", category: "Hardware", qty: 1, unitCost: 18.99 },
-      { name: "10GBase-LR SFP+ transceiver pack", category: "Network", qty: 1, unitCost: 94.89 },
-      { name: "Self tapping screw kit", category: "Hardware", qty: 1, unitCost: 7.98 },
-      { name: "Goldenmate lithium UPS battery backup", category: "Power", qty: 1, unitCost: 175.99 },
-      { name: "Cat6/Cat6a 1ft patch cables, 24 pack", category: "Network", qty: 1, unitCost: 19.94 },
-      { name: "Screw mount zip tie anchors", category: "Hardware", qty: 1, unitCost: 14.23 },
-      { name: "TRENDnet 240W DIN-rail power supply", category: "Power", qty: 1, unitCost: 168.99 },
-      { name: "TRENDnet 26-port industrial PoE switch", category: "Network", qty: 1, unitCost: 559.99 },
-    ],
-  },
-  {
-    number: "112-4648611-7664246",
-    vendor: "Amazon",
-    date: "Jul 14, 2026",
-    projectRef: "Newport News",
-    status: "Imported",
-    subtotal: 918,
-    tax: 55.08,
-    shipping: 0,
-    total: 973.08,
-    sourceFile: "amz 973.08.pdf",
-    shipTo: "10225 Prospect Ave, Santee CA",
-    paymentNote: "Visa ending 0950",
-    lines: [
-      { name: "Tecmojo 42U server rack network cabinet", category: "Rack", qty: 1, unitCost: 918, lineTotal: 918 },
-    ],
-  },
-  {
-    number: "112-8691883-8231436",
-    vendor: "Amazon",
-    date: "Jul 8, 2026",
-    projectRef: "Newport News",
-    status: "Imported",
-    subtotal: 73.49,
-    tax: 6.06,
-    shipping: 0,
-    total: 79.55,
-    sourceFile: "AMZ 79.55.pdf",
-    shipTo: "10225 Prospect Ave, Santee CA",
-    paymentNote: "Visa ending 0950",
-    lines: [
-      { name: "19-inch rack mount for UCG-Fiber and UXG-Fiber", category: "Rack", qty: 1, unitCost: 73.49, lineTotal: 73.49 },
-    ],
-  },
-];
+// The 7 historical orders that used to be hardcoded here now live in the
+// purchase_orders/purchase_order_lines tables (seeded by migration 032) and
+// are loaded into React state (see loadPurchaseOrders in the App component)
+// alongside any new orders created through the real "New Purchase Order"
+// form in the Purchasing view.
 
 const blankSow: ScopeOfWork = {
   summary: "Define the garage or lot scope, included modules, parking guidance goals, and expected outcome.",
@@ -810,8 +666,16 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function lineTotal(line: PurchaseLine) {
+function lineTotal(line: PurchaseOrderLine) {
   return line.lineTotal ?? line.qty * line.unitCost;
+}
+
+function formatPoDate(isoDate: string) {
+  if (!isoDate) {
+    return "";
+  }
+  const parsed = new Date(`${isoDate}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? isoDate : parsed.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 function sumBy<T extends string>(items: PurchaseOrder[], key: (order: PurchaseOrder) => T) {
@@ -930,6 +794,10 @@ function App() {
   // Phase 10b: Project Documents no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [projectDocuments, setProjectDocuments] = useState<UploadedDoc[]>([]);
+  // Purchase Orders (migration 032): used to be a hardcoded, unchangeable
+  // array of 7 historical orders. Now loaded from the real table and
+  // extended by createPurchaseOrder/updatePurchaseOrderStatus below.
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [roleMode, setRoleMode] = useState<RoleMode>(() => ((localState?.roleMode as RoleMode | undefined) ?? "manager"));
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
   const [authEmail, setAuthEmail] = useState("");
@@ -1201,6 +1069,38 @@ function App() {
     }
     loadProjectDocuments(authSession.accessToken).then(setProjectDocuments).catch(() => {});
   }, [authSession]);
+
+  // Purchase Orders (migration 032): loaded fresh from the real table, same
+  // per-row create/update pattern as Purchase Requests and Project
+  // Documents above.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadPurchaseOrders(authSession.accessToken).then(setPurchaseOrders).catch(() => {});
+  }, [authSession]);
+
+  async function handleCreatePurchaseOrder(order: Parameters<typeof createPurchaseOrder>[0]) {
+    if (!authSession) {
+      setAuthStatus("Sign in to create a purchase order.");
+      return;
+    }
+    try {
+      const created = await createPurchaseOrder(order, authSession.accessToken);
+      if (created) {
+        setPurchaseOrders((current) => [created, ...current]);
+      }
+    } catch (error) {
+      setAuthStatus(error instanceof Error ? error.message : "Could not save the purchase order.");
+    }
+  }
+
+  async function handleUpdatePurchaseOrderStatus(id: string, status: PurchaseOrder["status"]) {
+    setPurchaseOrders((current) => current.map((order) => (order.id === id ? { ...order, status } : order)));
+    if (authSession) {
+      await updatePurchaseOrderStatus(id, status, authSession.accessToken);
+    }
+  }
 
   // Each entry can carry the actual File that was picked -- if it does, the
   // bytes get uploaded to the private "project-documents" Storage bucket
@@ -3127,8 +3027,8 @@ function App() {
           <p>Purchasing, inventory, project transfers, and reports for field packages.</p>
         </div>
 
-        {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} />}
-        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
+        {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
+        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
         {view === "sales" && allowedTabs.includes("sales") && (
@@ -3165,7 +3065,7 @@ function App() {
             onDeleteTaskDependency={handleDeleteTaskDependency}
           />
         )}
-        {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} projectDocuments={projectDocuments} />}
+        {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} projectDocuments={projectDocuments} />}
         {view === "admin" && canReviewApprovals && (
           <AdminPage
             currentUserId={authSession?.userId ?? ""}
@@ -3252,6 +3152,7 @@ function Dashboard({
   inventoryMovements,
   projectAllocations,
   purchaseRequests,
+  purchaseOrders,
 }: {
   roleMode: RoleMode;
   projectSites: ProjectSite[];
@@ -3262,6 +3163,7 @@ function Dashboard({
   inventoryMovements: InventoryMovement[];
   projectAllocations: ProjectAllocationHistory[];
   purchaseRequests: PurchaseRequest[];
+  purchaseOrders: PurchaseOrder[];
 }) {
   const importedLines = purchaseOrders.reduce((sum, order) => sum + order.lines.length, 0);
   const heldOrders = purchaseOrders.filter((order) => order.status === "On Hold");
@@ -3448,6 +3350,9 @@ function Purchasing({
   projectSites,
   inventoryItems,
   purchaseRequests,
+  purchaseOrders,
+  onCreatePurchaseOrder,
+  onUpdatePurchaseOrderStatus,
   projectDocuments,
   onCreateDocuments,
   onUpdateDocumentStatus,
@@ -3471,6 +3376,22 @@ function Purchasing({
   projectSites: ProjectSite[];
   inventoryItems: Part[];
   purchaseRequests: PurchaseRequest[];
+  purchaseOrders: PurchaseOrder[];
+  onCreatePurchaseOrder: (order: {
+    number: string;
+    vendor: string;
+    date: string;
+    projectRef: string;
+    status: PurchaseOrder["status"];
+    subtotal: number;
+    tax: number;
+    shipping: number;
+    sourceFile: string;
+    shipTo: string;
+    paymentNote: string;
+    lines: Array<{ name: string; category: PurchaseLineCategory; qty: number; unitCost: number }>;
+  }) => void;
+  onUpdatePurchaseOrderStatus: (id: string, status: PurchaseOrder["status"]) => void;
   projectDocuments: UploadedDoc[];
   onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
   onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
@@ -3553,6 +3474,78 @@ function Purchasing({
 
   function updateProjectDocumentStatus(docId: UploadedDoc["id"], status: UploadedDoc["status"]) {
     onUpdateDocumentStatus(docId, status);
+  }
+
+  const blankPoLine = { name: "", category: "Other" as PurchaseLineCategory, qty: 1, unitCost: 0 };
+  const [showPoForm, setShowPoForm] = useState(false);
+  const [poDraft, setPoDraft] = useState({
+    number: "",
+    vendor: "",
+    date: new Date().toISOString().slice(0, 10),
+    projectRef: "",
+    status: "Imported" as PurchaseOrder["status"],
+    tax: 0,
+    shipping: 0,
+    sourceFile: "",
+    shipTo: "",
+    paymentNote: "",
+    lines: [{ ...blankPoLine }],
+  });
+  const poSubtotal = poDraft.lines.reduce((sum, line) => sum + line.qty * line.unitCost, 0);
+  const poVendorOptions = Array.from(new Set(purchaseOrders.map((order) => order.vendor)));
+
+  function updatePoLine(index: number, updates: Partial<typeof blankPoLine>) {
+    setPoDraft((current) => ({
+      ...current,
+      lines: current.lines.map((line, lineIndex) => (lineIndex === index ? { ...line, ...updates } : line)),
+    }));
+  }
+
+  function addPoLine() {
+    setPoDraft((current) => ({ ...current, lines: [...current.lines, { ...blankPoLine }] }));
+  }
+
+  function removePoLine(index: number) {
+    setPoDraft((current) => ({ ...current, lines: current.lines.filter((_, lineIndex) => lineIndex !== index) }));
+  }
+
+  function resetPoDraft() {
+    setPoDraft({
+      number: "",
+      vendor: "",
+      date: new Date().toISOString().slice(0, 10),
+      projectRef: "",
+      status: "Imported",
+      tax: 0,
+      shipping: 0,
+      sourceFile: "",
+      shipTo: "",
+      paymentNote: "",
+      lines: [{ ...blankPoLine }],
+    });
+  }
+
+  function submitPurchaseOrder() {
+    if (!poDraft.number.trim() || !poDraft.vendor.trim()) {
+      return;
+    }
+    const cleanLines = poDraft.lines.filter((line) => line.name.trim() && line.qty > 0);
+    onCreatePurchaseOrder({
+      number: poDraft.number.trim(),
+      vendor: poDraft.vendor.trim(),
+      date: poDraft.date,
+      projectRef: poDraft.projectRef.trim(),
+      status: poDraft.status,
+      subtotal: poSubtotal,
+      tax: poDraft.tax,
+      shipping: poDraft.shipping,
+      sourceFile: poDraft.sourceFile.trim(),
+      shipTo: poDraft.shipTo.trim(),
+      paymentNote: poDraft.paymentNote.trim(),
+      lines: cleanLines,
+    });
+    resetPoDraft();
+    setShowPoForm(false);
   }
 
   function submitManualRequest() {
@@ -3868,28 +3861,99 @@ function Purchasing({
       </section>
 
       <section className="panel wide">
-        <PanelHeader title="Imported Purchase Queue" label="Recent PDFs organized by vendor, project reference, and status" />
+        <div className="panel-title-row">
+          <PanelHeader title="Imported Purchase Queue" label="Vendor orders organized by vendor, project reference, and status" />
+          <button className="secondary-action mini-action" type="button" onClick={() => setShowPoForm((current) => !current)}>
+            {showPoForm ? "Cancel" : "New Purchase Order"}
+          </button>
+        </div>
+        {showPoForm && (
+          <div className="inline-form">
+            <div className="form-grid">
+              <label>Order # <input value={poDraft.number} onChange={(event) => setPoDraft((current) => ({ ...current, number: event.target.value }))} placeholder="PO or order number" /></label>
+              <label>Vendor <input value={poDraft.vendor} onChange={(event) => setPoDraft((current) => ({ ...current, vendor: event.target.value }))} list="po-vendor-options" placeholder="Vendor name" /></label>
+              <datalist id="po-vendor-options">
+                {poVendorOptions.map((vendor) => <option key={vendor} value={vendor} />)}
+              </datalist>
+              <label>Date <input type="date" value={poDraft.date} onChange={(event) => setPoDraft((current) => ({ ...current, date: event.target.value }))} /></label>
+              <label>Project Ref <input value={poDraft.projectRef} onChange={(event) => setPoDraft((current) => ({ ...current, projectRef: event.target.value }))} list="po-project-options" placeholder="Project name" /></label>
+              <datalist id="po-project-options">
+                {projectSites.map((project) => <option key={project.name} value={project.name} />)}
+              </datalist>
+              <label>Status
+                <select value={poDraft.status} onChange={(event) => setPoDraft((current) => ({ ...current, status: event.target.value as PurchaseOrder["status"] }))}>
+                  <option>Imported</option>
+                  <option>In Processing</option>
+                  <option>On Hold</option>
+                </select>
+              </label>
+              <label>Ship To <input value={poDraft.shipTo} onChange={(event) => setPoDraft((current) => ({ ...current, shipTo: event.target.value }))} /></label>
+              <label>Payment Note <input value={poDraft.paymentNote} onChange={(event) => setPoDraft((current) => ({ ...current, paymentNote: event.target.value }))} /></label>
+              <label>Source File <input value={poDraft.sourceFile} onChange={(event) => setPoDraft((current) => ({ ...current, sourceFile: event.target.value }))} placeholder="Attached PDF name (optional)" /></label>
+              <label>Tax <input type="number" min={0} step="0.01" value={poDraft.tax} onChange={(event) => setPoDraft((current) => ({ ...current, tax: Number(event.target.value) || 0 }))} /></label>
+              <label>Shipping <input type="number" min={0} step="0.01" value={poDraft.shipping} onChange={(event) => setPoDraft((current) => ({ ...current, shipping: Number(event.target.value) || 0 }))} /></label>
+            </div>
+            <div className="line-list">
+              {poDraft.lines.map((line, index) => (
+                <div className="line-item" key={index}>
+                  <input value={line.name} onChange={(event) => updatePoLine(index, { name: event.target.value })} placeholder="Item name" />
+                  <select value={line.category} onChange={(event) => updatePoLine(index, { category: event.target.value as PurchaseLineCategory })}>
+                    <option>Compute</option>
+                    <option>Storage</option>
+                    <option>Network</option>
+                    <option>Power</option>
+                    <option>Enclosure</option>
+                    <option>Hardware</option>
+                    <option>Rack</option>
+                    <option>Other</option>
+                  </select>
+                  <input type="number" min={1} value={line.qty} onChange={(event) => updatePoLine(index, { qty: Number(event.target.value) || 0 })} aria-label="Quantity" />
+                  <input type="number" min={0} step="0.01" value={line.unitCost} onChange={(event) => updatePoLine(index, { unitCost: Number(event.target.value) || 0 })} aria-label="Unit cost" />
+                  <b>{moneyExact(line.qty * line.unitCost)}</b>
+                  {poDraft.lines.length > 1 && <button className="secondary-action mini-action" type="button" onClick={() => removePoLine(index)}>Remove</button>}
+                </div>
+              ))}
+              <button className="secondary-action mini-action" type="button" onClick={addPoLine}>Add Line</button>
+            </div>
+            <div className="order-totals">
+              <span>Subtotal {moneyExact(poSubtotal)}</span>
+              <span>Tax {moneyExact(poDraft.tax)}</span>
+              <span>Shipping {moneyExact(poDraft.shipping)}</span>
+              <strong>{moneyExact(poSubtotal + poDraft.tax + poDraft.shipping)}</strong>
+            </div>
+            <button className="primary-action" type="button" onClick={submitPurchaseOrder} disabled={!poDraft.number.trim() || !poDraft.vendor.trim()}>Save Purchase Order</button>
+          </div>
+        )}
         <table>
           <thead>
             <tr><th>Order</th><th>Vendor</th><th>Project Ref</th><th>Status</th><th>Lines</th><th>Total</th></tr>
           </thead>
           <tbody>
             {purchaseOrders.map((po) => (
-              <tr key={po.number}>
-                <td><strong>{po.number}</strong><small>{po.date}</small></td>
+              <tr key={po.id}>
+                <td><strong>{po.number}</strong><small>{formatPoDate(po.date)}</small></td>
                 <td>{po.vendor}</td>
                 <td>{po.projectRef}</td>
-                <td><span className={`status ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`}>{po.status}</span></td>
+                <td>
+                  <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
+                    <option>Imported</option>
+                    <option>In Processing</option>
+                    <option>On Hold</option>
+                  </select>
+                </td>
                 <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small></td>
                 <td>{moneyExact(po.total)}</td>
               </tr>
             ))}
+            {purchaseOrders.length === 0 && (
+              <tr><td colSpan={6} className="empty-compact-state">No purchase orders yet. Add one above.</td></tr>
+            )}
           </tbody>
         </table>
       </section>
 
       <section className="panel">
-        <PanelHeader title="Spend By Project" label="PDF PO/ref fields" />
+        <PanelHeader title="Spend By Project" label="Total spend grouped by project reference" />
         <div className="stack">
           {projectSpend.map(([project, total]) => (
             <div className="row-card" key={project}>
@@ -3900,23 +3964,15 @@ function Purchasing({
               <b>{moneyExact(total)}</b>
             </div>
           ))}
-        </div>
-      </section>
-
-      <section className="panel">
-        <PanelHeader title="Import Notes" label="What the PDFs told us" />
-        <div className="note-list">
-          <p>NeweggBusiness orders are tied to Straud Medical and include server compute, storage, GPU, power, and rack chassis hardware.</p>
-          <p>Amazon orders are tied to Newport News and Newport News 37th St. with field enclosures, networking, rack, UPS, and hardware supplies.</p>
-          <p>One NeweggBusiness order is on hold, so it is flagged for follow-up before inventory receiving.</p>
+          {projectSpend.length === 0 && <div className="empty-compact-state">No purchase orders yet.</div>}
         </div>
       </section>
 
       <section className="panel full">
-        <PanelHeader title="Order Line Items" label="Grouped from the attached order PDFs" />
+        <PanelHeader title="Order Line Items" label="Grouped by purchase order" />
         <div className="order-grid">
           {purchaseOrders.map((order) => (
-            <article className="order-card" key={order.number}>
+            <article className="order-card" key={order.id}>
               <div className="order-card-header">
                 <div>
                   <h3>{order.vendor}</h3>
@@ -3925,13 +3981,13 @@ function Purchasing({
                 <span className={`status ${order.status === "On Hold" ? "warn" : order.status === "Imported" ? "ok" : ""}`}>{order.status}</span>
               </div>
               <div className="order-meta">
-                <span>{order.date}</span>
+                <span>{formatPoDate(order.date)}</span>
                 <span>{order.shipTo}</span>
                 <span>{order.paymentNote}</span>
               </div>
               <div className="line-list">
-                {order.lines.map((line) => (
-                  <div className="line-item" key={`${order.number}-${line.name}`}>
+                {order.lines.map((line, index) => (
+                  <div className="line-item" key={`${order.id}-${line.name}-${index}`}>
                     <div>
                       <strong>{line.name}</strong>
                       <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
@@ -3939,6 +3995,7 @@ function Purchasing({
                     <b>{moneyExact(lineTotal(line))}</b>
                   </div>
                 ))}
+                {order.lines.length === 0 && <div className="empty-compact-state">No line items.</div>}
               </div>
               <div className="order-totals">
                 <span>Subtotal {moneyExact(order.subtotal)}</span>
@@ -3947,6 +4004,7 @@ function Purchasing({
               </div>
             </article>
           ))}
+          {purchaseOrders.length === 0 && <div className="empty-compact-state">No purchase orders yet.</div>}
         </div>
       </section>
     </div>
@@ -6166,6 +6224,7 @@ function Reports({
   buildTransactions,
   projectAllocations,
   purchaseRequests,
+  purchaseOrders,
   projectDocuments,
 }: {
   inventoryItems: Part[];
@@ -6176,6 +6235,7 @@ function Reports({
   buildTransactions: BuildTransaction[];
   projectAllocations: ProjectAllocationHistory[];
   purchaseRequests: PurchaseRequest[];
+  purchaseOrders: PurchaseOrder[];
   projectDocuments: UploadedDoc[];
 }) {
   const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects" | "documents">("purchasing");
@@ -6239,10 +6299,10 @@ function Reports({
   const projectSpend = Object.entries(sumBy(filteredPurchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
   const categorySpend = filteredPurchaseOrders
     .flatMap((order) => order.lines)
-    .reduce<Record<PurchaseLine["category"], number>>((totals, line) => {
+    .reduce<Record<PurchaseLineCategory, number>>((totals, line) => {
       totals[line.category] = (totals[line.category] ?? 0) + lineTotal(line);
       return totals;
-    }, {} as Record<PurchaseLine["category"], number>);
+    }, {} as Record<PurchaseLineCategory, number>);
   const categoryRows = Object.entries(categorySpend).sort((a, b) => b[1] - a[1]);
   const largestCategory = Math.max(1, ...categoryRows.map(([, total]) => total));
   const costHistoryRows = filteredInventoryItems

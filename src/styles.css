@@ -1417,6 +1417,37 @@ td small {
   color: #756d62;
 }
 
+.status-select {
+  background: #ebe5d8;
+  border: none;
+  border-radius: 999px;
+  color: #443c2d;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.status-select.warn {
+  background: #fff1d6;
+  color: #906313;
+}
+
+.status-select.ok {
+  background: #dceef7;
+  color: #123f6b;
+}
+
+.inline-form {
+  background: #fbf9f4;
+  border: 1px solid #ded7cb;
+  border-radius: 12px;
+  display: grid;
+  gap: 14px;
+  margin: 12px 0;
+  padding: 16px;
+}
+
 .project-top {
   align-items: flex-start;
   display: flex;
