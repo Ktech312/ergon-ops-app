@@ -1687,7 +1687,29 @@ function App() {
       );
       const shareToken = await createSubmittalShareToken(created.id, authSession.accessToken);
       setSubmittals([{ ...created, shareToken }, ...existing]);
-      setSubmittalStatus(`Submittal v${created.version} created and ready to share.`);
+
+      if (!clientEmail.trim()) {
+        setSubmittalStatus(`Submittal v${created.version} created. No client email was entered -- use Copy client link to share it.`);
+        return;
+      }
+
+      setSubmittalStatus(`Submittal v${created.version} created. Sending email to ${clientEmail}...`);
+      const shareUrl = `${window.location.origin}${window.location.pathname}?submittal=${shareToken}`;
+      try {
+        const emailResponse = await fetch("/api/send-submittal-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clientEmail, clientName, projectName: project.name, projectRef: project.ref, shareUrl }),
+        });
+        const emailResult = (await emailResponse.json()) as { sent: boolean; reason?: string; error?: string };
+        if (emailResult.sent) {
+          setSubmittalStatus(`Submittal v${created.version} created and emailed to ${clientEmail}.`);
+        } else {
+          setSubmittalStatus(`Submittal v${created.version} created. ${emailResult.reason || emailResult.error || "Email was not sent."}`);
+        }
+      } catch (emailError) {
+        setSubmittalStatus(`Submittal v${created.version} created, but the send request failed. Use Copy client link to share it manually.`);
+      }
     } catch (error) {
       setSubmittalStatus(error instanceof Error ? error.message : "Could not create submittal.");
     }
