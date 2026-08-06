@@ -233,7 +233,7 @@ const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
   { value: "inventory", label: "Inventory" },
   { value: "projects", label: "Projects" },
   { value: "sales_catalog", label: "Sales - Product Catalog" },
-  { value: "sales_quotes", label: "Sales - Quote Builder" },
+  { value: "sales_quotes", label: "Sales - Site Builder" },
   { value: "engineering", label: "Engineering" },
   { value: "general", label: "General / Internal" },
 ];
@@ -1508,9 +1508,10 @@ function App() {
     ]);
   }
 
-  async function handleCreateTask(task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) {
+  async function handleCreateTask(task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">): Promise<boolean> {
     if (!authSession) {
-      return;
+      setTaskStatusMessage("You must be signed in to create a task.");
+      return false;
     }
     try {
       const created = await createTask(task, authSession.userId, authSession.email, authSession.accessToken);
@@ -1520,14 +1521,17 @@ function App() {
       if (created.assigneeEmail) {
         notify("task_assigned", created.assigneeEmail, "New task assigned", `"${created.title}" was assigned to you.`, "task", created.id, `task_assigned:${created.id}:${created.assigneeEmail}`);
       }
+      return true;
     } catch (error) {
       setTaskStatusMessage(error instanceof Error ? error.message : "Could not create task.");
+      return false;
     }
   }
 
-  async function handleUpdateTask(id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) {
+  async function handleUpdateTask(id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>): Promise<boolean> {
     if (!authSession) {
-      return;
+      setTaskStatusMessage("You must be signed in to update a task.");
+      return false;
     }
     try {
       const previous = tasks.find((existing) => existing.id === id);
@@ -1556,8 +1560,10 @@ function App() {
       if (updated.status === "in_progress" && previous?.status !== "in_progress") {
         runTaskHardwareAutomation(updated);
       }
+      return true;
     } catch (error) {
       setTaskStatusMessage(error instanceof Error ? error.message : "Could not update task.");
+      return false;
     }
   }
 
@@ -3253,6 +3259,7 @@ function App() {
             taskActivity={taskActivity}
             projectSites={projectSites}
             teamMembers={teamMembers}
+            salesQuotes={salesQuotes}
             status={taskStatusMessage}
             onCreate={handleCreateTask}
             onUpdate={handleUpdateTask}
@@ -3608,8 +3615,8 @@ function Purchasing({
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
-  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
 }) {
@@ -4265,8 +4272,8 @@ function Inventory({
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
-  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
 }) {
@@ -5450,8 +5457,8 @@ function Projects({
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
-  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
   scheduleTemplates: ScheduleTemplate[];
@@ -7531,8 +7538,8 @@ function SalesHome({
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
-  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
 }) {
@@ -7549,6 +7556,7 @@ function SalesHome({
         taskActivity={taskActivity}
         teamMembers={teamMembers}
         projectSites={projectSites}
+        salesQuotes={salesQuotes}
         isInternal
         hideAdd
         onCreate={onCreateTask}
@@ -7630,7 +7638,7 @@ function SalesCatalog({
   onRefresh: () => void;
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -7965,7 +7973,7 @@ function SalesQuoteBuilder({
   projectSites: ProjectSite[];
   tasks: EOTask[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
 }) {
   const [mode, setMode] = useState<"list" | "detail">("list");
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
@@ -8010,12 +8018,12 @@ function SalesQuoteBuilder({
         <section className="panel wide">
           <div className="panel-title-row">
             <div>
-              <h2>Quote Builder</h2>
+              <h2>Site Builder</h2>
               <p>Scope a client's garages and parking lots, then build a hardware quote.</p>
             </div>
             <div className="action-row">
               <button className="primary-action mini-action" type="button" onClick={() => setShowNewQuoteModal(true)} disabled={!isConfigured}>
-                <Plus size={14} /> New Quote
+                <Plus size={14} /> New Site
               </button>
               <button className="icon-button" type="button" onClick={() => setIsCollapsed((current) => !current)} aria-label={isCollapsed ? "Expand section" : "Collapse section"}>
                 {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
@@ -8047,7 +8055,7 @@ function SalesQuoteBuilder({
                     );
                   })}
                   {salesQuotes.length === 0 && (
-                    <tr><td colSpan={5} className="empty-compact-state">No quotes yet. New Quote to start scoping a site.</td></tr>
+                    <tr><td colSpan={5} className="empty-compact-state">No sites yet. New Site to start scoping one.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -8080,6 +8088,7 @@ function SalesQuoteBuilder({
                 label="S.E Request"
                 teamMembers={teamMembers}
                 projectSites={projectSites}
+                salesQuotes={salesQuotes}
                 onCreate={onCreateTask}
               />
             </div>
@@ -8128,16 +8137,23 @@ function SalesQuoteBuilder({
           <div className="quote-hardware-summary">
             <span className="label">Quote Hardware Summary</span>
             <p className="muted">Running tally from the location details collected so far. Full hardware sizing and VPU recommendations will build on this as the rules engine comes online.</p>
-            <div className="quote-hardware-summary-grid">
-              <div><strong>{selectedQuote.locations.filter((location) => location.locationType === "garage").length}</strong><span>Garages</span></div>
-              <div><strong>{selectedQuote.locations.filter((location) => location.locationType === "lot").length}</strong><span>Lots</span></div>
-              <div><strong>{selectedQuote.locations.filter((location) => location.fli).length}</strong><span>FLI locations</span></div>
-              <div><strong>{selectedQuote.locations.filter((location) => location.lpr).length}</strong><span>LPR locations</span></div>
-              <div><strong>{selectedQuote.locations.filter((location) => location.peopleCounting).length}</strong><span>People counting</span></div>
-              <div><strong>{selectedQuote.locations.reduce((sum, location) => sum + location.entriesCount, 0)}</strong><span>Total entries</span></div>
-              <div><strong>{selectedQuote.locations.reduce((sum, location) => sum + location.exitsCount, 0)}</strong><span>Total exits</span></div>
-              <div><strong>{selectedQuote.locations.reduce((sum, location) => sum + location.levelsCount, 0)}</strong><span>Total levels</span></div>
-            </div>
+            <ul className="quote-hardware-summary-list">
+              {[
+                { label: "Garages", value: selectedQuote.locations.filter((location) => location.locationType === "garage").length },
+                { label: "Lots", value: selectedQuote.locations.filter((location) => location.locationType === "lot").length },
+                { label: "FLI locations", value: selectedQuote.locations.filter((location) => location.fli).length },
+                { label: "LPR locations", value: selectedQuote.locations.filter((location) => location.lpr).length },
+                { label: "People counting", value: selectedQuote.locations.filter((location) => location.peopleCounting).length },
+                { label: "Total entries", value: selectedQuote.locations.reduce((sum, location) => sum + location.entriesCount, 0) },
+                { label: "Total exits", value: selectedQuote.locations.reduce((sum, location) => sum + location.exitsCount, 0) },
+                { label: "Total levels", value: selectedQuote.locations.reduce((sum, location) => sum + location.levelsCount, 0) },
+              ]
+                .filter((stat) => stat.value > 0)
+                .map((stat) => (
+                  <li key={stat.label}><span>{stat.label}</span><strong>{stat.value}</strong></li>
+                ))}
+              {selectedQuote.locations.length === 0 && <li className="empty-compact-state">Nothing recorded yet.</li>}
+            </ul>
           </div>
         </section>
       )}
@@ -8194,7 +8210,7 @@ function SalesQuoteBuilder({
           <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-quote-title">
             <div className="modal-header">
               <div>
-                <h2 id="new-quote-title">New Quote</h2>
+                <h2 id="new-quote-title">New Site</h2>
                 <p>Garage/lot counts create line items below to name individually after creating.</p>
               </div>
               <button className="icon-button" type="button" onClick={() => setShowNewQuoteModal(false)} aria-label="Close new quote form">x</button>
@@ -8252,6 +8268,7 @@ function RequestTaskButton({
   label,
   teamMembers,
   projectSites,
+  salesQuotes,
   onCreate,
 }: {
   section: TaskSection;
@@ -8260,7 +8277,8 @@ function RequestTaskButton({
   label?: string;
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
-  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
+  salesQuotes?: SalesQuote[];
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<TaskDraft>(EMPTY_TASK_DRAFT);
@@ -8270,12 +8288,11 @@ function RequestTaskButton({
     setOpen(true);
   }
 
-  function submit() {
+  async function submit() {
     if (!draft.title.trim()) {
-      return;
+      return false;
     }
-    onCreate(draft);
-    setOpen(false);
+    return onCreate(draft);
   }
 
   return (
@@ -8290,6 +8307,7 @@ function RequestTaskButton({
           editingId={null}
           projectSites={projectSites}
           teamMembers={teamMembers}
+          salesQuotes={salesQuotes}
           onSubmit={submit}
           onClose={() => setOpen(false)}
           lockSection
@@ -8419,6 +8437,7 @@ function TaskEditorModal({
   onQuickStatusChange,
   projectSites,
   teamMembers,
+  salesQuotes,
   onSubmit,
   onClose,
   lockSection,
@@ -8433,10 +8452,11 @@ function TaskEditorModal({
   editingId: string | null;
   editingTask?: EOTask | null;
   activityLog?: TaskActivityEntry[];
-  onQuickStatusChange?: (status: TaskStatus) => void;
+  onQuickStatusChange?: (status: TaskStatus) => Promise<boolean>;
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
-  onSubmit: () => void;
+  salesQuotes?: SalesQuote[];
+  onSubmit: () => Promise<boolean>;
   onClose: () => void;
   lockSection?: boolean;
   lockProjectRef?: boolean;
@@ -8447,7 +8467,38 @@ function TaskEditorModal({
 }) {
   const [depSku, setDepSku] = useState("");
   const [depQty, setDepQty] = useState(1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const isClosed = editingTask?.status === "done" && Boolean(editingTask?.closedAt);
+
+  async function handleSubmitClick() {
+    if (!draft.title.trim() || isSubmitting) {
+      return;
+    }
+    setSubmitError("");
+    setIsSubmitting(true);
+    const ok = await onSubmit();
+    setIsSubmitting(false);
+    if (ok) {
+      onClose();
+    } else {
+      setSubmitError("Could not save this task. Check your connection and try again.");
+    }
+  }
+
+  async function handleQuickStatus(status: TaskStatus) {
+    if (!onQuickStatusChange || isSubmitting) {
+      return;
+    }
+    setSubmitError("");
+    setIsSubmitting(true);
+    const ok = await onQuickStatusChange(status);
+    setIsSubmitting(false);
+    if (!ok) {
+      setSubmitError(status === "done" ? "Could not close the task. Try again." : "Could not reopen the task. Try again.");
+    }
+  }
+
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
@@ -8485,6 +8536,14 @@ function TaskEditorModal({
             ))}
           </select></label>
           <label>Category<input value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="e.g. API, Portal, FLI" /></label>
+          {draft.section === "sales_quotes" && (
+            <label>Quote<select value={draft.quoteId} onChange={(event) => setDraft((current) => ({ ...current, quoteId: event.target.value }))}>
+              <option value="">Not linked to a quote</option>
+              {(salesQuotes ?? []).map((quote) => (
+                <option key={quote.id} value={quote.id}>{quote.siteName} - {quote.clientName}</option>
+              ))}
+            </select></label>
+          )}
           {!lockProjectRef && (
             <label className="checkbox-inline-field">
               <input
@@ -8574,18 +8633,6 @@ function TaskEditorModal({
         )}
 
         <div className="task-modal-footer">
-          {editingId && onQuickStatusChange && (
-            <div className="task-modal-footer-left">
-              {isClosed ? (
-                <button className="secondary-action mini-action" type="button" onClick={() => onQuickStatusChange("to_do")}>Reopen Task</button>
-              ) : (
-                <button className="secondary-action mini-action" type="button" onClick={() => onQuickStatusChange("done")}>Close Task</button>
-              )}
-              {isClosed && editingTask && (
-                <span className="muted">Closed by {editingTask.closedByEmail || "Unknown"} on {new Date(editingTask.closedAt).toLocaleString()}</span>
-              )}
-            </div>
-          )}
           {editingId && (
             <div className="task-activity-log">
               <span className="task-activity-log-label">Activity Log</span>
@@ -8600,9 +8647,24 @@ function TaskEditorModal({
               </div>
             </div>
           )}
+          {submitError && <div className="modal-error-text">{submitError}</div>}
           <div className="modal-actions">
+            {editingId && onQuickStatusChange && (
+              <div className="task-modal-footer-left">
+                {isClosed ? (
+                  <button className="secondary-action mini-action" type="button" disabled={isSubmitting} onClick={() => handleQuickStatus("to_do")}>Reopen Task</button>
+                ) : (
+                  <button className="secondary-action mini-action" type="button" disabled={isSubmitting} onClick={() => handleQuickStatus("done")}>Close Task</button>
+                )}
+                {isClosed && editingTask && (
+                  <span className="muted">Closed by {editingTask.closedByEmail || "Unknown"} on {new Date(editingTask.closedAt).toLocaleString()}</span>
+                )}
+              </div>
+            )}
             <button className="secondary-action" type="button" onClick={onClose}>Cancel</button>
-            <button className="primary-action" type="button" onClick={onSubmit} disabled={!draft.title.trim()}>{editingId ? "Save Task" : "Add Task"}</button>
+            <button className="primary-action" type="button" onClick={handleSubmitClick} disabled={!draft.title.trim() || isSubmitting}>
+              {isSubmitting ? "Saving..." : editingId ? "Save Task" : "Add Task"}
+            </button>
           </div>
         </div>
       </section>
@@ -8610,7 +8672,7 @@ function TaskEditorModal({
   );
 }
 
-function TaskCard({ task, teamMembers, onUpdate, onEdit, onDelete, showStatusMove }: { task: EOTask; teamMembers: TeamMember[]; onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void; onEdit: () => void; onDelete: () => void; showStatusMove?: boolean }) {
+function TaskCard({ task, teamMembers, onUpdate, onEdit, onDelete, showStatusMove }: { task: EOTask; teamMembers: TeamMember[]; onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>; onEdit: () => void; onDelete: () => void; showStatusMove?: boolean }) {
   return (
     <div className="task-card">
       <div className="task-card-top">
@@ -8807,6 +8869,7 @@ function TasksBoard({
   taskActivity,
   projectSites,
   teamMembers,
+  salesQuotes,
   status,
   onCreate,
   onUpdate,
@@ -8821,9 +8884,10 @@ function TasksBoard({
   taskActivity: TaskActivityEntry[];
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
+  salesQuotes?: SalesQuote[];
   status: string;
-  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
-  onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDelete: (id: string) => void;
   onRefresh: () => void;
   inventoryItems?: Part[];
@@ -8873,16 +8937,14 @@ function TasksBoard({
     setModalOpen(true);
   }
 
-  function submitDraft() {
+  async function submitDraft() {
     if (!draft.title.trim()) {
-      return;
+      return false;
     }
     if (editingId) {
-      onUpdate(editingId, draft);
-    } else {
-      onCreate(draft);
+      return onUpdate(editingId, draft);
     }
-    setModalOpen(false);
+    return onCreate(draft);
   }
 
   return (
@@ -9039,6 +9101,7 @@ function TasksBoard({
           onQuickStatusChange={editingId ? (status) => onUpdate(editingId, { status }) : undefined}
           projectSites={projectSites}
           teamMembers={teamMembers}
+          salesQuotes={salesQuotes}
           onSubmit={submitDraft}
           onClose={() => setModalOpen(false)}
           taskDependencies={(taskHardwareDependencies ?? []).filter((dep) => dep.taskId === editingId)}
@@ -9057,6 +9120,7 @@ function TaskMiniPanel({
   taskActivity,
   teamMembers,
   projectSites,
+  salesQuotes,
   section,
   projectRef,
   isInternal,
@@ -9071,12 +9135,13 @@ function TaskMiniPanel({
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
+  salesQuotes?: SalesQuote[];
   section?: TaskSection;
   projectRef?: string;
   isInternal?: boolean;
   hideAdd?: boolean;
-  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
-  onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => void;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDelete: (id: string) => void;
   onOpenFull: () => void;
 }) {
@@ -9131,16 +9196,14 @@ function TaskMiniPanel({
     setModalOpen(true);
   }
 
-  function submitDraft() {
+  async function submitDraft() {
     if (!draft.title.trim()) {
-      return;
+      return false;
     }
     if (editingId) {
-      onUpdate(editingId, draft);
-    } else {
-      onCreate(draft);
+      return onUpdate(editingId, draft);
     }
-    setModalOpen(false);
+    return onCreate(draft);
   }
 
   return (
@@ -9180,6 +9243,7 @@ function TaskMiniPanel({
           onQuickStatusChange={editingId ? (status) => onUpdate(editingId, { status }) : undefined}
           projectSites={projectSites}
           teamMembers={teamMembers}
+          salesQuotes={salesQuotes}
           onSubmit={submitDraft}
           onClose={() => setModalOpen(false)}
           lockSection
