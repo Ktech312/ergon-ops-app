@@ -2667,6 +2667,113 @@ export async function deletePresalesRule(id: string, accessToken?: string): Prom
   });
 }
 
+// --- Site Builder hardware recommendation engine (v1, migration 045) ------
+// A different shape from PresalesHardwareRule above: a Site Builder
+// location has no "tier" or node count, just FLI/LPR/People Counting
+// checkboxes and entry/exit/level counts, so each rule maps one of those
+// "metrics" to a recommended quantity of an item. The app evaluates these
+// live per location (see main.tsx's computeLocationHardware) -- nothing
+// about the recommendation itself is persisted per-quote.
+export type SiteHardwareMetric = "fli" | "lpr" | "people_counting" | "per_entry" | "per_exit" | "per_level";
+
+export type SiteHardwareRule = {
+  id: string;
+  metric: SiteHardwareMetric;
+  itemName: string;
+  qtyPerUnit: number;
+  notes: string;
+  sequenceOrder: number;
+  isActive: boolean;
+};
+
+type SiteHardwareRuleRow = {
+  id: string;
+  metric: SiteHardwareMetric;
+  item_name: string;
+  qty_per_unit: number | string;
+  notes: string | null;
+  sequence_order: number;
+  is_active: boolean;
+};
+
+function mapSiteHardwareRuleRow(row: SiteHardwareRuleRow): SiteHardwareRule {
+  return {
+    id: row.id,
+    metric: row.metric,
+    itemName: row.item_name,
+    qtyPerUnit: Number(row.qty_per_unit),
+    notes: row.notes ?? "",
+    sequenceOrder: row.sequence_order,
+    isActive: row.is_active,
+  };
+}
+
+export async function loadSiteHardwareRules(accessToken?: string): Promise<SiteHardwareRule[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("site_hardware_rules?select=*&order=metric.asc,sequence_order.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as SiteHardwareRuleRow[];
+  return rows.map(mapSiteHardwareRuleRow);
+}
+
+export async function createSiteHardwareRule(rule: Omit<SiteHardwareRule, "id">, accessToken?: string): Promise<SiteHardwareRule> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("site_hardware_rules"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      metric: rule.metric,
+      item_name: rule.itemName,
+      qty_per_unit: rule.qtyPerUnit,
+      notes: rule.notes || null,
+      sequence_order: rule.sequenceOrder,
+      is_active: rule.isActive,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not add rule: ${response.status}`);
+  }
+  const rows = (await response.json()) as SiteHardwareRuleRow[];
+  return mapSiteHardwareRuleRow(rows[0]);
+}
+
+export async function updateSiteHardwareRule(id: string, patch: Partial<Omit<SiteHardwareRule, "id">>, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (patch.metric !== undefined) payload.metric = patch.metric;
+  if (patch.itemName !== undefined) payload.item_name = patch.itemName;
+  if (patch.qtyPerUnit !== undefined) payload.qty_per_unit = patch.qtyPerUnit;
+  if (patch.notes !== undefined) payload.notes = patch.notes || null;
+  if (patch.sequenceOrder !== undefined) payload.sequence_order = patch.sequenceOrder;
+  if (patch.isActive !== undefined) payload.is_active = patch.isActive;
+
+  await fetch(supabaseUrl(`site_hardware_rules?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteSiteHardwareRule(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`site_hardware_rules?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+}
+
 // --- Phase 21: Task-Linked Inventory Automation ----------------------------
 
 export type TaskHardwareDependency = {

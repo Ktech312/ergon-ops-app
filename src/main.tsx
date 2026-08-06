@@ -53,6 +53,10 @@ import {
   createSubmittal,
   createSubmittalShareToken,
   createInvite,
+  createSiteHardwareRule,
+  loadSiteHardwareRules,
+  updateSiteHardwareRule,
+  deleteSiteHardwareRule,
   createTask,
   createTeamMember,
   ensureTeamMemberForSelf,
@@ -201,6 +205,8 @@ import {
   type TaskSection,
   type TaskStatus,
   type TeamMember,
+  type SiteHardwareRule,
+  type SiteHardwareMetric,
   type UserInvite,
   type PublicInviteView,
   type UserRoles,
@@ -891,6 +897,8 @@ function App() {
   const [handovers, setHandovers] = useState<ProjectHandover[]>([]);
   const [handoverStatus, setHandoverStatus] = useState("");
   const [presalesRules, setPresalesRules] = useState<PresalesHardwareRule[]>([]);
+  const [siteHardwareRules, setSiteHardwareRules] = useState<SiteHardwareRule[]>([]);
+  const [siteHardwareRuleStatus, setSiteHardwareRuleStatus] = useState("");
   const [presalesStatus, setPresalesStatus] = useState("");
   const [taskHardwareDependencies, setTaskHardwareDependencies] = useState<TaskHardwareDependency[]>([]);
   const [inventoryItemSkuById, setInventoryItemSkuById] = useState<Record<string, string>>({});
@@ -1884,7 +1892,8 @@ function App() {
     }
     const inAppActive = ruleActive(eventType, "in_app");
     const emailActive = ruleActive(eventType, "email");
-    if (!inAppActive && !emailActive) {
+    const slackActive = ruleActive(eventType, "slack");
+    if (!inAppActive && !emailActive && !slackActive) {
       return;
     }
     const created = await createNotification({ recipientEmail, eventType, title, body, relatedEntityType, relatedEntityId, dedupeKey }, authSession.accessToken).catch(() => null);
@@ -1893,20 +1902,35 @@ function App() {
     }
     // created is null if this exact event was already recorded (dedupe_key
     // collision) or the insert failed -- either way, don't send a
-    // duplicate/orphaned email.
-    if (!created || !emailActive) {
+    // duplicate/orphaned delivery.
+    if (!created) {
       return;
     }
-    try {
-      const response = await fetch("/api/send-notification-email", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ to: recipientEmail, subject: title, body, companyName: branding.companyName }),
-      });
-      const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
-      await recordNotificationDelivery(created.id, "email", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
-    } catch (error) {
-      await recordNotificationDelivery(created.id, "email", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
+    if (emailActive) {
+      try {
+        const response = await fetch("/api/send-notification-email", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ to: recipientEmail, subject: title, body, companyName: branding.companyName }),
+        });
+        const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
+        await recordNotificationDelivery(created.id, "email", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
+      } catch (error) {
+        await recordNotificationDelivery(created.id, "email", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
+      }
+    }
+    if (slackActive) {
+      try {
+        const response = await fetch("/api/send-notification-slack", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title, body }),
+        });
+        const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
+        await recordNotificationDelivery(created.id, "slack", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
+      } catch (error) {
+        await recordNotificationDelivery(created.id, "slack", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
+      }
     }
   }
 
@@ -2174,11 +2198,13 @@ function App() {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setHandoverSchema(null);
       setPresalesRules([]);
+      setSiteHardwareRules([]);
       setTaskHardwareDependencies([]);
       return;
     }
     loadFormSchema("after_sales_handover", authSession.accessToken).then(setHandoverSchema).catch(() => {});
     loadPresalesRules(authSession.accessToken).then(setPresalesRules).catch(() => {});
+    loadSiteHardwareRules(authSession.accessToken).then(setSiteHardwareRules).catch(() => {});
     loadTaskHardwareDependencies(authSession.accessToken).then(async (deps) => {
       setTaskHardwareDependencies(deps);
       const skuMap = await loadInventoryItemSkusByIds(deps.map((dep) => dep.inventoryItemId).filter((id): id is string => Boolean(id)), authSession.accessToken);
@@ -2345,6 +2371,34 @@ function App() {
     }
     await deletePresalesRule(id, authSession.accessToken);
     setPresalesRules((current) => current.filter((rule) => rule.id !== id));
+  }
+
+  async function handleAddSiteHardwareRule(rule: Omit<SiteHardwareRule, "id">) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const created = await createSiteHardwareRule(rule, authSession.accessToken);
+      setSiteHardwareRules((current) => [...current, created]);
+    } catch (error) {
+      setSiteHardwareRuleStatus(error instanceof Error ? error.message : "Could not add rule.");
+    }
+  }
+
+  async function handleUpdateSiteHardwareRule(id: string, patch: Partial<Omit<SiteHardwareRule, "id">>) {
+    if (!authSession) {
+      return;
+    }
+    setSiteHardwareRules((current) => current.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)));
+    await updateSiteHardwareRule(id, patch, authSession.accessToken);
+  }
+
+  async function handleDeleteSiteHardwareRule(id: string) {
+    if (!authSession) {
+      return;
+    }
+    await deleteSiteHardwareRule(id, authSession.accessToken);
+    setSiteHardwareRules((current) => current.filter((rule) => rule.id !== id));
   }
 
   // Phase 21: task-linked inventory automation. All client-side, sequential
@@ -3552,6 +3606,7 @@ function App() {
             onUploadSalesQuoteImage={handleUploadSalesQuoteImage}
             onUpdateSalesQuoteImageDescription={handleUpdateSalesQuoteImageDescription}
             onDownloadSalesQuoteImage={handleDownloadSalesQuoteImage}
+            siteHardwareRules={siteHardwareRules}
             projectSites={projectSites}
             tasks={tasks}
             taskActivity={taskActivity}
@@ -3628,6 +3683,11 @@ function App() {
             presalesStatus={presalesStatus}
             onAddPresalesRule={handleAddPresalesRule}
             onDeletePresalesRule={handleDeletePresalesRule}
+            siteHardwareRules={siteHardwareRules}
+            siteHardwareRuleStatus={siteHardwareRuleStatus}
+            onAddSiteHardwareRule={handleAddSiteHardwareRule}
+            onUpdateSiteHardwareRule={handleUpdateSiteHardwareRule}
+            onDeleteSiteHardwareRule={handleDeleteSiteHardwareRule}
             invites={invites}
             inviteStatus={inviteStatus}
             onSendInvite={handleSendInvite}
@@ -7468,6 +7528,11 @@ function AdminPage({
   presalesStatus,
   onAddPresalesRule,
   onDeletePresalesRule,
+  siteHardwareRules,
+  siteHardwareRuleStatus,
+  onAddSiteHardwareRule,
+  onUpdateSiteHardwareRule,
+  onDeleteSiteHardwareRule,
   invites,
   inviteStatus,
   onSendInvite,
@@ -7517,6 +7582,11 @@ function AdminPage({
   presalesStatus: string;
   onAddPresalesRule: (rule: Omit<PresalesHardwareRule, "id">) => void;
   onDeletePresalesRule: (id: string) => void;
+  siteHardwareRules: SiteHardwareRule[];
+  siteHardwareRuleStatus: string;
+  onAddSiteHardwareRule: (rule: Omit<SiteHardwareRule, "id">) => void;
+  onUpdateSiteHardwareRule: (id: string, patch: Partial<Omit<SiteHardwareRule, "id">>) => void;
+  onDeleteSiteHardwareRule: (id: string) => void;
   invites: UserInvite[];
   inviteStatus: string;
   onSendInvite: (input: { email: string; fullName: string; primaryRole: string; secondaryRoles: string[] }) => void;
@@ -7530,6 +7600,7 @@ function AdminPage({
   const [phaseDrafts, setPhaseDrafts] = useState<Record<string, { phaseName: string; durationMode: "fixed_hours" | "per_bom_unit"; fixedHours: number; bomCategoryFilter: string; defaultRole: string }>>({});
   const [formFieldDraft, setFormFieldDraft] = useState({ section: "site_requirements", label: "", fieldType: "text" as FormSchemaField["fieldType"], placeholder: "", isRequired: false, optionsRaw: "" });
   const [presalesRuleDraft, setPresalesRuleDraft] = useState({ tier: "", baseItemName: "", quantityMode: "fixed" as PresalesHardwareRule["quantityMode"], fixedQty: 1, perNodeDivisor: 16, requiresCloudSync: "any" as "any" | "yes" | "no" });
+  const [siteHardwareRuleDraft, setSiteHardwareRuleDraft] = useState({ metric: "lpr" as SiteHardwareMetric, itemName: "", qtyPerUnit: 1, notes: "" });
 
   function phaseDraftFor(templateId: string) {
     return phaseDrafts[templateId] ?? { phaseName: "", durationMode: "fixed_hours" as const, fixedHours: 4, bomCategoryFilter: "", defaultRole: "" };
@@ -7780,7 +7851,7 @@ function AdminPage({
                   <td>{rule.eventType.replace(/_/g, " ")}</td>
                   <td><input type="checkbox" checked={rule.channels.includes("in_app")} onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "in_app"] : rule.channels.filter((c) => c !== "in_app") })} /></td>
                   <td><input type="checkbox" checked={rule.channels.includes("email")} title="Sends a real email via Resend when this event fires" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "email"] : rule.channels.filter((c) => c !== "email") })} /></td>
-                  <td><input type="checkbox" checked={rule.channels.includes("slack")} disabled title="Needs a Slack/Teams webhook -- not configured yet" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "slack"] : rule.channels.filter((c) => c !== "slack") })} /></td>
+                  <td><input type="checkbox" checked={rule.channels.includes("slack")} title="Posts to Slack/Teams once SLACK_WEBHOOK_URL is set in Vercel" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "slack"] : rule.channels.filter((c) => c !== "slack") })} /></td>
                   <td><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateNotificationRule(rule.id, { isActive: event.target.checked })} /></td>
                 </tr>
               ))}
@@ -8019,6 +8090,63 @@ function AdminPage({
             </button>
           </div>
         </section>
+
+        <section className="panel wide">
+          <PanelHeader title="Site Hardware Rules" label="v1 hardware recommendation for Site Builder locations -- FLI/LPR/People Counting checkboxes and entry/exit/level counts drive quantities. Tune these as real numbers come in." />
+          {siteHardwareRuleStatus && <small className="muted">{siteHardwareRuleStatus}</small>}
+          <table>
+            <thead><tr><th>Metric</th><th>Item</th><th>Qty per unit</th><th>Notes</th><th>Active</th><th></th></tr></thead>
+            <tbody>
+              {siteHardwareRules.map((rule) => (
+                <tr key={rule.id}>
+                  <td>{SITE_HARDWARE_METRIC_OPTIONS.find((option) => option.value === rule.metric)?.label ?? rule.metric}</td>
+                  <td>{rule.itemName}</td>
+                  <td>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.5"
+                      value={rule.qtyPerUnit}
+                      onChange={(event) => onUpdateSiteHardwareRule(rule.id, { qtyPerUnit: Number(event.target.value) || 0 })}
+                    />
+                  </td>
+                  <td>{rule.notes || "-"}</td>
+                  <td><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateSiteHardwareRule(rule.id, { isActive: event.target.checked })} /></td>
+                  <td><button className="secondary-action mini-action" type="button" onClick={() => onDeleteSiteHardwareRule(rule.id)}>Remove</button></td>
+                </tr>
+              ))}
+              {siteHardwareRules.length === 0 && <tr><td colSpan={6} className="empty-compact-state">No rules yet.</td></tr>}
+            </tbody>
+          </table>
+          <div className="roster-add-row">
+            <select value={siteHardwareRuleDraft.metric} onChange={(event) => setSiteHardwareRuleDraft((current) => ({ ...current, metric: event.target.value as SiteHardwareMetric }))}>
+              {SITE_HARDWARE_METRIC_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <input value={siteHardwareRuleDraft.itemName} onChange={(event) => setSiteHardwareRuleDraft((current) => ({ ...current, itemName: event.target.value }))} placeholder="Item name (e.g. LPR Camera)" />
+            <input type="number" min={0} step="0.5" value={siteHardwareRuleDraft.qtyPerUnit} onChange={(event) => setSiteHardwareRuleDraft((current) => ({ ...current, qtyPerUnit: Number(event.target.value) || 0 }))} placeholder="Qty per unit" />
+            <input value={siteHardwareRuleDraft.notes} onChange={(event) => setSiteHardwareRuleDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Notes (optional)" />
+            <button
+              className="primary-action mini-action"
+              type="button"
+              disabled={!siteHardwareRuleDraft.itemName.trim()}
+              onClick={() => {
+                onAddSiteHardwareRule({
+                  metric: siteHardwareRuleDraft.metric,
+                  itemName: siteHardwareRuleDraft.itemName,
+                  qtyPerUnit: siteHardwareRuleDraft.qtyPerUnit,
+                  notes: siteHardwareRuleDraft.notes,
+                  sequenceOrder: siteHardwareRules.length,
+                  isActive: true,
+                });
+                setSiteHardwareRuleDraft({ metric: siteHardwareRuleDraft.metric, itemName: "", qtyPerUnit: 1, notes: "" });
+              }}
+            >
+              <Plus size={14} /> Add Rule
+            </button>
+          </div>
+        </section>
         </>
       )}
 
@@ -8176,6 +8304,7 @@ function SalesHome({
   onUploadSalesQuoteImage,
   onUpdateSalesQuoteImageDescription,
   onDownloadSalesQuoteImage,
+  siteHardwareRules,
   projectSites,
   tasks,
   taskActivity,
@@ -8206,6 +8335,7 @@ function SalesHome({
   onUploadSalesQuoteImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
   onUpdateSalesQuoteImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadSalesQuoteImage: (image: SalesQuoteLocationImage) => void;
+  siteHardwareRules: SiteHardwareRule[];
   projectSites: ProjectSite[];
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
@@ -8261,6 +8391,7 @@ function SalesHome({
         onUploadImage={onUploadSalesQuoteImage}
         onUpdateImageDescription={onUpdateSalesQuoteImageDescription}
         onDownloadImage={onDownloadSalesQuoteImage}
+        siteHardwareRules={siteHardwareRules}
         projectSites={projectSites}
         tasks={tasks}
         teamMembers={teamMembers}
@@ -8606,6 +8737,65 @@ function SalesCatalog({
   );
 }
 
+// v1 hardware recommendation engine for Site Builder (migration 045). Each
+// active rule maps one metric collected on a location (FLI/LPR/People
+// Counting checkboxes, or entry/exit/level counts) to a quantity of an
+// item; this sums matching rules for one location (or, when called with an
+// already-summed accumulator, across every location in a quote). These are
+// v1 starter assumptions meant to be tuned from Admin -> Site Hardware
+// Rules, not a validated hardware spec.
+function accumulateLocationHardware(location: SalesQuoteLocation, rules: SiteHardwareRule[], into: Map<string, number>) {
+  rules
+    .filter((rule) => rule.isActive)
+    .forEach((rule) => {
+      let qty = 0;
+      switch (rule.metric) {
+        case "fli":
+          qty = location.fli ? rule.qtyPerUnit : 0;
+          break;
+        case "lpr":
+          qty = location.lpr ? rule.qtyPerUnit : 0;
+          break;
+        case "people_counting":
+          qty = location.peopleCounting ? rule.qtyPerUnit : 0;
+          break;
+        case "per_entry":
+          qty = location.entriesCount * rule.qtyPerUnit;
+          break;
+        case "per_exit":
+          qty = location.exitsCount * rule.qtyPerUnit;
+          break;
+        case "per_level":
+          qty = location.levelsCount * rule.qtyPerUnit;
+          break;
+      }
+      if (qty > 0) {
+        into.set(rule.itemName, (into.get(rule.itemName) ?? 0) + qty);
+      }
+    });
+}
+
+function computeLocationHardware(location: SalesQuoteLocation, rules: SiteHardwareRule[]): Array<{ itemName: string; qty: number }> {
+  const totals = new Map<string, number>();
+  accumulateLocationHardware(location, rules, totals);
+  return Array.from(totals.entries()).map(([itemName, qty]) => ({ itemName, qty }));
+}
+
+function computeQuoteHardware(locations: SalesQuoteLocation[], rules: SiteHardwareRule[]): Array<{ itemName: string; qty: number }> {
+  const totals = new Map<string, number>();
+  locations.forEach((location) => accumulateLocationHardware(location, rules, totals));
+  return Array.from(totals.entries()).map(([itemName, qty]) => ({ itemName, qty }));
+}
+
+const SITE_HARDWARE_METRIC_OPTIONS: Array<{ value: SiteHardwareMetric; label: string }> = [
+  { value: "fli", label: "FLI checked (flat qty)" },
+  { value: "lpr", label: "LPR checked (flat qty)" },
+  { value: "people_counting", label: "People Counting checked (flat qty)" },
+  { value: "per_entry", label: "Per entry lane" },
+  { value: "per_exit", label: "Per exit lane" },
+  { value: "per_level", label: "Per level" },
+];
+
 const EMPTY_NEW_QUOTE_DRAFT = { clientName: "", siteName: "", city: "", garageCount: 1, lotCount: 0 };
 
 // Sale Design and Quote Builder. A quote starts with a client/site and a
@@ -8838,6 +9028,7 @@ function SalesQuoteBuilder({
   onUploadImage,
   onUpdateImageDescription,
   onDownloadImage,
+  siteHardwareRules,
   projectSites,
   tasks,
   teamMembers,
@@ -8856,6 +9047,7 @@ function SalesQuoteBuilder({
   onUploadImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
   onUpdateImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadImage: (image: SalesQuoteLocationImage) => void;
+  siteHardwareRules: SiteHardwareRule[];
   projectSites: ProjectSite[];
   tasks: EOTask[];
   teamMembers: TeamMember[];
@@ -9021,7 +9213,7 @@ function SalesQuoteBuilder({
 
           <div className="quote-hardware-summary">
             <span className="label">Quote Hardware Summary</span>
-            <p className="muted">Running tally from the location details collected so far. Full hardware sizing and VPU recommendations will build on this as the rules engine comes online.</p>
+            <p className="muted">Running tally from the location details collected so far.</p>
             <ul className="quote-hardware-summary-list">
               {[
                 { label: "Garages", value: selectedQuote.locations.filter((location) => location.locationType === "garage").length },
@@ -9038,6 +9230,16 @@ function SalesQuoteBuilder({
                   <li key={stat.label}><span>{stat.label}</span><strong>{stat.value}</strong></li>
                 ))}
               {selectedQuote.locations.length === 0 && <li className="empty-compact-state">Nothing recorded yet.</li>}
+            </ul>
+            <span className="label">Recommended Hardware (v1, whole site)</span>
+            <p className="muted">Rolled up from every location using the Site Hardware Rules -- tune those rules in Admin as real numbers come in.</p>
+            <ul className="quote-hardware-summary-list">
+              {computeQuoteHardware(selectedQuote.locations, siteHardwareRules).map((line) => (
+                <li key={line.itemName}><span>{line.itemName}</span><strong>{line.qty}</strong></li>
+              ))}
+              {computeQuoteHardware(selectedQuote.locations, siteHardwareRules).length === 0 && (
+                <li className="empty-compact-state">Nothing recommended yet.</li>
+              )}
             </ul>
           </div>
         </section>
@@ -9068,7 +9270,19 @@ function SalesQuoteBuilder({
               <label>Levels<input type="number" min={0} value={selectedLocation.levelsCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { levelsCount: Number(event.target.value) || 0 })} /></label>
             </div>
             <div className="note-list">
-              <p><strong>Recommended Hardware</strong> -- rules engine coming next. Once built, this will size cameras, signs, and related hardware from the checkboxes and counts above.</p>
+              <p><strong>Recommended Hardware</strong> -- v1 estimate from the Site Hardware Rules in Admin, based on the checkboxes and counts above. Tune the rules there as real numbers come in.</p>
+              {(() => {
+                const recommended = computeLocationHardware(selectedLocation, siteHardwareRules);
+                return recommended.length > 0 ? (
+                  <ul className="quote-hardware-summary-list">
+                    {recommended.map((line) => (
+                      <li key={line.itemName}><span>{line.itemName}</span><strong>{line.qty}</strong></li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted">Nothing recommended yet -- check FLI/LPR/People Counting or add entry/exit/level counts above.</p>
+                );
+              })()}
             </div>
             {selectedLocation.images.length > 0 && (
               <div className="line-list">
