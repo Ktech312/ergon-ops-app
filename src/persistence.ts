@@ -1119,6 +1119,7 @@ export type UserStatus = {
   approvedBy: string | null;
   approvedAt: string | null;
   requestedAt: string;
+  hasSeenWelcome: boolean;
 };
 
 type UserStatusRow = {
@@ -1128,6 +1129,7 @@ type UserStatusRow = {
   approved_by: string | null;
   approved_at: string | null;
   requested_at: string;
+  has_seen_welcome: boolean;
 };
 
 function mapUserStatusRow(row: UserStatusRow): UserStatus {
@@ -1138,7 +1140,22 @@ function mapUserStatusRow(row: UserStatusRow): UserStatus {
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
     requestedAt: row.requested_at,
+    hasSeenWelcome: row.has_seen_welcome,
   };
+}
+
+// Called once, when the first-login welcome slideshow finishes (or the
+// person skips it) -- so it never shows again for that account.
+export async function markWelcomeSeen(userId: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  await fetch(supabaseUrl(`app_user_status?user_id=eq.${userId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ has_seen_welcome: true }),
+  }).catch(() => undefined);
 }
 
 // Creates a pending-approval row for the current user if one doesn't already

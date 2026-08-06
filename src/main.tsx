@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import {
   BarChart3,
   Bell,
+  BookOpen,
   Boxes,
   Building2,
   CalendarDays,
@@ -107,6 +108,7 @@ import {
   loadTeamMembers,
   loadUserRoleMode,
   loadUsersByRole,
+  markWelcomeSeen,
   makeCatalogNumber,
   markAllNotificationsRead,
   markNotificationRead,
@@ -204,7 +206,7 @@ import {
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "tasks" | "reports" | "admin";
+type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "tasks" | "reports" | "admin" | "library";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -233,6 +235,7 @@ const TAB_LABELS: Record<View, string> = {
   tasks: "Tasks",
   reports: "Reports",
   admin: "Admin",
+  library: "Library",
 };
 
 // Starting point when a role has no explicit per-user tab override. An admin
@@ -752,7 +755,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "admin"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "admin", "library"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -1349,6 +1352,7 @@ function App() {
           approvedBy: authSession.userId,
           approvedAt: new Date().toISOString(),
           requestedAt: existing?.requestedAt ?? new Date().toISOString(),
+          hasSeenWelcome: existing?.hasSeenWelcome ?? false,
         };
         return existing ? current.map((entry) => (entry.userId === targetUserId ? updated : entry)) : [...current, updated];
       });
@@ -3352,6 +3356,19 @@ function App() {
   const isManagerRole = authChecksReady && (roleMode === "manager" || ownRoleKeys.includes("manager"));
   const canReviewApprovals = isAdmin || isManagerRole;
 
+  if (authSession && isRemotePersistenceConfigured() && userApprovalStatus && !userApprovalStatus.hasSeenWelcome) {
+    return (
+      <WelcomeSlideshow
+        companyName={branding.companyName}
+        allowedTabs={allowedTabs}
+        onFinish={() => {
+          markWelcomeSeen(authSession.userId, authSession.accessToken);
+          setUserApprovalStatus((current) => (current ? { ...current, hasSeenWelcome: true } : current));
+        }}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="top-nav">
@@ -3376,6 +3393,9 @@ function App() {
             <div className={`sync-status ${syncStatus}`}>
               <span>{syncStatus === "local" ? "Setup required" : syncStatus === "auth" ? "Sign in required" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
             </div>
+            <button className={`icon-button library-nav-button ${view === "library" ? "active" : ""}`} type="button" onClick={() => navigateToView("library")} aria-label="Learning Library" title="Learning Library">
+              <BookOpen size={17} />
+            </button>
             <div className="notification-bell">
               <button className="notification-bell-trigger" type="button" onClick={() => setNotificationsOpen((open) => !open)} aria-label="Notifications">
                 <Bell size={17} />
@@ -3515,6 +3535,7 @@ function App() {
           />
         )}
         {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} projectDocuments={projectDocuments} />}
+        {view === "library" && <LibraryPage onBack={() => navigateToView("dashboard")} />}
         {view === "admin" && canReviewApprovals && (
           <AdminPage
             currentUserId={authSession?.userId ?? ""}
@@ -3597,6 +3618,7 @@ function pageTitle(view: View) {
     tasks: "Tasks",
     reports: "Reports",
     admin: "Admin",
+    library: "Learning Library",
   };
   return titles[view];
 }
@@ -7253,6 +7275,104 @@ function PendingApprovalRow({
         <button className="secondary-action mini-action" type="button" onClick={onDeny}>Deny</button>
       </td>
     </tr>
+  );
+}
+
+// Learning Library -- reached via the book icon next to Cloud Sync in the
+// top nav. The user guides themselves ("this is where the user guides will
+// live") don't exist yet, so this is an honest empty state per category
+// rather than fake placeholder articles -- it's a real, working page (back
+// button, real category list matching the app's actual sections) that's
+// ready for real content to be dropped in later.
+const LIBRARY_CATEGORIES = ["Getting Started", "Dashboard", "Inventory", "Purchasing", "Projects", "Sales & Site Builder", "Tasks", "Reports"];
+
+function LibraryPage({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="content-grid">
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <div>
+            <h2>Learning Library</h2>
+            <p>User guides and walkthroughs, organized by section.</p>
+          </div>
+          <button className="secondary-action mini-action" type="button" onClick={onBack}>Back</button>
+        </div>
+        <div className="library-category-grid">
+          {LIBRARY_CATEGORIES.map((category) => (
+            <div className="library-category-card" key={category}>
+              <BookOpen size={18} />
+              <strong>{category}</strong>
+              <span className="muted">Guides coming soon</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// First-login welcome walkthrough. Shows exactly once per account (see
+// app_user_status.has_seen_welcome, migration 043) -- skippable, and the
+// last slide always finishes it. Slide copy is v1 and can be revised later
+// without touching the mechanism (show-once / skip / finish) that runs it.
+function WelcomeSlideshow({
+  companyName,
+  allowedTabs,
+  onFinish,
+}: {
+  companyName: string;
+  allowedTabs: View[];
+  onFinish: () => void;
+}) {
+  const [slideIndex, setSlideIndex] = useState(0);
+  const tabList = allowedTabs.filter((tab) => tab !== "admin" && tab !== "library").map((tab) => TAB_LABELS[tab]).join(", ");
+
+  const slides = [
+    {
+      title: `Welcome to ${companyName} Ops`,
+      body: "This is a quick walkthrough of the basics before you dive in. It only takes a minute.",
+    },
+    {
+      title: "Find your way around",
+      body: tabList ? `Based on your role, you have access to: ${tabList}. You can always get back to any of these from the top navigation bar.` : "Use the top navigation bar to move between sections.",
+    },
+    {
+      title: "Stay on top of tasks",
+      body: "Tasks can be assigned to you individually or to your whole team. The bell icon in the top right shows notifications the moment something needs your attention.",
+    },
+    {
+      title: "Need help later?",
+      body: "The book icon next to Cloud Sync opens the Learning Library, where guides for every section will live. You're all set -- let's get started.",
+    },
+  ];
+
+  const isLast = slideIndex === slides.length - 1;
+  const slide = slides[slideIndex];
+
+  return (
+    <div className="auth-gate">
+      <div className="auth-gate-card welcome-slideshow-card">
+        <img className="auth-gate-logo" src="/ergon-logo.png" alt={companyName} />
+        <h2>{slide.title}</h2>
+        <p className="muted">{slide.body}</p>
+        <div className="welcome-slideshow-dots">
+          {slides.map((_, index) => (
+            <span key={index} className={`welcome-slideshow-dot ${index === slideIndex ? "active" : ""}`} />
+          ))}
+        </div>
+        <div className="auth-gate-actions">
+          {!isLast && (
+            <button className="secondary-action" type="button" onClick={onFinish}>Skip</button>
+          )}
+          {slideIndex > 0 && (
+            <button className="secondary-action" type="button" onClick={() => setSlideIndex((index) => index - 1)}>Back</button>
+          )}
+          <button className="primary-action" type="button" onClick={() => (isLast ? onFinish() : setSlideIndex((index) => index + 1))}>
+            {isLast ? "Get Started" : "Next"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
