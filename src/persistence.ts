@@ -885,6 +885,8 @@ export type EOTask = {
   completedAt: string | null;
   closedByEmail: string;
   closedAt: string;
+  deletedByEmail: string;
+  deletedAt: string;
 };
 
 type TaskRow = {
@@ -910,6 +912,8 @@ type TaskRow = {
   completed_at: string | null;
   closed_by_email: string | null;
   closed_at: string | null;
+  deleted_by_email: string | null;
+  deleted_at: string | null;
 };
 
 function mapTaskRow(row: TaskRow): EOTask {
@@ -936,6 +940,8 @@ function mapTaskRow(row: TaskRow): EOTask {
     completedAt: row.completed_at,
     closedByEmail: row.closed_by_email ?? "",
     closedAt: row.closed_at ?? "",
+    deletedByEmail: row.deleted_by_email ?? "",
+    deletedAt: row.deleted_at ?? "",
   };
 }
 
@@ -948,7 +954,27 @@ export async function loadTasks(accessToken?: string): Promise<EOTask[]> {
     return [];
   }
 
-  const response = await fetch(supabaseUrl("tasks?select=*&order=created_at.desc"), {
+  const response = await fetch(supabaseUrl("tasks?select=*&deleted_at=is.null&order=created_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as TaskRow[];
+  return rows.map(mapTaskRow);
+}
+
+// Soft-deleted tasks -- kept for the Deleted Tasks review panel so who
+// deleted what, and when, stays visible and reversible instead of vanishing
+// the moment someone clicks Delete.
+export async function loadDeletedTasks(accessToken?: string): Promise<EOTask[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("tasks?select=*&deleted_at=not.is.null&order=deleted_at.desc"), {
     headers: supabaseHeaders(accessToken),
   });
 
@@ -961,7 +987,7 @@ export async function loadTasks(accessToken?: string): Promise<EOTask[]> {
 }
 
 export async function createTask(
-  task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">,
+  task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">,
   createdBy: string,
   createdByEmail: string,
   accessToken?: string,
@@ -1028,6 +1054,8 @@ export async function updateTask(id: string, task: Partial<Omit<EOTask, "id" | "
   if (task.dueDate !== undefined) payload.due_date = task.dueDate || null;
   if (task.closedByEmail !== undefined) payload.closed_by_email = task.closedByEmail || null;
   if (task.closedAt !== undefined) payload.closed_at = task.closedAt || null;
+  if (task.deletedByEmail !== undefined) payload.deleted_by_email = task.deletedByEmail || null;
+  if (task.deletedAt !== undefined) payload.deleted_at = task.deletedAt || null;
 
   const response = await fetch(supabaseUrl(`tasks?id=eq.${id}`), {
     method: "PATCH",
@@ -1046,16 +1074,13 @@ export async function updateTask(id: string, task: Partial<Omit<EOTask, "id" | "
   return mapTaskRow(rows[0]);
 }
 
-export async function deleteTask(id: string, accessToken?: string) {
-  if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
-  }
-
-  await fetch(supabaseUrl(`tasks?id=eq.${id}`), {
-    method: "DELETE",
-    headers: supabaseHeaders(accessToken),
-  });
-}
+// Deleting a task is a soft delete (see updateTask's deletedByEmail/deletedAt
+// handling above) -- there is deliberately no hard-delete function here.
+// Hard-deleting would cascade-remove the task's own task_activity_log rows
+// (migration 036's foreign key), destroying the exact audit trail this app
+// was built to keep. "Delete" in the UI stamps who/when and hides the task
+// from normal lists; it stays reviewable and restorable from the Deleted
+// Tasks panel.
 
 // Task audit trail (migration 036). One row per create/update/close/reopen,
 // loaded per-task on demand when the Edit Task modal opens for an existing

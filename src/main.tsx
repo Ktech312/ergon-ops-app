@@ -57,7 +57,6 @@ import {
   deleteFormSchemaField,
   deletePresalesRule,
   deleteScheduleTemplatePhase,
-  deleteTask,
   deleteTaskHardwareDependency,
   ensureOwnApprovalRequest,
   fetchPublicSubmittal,
@@ -93,6 +92,7 @@ import {
   loadSalesQuotes,
   loadRemoteAppState,
   loadAllTaskActivity,
+  loadDeletedTasks,
   loadScheduleTemplates,
   loadStandardInstallTimes,
   loadSubmittalsForProject,
@@ -839,6 +839,7 @@ function App() {
   const [allowedViewsMap, setAllowedViewsMap] = useState<Record<string, string[] | null>>({});
   const [approvalReviewStatus, setApprovalReviewStatus] = useState("");
   const [tasks, setTasks] = useState<EOTask[]>([]);
+  const [deletedTasks, setDeletedTasks] = useState<EOTask[]>([]);
   const [taskStatusMessage, setTaskStatusMessage] = useState("");
   const [taskActivity, setTaskActivity] = useState<TaskActivityEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -1483,6 +1484,9 @@ function App() {
     loadTasks(accessToken)
       .then(setTasks)
       .catch(() => setTaskStatusMessage("Could not load tasks."));
+    loadDeletedTasks(accessToken)
+      .then(setDeletedTasks)
+      .catch(() => undefined);
     loadAllTaskActivity(accessToken)
       .then(setTaskActivity)
       .catch(() => undefined);
@@ -1491,6 +1495,7 @@ function App() {
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setTasks([]);
+      setDeletedTasks([]);
       setTaskActivity([]);
       return;
     }
@@ -1508,7 +1513,7 @@ function App() {
     ]);
   }
 
-  async function handleCreateTask(task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">): Promise<boolean> {
+  async function handleCreateTask(task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">): Promise<boolean> {
     if (!authSession) {
       setTaskStatusMessage("You must be signed in to create a task.");
       return false;
@@ -1567,12 +1572,54 @@ function App() {
     }
   }
 
-  async function handleDeleteTask(id: string) {
+  // Soft delete: the row and its full activity history stay in the
+  // database (see persistence.ts's updateTask/deletedByEmail comments), just
+  // stamped with who and when, and dropped out of the normal lists. That
+  // keeps deletion reversible and reviewable in the Deleted Tasks panel
+  // instead of a real destructive action anyone could trigger with one click.
+  async function handleDeleteTask(id: string): Promise<boolean> {
     if (!authSession) {
-      return;
+      setTaskStatusMessage("You must be signed in to delete a task.");
+      return false;
     }
-    await deleteTask(id, authSession.accessToken);
-    setTasks((current) => current.filter((task) => task.id !== id));
+    const target = tasks.find((existing) => existing.id === id);
+    if (!window.confirm(`Delete "${target?.title ?? "this task"}"? It disappears from every task list, but who deleted it and when is kept on record, and it can be restored from the Deleted Tasks panel.`)) {
+      return false;
+    }
+    try {
+      const updated = await updateTask(id, { deletedByEmail: authSession.email, deletedAt: new Date().toISOString() }, authSession.accessToken);
+      setTasks((current) => current.filter((existing) => existing.id !== id));
+      setDeletedTasks((current) => [updated, ...current]);
+      setTaskStatusMessage(`${updated.title} deleted.`);
+      if (target) {
+        logTaskActivityLocally(id, describeTaskChanges(target, updated));
+      }
+      return true;
+    } catch (error) {
+      setTaskStatusMessage(error instanceof Error ? error.message : "Could not delete task.");
+      return false;
+    }
+  }
+
+  async function handleRestoreTask(id: string): Promise<boolean> {
+    if (!authSession) {
+      setTaskStatusMessage("You must be signed in to restore a task.");
+      return false;
+    }
+    const target = deletedTasks.find((existing) => existing.id === id);
+    try {
+      const updated = await updateTask(id, { deletedByEmail: "", deletedAt: "" }, authSession.accessToken);
+      setDeletedTasks((current) => current.filter((existing) => existing.id !== id));
+      setTasks((current) => [updated, ...current]);
+      setTaskStatusMessage(`${updated.title} restored.`);
+      if (target) {
+        logTaskActivityLocally(id, describeTaskChanges(target, updated));
+      }
+      return true;
+    } catch (error) {
+      setTaskStatusMessage(error instanceof Error ? error.message : "Could not restore task.");
+      return false;
+    }
   }
 
   function reloadTeamMembers(accessToken: string) {
@@ -1759,7 +1806,7 @@ function App() {
   // 8-hour work day, does not currently skip weekends -- a reasonable v1).
   // No AI call in this path at all, per E's decision to keep the actual
   // date math deterministic and auditable.
-  function generateScheduleTasks(project: ProjectSite, template: ScheduleTemplate): Array<Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">> {
+  function generateScheduleTasks(project: ProjectSite, template: ScheduleTemplate): Array<Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">> {
     const bomQtyByCategory = new Map<string, number>();
     project.bom.forEach((line) => {
       const part = inventoryItems.find((item) => item.name === line.item);
@@ -3263,6 +3310,9 @@ function App() {
             onCreate={handleCreateTask}
             onUpdate={handleUpdateTask}
             onDelete={handleDeleteTask}
+            deletedTasks={deletedTasks}
+            onRestore={handleRestoreTask}
+            canReviewDeletedTasks={isAdmin || roleMode === "manager"}
             onRefresh={() => authSession && reloadTasks(authSession.accessToken)}
             inventoryItems={inventoryItems}
             taskHardwareDependencies={taskHardwareDependencies}
@@ -3614,7 +3664,7 @@ function Purchasing({
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
@@ -4271,7 +4321,7 @@ function Inventory({
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
@@ -5456,7 +5506,7 @@ function Projects({
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
@@ -7537,7 +7587,7 @@ function SalesHome({
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
@@ -7636,7 +7686,7 @@ function SalesCatalog({
   onRefresh: () => void;
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -7971,7 +8021,7 @@ function SalesQuoteBuilder({
   projectSites: ProjectSite[];
   tasks: EOTask[];
   teamMembers: TeamMember[];
-  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
 }) {
   const [mode, setMode] = useState<"list" | "detail">("list");
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
@@ -8273,7 +8323,7 @@ function RequestTaskButton({
   label?: string;
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
-  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<TaskDraft>(EMPTY_TASK_DRAFT);
@@ -8332,6 +8382,13 @@ function formatTaskFieldValue(value: string) {
 function describeTaskChanges(previous: EOTask, updated: EOTask): string {
   const changes: string[] = [];
 
+  if (previous.deletedAt !== updated.deletedAt) {
+    if (!previous.deletedAt && updated.deletedAt) {
+      changes.push("Deleted the task.");
+    } else if (previous.deletedAt && !updated.deletedAt) {
+      changes.push("Restored the task.");
+    }
+  }
   if (previous.status !== updated.status) {
     const wasClosed = previous.status === "done";
     const isClosed = updated.status === "done";
@@ -8867,13 +8924,16 @@ function TasksBoard({
   taskHardwareDependencies,
   onAddTaskDependency,
   onDeleteTaskDependency,
+  deletedTasks,
+  onRestore,
+  canReviewDeletedTasks,
 }: {
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
   status: string;
-  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
   onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDelete: (id: string) => void;
   onRefresh: () => void;
@@ -8881,6 +8941,9 @@ function TasksBoard({
   taskHardwareDependencies?: TaskHardwareDependency[];
   onAddTaskDependency?: (taskId: string, sku: string, qty: number) => void;
   onDeleteTaskDependency?: (id: string) => void;
+  deletedTasks?: EOTask[];
+  onRestore?: (id: string) => Promise<boolean>;
+  canReviewDeletedTasks?: boolean;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -8890,6 +8953,7 @@ function TasksBoard({
   const [viewMode, setViewMode] = useState<"list" | "board" | "calendar" | "gantt">("list");
   const [groupBy, setGroupBy] = useState<TaskGroupBy>("status");
   const [personFilter, setPersonFilter] = useState("");
+  const [showDeleted, setShowDeleted] = useState(false);
 
   const filteredTasks = tasks.filter((task) =>
     (sectionFilter === "all" || task.section === sectionFilter) &&
@@ -8950,6 +9014,11 @@ function TasksBoard({
             <Plus size={14} /> Add Task
           </button>
           <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
+          {canReviewDeletedTasks && (deletedTasks ?? []).length > 0 && (
+            <button className="secondary-action mini-action" type="button" onClick={() => setShowDeleted((current) => !current)}>
+              {showDeleted ? "Hide" : "Show"} Deleted ({(deletedTasks ?? []).length})
+            </button>
+          )}
           <div className="view-mode-tabs">
             <button className={`view-mode-tab ${viewMode === "list" ? "active" : ""}`} type="button" onClick={() => setViewMode("list")}>List</button>
             <button className={`view-mode-tab ${viewMode === "board" ? "active" : ""}`} type="button" onClick={() => setViewMode("board")}>Board</button>
@@ -8975,6 +9044,36 @@ function TasksBoard({
           )}
           {status && <span className="muted">{status}</span>}
         </div>
+
+        {canReviewDeletedTasks && showDeleted && (
+          <div className="deleted-tasks-panel">
+            <span className="deleted-tasks-label">Deleted Tasks</span>
+            <p className="muted">Removed from the lists above, but kept on record -- who deleted it, when, and every change it had before that. Restore brings it back.</p>
+            <table>
+              <thead>
+                <tr><th>Title</th><th>Section</th><th>Deleted by</th><th>Deleted at</th><th></th></tr>
+              </thead>
+              <tbody>
+                {(deletedTasks ?? []).map((task) => (
+                  <tr key={task.id}>
+                    <td>{task.title}</td>
+                    <td>{TASK_SECTION_OPTIONS.find((option) => option.value === task.section)?.label ?? task.section}</td>
+                    <td>{task.deletedByEmail || "Unknown"}</td>
+                    <td>{task.deletedAt ? new Date(task.deletedAt).toLocaleString() : "-"}</td>
+                    <td>
+                      {onRestore && (
+                        <button className="secondary-action mini-action" type="button" onClick={() => onRestore(task.id)}>Restore</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {(deletedTasks ?? []).length === 0 && (
+                  <tr><td colSpan={5} className="empty-compact-state">No deleted tasks.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {viewMode === "calendar" && (
           <TaskCalendar tasks={filteredTasks} teamMembers={teamMembers} onSelectTask={openEditModal} />
@@ -9124,7 +9223,7 @@ function TaskMiniPanel({
   projectRef?: string;
   isInternal?: boolean;
   hideAdd?: boolean;
-  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
+  onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
   onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDelete: (id: string) => void;
   onOpenFull: () => void;
