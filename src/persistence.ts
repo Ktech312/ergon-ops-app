@@ -540,6 +540,91 @@ export async function revokeAdmin(userId: string, accessToken?: string) {
   }
 }
 
+// Company branding (migration 039) -- a singleton row so this same app can
+// be reused for a different company by changing the name and logo here,
+// with no code/text hardcoded to "Ergon" left anywhere else. Everyone
+// signed in can read it (it renders in the top nav); only an admin can
+// write it.
+export type CompanyBranding = {
+  companyName: string;
+  logoStoragePath: string;
+};
+
+const COMPANY_BRANDING_BUCKET = "company-branding";
+
+export function companyLogoUrl(logoStoragePath: string): string | null {
+  if (!logoStoragePath) {
+    return null;
+  }
+  return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/public/${COMPANY_BRANDING_BUCKET}/${logoStoragePath}`;
+}
+
+export async function loadCompanyBranding(accessToken?: string): Promise<CompanyBranding> {
+  const fallback: CompanyBranding = { companyName: "Ergon", logoStoragePath: "" };
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return fallback;
+  }
+
+  const response = await fetch(supabaseUrl("company_branding?select=company_name,logo_storage_path&id=eq.true"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return fallback;
+  }
+
+  const rows = (await response.json()) as Array<{ company_name: string; logo_storage_path: string | null }>;
+  if (!rows[0]) {
+    return fallback;
+  }
+  return { companyName: rows[0].company_name || "Ergon", logoStoragePath: rows[0].logo_storage_path ?? "" };
+}
+
+export async function saveCompanyBranding(updates: Partial<CompanyBranding>, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  const payload: Record<string, unknown> = {};
+  if (updates.companyName !== undefined) payload.company_name = updates.companyName;
+  if (updates.logoStoragePath !== undefined) payload.logo_storage_path = updates.logoStoragePath || null;
+
+  const response = await fetch(supabaseUrl("company_branding?id=eq.true"), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not save company branding: ${response.status}`);
+  }
+}
+
+export async function uploadCompanyLogo(file: File, accessToken?: string): Promise<string | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  const storagePath = `logo-${Date.now().toString(36)}-${sanitizeStoragePathSegment(file.name)}`;
+  const response = await fetch(
+    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${COMPANY_BRANDING_BUCKET}/${storagePath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": file.type || "application/octet-stream",
+        "x-upsert": "true",
+      },
+      body: file,
+    },
+  );
+  if (!response.ok) {
+    return null;
+  }
+  return storagePath;
+}
+
 export type CatalogItem = {
   id: string;
   catalogNumber: string;

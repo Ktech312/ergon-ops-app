@@ -140,6 +140,10 @@ import {
   upsertKnownUser,
   upsertStandardInstallTime,
   uploadDocumentFile,
+  companyLogoUrl,
+  loadCompanyBranding,
+  saveCompanyBranding,
+  uploadCompanyLogo,
   type ApprovalStatus,
   type AuthSession,
   type BomLine,
@@ -147,6 +151,7 @@ import {
   type BuildRecipe,
   type BuildTransaction,
   type CatalogItem,
+  type CompanyBranding,
   type EOTask,
   type FormSchema,
   type FormSchemaField,
@@ -826,6 +831,8 @@ function App() {
   const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
   const [userRoleMap, setUserRoleMap] = useState<Record<string, string>>({});
   const [adminIds, setAdminIds] = useState<string[]>([]);
+  const [branding, setBranding] = useState<CompanyBranding>({ companyName: "Ergon", logoStoragePath: "" });
+  const [brandingStatus, setBrandingStatus] = useState("");
   const [adminStatus, setAdminStatus] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
@@ -1177,6 +1184,44 @@ function App() {
 
     void saveUserRoleMode(authSession.userId, roleMode, authSession.accessToken);
   }, [authSession, roleMode, isAdmin]);
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadCompanyBranding(authSession.accessToken).then(setBranding).catch(() => undefined);
+  }, [authSession]);
+
+  async function handleSaveCompanyName(name: string) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      await saveCompanyBranding({ companyName: name }, authSession.accessToken);
+      setBranding((current) => ({ ...current, companyName: name }));
+      setBrandingStatus("Company name updated.");
+    } catch (error) {
+      setBrandingStatus(error instanceof Error ? error.message : "Could not update company name.");
+    }
+  }
+
+  async function handleUploadCompanyLogo(file: File) {
+    if (!authSession) {
+      return;
+    }
+    const path = await uploadCompanyLogo(file, authSession.accessToken);
+    if (!path) {
+      setBrandingStatus("Could not upload logo.");
+      return;
+    }
+    try {
+      await saveCompanyBranding({ logoStoragePath: path }, authSession.accessToken);
+      setBranding((current) => ({ ...current, logoStoragePath: path }));
+      setBrandingStatus("Logo updated.");
+    } catch (error) {
+      setBrandingStatus(error instanceof Error ? error.message : "Could not save logo.");
+    }
+  }
 
   function reloadAdminDirectory(accessToken: string) {
     Promise.all([loadAllKnownUsers(accessToken), loadAllUserRoles(accessToken), loadAllAdmins(accessToken), loadAllAllowedViews(accessToken)])
@@ -3167,9 +3212,9 @@ function App() {
       <header className="top-nav">
         <div className="top-nav-row">
           <div className="brand">
-            <img className="brand-mark" src="/ergon-icon.png" alt="Ergon" />
+            <img className="brand-mark" src={(branding.logoStoragePath && companyLogoUrl(branding.logoStoragePath)) || "/ergon-icon.png"} alt={branding.companyName} />
             <div>
-              <div className="brand-title">Ergon</div>
+              <div className="brand-title">{branding.companyName}</div>
               <div className="brand-subtitle">Ops Command</div>
             </div>
           </div>
@@ -3338,6 +3383,10 @@ function App() {
             onRevokeAdmin={handleRevokeAdmin}
             onSetAllowedViews={handleSetAllowedViews}
             onReviewApproval={handleReviewApproval}
+            branding={branding}
+            brandingStatus={brandingStatus}
+            onSaveCompanyName={handleSaveCompanyName}
+            onUploadLogo={handleUploadCompanyLogo}
             teamMembers={teamMembers}
             teamMemberStatus={teamMemberStatus}
             onAddTeamMember={handleAddTeamMember}
@@ -6997,6 +7046,10 @@ function AdminPage({
   onSetAllowedViews,
   onReviewApproval,
   onRefresh,
+  branding,
+  brandingStatus,
+  onSaveCompanyName,
+  onUploadLogo,
   teamMembers,
   teamMemberStatus,
   onAddTeamMember,
@@ -7036,6 +7089,10 @@ function AdminPage({
   onSetAllowedViews: (userId: string, views: string[] | null) => void;
   onReviewApproval: (userId: string, status: ApprovalStatus, expiresAt: string | null) => void;
   onRefresh: () => void;
+  branding: CompanyBranding;
+  brandingStatus: string;
+  onSaveCompanyName: (name: string) => void;
+  onUploadLogo: (file: File) => void;
   teamMembers: TeamMember[];
   teamMemberStatus: string;
   onAddTeamMember: (member: Omit<TeamMember, "id">) => void;
@@ -7078,6 +7135,12 @@ function AdminPage({
     setRosterDraft({ fullName: "", email: "", roleTitle: "" });
   }
 
+  const [companyNameDraft, setCompanyNameDraft] = useState(branding.companyName);
+  useEffect(() => {
+    setCompanyNameDraft(branding.companyName);
+  }, [branding.companyName]);
+  const logoUrl = branding.logoStoragePath ? companyLogoUrl(branding.logoStoragePath) : null;
+
   const usersByid = new Map(knownUsers.map((user) => [user.userId, user]));
   const approvalByUserId = new Map(approvalStatuses.map((entry) => [entry.userId, entry]));
   const pendingUsers = approvalStatuses
@@ -7087,6 +7150,30 @@ function AdminPage({
 
   return (
     <div className="content-grid">
+      {isAdmin && (
+        <section className="panel wide">
+          <PanelHeader title="Company Branding" label="Shown in the top nav -- change these to reuse this app for a different company" />
+          <div className="branding-editor-row">
+            <div className="branding-logo-block">
+              {logoUrl ? <img className="branding-logo-preview" src={logoUrl} alt={branding.companyName} /> : <div className="branding-logo-placeholder">No logo yet</div>}
+              <label className="secondary-action mini-action hidden-file-label">
+                Upload logo
+                <input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) { onUploadLogo(file); } event.target.value = ""; }} />
+              </label>
+            </div>
+            <label className="branding-name-field">Company name
+              <div className="branding-name-row">
+                <input value={companyNameDraft} onChange={(event) => setCompanyNameDraft(event.target.value)} placeholder="Company name" />
+                <button className="primary-action mini-action" type="button" disabled={!companyNameDraft.trim() || companyNameDraft === branding.companyName} onClick={() => onSaveCompanyName(companyNameDraft.trim())}>
+                  Save
+                </button>
+              </div>
+            </label>
+          </div>
+          {brandingStatus && <small className="muted">{brandingStatus}</small>}
+        </section>
+      )}
+
       <section className="panel wide">
         <PanelHeader title="Pending Approvals" label="New sign-ins wait here until a Manager or Admin lets them in" />
         <div className="report-filter-row">
