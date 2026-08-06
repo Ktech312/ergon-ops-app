@@ -4659,6 +4659,7 @@ export type SalesQuoteLocationImage = {
   imageType: "photo" | "drawing";
   storagePath: string;
   fileName: string;
+  description: string;
   uploadedAt: string;
 };
 
@@ -4692,6 +4693,7 @@ type SalesQuoteLocationImageRow = {
   image_type: string;
   storage_path: string;
   file_name: string | null;
+  description: string | null;
   uploaded_at: string;
 };
 
@@ -4726,6 +4728,7 @@ function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQu
     imageType: row.image_type === "drawing" ? "drawing" : "photo",
     storagePath: row.storage_path,
     fileName: row.file_name ?? "",
+    description: row.description ?? "",
     uploadedAt: row.uploaded_at,
   };
 }
@@ -4762,7 +4765,7 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
 }
 
 const SALES_QUOTE_SELECT =
-  "id,client_name,site_name,city,created_by_email,created_at,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,uploaded_at))";
+  "id,client_name,site_name,city,created_by_email,created_at,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at))";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -4950,6 +4953,7 @@ export async function addSalesQuoteLocationImage(
   imageType: "photo" | "drawing",
   file: File,
   accessToken?: string,
+  description?: string,
 ): Promise<SalesQuoteLocationImage | null> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return null;
@@ -4962,11 +4966,23 @@ export async function addSalesQuoteLocationImage(
   const response = await fetch(supabaseUrl("sales_quote_location_images"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-    body: JSON.stringify({ quote_location_id: quoteLocationId, image_type: imageType, storage_path: storagePath, file_name: file.name }),
+    body: JSON.stringify({ quote_location_id: quoteLocationId, image_type: imageType, storage_path: storagePath, file_name: file.name, description: description || null }),
   });
   if (!response.ok) {
     return null;
   }
   const rows = (await response.json()) as SalesQuoteLocationImageRow[];
   return rows[0] ? mapSalesQuoteLocationImageRow(rows[0]) : null;
+}
+
+export async function updateSalesQuoteLocationImageDescription(imageId: string, description: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`sales_quote_location_images?id=eq.${imageId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ description: description || null }),
+  });
+  return response.ok;
 }

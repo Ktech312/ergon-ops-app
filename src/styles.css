@@ -2549,6 +2549,81 @@ td small {
   font-size: 13px;
 }
 
+.quote-image-line-item {
+  align-items: flex-start;
+}
+
+.quote-image-description-input {
+  margin-top: 4px;
+  width: 100%;
+}
+
+.camera-capture-modal {
+  max-width: 480px;
+}
+
+.camera-capture-live,
+.camera-capture-review {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.camera-capture-video {
+  background: #000;
+  border-radius: 10px;
+  max-height: 60vh;
+  width: 100%;
+}
+
+.camera-capture-shutter {
+  align-items: center;
+  align-self: center;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.camera-capture-fallback {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px 0;
+}
+
+.camera-capture-thumb-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.camera-capture-thumb {
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  height: 56px;
+  object-fit: cover;
+  width: 56px;
+}
+
+.camera-capture-review-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.camera-capture-review-thumb {
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  flex-shrink: 0;
+  height: 64px;
+  object-fit: cover;
+  width: 64px;
+}
+
+.camera-capture-review-description {
+  flex: 1;
+}
+
 .inventory-editor-hero {
   border-bottom: 1px solid #e8e1d5;
   display: grid;

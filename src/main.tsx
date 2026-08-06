@@ -144,6 +144,7 @@ import {
   updatePurchaseOrderStatus,
   updatePurchaseRequestRemote,
   updateSalesQuoteLocation,
+  updateSalesQuoteLocationImageDescription,
   updateTask,
   updateTaskHardwareDependencyStatus,
   updateTeamMember,
@@ -1622,11 +1623,11 @@ function App() {
     }
   }
 
-  async function handleUploadSalesQuoteImage(quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File) {
+  async function handleUploadSalesQuoteImage(quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string): Promise<boolean> {
     if (!authSession) {
-      return;
+      return false;
     }
-    const image = await addSalesQuoteLocationImage(locationId, imageType, file, authSession.accessToken);
+    const image = await addSalesQuoteLocationImage(locationId, imageType, file, authSession.accessToken, description);
     if (image) {
       setSalesQuotes((current) =>
         current.map((entry) =>
@@ -1635,7 +1636,30 @@ function App() {
             : entry,
         ),
       );
+      return true;
     }
+    return false;
+  }
+
+  async function handleUpdateSalesQuoteImageDescription(quoteId: string, locationId: string, imageId: string, description: string) {
+    if (!authSession) {
+      return;
+    }
+    setSalesQuotes((current) =>
+      current.map((entry) =>
+        entry.id === quoteId
+          ? {
+              ...entry,
+              locations: entry.locations.map((location) =>
+                location.id === locationId
+                  ? { ...location, images: location.images.map((image) => (image.id === imageId ? { ...image, description } : image)) }
+                  : location,
+              ),
+            }
+          : entry,
+      ),
+    );
+    await updateSalesQuoteLocationImageDescription(imageId, description, authSession.accessToken);
   }
 
   async function handleDownloadSalesQuoteImage(image: SalesQuoteLocationImage) {
@@ -3503,6 +3527,7 @@ function App() {
             onAddSalesQuoteLocation={handleAddSalesQuoteLocation}
             onUpdateSalesQuoteLocation={handleUpdateSalesQuoteLocation}
             onUploadSalesQuoteImage={handleUploadSalesQuoteImage}
+            onUpdateSalesQuoteImageDescription={handleUpdateSalesQuoteImageDescription}
             onDownloadSalesQuoteImage={handleDownloadSalesQuoteImage}
             projectSites={projectSites}
             tasks={tasks}
@@ -8126,6 +8151,7 @@ function SalesHome({
   onAddSalesQuoteLocation,
   onUpdateSalesQuoteLocation,
   onUploadSalesQuoteImage,
+  onUpdateSalesQuoteImageDescription,
   onDownloadSalesQuoteImage,
   projectSites,
   tasks,
@@ -8154,7 +8180,8 @@ function SalesHome({
     locationId: string,
     updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
   ) => void;
-  onUploadSalesQuoteImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File) => void;
+  onUploadSalesQuoteImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
+  onUpdateSalesQuoteImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadSalesQuoteImage: (image: SalesQuoteLocationImage) => void;
   projectSites: ProjectSite[];
   tasks: EOTask[];
@@ -8209,6 +8236,7 @@ function SalesHome({
         onAddLocation={onAddSalesQuoteLocation}
         onUpdateLocation={onUpdateSalesQuoteLocation}
         onUploadImage={onUploadSalesQuoteImage}
+        onUpdateImageDescription={onUpdateSalesQuoteImageDescription}
         onDownloadImage={onDownloadSalesQuoteImage}
         projectSites={projectSites}
         tasks={tasks}
@@ -8565,6 +8593,218 @@ const EMPTY_NEW_QUOTE_DRAFT = { clientName: "", siteName: "", city: "", garageCo
 // asked for the inputs (FLI/LPR/people counting, entries/exits/levels) to
 // exist now, with the rules engine that turns them into a camera/sign count
 // built next -- it is not decorative, it is explicitly staged.
+// Custom in-app camera for Site Builder photo batches -- opens the phone's
+// camera directly (getUserMedia), lets the field rep snap as many photos as
+// they want for this one garage/lot before reviewing anything, then shows
+// every shot together for a quick per-photo description and a chance to
+// discard a bad one before saving the whole batch. Every photo saved here
+// is tied to the specific location it was opened from (see onSavePhoto's
+// locationId closure in SalesQuoteBuilder), so it's automatically filed
+// under that garage/lot's title -- no extra step required.
+type CapturedPhoto = { id: string; blob: Blob; previewUrl: string; description: string };
+
+function CameraCaptureModal({
+  locationName,
+  onClose,
+  onSavePhoto,
+}: {
+  locationName: string;
+  onClose: () => void;
+  onSavePhoto: (file: File, description: string) => Promise<boolean>;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [phase, setPhase] = useState<"camera" | "review">("camera");
+  const [cameraError, setCameraError] = useState("");
+  const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError("This browser can't access the camera directly. Use the file picker below instead.");
+      return;
+    }
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: "environment" }, audio: false })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCameraError("Could not access the camera (permission denied or unavailable). Use the file picker below instead.");
+        }
+      });
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
+  function stopCamera() {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }
+
+  function capturePhoto() {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) {
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          return;
+        }
+        const previewUrl = URL.createObjectURL(blob);
+        setPhotos((current) => [...current, { id: makeId("photo"), blob, previewUrl, description: "" }]);
+      },
+      "image/jpeg",
+      0.9,
+    );
+  }
+
+  function handleFilePicked(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) {
+      const previewUrl = URL.createObjectURL(file);
+      setPhotos((current) => [...current, { id: makeId("photo"), blob: file, previewUrl, description: "" }]);
+    }
+    event.target.value = "";
+  }
+
+  function discardPhoto(id: string) {
+    setPhotos((current) => {
+      const target = current.find((photo) => photo.id === id);
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return current.filter((photo) => photo.id !== id);
+    });
+  }
+
+  function goToReview() {
+    stopCamera();
+    setPhase("review");
+  }
+
+  function handleClose() {
+    stopCamera();
+    photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+    onClose();
+  }
+
+  async function saveAll() {
+    setIsSaving(true);
+    setSaveError("");
+    let failures = 0;
+    for (const photo of photos) {
+      const file = new File([photo.blob], `${makeId("photo")}.jpg`, { type: photo.blob.type || "image/jpeg" });
+      const ok = await onSavePhoto(file, photo.description.trim());
+      if (!ok) {
+        failures += 1;
+      }
+    }
+    setIsSaving(false);
+    if (failures > 0) {
+      setSaveError(`${failures} of ${photos.length} photo(s) could not be saved. Check your connection and try again -- the rest were saved.`);
+      return;
+    }
+    photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+    onClose();
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel camera-capture-modal" role="dialog" aria-modal="true" aria-labelledby="camera-capture-title">
+        <div className="modal-header">
+          <div>
+            <h2 id="camera-capture-title">Photos: {locationName}</h2>
+            <p>{phase === "camera" ? "Take as many photos as you need, then review before saving." : "Add a quick description to each photo, discard any you don't want, then save the batch."}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={handleClose} aria-label="Close camera">x</button>
+        </div>
+
+        {phase === "camera" && (
+          <div className="camera-capture-live">
+            {cameraError ? (
+              <div className="camera-capture-fallback">
+                <p className="muted">{cameraError}</p>
+                <label className="secondary-action mini-action hidden-file-label">
+                  Choose photo from files
+                  <input type="file" accept="image/*" capture="environment" onChange={handleFilePicked} />
+                </label>
+              </div>
+            ) : (
+              <>
+                <video ref={videoRef} className="camera-capture-video" autoPlay playsInline muted />
+                <button className="primary-action camera-capture-shutter" type="button" onClick={capturePhoto}>
+                  <Camera size={20} /> Capture
+                </button>
+              </>
+            )}
+            {photos.length > 0 && (
+              <div className="camera-capture-thumb-row">
+                {photos.map((photo) => (
+                  <img key={photo.id} src={photo.previewUrl} alt="Captured" className="camera-capture-thumb" />
+                ))}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={handleClose}>Cancel</button>
+              <button className="primary-action" type="button" disabled={photos.length === 0} onClick={goToReview}>
+                Review {photos.length > 0 ? `(${photos.length})` : ""}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === "review" && (
+          <div className="camera-capture-review">
+            {photos.length === 0 && <p className="empty-compact-state">No photos captured.</p>}
+            {photos.map((photo) => (
+              <div className="camera-capture-review-row" key={photo.id}>
+                <img src={photo.previewUrl} alt="Captured" className="camera-capture-review-thumb" />
+                <input
+                  className="camera-capture-review-description"
+                  value={photo.description}
+                  placeholder="Small description (optional)"
+                  onChange={(event) => setPhotos((current) => current.map((entry) => (entry.id === photo.id ? { ...entry, description: event.target.value } : entry)))}
+                />
+                <button className="secondary-action mini-action" type="button" onClick={() => discardPhoto(photo.id)}>Discard</button>
+              </div>
+            ))}
+            {saveError && <small className="error-text">{saveError}</small>}
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setPhase("camera")}>Take more</button>
+              <button className="primary-action" type="button" disabled={photos.length === 0 || isSaving} onClick={saveAll}>
+                {isSaving ? "Saving..." : `Save ${photos.length} photo(s)`}
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function SalesQuoteBuilder({
   salesQuotes,
   status,
@@ -8573,6 +8813,7 @@ function SalesQuoteBuilder({
   onAddLocation,
   onUpdateLocation,
   onUploadImage,
+  onUpdateImageDescription,
   onDownloadImage,
   projectSites,
   tasks,
@@ -8589,7 +8830,8 @@ function SalesQuoteBuilder({
     locationId: string,
     updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
   ) => void;
-  onUploadImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File) => void;
+  onUploadImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
+  onUpdateImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadImage: (image: SalesQuoteLocationImage) => void;
   projectSites: ProjectSite[];
   tasks: EOTask[];
@@ -8597,6 +8839,7 @@ function SalesQuoteBuilder({
   onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
 }) {
   const [mode, setMode] = useState<"list" | "detail">("list");
+  const [cameraLocationId, setCameraLocationId] = useState<string | null>(null);
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
@@ -8735,10 +8978,9 @@ function SalesQuoteBuilder({
                     <td><button className="table-action" type="button" onClick={() => setSelectedLocationId(location.id)}>Details</button></td>
                     <td>
                       <div className="quote-photo-actions">
-                        <label className="icon-count-button hidden-file-label" title="Take Photo">
+                        <button className="icon-count-button" type="button" title="Take Photos" onClick={() => setCameraLocationId(location.id)}>
                           <Camera size={16} /><span>{photoCount}</span>
-                          <input type="file" accept="image/*" capture="environment" onChange={(event) => handleImageSelect(location.id, "photo", event)} />
-                        </label>
+                        </button>
                         <label className="icon-count-button hidden-file-label" title="Upload">
                           <Upload size={16} /><span>{drawingCount}</span>
                           <input type="file" accept="image/*,.pdf" onChange={(event) => handleImageSelect(location.id, "drawing", event)} />
@@ -8808,10 +9050,18 @@ function SalesQuoteBuilder({
             {selectedLocation.images.length > 0 && (
               <div className="line-list">
                 {selectedLocation.images.map((image) => (
-                  <div className="line-item" key={image.id}>
+                  <div className="line-item quote-image-line-item" key={image.id}>
                     <div>
                       <strong>{image.fileName || (image.imageType === "photo" ? "Photo" : "Drawing")}</strong>
                       <span>{image.imageType === "photo" ? "Photo" : "Drawing"}</span>
+                      {image.imageType === "photo" && (
+                        <input
+                          className="quote-image-description-input"
+                          value={image.description}
+                          placeholder="Description (optional)"
+                          onChange={(event) => onUpdateImageDescription(selectedQuote.id, selectedLocation.id, image.id, event.target.value)}
+                        />
+                      )}
                     </div>
                     <button className="secondary-action mini-action" type="button" onClick={() => onDownloadImage(image)}>View</button>
                   </div>
@@ -8823,6 +9073,14 @@ function SalesQuoteBuilder({
             </div>
           </section>
         </div>
+      )}
+
+      {cameraLocationId && selectedQuote && (
+        <CameraCaptureModal
+          locationName={selectedQuote.locations.find((location) => location.id === cameraLocationId)?.name || "this location"}
+          onClose={() => setCameraLocationId(null)}
+          onSavePhoto={(file, description) => onUploadImage(selectedQuote.id, cameraLocationId, "photo", file, description)}
+        />
       )}
 
       {showNewQuoteModal && (
