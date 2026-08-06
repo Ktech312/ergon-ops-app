@@ -8064,13 +8064,20 @@ function SalesQuoteBuilder({
               <h2>{selectedQuote.siteName}</h2>
               <p>{selectedQuote.clientName} - {selectedQuote.city || "No city set"} - Started by {selectedQuote.createdByEmail || "Unknown"}</p>
             </div>
-            <div className="report-filter-row">
-              <button className="secondary-action mini-action" type="button" onClick={() => onAddLocation(selectedQuote.id, "garage")}>+ Garage</button>
-              <button className="secondary-action mini-action" type="button" onClick={() => onAddLocation(selectedQuote.id, "lot")}>+ Lot</button>
+            <div className="quote-original-form-slot">
+              <span className="label">Original Form</span>
+              <p>Placeholder for the original intake form this quote was scoped from -- we'll wire this up next.</p>
+            </div>
+            <div className="quote-detail-actions">
+              <div className="stacked-mini-actions">
+                <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => onAddLocation(selectedQuote.id, "garage")}>+ Garage</button>
+                <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => onAddLocation(selectedQuote.id, "lot")}>+ Lot</button>
+              </div>
               <RequestTaskButton
                 section="sales_quotes"
                 contextNote={`Regarding quote: ${selectedQuote.siteName} (${selectedQuote.clientName})`}
                 quoteId={selectedQuote.id}
+                label="S.E Request"
                 teamMembers={teamMembers}
                 projectSites={projectSites}
                 onCreate={onCreateTask}
@@ -8079,39 +8086,59 @@ function SalesQuoteBuilder({
           </div>
           <table>
             <thead>
-              <tr><th>Type</th><th>Name</th><th>Photos / Drawings</th><th></th></tr>
+              <tr><th>Type</th><th>Name</th><th></th><th>Photos</th></tr>
             </thead>
             <tbody>
-              {selectedQuote.locations.map((location) => (
-                <tr key={location.id}>
-                  <td><span className={`status ${location.locationType === "garage" ? "ok" : ""}`}>{location.locationType === "garage" ? "Garage" : "Lot"}</span></td>
-                  <td>
-                    <input
-                      className="quote-location-row-name"
-                      value={location.name}
-                      onChange={(event) => onUpdateLocation(selectedQuote.id, location.id, { name: event.target.value })}
-                      placeholder={location.locationType === "garage" ? "Garage name" : "Lot name"}
-                    />
-                  </td>
-                  <td>
-                    <label className="secondary-action mini-action hidden-file-label">
-                      <Camera size={14} /> Take Photo
-                      <input type="file" accept="image/*" capture="environment" onChange={(event) => handleImageSelect(location.id, "photo", event)} />
-                    </label>
-                    <label className="secondary-action mini-action hidden-file-label">
-                      <Upload size={14} /> Upload
-                      <input type="file" accept="image/*,.pdf" onChange={(event) => handleImageSelect(location.id, "drawing", event)} />
-                    </label>
-                    <small>{location.images.length} file{location.images.length === 1 ? "" : "s"}</small>
-                  </td>
-                  <td><button className="table-action" type="button" onClick={() => setSelectedLocationId(location.id)}>Details</button></td>
-                </tr>
-              ))}
+              {selectedQuote.locations.map((location) => {
+                const photoCount = location.images.filter((image) => image.imageType === "photo").length;
+                const drawingCount = location.images.filter((image) => image.imageType === "drawing").length;
+                return (
+                  <tr key={location.id}>
+                    <td><span className={`status ${location.locationType === "garage" ? "ok" : ""}`}>{location.locationType === "garage" ? "Garage" : "Lot"}</span></td>
+                    <td>
+                      <input
+                        className="quote-location-row-name"
+                        value={location.name}
+                        onChange={(event) => onUpdateLocation(selectedQuote.id, location.id, { name: event.target.value })}
+                        placeholder={location.locationType === "garage" ? "Garage name" : "Lot name"}
+                      />
+                    </td>
+                    <td><button className="table-action" type="button" onClick={() => setSelectedLocationId(location.id)}>Details</button></td>
+                    <td>
+                      <div className="quote-photo-actions">
+                        <label className="icon-count-button hidden-file-label" title="Take Photo">
+                          <Camera size={16} /><span>{photoCount}</span>
+                          <input type="file" accept="image/*" capture="environment" onChange={(event) => handleImageSelect(location.id, "photo", event)} />
+                        </label>
+                        <label className="icon-count-button hidden-file-label" title="Upload">
+                          <Upload size={16} /><span>{drawingCount}</span>
+                          <input type="file" accept="image/*,.pdf" onChange={(event) => handleImageSelect(location.id, "drawing", event)} />
+                        </label>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {selectedQuote.locations.length === 0 && (
                 <tr><td colSpan={4} className="empty-compact-state">No garages or lots yet. Use + Garage / + Lot above.</td></tr>
               )}
             </tbody>
           </table>
+
+          <div className="quote-hardware-summary">
+            <span className="label">Quote Hardware Summary</span>
+            <p className="muted">Running tally from the location details collected so far. Full hardware sizing and VPU recommendations will build on this as the rules engine comes online.</p>
+            <div className="quote-hardware-summary-grid">
+              <div><strong>{selectedQuote.locations.filter((location) => location.locationType === "garage").length}</strong><span>Garages</span></div>
+              <div><strong>{selectedQuote.locations.filter((location) => location.locationType === "lot").length}</strong><span>Lots</span></div>
+              <div><strong>{selectedQuote.locations.filter((location) => location.fli).length}</strong><span>FLI locations</span></div>
+              <div><strong>{selectedQuote.locations.filter((location) => location.lpr).length}</strong><span>LPR locations</span></div>
+              <div><strong>{selectedQuote.locations.filter((location) => location.peopleCounting).length}</strong><span>People counting</span></div>
+              <div><strong>{selectedQuote.locations.reduce((sum, location) => sum + location.entriesCount, 0)}</strong><span>Total entries</span></div>
+              <div><strong>{selectedQuote.locations.reduce((sum, location) => sum + location.exitsCount, 0)}</strong><span>Total exits</span></div>
+              <div><strong>{selectedQuote.locations.reduce((sum, location) => sum + location.levelsCount, 0)}</strong><span>Total levels</span></div>
+            </div>
+          </div>
         </section>
       )}
 
@@ -8222,6 +8249,7 @@ function RequestTaskButton({
   section,
   contextNote,
   quoteId,
+  label,
   teamMembers,
   projectSites,
   onCreate,
@@ -8229,6 +8257,7 @@ function RequestTaskButton({
   section: TaskSection;
   contextNote?: string;
   quoteId?: string;
+  label?: string;
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
   onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
@@ -8252,7 +8281,7 @@ function RequestTaskButton({
   return (
     <>
       <button className="secondary-action mini-action" type="button" onClick={openModal}>
-        <Plus size={14} /> Request
+        <Plus size={14} /> {label ?? "Request"}
       </button>
       {open && (
         <TaskEditorModal

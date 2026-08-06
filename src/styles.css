@@ -2449,6 +2449,104 @@ td small {
   white-space: nowrap;
 }
 
+.mini-action-sm {
+  font-size: 12px;
+  min-height: 26px;
+  padding: 0 8px;
+}
+
+.stacked-mini-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quote-detail-actions {
+  align-items: flex-start;
+  display: flex;
+  gap: 10px;
+}
+
+.quote-original-form-slot {
+  background: #f8f5ef;
+  border: 1px dashed #d8cfbe;
+  border-radius: 8px;
+  max-width: 260px;
+  padding: 8px 10px;
+}
+
+.quote-original-form-slot .label,
+.quote-hardware-summary .label {
+  color: #756d62;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.quote-original-form-slot p {
+  color: #8a8272;
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.icon-count-button {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  color: #514b43;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 5px;
+  height: 28px;
+  justify-content: center;
+  padding: 0 8px;
+}
+
+.icon-count-button span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.quote-photo-actions {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quote-hardware-summary {
+  border-top: 1px solid #e8e1d5;
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.quote-hardware-summary-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  margin-top: 10px;
+}
+
+.quote-hardware-summary-grid div {
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.quote-hardware-summary-grid strong {
+  display: block;
+  font-size: 18px;
+}
+
+.quote-hardware-summary-grid span {
+  color: #756d62;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
 .inventory-editor-hero {
   border-bottom: 1px solid #e8e1d5;
   display: grid;
