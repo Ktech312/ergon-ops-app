@@ -106,6 +106,7 @@ import {
   loadTasks,
   loadTeamMembers,
   loadUserRoleMode,
+  loadUsersByRole,
   makeCatalogNumber,
   markAllNotificationsRead,
   markNotificationRead,
@@ -1688,6 +1689,8 @@ function App() {
       logTaskActivityLocally(created.id, "Created the task.");
       if (created.assigneeEmail) {
         notify("task_assigned", created.assigneeEmail, "New task assigned", `"${created.title}" was assigned to you.`, "task", created.id, `task_assigned:${created.id}:${created.assigneeEmail}`);
+      } else if (created.assignedRoleKey) {
+        notifyRoleAssignment(created.assignedRoleKey, "New task for your team", created.id, created.title);
       }
       return true;
     } catch (error) {
@@ -1724,6 +1727,8 @@ function App() {
       }
       if (updated.assigneeEmail && updated.assigneeEmail !== previous?.assigneeEmail) {
         notify("task_assigned", updated.assigneeEmail, "Task assigned", `"${updated.title}" was assigned to you.`, "task", updated.id, `task_assigned:${updated.id}:${updated.assigneeEmail}`);
+      } else if (updated.assignedRoleKey && updated.assignedRoleKey !== previous?.assignedRoleKey) {
+        notifyRoleAssignment(updated.assignedRoleKey, "Task assigned to your team", updated.id, updated.title);
       }
       if (updated.status === "in_progress" && previous?.status !== "in_progress") {
         runTaskHardwareAutomation(updated);
@@ -1851,6 +1856,20 @@ function App() {
     await createNotification({ recipientEmail, eventType, title, body, relatedEntityType, relatedEntityId, dedupeKey }, authSession.accessToken).catch(() => {});
     if (recipientEmail.toLowerCase() === authSession.email?.toLowerCase()) {
       reloadNotifications(authSession.email, authSession.accessToken);
+    }
+  }
+
+  // "if it's engineering, all the engineers should receive the request" --
+  // looks up everyone currently holding the role and fires the same
+  // task_assigned notification to each of them individually, instead of
+  // picking one person.
+  async function notifyRoleAssignment(roleKey: string, title: string, taskId: string, taskTitle: string) {
+    if (!authSession) {
+      return;
+    }
+    const members = await loadUsersByRole(roleKey, authSession.accessToken).catch(() => []);
+    for (const member of members) {
+      await notify("task_assigned", member.email, title, `"${taskTitle}" was assigned to the ${roleLabelFor(roleKey)} team.`, "task", taskId, `task_assigned:${taskId}:${member.email}`);
     }
   }
 
@@ -2004,6 +2023,7 @@ function App() {
         impactAreas: [],
         assigneeUserId: null,
         assigneeEmail: "",
+        assignedRoleKey: null,
         startDate: startDate.toISOString().slice(0, 10),
         dueDate: dueDate.toISOString().slice(0, 10),
       };
@@ -8726,6 +8746,7 @@ const EMPTY_TASK_DRAFT = {
   impactAreas: [] as string[],
   assigneeUserId: null as string | null,
   assigneeEmail: "",
+  assignedRoleKey: null as string | null,
   startDate: "",
   dueDate: "",
 };
@@ -8804,6 +8825,20 @@ function assigneeLabel(email: string, teamMembers: TeamMember[]) {
   return teamMembers.find((member) => member.email && member.email.toLowerCase() === email.toLowerCase())?.fullName ?? email;
 }
 
+function roleLabelFor(roleKey: string) {
+  return ROLE_KEY_OPTIONS.find((option) => option.value === roleKey)?.label ?? roleKey;
+}
+
+// A task is assigned to either one person or a whole role/team, never both
+// (see EOTask.assignedRoleKey) -- this is the single place that decides
+// which to show, so every list/board/card stays consistent.
+function taskAssigneeLabel(task: EOTask, teamMembers: TeamMember[]) {
+  if (task.assignedRoleKey) {
+    return `${roleLabelFor(task.assignedRoleKey)} team`;
+  }
+  return assigneeLabel(task.assigneeEmail, teamMembers);
+}
+
 function formatTaskFieldValue(value: string) {
   return value ? value : "(none)";
 }
@@ -8842,6 +8877,9 @@ function describeTaskChanges(previous: EOTask, updated: EOTask): string {
   if (previous.assigneeEmail !== updated.assigneeEmail) {
     changes.push(`Assignee: ${formatTaskFieldValue(previous.assigneeEmail)} -> ${formatTaskFieldValue(updated.assigneeEmail)}`);
   }
+  if (previous.assignedRoleKey !== updated.assignedRoleKey) {
+    changes.push(`Assigned team: ${formatTaskFieldValue(previous.assignedRoleKey ?? "")} -> ${formatTaskFieldValue(updated.assignedRoleKey ?? "")}`);
+  }
   if (previous.dueDate !== updated.dueDate) {
     changes.push(`Due date: ${formatTaskFieldValue(previous.dueDate)} -> ${formatTaskFieldValue(updated.dueDate)}`);
   }
@@ -8877,6 +8915,14 @@ function taskGroupDefs(groupBy: TaskGroupBy, teamMembers: TeamMember[], tasks: E
   const seen = new Set<string>();
   const groups: Array<{ key: string; label: string }> = [];
   tasks.forEach((task) => {
+    if (task.assignedRoleKey) {
+      const roleGroupKey = `role:${task.assignedRoleKey}`;
+      if (!seen.has(roleGroupKey)) {
+        seen.add(roleGroupKey);
+        groups.push({ key: roleGroupKey, label: `${roleLabelFor(task.assignedRoleKey)} (team)` });
+      }
+      return;
+    }
     const key = task.assigneeEmail || "";
     if (key && !seen.has(key)) {
       seen.add(key);
@@ -8895,7 +8941,10 @@ function taskMatchesGroup(task: EOTask, groupBy: TaskGroupBy, key: string) {
   if (groupBy === "section") {
     return task.section === key;
   }
-  return (task.assigneeEmail || "") === key;
+  if (key.startsWith("role:")) {
+    return task.assignedRoleKey === key.slice("role:".length);
+  }
+  return !task.assignedRoleKey && (task.assigneeEmail || "") === key;
 }
 
 function AssigneeSelect({ value, teamMembers, onChange }: { value: string; teamMembers: TeamMember[]; onChange: (email: string) => void }) {
@@ -9041,7 +9090,37 @@ function TaskEditorModal({
               ))}
             </select></label>
           )}
-          <label>Assignee<AssigneeSelect value={draft.assigneeEmail} teamMembers={teamMembers} onChange={(email) => setDraft((current) => ({ ...current, assigneeEmail: email }))} /></label>
+          <label>
+            Assignee
+            <AssigneeSelect
+              value={draft.assigneeEmail}
+              teamMembers={teamMembers}
+              onChange={(email) => setDraft((current) => ({ ...current, assigneeEmail: email, assigneeUserId: null, assignedRoleKey: email ? null : current.assignedRoleKey }))}
+            />
+          </label>
+          <label>
+            Or assign to a whole team
+            <select
+              value={draft.assignedRoleKey ?? ""}
+              onChange={(event) => {
+                const roleKey = event.target.value || null;
+                setDraft((current) => ({
+                  ...current,
+                  assignedRoleKey: roleKey,
+                  assigneeEmail: roleKey ? "" : current.assigneeEmail,
+                  assigneeUserId: roleKey ? null : current.assigneeUserId,
+                }));
+              }}
+            >
+              <option value="">-- individual assignee above --</option>
+              {ROLE_KEY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          {draft.assignedRoleKey && (
+            <span className="muted span-2">Everyone with the {roleLabelFor(draft.assignedRoleKey)} role will be notified -- not just one person.</span>
+          )}
           <label>Start date<input type="date" value={draft.startDate} onChange={(event) => setDraft((current) => ({ ...current, startDate: event.target.value }))} /></label>
           <label>Due date<input type="date" value={draft.dueDate} onChange={(event) => setDraft((current) => ({ ...current, dueDate: event.target.value }))} /></label>
           <label className="span-2">Description<textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Details, links, context" /></label>
@@ -9160,7 +9239,7 @@ function TaskCard({ task, teamMembers, onUpdate, onEdit, onDelete, showStatusMov
       </div>
       <strong className="task-card-title">{task.title}</strong>
       <div className="task-card-meta">
-        <span>{assigneeLabel(task.assigneeEmail, teamMembers)}</span>
+        <span>{taskAssigneeLabel(task, teamMembers)}</span>
         <span>{task.isInternal ? "Internal" : task.projectRef || "External"}</span>
       </div>
       {task.impactAreas.length > 0 && (
@@ -9415,6 +9494,7 @@ function TasksBoard({
       impactAreas: task.impactAreas,
       assigneeUserId: task.assigneeUserId,
       assigneeEmail: task.assigneeEmail,
+      assignedRoleKey: task.assignedRoleKey,
       startDate: task.startDate,
       dueDate: task.dueDate,
     });
@@ -9558,7 +9638,7 @@ function TasksBoard({
                             "-"
                           )}
                         </td>
-                        <td>{assigneeLabel(task.assigneeEmail, teamMembers)}</td>
+                        <td>{taskAssigneeLabel(task, teamMembers)}</td>
                         <td>{task.dueDate || "-"}</td>
                         <td>{task.isInternal ? "Internal" : task.projectRef || "External"}</td>
                         <td>
@@ -9706,6 +9786,7 @@ function TaskMiniPanel({
       impactAreas: task.impactAreas,
       assigneeUserId: task.assigneeUserId,
       assigneeEmail: task.assigneeEmail,
+      assignedRoleKey: task.assignedRoleKey,
       startDate: task.startDate,
       dueDate: task.dueDate,
     });
@@ -9740,7 +9821,7 @@ function TaskMiniPanel({
           <button key={task.id} className="task-mini-row" type="button" onClick={() => openEditModal(task)}>
             <span className={`status-pill status-${task.status}`}>{TASK_STATUS_OPTIONS.find((option) => option.value === task.status)?.label ?? task.status}</span>
             <span className="task-mini-row-title">{task.title}</span>
-            <span className="muted">{assigneeLabel(task.assigneeEmail, teamMembers)}</span>
+            <span className="muted">{taskAssigneeLabel(task, teamMembers)}</span>
             {task.dueDate && <span className="muted">{task.dueDate}</span>}
           </button>
         ))}

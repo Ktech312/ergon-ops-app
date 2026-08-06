@@ -327,6 +327,30 @@ export async function loadOwnRoleKeys(userId: string, accessToken?: string): Pro
   return rows.map((row) => row.role_key);
 }
 
+// Who currently holds a given role -- used to broadcast a role-assigned task
+// (see EOTask.assignedRoleKey) to every member of that team as a
+// notification. Goes through the get_users_by_role RPC (migration 042)
+// rather than querying app_user_roles directly, since a regular user's read
+// access there is limited to their own row (see migration 010's RLS policy).
+export async function loadUsersByRole(roleKey: string, accessToken?: string): Promise<Array<{ userId: string; email: string }>> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !roleKey) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("rpc/get_users_by_role"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ target_role: roleKey }),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as Array<{ user_id: string; email: string }>;
+  return rows.map((row) => ({ userId: row.user_id, email: row.email }));
+}
+
 export async function loadOwnAllowedViews(userId: string, accessToken?: string): Promise<string[] | null> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return null;
@@ -1220,6 +1244,11 @@ export type EOTask = {
   impactAreas: string[];
   assigneeUserId: string | null;
   assigneeEmail: string;
+  // Mutually exclusive with assigneeUserId/assigneeEmail (enforced
+  // client-side): when set, the task belongs to everyone holding this role
+  // rather than one person -- "if it's engineering, all the engineers
+  // should receive the request" (migration 042).
+  assignedRoleKey: string | null;
   startDate: string;
   dueDate: string;
   createdBy: string | null;
@@ -1247,6 +1276,7 @@ type TaskRow = {
   impact_areas: string[] | null;
   assignee_user_id: string | null;
   assignee_email: string | null;
+  assigned_role_key: string | null;
   start_date: string | null;
   due_date: string | null;
   created_by: string | null;
@@ -1275,6 +1305,7 @@ function mapTaskRow(row: TaskRow): EOTask {
     impactAreas: row.impact_areas ?? [],
     assigneeUserId: row.assignee_user_id,
     assigneeEmail: row.assignee_email ?? "",
+    assignedRoleKey: row.assigned_role_key,
     startDate: row.start_date ?? "",
     dueDate: row.due_date ?? "",
     createdBy: row.created_by,
@@ -1358,6 +1389,7 @@ export async function createTask(
       category: task.category,
       impact_areas: task.impactAreas,
       assignee_email: task.assigneeEmail || null,
+      assigned_role_key: task.assignedRoleKey || null,
       start_date: task.startDate || null,
       due_date: task.dueDate || null,
       created_by: createdBy,
@@ -1393,6 +1425,7 @@ export async function updateTask(id: string, task: Partial<Omit<EOTask, "id" | "
   if (task.category !== undefined) payload.category = task.category;
   if (task.impactAreas !== undefined) payload.impact_areas = task.impactAreas;
   if (task.assigneeEmail !== undefined) payload.assignee_email = task.assigneeEmail || null;
+  if (task.assignedRoleKey !== undefined) payload.assigned_role_key = task.assignedRoleKey || null;
   if (task.startDate !== undefined) payload.start_date = task.startDate || null;
   if (task.dueDate !== undefined) payload.due_date = task.dueDate || null;
   if (task.closedByEmail !== undefined) payload.closed_by_email = task.closedByEmail || null;
