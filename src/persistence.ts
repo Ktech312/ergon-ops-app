@@ -441,6 +441,180 @@ export async function saveUserRoleMode(userId: string, roleKey: string, accessTo
   return setPrimaryUserRole(userId, roleKey, accessToken);
 }
 
+// --- Invite flow (migration 041) --------------------------------------
+// Real invites: an Admin picks an email + mandatory primary role + optional
+// secondary roles, the app emails a unique link, and accepting the invite
+// (see acceptInvite below) auto-approves the account and assigns those
+// roles -- no sitting in the Pending Approvals queue, since the invite
+// itself was the approval.
+
+export type UserInvite = {
+  id: string;
+  token: string;
+  email: string;
+  fullName: string;
+  primaryRole: string;
+  secondaryRoles: string[];
+  invitedByEmail: string;
+  status: "pending" | "accepted" | "revoked";
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+};
+
+type UserInviteRow = {
+  id: string;
+  token: string;
+  email: string;
+  full_name: string | null;
+  primary_role: string;
+  secondary_roles: string[] | null;
+  invited_by_email: string | null;
+  status: "pending" | "accepted" | "revoked";
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+};
+
+function mapUserInviteRow(row: UserInviteRow): UserInvite {
+  return {
+    id: row.id,
+    token: row.token,
+    email: row.email,
+    fullName: row.full_name ?? "",
+    primaryRole: row.primary_role,
+    secondaryRoles: row.secondary_roles ?? [],
+    invitedByEmail: row.invited_by_email ?? "",
+    status: row.status,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    acceptedAt: row.accepted_at,
+  };
+}
+
+export async function loadInvites(accessToken?: string): Promise<UserInvite[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("user_invites?select=*&order=created_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as UserInviteRow[];
+  return rows.map(mapUserInviteRow);
+}
+
+export async function createInvite(
+  input: { email: string; fullName: string; primaryRole: string; secondaryRoles: string[]; invitedByEmail: string },
+  accessToken?: string,
+): Promise<UserInvite | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+
+  const response = await fetch(supabaseUrl("user_invites"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      email: input.email.trim().toLowerCase(),
+      full_name: input.fullName.trim() || null,
+      primary_role: input.primaryRole,
+      secondary_roles: input.secondaryRoles,
+      invited_by_email: input.invitedByEmail,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not create invite: ${response.status}`);
+  }
+
+  const rows = (await response.json()) as UserInviteRow[];
+  return rows[0] ? mapUserInviteRow(rows[0]) : null;
+}
+
+export async function revokeInvite(id: string, accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  await fetch(supabaseUrl(`user_invites?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ status: "revoked" }),
+  });
+}
+
+export type PublicInviteView = {
+  email: string;
+  fullName: string;
+  primaryRole: string;
+  secondaryRoles: string[];
+  status: "pending" | "accepted" | "revoked";
+};
+
+// Anon-safe: called from the pre-login invite landing page, before the
+// visitor has any session. Talks only to the get_invite_by_token RPC, which
+// returns sanitized fields for a single invite -- never the raw table.
+export async function fetchInviteByToken(token: string): Promise<PublicInviteView | null> {
+  if (!isRemotePersistenceConfigured() || !token) {
+    return null;
+  }
+
+  const response = await fetch(supabaseUrl("rpc/get_invite_by_token"), {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ lookup_token: token }),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const rows = (await response.json()) as Array<{
+    email: string;
+    full_name: string | null;
+    primary_role: string;
+    secondary_roles: string[] | null;
+    status: "pending" | "accepted" | "revoked";
+  }>;
+
+  if (!rows.length) {
+    return null;
+  }
+
+  const row = rows[0];
+  return {
+    email: row.email,
+    fullName: row.full_name ?? "",
+    primaryRole: row.primary_role,
+    secondaryRoles: row.secondary_roles ?? [],
+    status: row.status,
+  };
+}
+
+// Called with the invitee's own freshly-created session, right after they
+// finish signup/Google OAuth from the invite landing page. Assigns the
+// roles the admin chose and auto-approves the account server-side (see
+// accept_invite in migration 041).
+export async function acceptInvite(token: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !token) {
+    return false;
+  }
+
+  const response = await fetch(supabaseUrl("rpc/accept_invite"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ lookup_token: token }),
+  });
+
+  return response.ok;
+}
+
 export type KnownUser = {
   userId: string;
   email: string;

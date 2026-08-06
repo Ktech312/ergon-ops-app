@@ -51,6 +51,7 @@ import {
   createScheduleTemplate,
   createSubmittal,
   createSubmittalShareToken,
+  createInvite,
   createTask,
   createTeamMember,
   ensureTeamMemberForSelf,
@@ -60,6 +61,10 @@ import {
   deleteTaskHardwareDependency,
   ensureOwnApprovalRequest,
   fetchPublicSubmittal,
+  fetchInviteByToken,
+  acceptInvite,
+  loadInvites,
+  revokeInvite,
   getDocumentDownloadUrl,
   getQuoteImageDownloadUrl,
   grantAdmin,
@@ -191,6 +196,8 @@ import {
   type TaskSection,
   type TaskStatus,
   type TeamMember,
+  type UserInvite,
+  type PublicInviteView,
   type UserRoles,
   type UserStatus,
 } from "./persistence";
@@ -845,6 +852,8 @@ function App() {
   const [adminIds, setAdminIds] = useState<string[]>([]);
   const [branding, setBranding] = useState<CompanyBranding>({ companyName: "Ergon", logoStoragePath: "" });
   const [brandingStatus, setBrandingStatus] = useState("");
+  const [invites, setInvites] = useState<UserInvite[]>([]);
+  const [inviteStatus, setInviteStatus] = useState("");
   const [adminStatus, setAdminStatus] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
@@ -889,8 +898,18 @@ function App() {
     }
     let cancelled = false;
     consumeOAuthRedirectSession()
-      .then((session) => {
+      .then(async (session) => {
         if (session && !cancelled) {
+          // If this Google sign-in was reached from the invite landing page
+          // (see InviteLandingPage's "Continue with Google" button, which
+          // stashes the token before the redirect), finish accepting the
+          // invite now that we have a real session -- assigns the roles the
+          // admin picked and auto-approves the account.
+          const pendingInviteToken = window.sessionStorage.getItem("pendingInviteToken");
+          if (pendingInviteToken) {
+            window.sessionStorage.removeItem("pendingInviteToken");
+            await acceptInvite(pendingInviteToken, session.accessToken).catch(() => undefined);
+          }
           setAuthSession(session);
           setAuthStatus(`Signed in as ${session.email}.`);
           setSyncStatus("loading");
@@ -1244,6 +1263,9 @@ function App() {
         setAllowedViewsMap(allowedViews);
       })
       .catch(() => setAdminStatus("Could not load the user directory."));
+    loadInvites(accessToken)
+      .then(setInvites)
+      .catch(() => setInviteStatus("Could not load invites."));
   }
 
   function reloadApprovalQueue(accessToken: string) {
@@ -1380,6 +1402,66 @@ function App() {
       setAdminStatus("Roles updated.");
     } catch (error) {
       setAdminStatus(error instanceof Error ? error.message : "Could not update secondary roles.");
+    }
+  }
+
+  async function handleSendInvite(input: { email: string; fullName: string; primaryRole: string; secondaryRoles: string[] }) {
+    if (!authSession) {
+      return;
+    }
+    const email = input.email.trim();
+    if (!email || !input.primaryRole) {
+      setInviteStatus("Email and primary role are required to send an invite.");
+      return;
+    }
+    setInviteStatus("Sending invite...");
+    try {
+      const invite = await createInvite(
+        { email, fullName: input.fullName, primaryRole: input.primaryRole, secondaryRoles: input.secondaryRoles, invitedByEmail: authSession.email },
+        authSession.accessToken,
+      );
+      if (!invite) {
+        setInviteStatus("Could not create the invite.");
+        return;
+      }
+      setInvites((current) => [invite, ...current]);
+      await sendInviteEmail(invite);
+    } catch (error) {
+      setInviteStatus(error instanceof Error ? error.message : "Could not create the invite.");
+    }
+  }
+
+  async function sendInviteEmail(invite: UserInvite) {
+    const roleLabel = ROLE_KEY_OPTIONS.find((option) => option.value === invite.primaryRole)?.label ?? invite.primaryRole;
+    const inviteUrl = `${window.location.origin}/?invite=${invite.token}`;
+    try {
+      const response = await fetch("/api/send-invite-email", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: invite.email, fullName: invite.fullName, roleLabel, inviteUrl, companyName: branding.companyName }),
+      });
+      const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
+      setInviteStatus(result.sent ? `Invite emailed to ${invite.email}.` : (result.reason || result.error || "Invite created, but the email could not be sent."));
+    } catch {
+      setInviteStatus(`Invite created for ${invite.email}, but the email could not be sent -- copy the link instead.`);
+    }
+  }
+
+  async function handleResendInvite(invite: UserInvite) {
+    setInviteStatus("Resending invite...");
+    await sendInviteEmail(invite);
+  }
+
+  async function handleRevokeInvite(id: string) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      await revokeInvite(id, authSession.accessToken);
+      setInvites((current) => current.map((invite) => (invite.id === id ? { ...invite, status: "revoked" } : invite)));
+      setInviteStatus("Invite revoked.");
+    } catch (error) {
+      setInviteStatus(error instanceof Error ? error.message : "Could not revoke the invite.");
     }
   }
 
@@ -3457,6 +3539,11 @@ function App() {
             presalesStatus={presalesStatus}
             onAddPresalesRule={handleAddPresalesRule}
             onDeletePresalesRule={handleDeletePresalesRule}
+            invites={invites}
+            inviteStatus={inviteStatus}
+            onSendInvite={handleSendInvite}
+            onResendInvite={handleResendInvite}
+            onRevokeInvite={handleRevokeInvite}
             onRefresh={() => {
               if (!authSession) {
                 return;
@@ -7193,6 +7280,11 @@ function AdminPage({
   presalesStatus,
   onAddPresalesRule,
   onDeletePresalesRule,
+  invites,
+  inviteStatus,
+  onSendInvite,
+  onResendInvite,
+  onRevokeInvite,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -7237,7 +7329,13 @@ function AdminPage({
   presalesStatus: string;
   onAddPresalesRule: (rule: Omit<PresalesHardwareRule, "id">) => void;
   onDeletePresalesRule: (id: string) => void;
+  invites: UserInvite[];
+  inviteStatus: string;
+  onSendInvite: (input: { email: string; fullName: string; primaryRole: string; secondaryRoles: string[] }) => void;
+  onResendInvite: (invite: UserInvite) => void;
+  onRevokeInvite: (id: string) => void;
 }) {
+  const [inviteDraft, setInviteDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", roleTitle: "" });
   const [timeDraft, setTimeDraft] = useState({ category: "", hoursPerUnit: 0, notes: "" });
   const [templateNameDraft, setTemplateNameDraft] = useState("");
@@ -7293,6 +7391,104 @@ function AdminPage({
             </label>
           </div>
           {brandingStatus && <small className="muted">{brandingStatus}</small>}
+        </section>
+      )}
+
+      {isAdmin && (
+        <section className="panel wide">
+          <PanelHeader title="Invite Someone" label="Email is mandatory, primary role is mandatory -- secondary roles are optional. Accepting the invite skips Pending Approvals entirely." />
+          <div className="roster-add-row">
+            <input value={inviteDraft.fullName} onChange={(event) => setInviteDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name (optional)" />
+            <input value={inviteDraft.email} onChange={(event) => setInviteDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email (required)" type="email" />
+            <select value={inviteDraft.primaryRole} onChange={(event) => setInviteDraft((current) => ({ ...current, primaryRole: event.target.value, secondaryRoles: current.secondaryRoles.filter((key) => key !== event.target.value) }))}>
+              <option value="">Primary role (required)</option>
+              {ROLE_KEY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <button
+              className="primary-action mini-action"
+              type="button"
+              disabled={!inviteDraft.email.trim() || !inviteDraft.primaryRole}
+              onClick={() => {
+                onSendInvite(inviteDraft);
+                setInviteDraft({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] });
+              }}
+            >
+              <Plus size={14} /> Send Invite
+            </button>
+          </div>
+          {inviteDraft.primaryRole && (
+            <div className="secondary-role-picker">
+              <span className="muted">Also part of:</span>
+              <div className="tag-picker-grid">
+                {ROLE_KEY_OPTIONS.filter((option) => option.value !== inviteDraft.primaryRole).map((option) => (
+                  <label key={option.value} className="checkbox-inline">
+                    <input
+                      type="checkbox"
+                      checked={inviteDraft.secondaryRoles.includes(option.value)}
+                      onChange={(event) => {
+                        setInviteDraft((current) => {
+                          const next = new Set(current.secondaryRoles);
+                          if (event.target.checked) {
+                            next.add(option.value);
+                          } else {
+                            next.delete(option.value);
+                          }
+                          return { ...current, secondaryRoles: Array.from(next) };
+                        });
+                      }}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+          {inviteStatus && <small className="muted">{inviteStatus}</small>}
+          <table>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Name</th>
+                <th>Primary role</th>
+                <th>Also part of</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {invites.map((invite) => (
+                <tr key={invite.id}>
+                  <td>{invite.email}</td>
+                  <td>{invite.fullName || "-"}</td>
+                  <td>{ROLE_KEY_OPTIONS.find((option) => option.value === invite.primaryRole)?.label ?? invite.primaryRole}</td>
+                  <td>{invite.secondaryRoles.map((key) => ROLE_KEY_OPTIONS.find((option) => option.value === key)?.label ?? key).join(", ") || "-"}</td>
+                  <td>{invite.status === "pending" ? "Waiting" : invite.status === "accepted" ? "Accepted" : "Revoked"}</td>
+                  <td>
+                    {invite.status === "pending" && (
+                      <>
+                        <button className="secondary-action mini-action" type="button" onClick={() => onResendInvite(invite)}>Resend</button>
+                        <button
+                          className="secondary-action mini-action"
+                          type="button"
+                          onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/?invite=${invite.token}`)}
+                        >
+                          Copy link
+                        </button>
+                        <button className="secondary-action mini-action" type="button" onClick={() => onRevokeInvite(invite.id)}>Revoke</button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {invites.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="empty-compact-state">No invites sent yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </section>
       )}
 
@@ -9729,11 +9925,138 @@ function SubmittalPublicPage({ token }: { token: string }) {
   );
 }
 
+// Public, pre-login landing page for a real invite. Reached via
+// ?invite=<token> on the root URL and rendered instead of <App/> entirely,
+// same pattern as SubmittalPublicPage above -- it talks to Supabase only
+// through the anon-key get_invite_by_token RPC until the person actually
+// signs up, at which point it uses their brand-new session to call
+// accept_invite (which assigns the roles the admin picked and auto-approves
+// the account, skipping the Pending Approvals queue).
+function InviteLandingPage({ token }: { token: string }) {
+  const [phase, setPhase] = useState<"loading" | "error" | "used" | "ready" | "submitting" | "done">("loading");
+  const [invite, setInvite] = useState<PublicInviteView | null>(null);
+  const [fullName, setFullName] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [formError, setFormError] = useState("");
+
+  useEffect(() => {
+    fetchInviteByToken(token)
+      .then((result) => {
+        if (!result) {
+          setPhase("error");
+          return;
+        }
+        setInvite(result);
+        setFullName(result.fullName);
+        setPhase(result.status === "pending" ? "ready" : "used");
+      })
+      .catch(() => setPhase("error"));
+  }, [token]);
+
+  async function handleAcceptWithPassword() {
+    if (!invite) {
+      return;
+    }
+    if (password.length < 8) {
+      setFormError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setFormError("Passwords do not match.");
+      return;
+    }
+    setFormError("");
+    setPhase("submitting");
+    try {
+      const session = await signUpWithPassword(invite.email, password);
+      if (!session) {
+        setFormError("Account created, but could not sign in automatically. Please check your email to confirm, then sign in and your invite will finish applying.");
+        setPhase("ready");
+        return;
+      }
+      const accepted = await acceptInvite(token, session.accessToken);
+      if (!accepted) {
+        setFormError("Signed up, but could not apply your invited role. Contact your admin.");
+        setPhase("ready");
+        return;
+      }
+      setPhase("done");
+      window.location.href = "/";
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Could not create your account.");
+      setPhase("ready");
+    }
+  }
+
+  function handleAcceptWithGoogle() {
+    window.sessionStorage.setItem("pendingInviteToken", token);
+    signInWithGoogleRedirect();
+  }
+
+  if (phase === "loading") {
+    return (
+      <div className="submittal-public-page">
+        <p>Loading your invite...</p>
+      </div>
+    );
+  }
+
+  if (phase === "error" || !invite) {
+    return (
+      <div className="submittal-public-page">
+        <h1>Invite not found</h1>
+        <p>This invite link is invalid or has expired. Please ask whoever invited you to send a new one.</p>
+      </div>
+    );
+  }
+
+  if (phase === "used") {
+    return (
+      <div className="submittal-public-page">
+        <h1>{invite.status === "accepted" ? "Already accepted" : "Invite revoked"}</h1>
+        <p>
+          {invite.status === "accepted"
+            ? "This invite has already been used to create an account. If that wasn't you, contact your admin."
+            : "This invite has been revoked. Please ask whoever invited you to send a new one."}
+        </p>
+      </div>
+    );
+  }
+
+  const roleLabel = ROLE_KEY_OPTIONS.find((option) => option.value === invite.primaryRole)?.label ?? invite.primaryRole;
+
+  return (
+    <div className="submittal-public-page">
+      <header className="submittal-public-header">
+        <h1>Welcome{invite.fullName ? ` ${invite.fullName}` : ""}</h1>
+        <p>You've been invited to join the <strong>{roleLabel}</strong> team.</p>
+      </header>
+      <section className="submittal-public-section submittal-response-form">
+        <h2>Set up your account</h2>
+        <label>Full name<input value={fullName} onChange={(event) => setFullName(event.target.value)} /></label>
+        <label>Email<input value={invite.email} disabled /></label>
+        <label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
+        <label>Confirm password<input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
+        {formError && <small className="error-text">{formError}</small>}
+        <div className="submittal-response-actions">
+          <button type="button" className="primary-action" disabled={phase === "submitting" || !password || !confirmPassword} onClick={handleAcceptWithPassword}>
+            {phase === "submitting" ? "Creating account..." : "Create account & accept invite"}
+          </button>
+        </div>
+        <div className="auth-gate-divider">or</div>
+        <button type="button" className="secondary-action auth-gate-google" onClick={handleAcceptWithGoogle}>Continue with Google</button>
+      </section>
+    </div>
+  );
+}
+
 const submittalToken = new URLSearchParams(window.location.search).get("submittal");
+const inviteToken = new URLSearchParams(window.location.search).get("invite");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    {submittalToken ? <SubmittalPublicPage token={submittalToken} /> : <App />}
+    {inviteToken ? <InviteLandingPage token={inviteToken} /> : submittalToken ? <SubmittalPublicPage token={submittalToken} /> : <App />}
   </StrictMode>
 );
 
