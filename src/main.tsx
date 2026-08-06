@@ -1780,6 +1780,7 @@ function App() {
         description: `Auto-generated from schedule template "${template.name}" (${hours.toFixed(1)} standard hours).`,
         section: "projects" as TaskSection,
         projectRef: project.ref,
+        quoteId: "",
         isInternal: false,
         status: "to_do" as TaskStatus,
         priority: "normal" as TaskPriority,
@@ -7581,6 +7582,7 @@ function SalesHome({
         onUploadImage={onUploadSalesQuoteImage}
         onDownloadImage={onDownloadSalesQuoteImage}
         projectSites={projectSites}
+        tasks={tasks}
         teamMembers={teamMembers}
         onCreateTask={onCreateTask}
       />
@@ -7944,6 +7946,7 @@ function SalesQuoteBuilder({
   onUploadImage,
   onDownloadImage,
   projectSites,
+  tasks,
   teamMembers,
   onCreateTask,
 }: {
@@ -7960,6 +7963,7 @@ function SalesQuoteBuilder({
   onUploadImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File) => void;
   onDownloadImage: (image: SalesQuoteLocationImage) => void;
   projectSites: ProjectSite[];
+  tasks: EOTask[];
   teamMembers: TeamMember[];
   onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
 }) {
@@ -8011,7 +8015,7 @@ function SalesQuoteBuilder({
             </div>
             <div className="action-row">
               <button className="primary-action mini-action" type="button" onClick={() => setShowNewQuoteModal(true)} disabled={!isConfigured}>
-                <Plus size={14} /> Add New
+                <Plus size={14} /> New Quote
               </button>
               <button className="icon-button" type="button" onClick={() => setIsCollapsed((current) => !current)} aria-label={isCollapsed ? "Expand section" : "Collapse section"}>
                 {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
@@ -8024,29 +8028,26 @@ function SalesQuoteBuilder({
               {status && <small className="muted">{status}</small>}
               <table>
                 <thead>
-                  <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th>Tasks</th><th></th></tr>
+                  <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th>Tasks</th></tr>
                 </thead>
                 <tbody>
-                  {salesQuotes.map((quote) => (
-                    <tr key={quote.id}>
-                      <td><strong>{quote.siteName}</strong><small>{quote.clientName}</small></td>
-                      <td>{quote.city || "-"}</td>
-                      <td>{quote.createdByEmail || "-"}</td>
-                      <td>{quote.locations.length}</td>
-                      <td>
-                        <RequestTaskButton
-                          section="sales_quotes"
-                          contextNote={`Regarding quote: ${quote.siteName} (${quote.clientName})`}
-                          teamMembers={teamMembers}
-                          projectSites={projectSites}
-                          onCreate={onCreateTask}
-                        />
-                      </td>
-                      <td><button className="table-action" type="button" onClick={() => openQuote(quote.id)}>Open</button></td>
-                    </tr>
-                  ))}
+                  {salesQuotes.map((quote) => {
+                    const quoteTasks = tasks.filter((task) => task.quoteId === quote.id);
+                    const openCount = quoteTasks.filter((task) => task.status !== "done").length;
+                    const taskPillClass = quoteTasks.length === 0 ? "status-pill" : openCount > 0 ? "status-pill status-blocked" : "status-pill status-done";
+                    const taskPillLabel = quoteTasks.length === 0 ? "No tasks" : openCount > 0 ? `${openCount} open` : "All done";
+                    return (
+                      <tr key={quote.id} className="table-row-clickable" onClick={() => openQuote(quote.id)}>
+                        <td><strong>{quote.siteName}</strong><small>{quote.clientName}</small></td>
+                        <td>{quote.city || "-"}</td>
+                        <td>{quote.createdByEmail || "-"}</td>
+                        <td>{quote.locations.length}</td>
+                        <td><span className={taskPillClass}>{taskPillLabel}</span></td>
+                      </tr>
+                    );
+                  })}
                   {salesQuotes.length === 0 && (
-                    <tr><td colSpan={6} className="empty-compact-state">No quotes yet. Add New to start scoping a site.</td></tr>
+                    <tr><td colSpan={5} className="empty-compact-state">No quotes yet. New Quote to start scoping a site.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -8069,6 +8070,7 @@ function SalesQuoteBuilder({
               <RequestTaskButton
                 section="sales_quotes"
                 contextNote={`Regarding quote: ${selectedQuote.siteName} (${selectedQuote.clientName})`}
+                quoteId={selectedQuote.id}
                 teamMembers={teamMembers}
                 projectSites={projectSites}
                 onCreate={onCreateTask}
@@ -8193,6 +8195,7 @@ const EMPTY_TASK_DRAFT = {
   description: "",
   section: "general" as TaskSection,
   projectRef: "",
+  quoteId: "",
   isInternal: true,
   status: "to_do" as TaskStatus,
   priority: "normal" as TaskPriority,
@@ -8218,12 +8221,14 @@ function priorityBadgeClass(priority: TaskPriority) {
 function RequestTaskButton({
   section,
   contextNote,
+  quoteId,
   teamMembers,
   projectSites,
   onCreate,
 }: {
   section: TaskSection;
   contextNote?: string;
+  quoteId?: string;
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
   onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => void;
@@ -8232,7 +8237,7 @@ function RequestTaskButton({
   const [draft, setDraft] = useState<TaskDraft>(EMPTY_TASK_DRAFT);
 
   function openModal() {
-    setDraft({ ...EMPTY_TASK_DRAFT, section, isInternal: true, description: contextNote ?? "" });
+    setDraft({ ...EMPTY_TASK_DRAFT, section, isInternal: true, description: contextNote ?? "", quoteId: quoteId ?? "" });
     setOpen(true);
   }
 
@@ -8825,6 +8830,7 @@ function TasksBoard({
       description: task.description,
       section: task.section,
       projectRef: task.projectRef,
+      quoteId: task.quoteId,
       isInternal: task.isInternal,
       status: task.status,
       priority: task.priority,
@@ -9082,6 +9088,7 @@ function TaskMiniPanel({
       description: task.description,
       section: task.section,
       projectRef: task.projectRef,
+      quoteId: task.quoteId,
       isInternal: task.isInternal,
       status: task.status,
       priority: task.priority,

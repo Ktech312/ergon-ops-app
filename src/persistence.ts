@@ -869,6 +869,7 @@ export type EOTask = {
   description: string;
   section: TaskSection;
   projectRef: string;
+  quoteId: string;
   isInternal: boolean;
   status: TaskStatus;
   priority: TaskPriority;
@@ -893,6 +894,7 @@ type TaskRow = {
   description: string | null;
   section: TaskSection;
   project_ref: string | null;
+  quote_id: string | null;
   is_internal: boolean;
   status: TaskStatus;
   priority: TaskPriority;
@@ -918,6 +920,7 @@ function mapTaskRow(row: TaskRow): EOTask {
     description: row.description ?? "",
     section: row.section,
     projectRef: row.project_ref ?? "",
+    quoteId: row.quote_id ?? "",
     isInternal: row.is_internal,
     status: row.status,
     priority: row.priority,
@@ -979,6 +982,7 @@ export async function createTask(
       description: task.description,
       section: task.section,
       project_ref: task.projectRef || null,
+      quote_id: task.quoteId || null,
       is_internal: task.isInternal,
       status: task.status,
       priority: task.priority,
@@ -1010,6 +1014,7 @@ export async function updateTask(id: string, task: Partial<Omit<EOTask, "id" | "
   if (task.description !== undefined) payload.description = task.description;
   if (task.section !== undefined) payload.section = task.section;
   if (task.projectRef !== undefined) payload.project_ref = task.projectRef || null;
+  if (task.quoteId !== undefined) payload.quote_id = task.quoteId || null;
   if (task.isInternal !== undefined) payload.is_internal = task.isInternal;
   if (task.status !== undefined) {
     payload.status = task.status;

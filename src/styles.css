@@ -3155,6 +3155,14 @@ td.empty-compact-state {
   padding-top: 14px;
 }
 
+.table-row-clickable {
+  cursor: pointer;
+}
+
+.table-row-clickable:hover {
+  background: #f8f5ef;
+}
+
 .task-audit-meta {
   color: #8a8272;
   display: flex;
