@@ -1746,19 +1746,23 @@ export async function loadNotifications(email: string, accessToken?: string): Pr
   return rows.map(mapNotificationRow);
 }
 
+// Returns the created row's id, or null if nothing was actually inserted
+// (Supabase's resolution=ignore-duplicates silently skips a row whose
+// dedupe_key already exists rather than erroring -- that's used below by
+// notify() to avoid re-sending the same email twice for the same event).
 export async function createNotification(
   notification: { recipientEmail: string; eventType: string; title: string; body: string; relatedEntityType?: string; relatedEntityId?: string; dedupeKey?: string },
   accessToken?: string,
-) {
+): Promise<{ id: string } | null> {
   if (!isRemotePersistenceConfigured() || !accessToken || !notification.recipientEmail) {
-    return;
+    return null;
   }
 
-  await fetch(supabaseUrl("notifications"), {
+  const response = await fetch(supabaseUrl("notifications"), {
     method: "POST",
     headers: {
       ...supabaseHeaders(accessToken),
-      prefer: "resolution=ignore-duplicates",
+      prefer: "return=representation,resolution=ignore-duplicates",
     },
     body: JSON.stringify({
       recipient_email: notification.recipientEmail,
@@ -1770,6 +1774,35 @@ export async function createNotification(
       dedupe_key: notification.dedupeKey ?? null,
     }),
   });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const rows = (await response.json()) as Array<{ id: string }>;
+  return rows[0] ? { id: rows[0].id } : null;
+}
+
+// Audit trail for non-in-app delivery attempts (migration 024's
+// notification_deliveries table) -- one row per channel per notification,
+// so "did the email actually go out" is a real, reviewable fact instead of
+// a guess.
+export async function recordNotificationDelivery(
+  notificationId: string,
+  channel: "email" | "slack" | "teams",
+  status: "sent" | "failed" | "skipped",
+  errorMessage?: string,
+  accessToken?: string,
+) {
+  if (!isRemotePersistenceConfigured() || !accessToken || !notificationId) {
+    return;
+  }
+
+  await fetch(supabaseUrl("notification_deliveries"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ notification_id: notificationId, channel, status, error_message: errorMessage || null }),
+  }).catch(() => undefined);
 }
 
 export async function markNotificationRead(id: string, accessToken?: string) {

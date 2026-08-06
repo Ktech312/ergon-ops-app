@@ -109,6 +109,7 @@ import {
   loadUserRoleMode,
   loadUsersByRole,
   markWelcomeSeen,
+  recordNotificationDelivery,
   makeCatalogNumber,
   markAllNotificationsRead,
   markNotificationRead,
@@ -1878,12 +1879,34 @@ function App() {
   }
 
   async function notify(eventType: string, recipientEmail: string, title: string, body: string, relatedEntityType: string, relatedEntityId: string, dedupeKey?: string) {
-    if (!authSession || !recipientEmail || !ruleActive(eventType, "in_app")) {
+    if (!authSession || !recipientEmail) {
       return;
     }
-    await createNotification({ recipientEmail, eventType, title, body, relatedEntityType, relatedEntityId, dedupeKey }, authSession.accessToken).catch(() => {});
+    const inAppActive = ruleActive(eventType, "in_app");
+    const emailActive = ruleActive(eventType, "email");
+    if (!inAppActive && !emailActive) {
+      return;
+    }
+    const created = await createNotification({ recipientEmail, eventType, title, body, relatedEntityType, relatedEntityId, dedupeKey }, authSession.accessToken).catch(() => null);
     if (recipientEmail.toLowerCase() === authSession.email?.toLowerCase()) {
       reloadNotifications(authSession.email, authSession.accessToken);
+    }
+    // created is null if this exact event was already recorded (dedupe_key
+    // collision) or the insert failed -- either way, don't send a
+    // duplicate/orphaned email.
+    if (!created || !emailActive) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/send-notification-email", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ to: recipientEmail, subject: title, body, companyName: branding.companyName }),
+      });
+      const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
+      await recordNotificationDelivery(created.id, "email", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
+    } catch (error) {
+      await recordNotificationDelivery(created.id, "email", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
     }
   }
 
@@ -7756,7 +7779,7 @@ function AdminPage({
                 <tr key={rule.id}>
                   <td>{rule.eventType.replace(/_/g, " ")}</td>
                   <td><input type="checkbox" checked={rule.channels.includes("in_app")} onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "in_app"] : rule.channels.filter((c) => c !== "in_app") })} /></td>
-                  <td><input type="checkbox" checked={rule.channels.includes("email")} disabled title="Needs an email provider secret -- not configured yet" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "email"] : rule.channels.filter((c) => c !== "email") })} /></td>
+                  <td><input type="checkbox" checked={rule.channels.includes("email")} title="Sends a real email via Resend when this event fires" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "email"] : rule.channels.filter((c) => c !== "email") })} /></td>
                   <td><input type="checkbox" checked={rule.channels.includes("slack")} disabled title="Needs a Slack/Teams webhook -- not configured yet" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "slack"] : rule.channels.filter((c) => c !== "slack") })} /></td>
                   <td><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateNotificationRule(rule.id, { isActive: event.target.checked })} /></td>
                 </tr>
