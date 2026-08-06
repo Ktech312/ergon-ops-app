@@ -3259,7 +3259,6 @@ function App() {
             taskActivity={taskActivity}
             projectSites={projectSites}
             teamMembers={teamMembers}
-            salesQuotes={salesQuotes}
             status={taskStatusMessage}
             onCreate={handleCreateTask}
             onUpdate={handleUpdateTask}
@@ -7556,7 +7555,6 @@ function SalesHome({
         taskActivity={taskActivity}
         teamMembers={teamMembers}
         projectSites={projectSites}
-        salesQuotes={salesQuotes}
         isInternal
         hideAdd
         onCreate={onCreateTask}
@@ -8088,7 +8086,6 @@ function SalesQuoteBuilder({
                 label="S.E Request"
                 teamMembers={teamMembers}
                 projectSites={projectSites}
-                salesQuotes={salesQuotes}
                 onCreate={onCreateTask}
               />
             </div>
@@ -8268,7 +8265,6 @@ function RequestTaskButton({
   label,
   teamMembers,
   projectSites,
-  salesQuotes,
   onCreate,
 }: {
   section: TaskSection;
@@ -8277,7 +8273,6 @@ function RequestTaskButton({
   label?: string;
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
-  salesQuotes?: SalesQuote[];
   onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
@@ -8307,7 +8302,6 @@ function RequestTaskButton({
           editingId={null}
           projectSites={projectSites}
           teamMembers={teamMembers}
-          salesQuotes={salesQuotes}
           onSubmit={submit}
           onClose={() => setOpen(false)}
           lockSection
@@ -8437,7 +8431,6 @@ function TaskEditorModal({
   onQuickStatusChange,
   projectSites,
   teamMembers,
-  salesQuotes,
   onSubmit,
   onClose,
   lockSection,
@@ -8455,7 +8448,6 @@ function TaskEditorModal({
   onQuickStatusChange?: (status: TaskStatus) => Promise<boolean>;
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
-  salesQuotes?: SalesQuote[];
   onSubmit: () => Promise<boolean>;
   onClose: () => void;
   lockSection?: boolean;
@@ -8520,10 +8512,15 @@ function TaskEditorModal({
             <label>Section<input value={TASK_SECTION_OPTIONS.find((option) => option.value === draft.section)?.label ?? draft.section} disabled /></label>
           ) : (
             <label>Section<select value={draft.section} onChange={(event) => setDraft((current) => ({ ...current, section: event.target.value as TaskSection }))}>
-              {TASK_SECTION_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
+              {TASK_SECTION_OPTIONS
+                .filter((option) => option.value !== "sales_quotes" || draft.section === "sales_quotes")
+                .map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
             </select></label>
+          )}
+          {draft.section === "sales_quotes" && (
+            <span className="muted span-2">Site Builder tasks are created from inside a specific site (its "S.E Request" button) so they stay linked to that site -- this one already is.</span>
           )}
           <label>Priority<select value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value as TaskPriority }))}>
             {TASK_PRIORITY_OPTIONS.map((option) => (
@@ -8536,14 +8533,6 @@ function TaskEditorModal({
             ))}
           </select></label>
           <label>Category<input value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="e.g. API, Portal, FLI" /></label>
-          {draft.section === "sales_quotes" && (
-            <label>Quote<select value={draft.quoteId} onChange={(event) => setDraft((current) => ({ ...current, quoteId: event.target.value }))}>
-              <option value="">Not linked to a quote</option>
-              {(salesQuotes ?? []).map((quote) => (
-                <option key={quote.id} value={quote.id}>{quote.siteName} - {quote.clientName}</option>
-              ))}
-            </select></label>
-          )}
           {!lockProjectRef && (
             <label className="checkbox-inline-field">
               <input
@@ -8869,7 +8858,6 @@ function TasksBoard({
   taskActivity,
   projectSites,
   teamMembers,
-  salesQuotes,
   status,
   onCreate,
   onUpdate,
@@ -8884,7 +8872,6 @@ function TasksBoard({
   taskActivity: TaskActivityEntry[];
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
-  salesQuotes?: SalesQuote[];
   status: string;
   onCreate: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt">) => Promise<boolean>;
   onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
@@ -9101,7 +9088,6 @@ function TasksBoard({
           onQuickStatusChange={editingId ? (status) => onUpdate(editingId, { status }) : undefined}
           projectSites={projectSites}
           teamMembers={teamMembers}
-          salesQuotes={salesQuotes}
           onSubmit={submitDraft}
           onClose={() => setModalOpen(false)}
           taskDependencies={(taskHardwareDependencies ?? []).filter((dep) => dep.taskId === editingId)}
@@ -9120,7 +9106,6 @@ function TaskMiniPanel({
   taskActivity,
   teamMembers,
   projectSites,
-  salesQuotes,
   section,
   projectRef,
   isInternal,
@@ -9135,7 +9120,6 @@ function TaskMiniPanel({
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
   projectSites: ProjectSite[];
-  salesQuotes?: SalesQuote[];
   section?: TaskSection;
   projectRef?: string;
   isInternal?: boolean;
@@ -9243,7 +9227,6 @@ function TaskMiniPanel({
           onQuickStatusChange={editingId ? (status) => onUpdate(editingId, { status }) : undefined}
           projectSites={projectSites}
           teamMembers={teamMembers}
-          salesQuotes={salesQuotes}
           onSubmit={submitDraft}
           onClose={() => setModalOpen(false)}
           lockSection
