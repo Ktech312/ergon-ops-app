@@ -3399,6 +3399,14 @@ td.empty-compact-state {
   flex: 1;
 }
 
+.secondary-role-picker {
+  margin-top: 6px;
+}
+
+.secondary-role-picker .tag-picker-grid {
+  margin-top: 4px;
+}
+
 .task-activity-entry {
   border-bottom: 1px solid #e8e1d5;
   display: flex;

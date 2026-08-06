@@ -81,6 +81,7 @@ import {
   loadLocalAppState,
   loadProjectAllocations,
   loadOwnAllowedViews,
+  loadOwnRoleKeys,
   loadOwnApprovalStatus,
   loadNotificationRules,
   loadNotifications,
@@ -120,7 +121,8 @@ import {
   releaseTransactionLock,
   setCatalogItemRetired,
   setUserAllowedViews,
-  setUserRole,
+  setPrimaryUserRole,
+  setSecondaryUserRoles,
   signInWithGoogleRedirect,
   signInWithPassword,
   signOut,
@@ -189,6 +191,7 @@ import {
   type TaskSection,
   type TaskStatus,
   type TeamMember,
+  type UserRoles,
   type UserStatus,
 } from "./persistence";
 import "./styles.css";
@@ -207,7 +210,9 @@ const inventoryTags = ["VPU Part", "Edge Box Part", "Solar Part", "Server Part",
 // equipment recipes are now backed by the real `equipment_types` /
 // `equipment_bom_components` tables instead of the app_records blob.
 
-type RoleMode = "warehouse" | "purchasing" | "pm" | "manager";
+type RoleMode = "warehouse" | "purchasing" | "pm" | "manager" | "sales" | "engineering" | "product_development" | "implementation" | "support" | "marketing";
+
+const ALL_ROLE_KEYS: RoleMode[] = ["warehouse", "purchasing", "pm", "manager", "sales", "engineering", "product_development", "implementation", "support", "marketing"];
 
 const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports"];
 
@@ -230,6 +235,12 @@ const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
   purchasing: ["dashboard", "purchasing", "inventory", "tasks", "reports"],
   pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports"],
   manager: ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports"],
+  sales: ["dashboard", "sales", "tasks", "reports"],
+  engineering: ["dashboard", "projects", "inventory", "tasks", "reports"],
+  product_development: ["dashboard", "projects", "tasks", "reports"],
+  implementation: ["dashboard", "projects", "purchasing", "inventory", "tasks"],
+  support: ["dashboard", "tasks", "reports"],
+  marketing: ["dashboard", "reports", "tasks"],
 };
 
 const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
@@ -829,7 +840,8 @@ function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => (isRemotePersistenceConfigured() ? "loading" : "local"));
   const [isAdmin, setIsAdmin] = useState(false);
   const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
-  const [userRoleMap, setUserRoleMap] = useState<Record<string, string>>({});
+  const [userRoleMap, setUserRoleMap] = useState<Record<string, UserRoles>>({});
+  const [ownRoleKeys, setOwnRoleKeys] = useState<string[]>([]);
   const [adminIds, setAdminIds] = useState<string[]>([]);
   const [branding, setBranding] = useState<CompanyBranding>({ companyName: "Ergon", logoStoragePath: "" });
   const [brandingStatus, setBrandingStatus] = useState("");
@@ -1256,19 +1268,21 @@ function App() {
     Promise.all([
       checkIsAdmin(authSession.userId, authSession.accessToken),
       loadUserRoleMode(authSession.userId, authSession.accessToken),
+      loadOwnRoleKeys(authSession.userId, authSession.accessToken),
       loadOwnAllowedViews(authSession.userId, authSession.accessToken),
       ensureOwnApprovalRequest(authSession.userId, authSession.accessToken).then(() =>
         loadOwnApprovalStatus(authSession.userId, authSession.accessToken),
       ),
-    ]).then(([adminFlag, savedRole, allowedViews, status]) => {
+    ]).then(([adminFlag, savedRole, roleKeys, allowedViews, status]) => {
       if (cancelled) {
         return;
       }
       setIsAdmin(adminFlag);
-      const resolvedRole = savedRole && ["warehouse", "purchasing", "pm", "manager"].includes(savedRole) ? (savedRole as RoleMode) : null;
+      const resolvedRole = savedRole && (ALL_ROLE_KEYS as string[]).includes(savedRole) ? (savedRole as RoleMode) : null;
       if (resolvedRole) {
         setRoleMode(resolvedRole);
       }
+      setOwnRoleKeys(roleKeys);
       setOwnAllowedViews(allowedViews);
       setUserApprovalStatus(status);
       setAuthChecksReady(true);
@@ -1339,11 +1353,33 @@ function App() {
       return;
     }
     try {
-      await setUserRole(userId, roleKey, authSession.accessToken);
-      setUserRoleMap((current) => ({ ...current, [userId]: roleKey }));
+      await setPrimaryUserRole(userId, roleKey, authSession.accessToken);
+      setUserRoleMap((current) => {
+        const existing = current[userId] ?? { primary: "", secondary: [] };
+        // Promoting a role that was already held as secondary removes it
+        // from the secondary set locally too, matching what the server
+        // just did (see setPrimaryUserRole's merge-duplicates upsert).
+        return { ...current, [userId]: { primary: roleKey, secondary: existing.secondary.filter((key) => key !== roleKey) } };
+      });
       setAdminStatus("Role updated.");
     } catch (error) {
       setAdminStatus(error instanceof Error ? error.message : "Could not update role.");
+    }
+  }
+
+  async function handleSetSecondaryRoles(userId: string, roleKeys: string[]) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      await setSecondaryUserRoles(userId, roleKeys, authSession.accessToken);
+      setUserRoleMap((current) => {
+        const existing = current[userId] ?? { primary: "", secondary: [] };
+        return { ...current, [userId]: { ...existing, secondary: roleKeys } };
+      });
+      setAdminStatus("Roles updated.");
+    } catch (error) {
+      setAdminStatus(error instanceof Error ? error.message : "Could not update secondary roles.");
     }
   }
 
@@ -3201,10 +3237,17 @@ function App() {
     );
   }
 
+  const effectiveRoleDefaultTabs: View[] = Array.from(
+    new Set(
+      (ownRoleKeys.length > 0 ? ownRoleKeys : [roleMode]).flatMap(
+        (key) => DEFAULT_TABS_BY_ROLE[key as RoleMode] ?? [],
+      ),
+    ),
+  );
   const allowedTabs: View[] = isAdmin
     ? ALL_TABS
-    : ((ownAllowedViews && ownAllowedViews.length > 0 ? ownAllowedViews : DEFAULT_TABS_BY_ROLE[roleMode]) as View[]);
-  const isManagerRole = authChecksReady && roleMode === "manager";
+    : ((ownAllowedViews && ownAllowedViews.length > 0 ? ownAllowedViews : effectiveRoleDefaultTabs) as View[]);
+  const isManagerRole = authChecksReady && (roleMode === "manager" || ownRoleKeys.includes("manager"));
   const canReviewApprovals = isAdmin || isManagerRole;
 
   return (
@@ -3262,7 +3305,11 @@ function App() {
               </button>
               {accountMenuOpen && (
                 <div className="account-menu-panel">
-                  <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}><option value="warehouse">Warehouse</option><option value="purchasing">Purchasing</option><option value="pm">PM</option><option value="manager">Manager</option></select></label>
+                  <label className="role-mode-select">Role view<select value={roleMode} onChange={(event) => setRoleMode(event.target.value as RoleMode)}>
+                    {ROLE_KEY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select></label>
                   {canReviewApprovals && (
                     <button
                       className={`secondary-action mini-action account-menu-admin-link ${view === "admin" ? "active" : ""}`}
@@ -3379,6 +3426,7 @@ function App() {
             status={adminStatus}
             approvalStatusMessage={approvalReviewStatus}
             onSetRole={handleSetUserRole}
+            onSetSecondaryRoles={handleSetSecondaryRoles}
             onGrantAdmin={handleGrantAdmin}
             onRevokeAdmin={handleRevokeAdmin}
             onSetAllowedViews={handleSetAllowedViews}
@@ -3540,6 +3588,60 @@ function Dashboard({
       cards: [
         { label: "Inventory value", value: money(inventoryValue), note: "Current stock value" },
         { label: "Request exposure", value: money(requestExposure), note: "Open purchase request estimate" },
+        { label: "Build transactions", value: String(buildTransactions.length), note: `${plannedBuilds.length} planned` },
+      ],
+    },
+    sales: {
+      title: "Sales Focus",
+      label: "Today: active projects and purchasing exposure across the pipeline",
+      cards: [
+        { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
+        { label: "Open requests", value: String(activePurchaseRequests.length), note: activePurchaseRequests[0]?.itemName ?? "No queued purchase requests" },
+        { label: "Inventory value", value: money(inventoryValue), note: "Current stock value" },
+      ],
+    },
+    engineering: {
+      title: "Engineering Focus",
+      label: "Today: project readiness and inventory movement",
+      cards: [
+        { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
+        { label: "Recent transfers", value: String(recentTransfers.length), note: recentTransfers[0]?.projectName ?? "No project transfers yet" },
+        { label: "Low stock SKUs", value: String(lowStock.length), note: "Use Inventory > Receive or Adjust" },
+      ],
+    },
+    product_development: {
+      title: "Product Development Focus",
+      label: "Today: project pipeline and build planning",
+      cards: [
+        { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
+        { label: "Planned builds", value: String(plannedBuilds.length), note: plannedBuilds[0]?.equipmentName ?? "No planned builds" },
+        { label: "Purchasing projects", value: String(projectSites.filter((project) => project.status === "Purchasing").length), note: "Need BOM/order follow-through" },
+      ],
+    },
+    implementation: {
+      title: "Implementation Focus",
+      label: "Today: project readiness, purchasing, and inventory",
+      cards: [
+        { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
+        { label: "Open requests", value: String(activePurchaseRequests.length), note: activePurchaseRequests[0]?.itemName ?? "No queued purchase requests" },
+        { label: "Low stock SKUs", value: String(lowStock.length), note: "Use Inventory > Receive or Adjust" },
+      ],
+    },
+    support: {
+      title: "Support Focus",
+      label: "Today: project status across active accounts",
+      cards: [
+        { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
+        { label: "Recent receipts", value: String(recentReceipts.length), note: recentReceipts[0]?.itemName ?? "No receipts logged yet" },
+        { label: "Build transactions", value: String(buildTransactions.length), note: `${plannedBuilds.length} planned` },
+      ],
+    },
+    marketing: {
+      title: "Marketing Focus",
+      label: "Today: overall account and project activity",
+      cards: [
+        { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
+        { label: "Inventory value", value: money(inventoryValue), note: "Current stock value" },
         { label: "Build transactions", value: String(buildTransactions.length), note: `${plannedBuilds.length} planned` },
       ],
     },
@@ -4469,12 +4571,24 @@ function Inventory({
     purchasing: { title: "Purchasing workbench", body: "Watch reorder items, receive against POs, and keep vendor costs current." },
     pm: { title: "PM workbench", body: "Transfer stock to projects and review project allocation history from the ledger." },
     manager: { title: "Manager workbench", body: "Review inventory value, build readiness, shortages, and recent transactions." },
+    sales: { title: "Inventory (view)", body: "Reference stock levels while scoping a quote. Ask an Admin or Manager for write access if you need it." },
+    engineering: { title: "Engineering workbench", body: "Check part availability and transfer stock to projects during install." },
+    product_development: { title: "Inventory (view)", body: "Reference stock and build readiness for planning. Ask an Admin or Manager for write access if you need it." },
+    implementation: { title: "Implementation workbench", body: "Transfer stock to projects and confirm parts are ready before install." },
+    support: { title: "Inventory (view)", body: "Reference stock levels while resolving a support case. Ask an Admin or Manager for write access if you need it." },
+    marketing: { title: "Inventory (view)", body: "Reference stock levels for reporting. Ask an Admin or Manager for write access if you need it." },
   };
   const rolePermissions: Record<RoleMode, string[]> = {
     warehouse: ["Receive", "Adjust", "Transfer", "Scan"],
     purchasing: ["Requests", "Receive PO", "Costs", "Vendors"],
     pm: ["Projects", "BOM", "Transfers", "Docs"],
     manager: ["Reports", "Builds", "Ledger", "Approvals"],
+    sales: ["View only"],
+    engineering: ["Transfer", "Scan"],
+    product_development: ["View only"],
+    implementation: ["Transfer", "Scan"],
+    support: ["View only"],
+    marketing: ["View only"],
   };
   const filteredInventoryItems = inventoryItems.filter((part) => {
     const status = part.retired ? "Retired" : part.stock <= part.reorderPoint ? "Reorder" : "Healthy";
@@ -6996,6 +7110,12 @@ const ROLE_KEY_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "purchasing", label: "Purchasing" },
   { value: "pm", label: "PM" },
   { value: "manager", label: "Manager" },
+  { value: "sales", label: "Sales" },
+  { value: "engineering", label: "Engineering" },
+  { value: "product_development", label: "Product Development" },
+  { value: "implementation", label: "Implementation" },
+  { value: "support", label: "Support" },
+  { value: "marketing", label: "Marketing" },
 ];
 
 function PendingApprovalRow({
@@ -7041,6 +7161,7 @@ function AdminPage({
   status,
   approvalStatusMessage,
   onSetRole,
+  onSetSecondaryRoles,
   onGrantAdmin,
   onRevokeAdmin,
   onSetAllowedViews,
@@ -7077,13 +7198,14 @@ function AdminPage({
   isAdmin: boolean;
   isManagerRole: boolean;
   knownUsers: KnownUser[];
-  userRoleMap: Record<string, string>;
+  userRoleMap: Record<string, UserRoles>;
   adminIds: string[];
   allowedViewsMap: Record<string, string[] | null>;
   approvalStatuses: UserStatus[];
   status: string;
   approvalStatusMessage: string;
   onSetRole: (userId: string, roleKey: string) => void;
+  onSetSecondaryRoles: (userId: string, roleKeys: string[]) => void;
   onGrantAdmin: (userId: string) => void;
   onRevokeAdmin: (userId: string) => void;
   onSetAllowedViews: (userId: string, views: string[] | null) => void;
@@ -7539,13 +7661,16 @@ function AdminPage({
                 const isUserAdmin = adminIds.includes(user.userId);
                 const approval = approvalByUserId.get(user.userId);
                 const override = allowedViewsMap[user.userId] ?? null;
-                const effectiveViews = override && override.length > 0 ? override : DEFAULT_TABS_BY_ROLE[(userRoleMap[user.userId] as RoleMode) ?? "warehouse"];
+                const roles = userRoleMap[user.userId] ?? { primary: "", secondary: [] };
+                const roleKeysForDefaults = roles.primary ? [roles.primary, ...roles.secondary] : ["warehouse"];
+                const defaultViews = Array.from(new Set(roleKeysForDefaults.flatMap((key) => DEFAULT_TABS_BY_ROLE[key as RoleMode] ?? [])));
+                const effectiveViews = override && override.length > 0 ? override : defaultViews;
                 return (
                   <tr key={user.userId}>
                     <td>{user.email}{user.userId === currentUserId ? " (you)" : ""}</td>
                     <td>
                       <select
-                        value={userRoleMap[user.userId] ?? ""}
+                        value={roles.primary}
                         onChange={(event) => onSetRole(user.userId, event.target.value)}
                       >
                         <option value="" disabled>Not set</option>
@@ -7553,6 +7678,31 @@ function AdminPage({
                           <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
+                      {roles.primary && (
+                        <div className="secondary-role-picker">
+                          <span className="muted">Also part of:</span>
+                          <div className="tag-picker-grid">
+                            {ROLE_KEY_OPTIONS.filter((option) => option.value !== roles.primary).map((option) => (
+                              <label key={option.value} className="checkbox-inline">
+                                <input
+                                  type="checkbox"
+                                  checked={roles.secondary.includes(option.value)}
+                                  onChange={(event) => {
+                                    const next = new Set(roles.secondary);
+                                    if (event.target.checked) {
+                                      next.add(option.value);
+                                    } else {
+                                      next.delete(option.value);
+                                    }
+                                    onSetSecondaryRoles(user.userId, Array.from(next));
+                                  }}
+                                />
+                                {option.label}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </td>
                     <td>
                       <div className="tab-permission-grid">

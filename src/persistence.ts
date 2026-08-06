@@ -295,7 +295,7 @@ export async function loadUserRoleMode(userId: string, accessToken?: string) {
     return null;
   }
 
-  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&select=role_key&limit=1`), {
+  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.true&select=role_key&limit=1`), {
     headers: supabaseHeaders(accessToken),
   });
 
@@ -307,12 +307,32 @@ export async function loadUserRoleMode(userId: string, accessToken?: string) {
   return rows[0]?.role_key ?? null;
 }
 
+// All of a user's roles -- primary and secondary -- used to compute their
+// effective default tab set (union of every role's defaults) and, later,
+// to route role-assigned tasks to everyone holding a given role.
+export async function loadOwnRoleKeys(userId: string, accessToken?: string): Promise<string[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&select=role_key`), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as Array<{ role_key: string }>;
+  return rows.map((row) => row.role_key);
+}
+
 export async function loadOwnAllowedViews(userId: string, accessToken?: string): Promise<string[] | null> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return null;
   }
 
-  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&select=allowed_views&limit=1`), {
+  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.true&select=allowed_views&limit=1`), {
     headers: supabaseHeaders(accessToken),
   });
 
@@ -332,7 +352,7 @@ export async function setUserAllowedViews(userId: string, allowedViews: string[]
     return;
   }
 
-  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}`), {
+  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.true`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({
@@ -346,12 +366,22 @@ export async function setUserAllowedViews(userId: string, allowedViews: string[]
   }
 }
 
-export async function saveUserRoleMode(userId: string, roleKey: string, accessToken?: string) {
+// Sets a user's PRIMARY role (the one that drives their default tab set).
+// Deletes any existing primary row first, since a user should only ever
+// have exactly one -- then upserts the new one (on the real user_id+role_key
+// unique index from migration 040), which also correctly "promotes" a role
+// that was already held as secondary rather than erroring on a duplicate.
+export async function setPrimaryUserRole(userId: string, roleKey: string, accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
 
-  await fetch(supabaseUrl("app_user_roles?on_conflict=user_id"), {
+  await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.true&role_key=neq.${roleKey}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+
+  const response = await fetch(supabaseUrl("app_user_roles?on_conflict=user_id,role_key"), {
     method: "POST",
     headers: {
       ...supabaseHeaders(accessToken),
@@ -360,9 +390,55 @@ export async function saveUserRoleMode(userId: string, roleKey: string, accessTo
     body: JSON.stringify({
       user_id: userId,
       role_key: roleKey,
+      is_primary: true,
       updated_at: new Date().toISOString(),
     }),
   });
+
+  if (!response.ok) {
+    throw new Error(`Could not set primary role: ${response.status}`);
+  }
+}
+
+// Secondary roles: additional access without replacing the primary role.
+// Replaces the user's whole secondary set with the given list -- simpler
+// and just as correct as diffing, since this is an infrequent admin action
+// on a short list, not a hot path.
+export async function setSecondaryUserRoles(userId: string, roleKeys: string[], accessToken?: string) {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+
+  await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.false`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (roleKeys.length === 0) {
+    return;
+  }
+
+  const response = await fetch(supabaseUrl("app_user_roles?on_conflict=user_id,role_key"), {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(accessToken),
+      prefer: "resolution=merge-duplicates",
+    },
+    body: JSON.stringify(roleKeys.map((roleKey) => ({
+      user_id: userId,
+      role_key: roleKey,
+      is_primary: false,
+      updated_at: new Date().toISOString(),
+    }))),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not set secondary roles: ${response.status}`);
+  }
+}
+
+export async function saveUserRoleMode(userId: string, roleKey: string, accessToken?: string) {
+  return setPrimaryUserRole(userId, roleKey, accessToken);
 }
 
 export type KnownUser = {
@@ -424,12 +500,14 @@ export async function loadAllKnownUsers(accessToken?: string): Promise<KnownUser
   return rows.map((row) => ({ userId: row.user_id, email: row.email, lastSeenAt: row.last_seen_at }));
 }
 
-export async function loadAllUserRoles(accessToken?: string): Promise<Record<string, string>> {
+export type UserRoles = { primary: string; secondary: string[] };
+
+export async function loadAllUserRoles(accessToken?: string): Promise<Record<string, UserRoles>> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return {};
   }
 
-  const response = await fetch(supabaseUrl("app_user_roles?select=user_id,role_key"), {
+  const response = await fetch(supabaseUrl("app_user_roles?select=user_id,role_key,is_primary"), {
     headers: supabaseHeaders(accessToken),
   });
 
@@ -437,10 +515,16 @@ export async function loadAllUserRoles(accessToken?: string): Promise<Record<str
     return {};
   }
 
-  const rows = (await response.json()) as Array<{ user_id: string; role_key: string }>;
-  const map: Record<string, string> = {};
+  const rows = (await response.json()) as Array<{ user_id: string; role_key: string; is_primary: boolean }>;
+  const map: Record<string, UserRoles> = {};
   rows.forEach((row) => {
-    map[row.user_id] = row.role_key;
+    const entry = map[row.user_id] ?? { primary: "", secondary: [] };
+    if (row.is_primary) {
+      entry.primary = row.role_key;
+    } else {
+      entry.secondary.push(row.role_key);
+    }
+    map[row.user_id] = entry;
   });
   return map;
 }
@@ -450,7 +534,7 @@ export async function loadAllAllowedViews(accessToken?: string): Promise<Record<
     return {};
   }
 
-  const response = await fetch(supabaseUrl("app_user_roles?select=user_id,allowed_views"), {
+  const response = await fetch(supabaseUrl("app_user_roles?select=user_id,allowed_views&is_primary=eq.true"), {
     headers: supabaseHeaders(accessToken),
   });
 
