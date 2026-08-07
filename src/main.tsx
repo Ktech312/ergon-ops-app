@@ -81,6 +81,10 @@ import {
   loadAuthSession,
   loadBuildTransactions,
   loadCatalogItems,
+  loadCatalogPriceChangeRequests,
+  createCatalogPriceChangeRequest,
+  approveCatalogPriceChangeRequest,
+  rejectCatalogPriceChangeRequest,
   loadFormSchema,
   loadFullBackupSnapshot,
   loadDeviceRecipes,
@@ -167,6 +171,8 @@ import {
   type BuildRecipe,
   type BuildTransaction,
   type CatalogItem,
+  type CatalogPriceChangeField,
+  type CatalogPriceChangeRequest,
   type CompanyBranding,
   type EOTask,
   type FormSchema,
@@ -869,6 +875,8 @@ function App() {
   const [adminStatus, setAdminStatus] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
+  const [catalogPriceChangeRequests, setCatalogPriceChangeRequests] = useState<CatalogPriceChangeRequest[]>([]);
+  const [catalogPriceChangeStatus, setCatalogPriceChangeStatus] = useState("");
   const [catalogStatus, setCatalogStatus] = useState("");
   const [salesQuotes, setSalesQuotes] = useState<SalesQuote[]>([]);
   const [salesQuoteStatus, setSalesQuoteStatus] = useState("");
@@ -1566,6 +1574,121 @@ function App() {
     setCatalogItems((current) => [...current, ...created].sort((a, b) => a.productName.localeCompare(b.productName)));
     setCatalogStatus(`Imported ${created.length} catalog item(s).`);
     return created.length;
+  }
+
+  // Price-change approval workflow (migration 046). product_catalog writes
+  // are admin/manager-only, so a Sales rep proposing a cost/markup/price
+  // change can't PATCH the catalog directly -- they insert a request row
+  // instead, every manager gets notified, and approving it is a normal
+  // catalog write performed by the reviewer's own already-authorized access.
+  function reloadCatalogPriceChangeRequests(accessToken: string) {
+    loadCatalogPriceChangeRequests(accessToken)
+      .then(setCatalogPriceChangeRequests)
+      .catch(() => setCatalogPriceChangeStatus("Could not load price change requests."));
+  }
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setCatalogPriceChangeRequests([]);
+      return;
+    }
+    reloadCatalogPriceChangeRequests(authSession.accessToken);
+  }, [authSession]);
+
+  async function handleProposeCatalogPriceChange(
+    catalogItemId: string,
+    fieldChanged: CatalogPriceChangeField,
+    previousValue: number,
+    requestedValue: number,
+    reason: string,
+  ) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const created = await createCatalogPriceChangeRequest(
+        { catalogItemId, requestedByEmail: authSession.email ?? "", fieldChanged, previousValue, requestedValue, reason },
+        authSession.accessToken,
+      );
+      if (created) {
+        setCatalogPriceChangeRequests((current) => [created, ...current]);
+      }
+      setCatalogPriceChangeStatus("Price change submitted for manager approval.");
+      const item = catalogItems.find((entry) => entry.id === catalogItemId);
+      const members = await loadUsersByRole("manager", authSession.accessToken).catch(() => []);
+      for (const member of members) {
+        await notify(
+          "catalog_price_change_requested",
+          member.email,
+          "Catalog price change needs approval",
+          `${authSession.email} proposed changing ${fieldChanged.replace(/_/g, " ")} on "${item?.productName ?? "a catalog item"}" from ${previousValue} to ${requestedValue}.${reason ? ` Reason: ${reason}` : ""}`,
+          "catalog_price_change_request",
+          created?.id ?? catalogItemId,
+        );
+      }
+    } catch (error) {
+      setCatalogPriceChangeStatus(error instanceof Error ? error.message : "Could not submit price change request.");
+    }
+  }
+
+  async function handleApproveCatalogPriceChange(request: CatalogPriceChangeRequest) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      await approveCatalogPriceChangeRequest(request, authSession.email ?? "", authSession.accessToken);
+      setCatalogPriceChangeRequests((current) =>
+        current.map((entry) => (entry.id === request.id ? { ...entry, status: "approved", reviewedByEmail: authSession.email ?? "", reviewedAt: new Date().toISOString() } : entry)),
+      );
+      setCatalogItems((current) =>
+        current.map((item) => {
+          if (item.id !== request.catalogItemId) {
+            return item;
+          }
+          if (request.fieldChanged === "unit_cost") {
+            return { ...item, unitCost: request.requestedValue };
+          }
+          if (request.fieldChanged === "markup_percent") {
+            return { ...item, markupPercent: request.requestedValue };
+          }
+          return { ...item, defaultSellPrice: request.requestedValue };
+        }),
+      );
+      setCatalogPriceChangeStatus("Price change approved and applied to the catalog.");
+      await notify(
+        "catalog_price_change_reviewed",
+        request.requestedByEmail,
+        "Your catalog price change was approved",
+        `${authSession.email} approved your request to change ${request.fieldChanged.replace(/_/g, " ")} to ${request.requestedValue}.`,
+        "catalog_price_change_request",
+        request.id,
+      );
+    } catch (error) {
+      setCatalogPriceChangeStatus(error instanceof Error ? error.message : "Could not approve that price change.");
+    }
+  }
+
+  async function handleRejectCatalogPriceChange(request: CatalogPriceChangeRequest) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      await rejectCatalogPriceChangeRequest(request.id, authSession.email ?? "", authSession.accessToken);
+      setCatalogPriceChangeRequests((current) =>
+        current.map((entry) => (entry.id === request.id ? { ...entry, status: "rejected", reviewedByEmail: authSession.email ?? "", reviewedAt: new Date().toISOString() } : entry)),
+      );
+      setCatalogPriceChangeStatus("Price change rejected.");
+      await notify(
+        "catalog_price_change_reviewed",
+        request.requestedByEmail,
+        "Your catalog price change was rejected",
+        `${authSession.email} rejected your request to change ${request.fieldChanged.replace(/_/g, " ")} to ${request.requestedValue}.`,
+        "catalog_price_change_request",
+        request.id,
+      );
+    } catch (error) {
+      setCatalogPriceChangeStatus(error instanceof Error ? error.message : "Could not reject that price change.");
+    }
   }
 
   // Sales Quote Builder (migration 033). Loaded once per session, same
@@ -3592,12 +3715,17 @@ function App() {
             catalogItems={catalogItems}
             catalogStatus={catalogStatus}
             isConfigured={isRemotePersistenceConfigured()}
-            canManageCatalog={isAdmin || roleMode === "manager"}
+            canManageCatalog={isAdmin || isManagerRole}
             onCreateCatalogItem={handleCreateCatalogItem}
             onUpdateCatalogItem={handleUpdateCatalogItem}
             onSetCatalogItemRetired={handleSetCatalogItemRetired}
             onBulkImportCatalogItems={handleBulkCreateCatalogItems}
             onRefreshCatalog={() => authSession && reloadCatalog(authSession.accessToken)}
+            inventoryItems={inventoryItems}
+            currentUserEmail={authSession?.email ?? ""}
+            priceChangeRequests={catalogPriceChangeRequests}
+            priceChangeStatus={catalogPriceChangeStatus}
+            onProposePriceChange={handleProposeCatalogPriceChange}
             salesQuotes={salesQuotes}
             salesQuoteStatus={salesQuoteStatus}
             onCreateSalesQuote={handleCreateSalesQuote}
@@ -3688,6 +3816,11 @@ function App() {
             onAddSiteHardwareRule={handleAddSiteHardwareRule}
             onUpdateSiteHardwareRule={handleUpdateSiteHardwareRule}
             onDeleteSiteHardwareRule={handleDeleteSiteHardwareRule}
+            catalogPriceChangeRequests={catalogPriceChangeRequests}
+            catalogItems={catalogItems}
+            catalogPriceChangeStatus={catalogPriceChangeStatus}
+            onApproveCatalogPriceChange={handleApproveCatalogPriceChange}
+            onRejectCatalogPriceChange={handleRejectCatalogPriceChange}
             invites={invites}
             inviteStatus={inviteStatus}
             onSendInvite={handleSendInvite}
@@ -7533,6 +7666,11 @@ function AdminPage({
   onAddSiteHardwareRule,
   onUpdateSiteHardwareRule,
   onDeleteSiteHardwareRule,
+  catalogPriceChangeRequests,
+  catalogItems,
+  catalogPriceChangeStatus,
+  onApproveCatalogPriceChange,
+  onRejectCatalogPriceChange,
   invites,
   inviteStatus,
   onSendInvite,
@@ -7587,6 +7725,11 @@ function AdminPage({
   onAddSiteHardwareRule: (rule: Omit<SiteHardwareRule, "id">) => void;
   onUpdateSiteHardwareRule: (id: string, patch: Partial<Omit<SiteHardwareRule, "id">>) => void;
   onDeleteSiteHardwareRule: (id: string) => void;
+  catalogPriceChangeRequests: CatalogPriceChangeRequest[];
+  catalogItems: CatalogItem[];
+  catalogPriceChangeStatus: string;
+  onApproveCatalogPriceChange: (request: CatalogPriceChangeRequest) => void;
+  onRejectCatalogPriceChange: (request: CatalogPriceChangeRequest) => void;
   invites: UserInvite[];
   inviteStatus: string;
   onSendInvite: (input: { email: string; fullName: string; primaryRole: string; secondaryRoles: string[] }) => void;
@@ -8150,6 +8293,56 @@ function AdminPage({
         </>
       )}
 
+      {(isAdmin || isManagerRole) && (
+        <section className="panel wide">
+          <PanelHeader title="Catalog Price Change Requests" label="Sales reps have no direct write access to the catalog -- their cost/markup/price edits land here for approval, then get applied automatically once approved." />
+          {catalogPriceChangeStatus && <small className="muted">{catalogPriceChangeStatus}</small>}
+          <table>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Requested by</th>
+                <th>Field</th>
+                <th>From</th>
+                <th>To</th>
+                <th>Reason</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {catalogPriceChangeRequests.map((request) => {
+                const item = catalogItems.find((entry) => entry.id === request.catalogItemId);
+                return (
+                  <tr key={request.id}>
+                    <td>{item?.productName ?? "(deleted item)"}</td>
+                    <td>{request.requestedByEmail}</td>
+                    <td>{request.fieldChanged.replace(/_/g, " ")}</td>
+                    <td>{request.previousValue}</td>
+                    <td>{request.requestedValue}</td>
+                    <td>{request.reason || "-"}</td>
+                    <td>{request.status}{request.reviewedByEmail ? ` by ${request.reviewedByEmail}` : ""}</td>
+                    <td>
+                      {request.status === "pending" && (
+                        <>
+                          <button className="secondary-action mini-action" type="button" onClick={() => onApproveCatalogPriceChange(request)}>Approve</button>
+                          <button className="secondary-action mini-action" type="button" onClick={() => onRejectCatalogPriceChange(request)}>Reject</button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {catalogPriceChangeRequests.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="empty-compact-state">No price change requests yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       {isAdmin && (
         <section className="panel wide">
           <PanelHeader title="Admin" label="Assign roles, tab access, and admin rights for every user who has signed in" />
@@ -8296,6 +8489,11 @@ function SalesHome({
   onSetCatalogItemRetired,
   onBulkImportCatalogItems,
   onRefreshCatalog,
+  inventoryItems,
+  currentUserEmail,
+  priceChangeRequests,
+  priceChangeStatus,
+  onProposePriceChange,
   salesQuotes,
   salesQuoteStatus,
   onCreateSalesQuote,
@@ -8323,6 +8521,11 @@ function SalesHome({
   onSetCatalogItemRetired: (id: string, retired: boolean) => void;
   onBulkImportCatalogItems: (items: Array<Omit<CatalogItem, "id" | "catalogNumber">>) => Promise<number>;
   onRefreshCatalog: () => void;
+  inventoryItems: Part[];
+  currentUserEmail: string;
+  priceChangeRequests: CatalogPriceChangeRequest[];
+  priceChangeStatus: string;
+  onProposePriceChange: (catalogItemId: string, fieldChanged: CatalogPriceChangeField, previousValue: number, requestedValue: number, reason: string) => void;
   salesQuotes: SalesQuote[];
   salesQuoteStatus: string;
   onCreateSalesQuote: (input: { clientName: string; siteName: string; city: string; garageCount: number; lotCount: number }) => void;
@@ -8376,6 +8579,11 @@ function SalesHome({
         onSetRetired={onSetCatalogItemRetired}
         onBulkImport={onBulkImportCatalogItems}
         onRefresh={onRefreshCatalog}
+        inventoryItems={inventoryItems}
+        currentUserEmail={currentUserEmail}
+        priceChangeRequests={priceChangeRequests}
+        priceChangeStatus={priceChangeStatus}
+        onProposePriceChange={onProposePriceChange}
         projectSites={projectSites}
         teamMembers={teamMembers}
         onCreateTask={onCreateTask}
@@ -8401,6 +8609,47 @@ function SalesHome({
   );
 }
 
+// Matches a catalog item's Linked SKU / equipment field against Inventory --
+// tries an exact ref (SKU) match first, then falls back to an exact name
+// match, since the field is free text ("SKU-1234" or "VPU Server Recipe").
+function findLinkedInventoryPart(item: CatalogItem, inventoryItems: Part[]): Part | undefined {
+  const reference = item.linkedReference.trim().toLowerCase();
+  if (!reference) {
+    return undefined;
+  }
+  return (
+    inventoryItems.find((part) => part.ref.toLowerCase() === reference) ??
+    inventoryItems.find((part) => part.name.toLowerCase() === reference)
+  );
+}
+
+// The unit cost actually used for pricing math. For costSource
+// "inventory_unit_cost" this is resolved LIVE from the linked inventory
+// item's current cost (which itself updates the moment a receipt changes
+// it, see receiveInventoryStock) -- never the stale stored unitCost field.
+// Manual/vendor-quote items just use the stored value.
+function resolveCatalogUnitCost(item: CatalogItem, inventoryItems: Part[]): number {
+  if (item.costSource === "inventory_unit_cost") {
+    const part = findLinkedInventoryPart(item, inventoryItems);
+    if (part) {
+      return part.cost;
+    }
+  }
+  return item.unitCost;
+}
+
+// Live current sell price = unit cost x (1 + markup%). Falls back to the
+// stored defaultSellPrice for items with no cost/markup set up yet (e.g.
+// legacy flat-priced catalog rows imported before this pricing model
+// existed), so nothing goes to $0 just because it hasn't been re-priced.
+function computeCatalogSellPrice(item: CatalogItem, inventoryItems: Part[]): number {
+  const unitCost = resolveCatalogUnitCost(item, inventoryItems);
+  if (unitCost > 0) {
+    return unitCost * (1 + item.markupPercent / 100);
+  }
+  return item.defaultSellPrice;
+}
+
 const EMPTY_CATALOG_DRAFT = {
   catalogNumber: "",
   productName: "",
@@ -8414,6 +8663,17 @@ const EMPTY_CATALOG_DRAFT = {
   datasheetUrl: "",
   imageUrl: "",
   isRetired: false,
+  unitCost: 0,
+  markupPercent: 0,
+  itemType: "regular" as CatalogItem["itemType"],
+  billingFrequency: "",
+  bundleComponents: "",
+  heightIn: "",
+  widthIn: "",
+  pixelPitchMm: "",
+  builtinFlasherModule: "",
+  additionalSpaceMultiplier: null as number | null,
+  insertQuantity: null as number | null,
 };
 
 function SalesCatalog({
@@ -8426,6 +8686,11 @@ function SalesCatalog({
   onSetRetired,
   onBulkImport,
   onRefresh,
+  inventoryItems,
+  currentUserEmail,
+  priceChangeRequests,
+  priceChangeStatus,
+  onProposePriceChange,
   projectSites,
   teamMembers,
   onCreateTask,
@@ -8439,6 +8704,11 @@ function SalesCatalog({
   onSetRetired: (id: string, retired: boolean) => void;
   onBulkImport: (items: Array<Omit<CatalogItem, "id" | "catalogNumber">>) => Promise<number>;
   onRefresh: () => void;
+  inventoryItems: Part[];
+  currentUserEmail: string;
+  priceChangeRequests: CatalogPriceChangeRequest[];
+  priceChangeStatus: string;
+  onProposePriceChange: (catalogItemId: string, fieldChanged: CatalogPriceChangeField, previousValue: number, requestedValue: number, reason: string) => void;
   projectSites: ProjectSite[];
   teamMembers: TeamMember[];
   onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
@@ -8452,8 +8722,13 @@ function SalesCatalog({
   const [importStatus, setImportStatus] = useState("");
   const [isCommittingImport, setIsCommittingImport] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [proposalItem, setProposalItem] = useState<CatalogItem | null>(null);
+  const [proposalField, setProposalField] = useState<CatalogPriceChangeField>("markup_percent");
+  const [proposalValue, setProposalValue] = useState(0);
+  const [proposalReason, setProposalReason] = useState("");
 
   const visibleItems = catalogItems.filter((item) => showRetired || !item.isRetired);
+  const myPendingRequests = priceChangeRequests.filter((request) => request.status === "pending" && request.requestedByEmail.toLowerCase() === currentUserEmail.toLowerCase());
 
   function openAddModal() {
     setEditingId(null);
@@ -8476,6 +8751,17 @@ function SalesCatalog({
       datasheetUrl: item.datasheetUrl,
       imageUrl: item.imageUrl,
       isRetired: item.isRetired,
+      unitCost: item.unitCost,
+      markupPercent: item.markupPercent,
+      itemType: item.itemType,
+      billingFrequency: item.billingFrequency,
+      bundleComponents: item.bundleComponents,
+      heightIn: item.heightIn,
+      widthIn: item.widthIn,
+      pixelPitchMm: item.pixelPitchMm,
+      builtinFlasherModule: item.builtinFlasherModule,
+      additionalSpaceMultiplier: item.additionalSpaceMultiplier,
+      insertQuantity: item.insertQuantity,
     });
     setModalOpen(true);
   }
@@ -8490,6 +8776,26 @@ function SalesCatalog({
       onCreate(draft);
     }
     setModalOpen(false);
+  }
+
+  // Sales reps have no direct write access to the catalog (Admin/Manager
+  // only) -- this opens a small modal that submits a
+  // catalog_price_change_requests row instead of PATCHing the item, so the
+  // change only takes effect once a manager approves it.
+  function openProposalModal(item: CatalogItem, field: CatalogPriceChangeField) {
+    setProposalItem(item);
+    setProposalField(field);
+    setProposalValue(field === "unit_cost" ? item.unitCost : field === "markup_percent" ? item.markupPercent : item.defaultSellPrice);
+    setProposalReason("");
+  }
+
+  function submitProposal() {
+    if (!proposalItem) {
+      return;
+    }
+    const previousValue = proposalField === "unit_cost" ? proposalItem.unitCost : proposalField === "markup_percent" ? proposalItem.markupPercent : proposalItem.defaultSellPrice;
+    onProposePriceChange(proposalItem.id, proposalField, previousValue, proposalValue, proposalReason);
+    setProposalItem(null);
   }
 
   function openImportModal() {
@@ -8524,23 +8830,49 @@ function SalesCatalog({
           const manufacturer = asText(findKey("manufacturer", "brand", "vendor"));
           const priceKey = findKey("default sell price", "sell price", "price");
           const defaultSellPrice = priceKey ? Number(row[priceKey]) || 0 : 0;
+          const costKey = findKey("unit cost", "cost");
+          const unitCost = costKey ? Number(row[costKey]) || 0 : 0;
           const linkedReference = asText(findKey("linked reference", "linked sku", "sku", "equipment"));
           const datasheetUrl = asText(findKey("datasheet url", "datasheet", "datasheet link"));
           const imageUrl = asText(findKey("image url", "image", "image link"));
           const salesDescription = asText(findKey("sales description", "description"));
           const technicalDescription = asText(findKey("technical description", "specs", "technical notes"));
+          // Gaps filled in from E's PandaDoc export (flat_priced_products.csv):
+          // bundle/subscription metadata and signage physical specs.
+          const itemType: CatalogItem["itemType"] = asText(findKey("type", "item type")).toLowerCase() === "bundle" ? "bundle" : "regular";
+          const billingFrequency = asText(findKey("billing_frequency", "billing frequency"));
+          const bundleComponents = asText(findKey("skus_in_bundle", "skus in bundle", "bundle components"));
+          const heightIn = asText(findKey("height", "height_in", "height (in)"));
+          const widthIn = asText(findKey("width", "width_in", "width (in)"));
+          const pixelPitchMm = asText(findKey("pixel pitch", "pixel_pitch", "pixel pitch mm"));
+          const builtinFlasherModule = asText(findKey("builtin flasher module", "built-in flasher module", "flasher module"));
+          const additionalSpaceMultiplierKey = findKey("multiplier for additional spaces.", "multiplier for additional spaces", "additional space multiplier");
+          const additionalSpaceMultiplier = additionalSpaceMultiplierKey && String(row[additionalSpaceMultiplierKey]).trim() !== "" ? Number(row[additionalSpaceMultiplierKey]) || 0 : null;
+          const insertQuantityKey = findKey("insert quantity", "insert_quantity");
+          const insertQuantity = insertQuantityKey && String(row[insertQuantityKey]).trim() !== "" ? Number(row[insertQuantityKey]) || 0 : null;
           const item: Omit<CatalogItem, "id" | "catalogNumber"> = {
             productName,
             category,
             manufacturer,
             defaultSellPrice,
             costSource: "manual",
+            unitCost,
+            markupPercent: 0,
             linkedReference,
             datasheetUrl,
             imageUrl,
             salesDescription,
             technicalDescription,
             isRetired: false,
+            itemType,
+            billingFrequency,
+            bundleComponents,
+            heightIn,
+            widthIn,
+            pixelPitchMm,
+            builtinFlasherModule,
+            additionalSpaceMultiplier,
+            insertQuantity,
           };
           return item;
         })
@@ -8598,9 +8930,13 @@ function SalesCatalog({
               <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
               <label className="checkbox-inline"><input type="checkbox" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} /> Show retired</label>
               {!isConfigured && <span className="muted">Set Supabase env vars to manage the catalog.</span>}
-              {!canManage && <span className="muted">Only Admins and Managers can add, edit, or retire catalog items.</span>}
+              {!canManage && <span className="muted">Only Admins and Managers can add, edit, or retire catalog items -- propose a price change instead.</span>}
               {status && <span className="muted">{status}</span>}
+              {priceChangeStatus && <span className="muted">{priceChangeStatus}</span>}
             </div>
+            {myPendingRequests.length > 0 && (
+              <p className="muted">You have {myPendingRequests.length} price change request(s) awaiting manager approval.</p>
+            )}
             <table>
               <thead>
                 <tr>
@@ -8608,6 +8944,8 @@ function SalesCatalog({
                   <th>Product</th>
                   <th>Category</th>
                   <th>Manufacturer</th>
+                  <th>Unit Cost</th>
+                  <th>Markup %</th>
                   <th>Sell Price</th>
                   <th>Linked Ref</th>
                   <th>Status</th>
@@ -8615,30 +8953,43 @@ function SalesCatalog({
                 </tr>
               </thead>
               <tbody>
-                {visibleItems.map((item) => (
-                  <tr key={item.id} className={item.isRetired ? "muted-row" : ""}>
-                    <td>{item.catalogNumber}</td>
-                    <td>{item.productName}</td>
-                    <td>{item.category}</td>
-                    <td>{item.manufacturer}</td>
-                    <td>{money(item.defaultSellPrice)}</td>
-                    <td>{item.linkedReference}</td>
-                    <td>{item.isRetired ? "Retired" : "Active"}</td>
-                    <td>
-                      {canManage && (
-                        <>
-                          <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(item)}>Edit</button>
-                          <button className="secondary-action mini-action" type="button" onClick={() => onSetRetired(item.id, !item.isRetired)}>
-                            {item.isRetired ? "Reactivate" : "Retire"}
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {visibleItems.map((item) => {
+                  const liveUnitCost = resolveCatalogUnitCost(item, inventoryItems);
+                  const isLiveInventoryLinked = item.costSource === "inventory_unit_cost" && Boolean(findLinkedInventoryPart(item, inventoryItems));
+                  const computedSellPrice = computeCatalogSellPrice(item, inventoryItems);
+                  return (
+                    <tr key={item.id} className={item.isRetired ? "muted-row" : ""}>
+                      <td>{item.catalogNumber}</td>
+                      <td>{item.productName}</td>
+                      <td>{item.category}</td>
+                      <td>{item.manufacturer}</td>
+                      <td>{money(liveUnitCost)}{isLiveInventoryLinked && <small className="muted"> (live)</small>}</td>
+                      <td>{item.markupPercent}%</td>
+                      <td>{money(computedSellPrice)}</td>
+                      <td>{item.linkedReference}</td>
+                      <td>{item.isRetired ? "Retired" : "Active"}</td>
+                      <td>
+                        {canManage ? (
+                          <>
+                            <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(item)}>Edit</button>
+                            <button className="secondary-action mini-action" type="button" onClick={() => onSetRetired(item.id, !item.isRetired)}>
+                              {item.isRetired ? "Reactivate" : "Retire"}
+                            </button>
+                          </>
+                        ) : (
+                          !item.isRetired && (
+                            <button className="secondary-action mini-action" type="button" onClick={() => openProposalModal(item, "markup_percent")}>
+                              Propose price change
+                            </button>
+                          )
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {visibleItems.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="empty-compact-state">
+                    <td colSpan={10} className="empty-compact-state">
                       No catalog items yet. Add a product to start building the sales catalog.
                     </td>
                   </tr>
@@ -8663,17 +9014,40 @@ function SalesCatalog({
               <label className="span-2">Product name<input value={draft.productName} onChange={(event) => setDraft((current) => ({ ...current, productName: event.target.value }))} placeholder="Product name" /></label>
               <label>Category<input value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="Category" /></label>
               <label>Manufacturer<input value={draft.manufacturer} onChange={(event) => setDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Manufacturer" /></label>
-              <label>Default sell price<input type="number" min={0} step="0.01" value={draft.defaultSellPrice} onChange={(event) => setDraft((current) => ({ ...current, defaultSellPrice: Number(event.target.value) }))} /></label>
               <label>Cost source<select value={draft.costSource} onChange={(event) => setDraft((current) => ({ ...current, costSource: event.target.value as CatalogItem["costSource"] }))}>
                 <option value="manual">Manual</option>
-                <option value="inventory_unit_cost">Inventory unit cost</option>
+                <option value="inventory_unit_cost">Inventory unit cost (live)</option>
                 <option value="vendor_quote">Vendor quote</option>
               </select></label>
               <label className="span-2">Linked SKU / equipment<input value={draft.linkedReference} onChange={(event) => setDraft((current) => ({ ...current, linkedReference: event.target.value }))} placeholder="e.g. SKU-1234 or VPU Server Recipe" /></label>
+              <label>
+                {draft.costSource === "inventory_unit_cost" ? "Fallback unit cost (used if no inventory match)" : "Unit cost"}
+                <input type="number" min={0} step="0.01" value={draft.unitCost} onChange={(event) => setDraft((current) => ({ ...current, unitCost: Number(event.target.value) }))} />
+              </label>
+              <label>Markup %<input type="number" step="0.1" value={draft.markupPercent} onChange={(event) => setDraft((current) => ({ ...current, markupPercent: Number(event.target.value) }))} /></label>
+              <label>Default sell price (fallback if no cost set)<input type="number" min={0} step="0.01" value={draft.defaultSellPrice} onChange={(event) => setDraft((current) => ({ ...current, defaultSellPrice: Number(event.target.value) }))} /></label>
+              <div className="span-2 muted">
+                Live suggested price: <strong>{money(computeCatalogSellPrice(draft as CatalogItem, inventoryItems))}</strong>
+                {draft.costSource === "inventory_unit_cost" && !findLinkedInventoryPart(draft as CatalogItem, inventoryItems) && " -- no inventory match found for that Linked SKU yet, using fallback unit cost."}
+              </div>
               <label className="span-2">Sales description<textarea value={draft.salesDescription} onChange={(event) => setDraft((current) => ({ ...current, salesDescription: event.target.value }))} placeholder="Customer-facing description for quotes" /></label>
               <label className="span-2">Technical description<textarea value={draft.technicalDescription} onChange={(event) => setDraft((current) => ({ ...current, technicalDescription: event.target.value }))} placeholder="Specs, dimensions, technical notes" /></label>
               <label>Datasheet URL<input value={draft.datasheetUrl} onChange={(event) => setDraft((current) => ({ ...current, datasheetUrl: event.target.value }))} placeholder="Link to a datasheet" /></label>
               <label>Image URL<input value={draft.imageUrl} onChange={(event) => setDraft((current) => ({ ...current, imageUrl: event.target.value }))} placeholder="Product image link" /></label>
+              <label>Item type<select value={draft.itemType} onChange={(event) => setDraft((current) => ({ ...current, itemType: event.target.value as CatalogItem["itemType"] }))}>
+                <option value="regular">Regular</option>
+                <option value="bundle">Bundle</option>
+              </select></label>
+              <label>Billing frequency<input value={draft.billingFrequency} onChange={(event) => setDraft((current) => ({ ...current, billingFrequency: event.target.value }))} placeholder="e.g. one-time, monthly, annual" /></label>
+              {draft.itemType === "bundle" && (
+                <label className="span-2">Bundle components<input value={draft.bundleComponents} onChange={(event) => setDraft((current) => ({ ...current, bundleComponents: event.target.value }))} placeholder="SKU:qty, SKU:qty" /></label>
+              )}
+              <label>Height (in)<input value={draft.heightIn} onChange={(event) => setDraft((current) => ({ ...current, heightIn: event.target.value }))} placeholder="e.g. 48" /></label>
+              <label>Width (in)<input value={draft.widthIn} onChange={(event) => setDraft((current) => ({ ...current, widthIn: event.target.value }))} placeholder="e.g. 36" /></label>
+              <label>Pixel pitch (mm)<input value={draft.pixelPitchMm} onChange={(event) => setDraft((current) => ({ ...current, pixelPitchMm: event.target.value }))} placeholder="Digital signage only" /></label>
+              <label>Built-in flasher module<input value={draft.builtinFlasherModule} onChange={(event) => setDraft((current) => ({ ...current, builtinFlasherModule: event.target.value }))} /></label>
+              <label>Additional space multiplier<input type="number" step="0.01" value={draft.additionalSpaceMultiplier ?? ""} onChange={(event) => setDraft((current) => ({ ...current, additionalSpaceMultiplier: event.target.value === "" ? null : Number(event.target.value) }))} /></label>
+              <label>Insert quantity<input type="number" step="1" value={draft.insertQuantity ?? ""} onChange={(event) => setDraft((current) => ({ ...current, insertQuantity: event.target.value === "" ? null : Number(event.target.value) }))} /></label>
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setModalOpen(false)}>Cancel</button>
@@ -8730,6 +9104,48 @@ function SalesCatalog({
                 </div>
               </>
             )}
+          </section>
+        </div>
+      )}
+
+      {proposalItem && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-proposal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="catalog-proposal-title">Propose a price change</h2>
+                <p>
+                  {proposalItem.productName} -- this goes to your manager for approval before it takes effect; it won't change the catalog on its own.
+                </p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setProposalItem(null)} aria-label="Close price change proposal">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label>What are you changing?
+                <select
+                  value={proposalField}
+                  onChange={(event) => {
+                    const field = event.target.value as CatalogPriceChangeField;
+                    setProposalField(field);
+                    setProposalValue(field === "unit_cost" ? proposalItem.unitCost : field === "markup_percent" ? proposalItem.markupPercent : proposalItem.defaultSellPrice);
+                  }}
+                >
+                  <option value="markup_percent">Markup %</option>
+                  <option value="unit_cost">Unit cost</option>
+                  <option value="default_sell_price">Sell price override</option>
+                </select>
+              </label>
+              <label>
+                Current value
+                <input type="number" value={proposalField === "unit_cost" ? proposalItem.unitCost : proposalField === "markup_percent" ? proposalItem.markupPercent : proposalItem.defaultSellPrice} disabled readOnly />
+              </label>
+              <label>Requested value<input type="number" step="0.01" value={proposalValue} onChange={(event) => setProposalValue(Number(event.target.value))} /></label>
+              <label className="span-2">Reason (for your manager)<textarea value={proposalReason} onChange={(event) => setProposalReason(event.target.value)} placeholder="e.g. customer requested a discount, vendor cost increase, etc." /></label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setProposalItem(null)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={submitProposal}>Submit for approval</button>
+            </div>
           </section>
         </div>
       )}

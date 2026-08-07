@@ -921,6 +921,26 @@ export type CatalogItem = {
   datasheetUrl: string;
   imageUrl: string;
   isRetired: boolean;
+  // Real pricing model: sell price = unitCost x (1 + markupPercent / 100).
+  // unitCost is either entered manually (costSource "manual"/"vendor_quote")
+  // or, for costSource "inventory_unit_cost", ignored in favor of the
+  // linked inventory item's live current cost (see main.tsx's
+  // resolveCatalogUnitCost) -- so this stored value is a fallback/snapshot,
+  // never the source of truth for that case.
+  unitCost: number;
+  markupPercent: number;
+  // Gaps filled in from E's PandaDoc export (flat_priced_products.csv):
+  // bundle/subscription metadata and signage physical specs. Optional --
+  // most products won't use most of these.
+  itemType: "regular" | "bundle";
+  billingFrequency: string;
+  bundleComponents: string;
+  heightIn: string;
+  widthIn: string;
+  pixelPitchMm: string;
+  builtinFlasherModule: string;
+  additionalSpaceMultiplier: number | null;
+  insertQuantity: number | null;
 };
 
 type CatalogItemRow = {
@@ -937,6 +957,17 @@ type CatalogItemRow = {
   datasheet_url: string | null;
   image_url: string | null;
   is_retired: boolean | null;
+  unit_cost: number | string | null;
+  markup_percent: number | string | null;
+  item_type: string | null;
+  billing_frequency: string | null;
+  bundle_components: string | null;
+  height_in: string | null;
+  width_in: string | null;
+  pixel_pitch_mm: string | null;
+  builtin_flasher_module: string | null;
+  additional_space_multiplier: number | string | null;
+  insert_quantity: number | string | null;
 };
 
 function mapCatalogRow(row: CatalogItemRow): CatalogItem {
@@ -954,6 +985,45 @@ function mapCatalogRow(row: CatalogItemRow): CatalogItem {
     datasheetUrl: row.datasheet_url ?? "",
     imageUrl: row.image_url ?? "",
     isRetired: Boolean(row.is_retired),
+    unitCost: Number(row.unit_cost) || 0,
+    markupPercent: Number(row.markup_percent) || 0,
+    itemType: row.item_type === "bundle" ? "bundle" : "regular",
+    billingFrequency: row.billing_frequency ?? "",
+    bundleComponents: row.bundle_components ?? "",
+    heightIn: row.height_in ?? "",
+    widthIn: row.width_in ?? "",
+    pixelPitchMm: row.pixel_pitch_mm ?? "",
+    builtinFlasherModule: row.builtin_flasher_module ?? "",
+    additionalSpaceMultiplier: row.additional_space_multiplier === null || row.additional_space_multiplier === undefined ? null : Number(row.additional_space_multiplier),
+    insertQuantity: row.insert_quantity === null || row.insert_quantity === undefined ? null : Number(row.insert_quantity),
+  };
+}
+
+function catalogItemWritePayload(item: Omit<CatalogItem, "id">) {
+  return {
+    catalog_number: item.catalogNumber,
+    product_name: item.productName,
+    sales_description: item.salesDescription,
+    technical_description: item.technicalDescription,
+    category: item.category,
+    manufacturer: item.manufacturer,
+    default_sell_price: item.defaultSellPrice,
+    cost_source: item.costSource,
+    linked_reference: item.linkedReference,
+    datasheet_url: item.datasheetUrl,
+    image_url: item.imageUrl,
+    is_retired: item.isRetired,
+    unit_cost: item.unitCost,
+    markup_percent: item.markupPercent,
+    item_type: item.itemType,
+    billing_frequency: item.billingFrequency || null,
+    bundle_components: item.bundleComponents || null,
+    height_in: item.heightIn || null,
+    width_in: item.widthIn || null,
+    pixel_pitch_mm: item.pixelPitchMm || null,
+    builtin_flasher_module: item.builtinFlasherModule || null,
+    additional_space_multiplier: item.additionalSpaceMultiplier,
+    insert_quantity: item.insertQuantity,
   };
 }
 
@@ -989,20 +1059,7 @@ export async function createCatalogItem(item: Omit<CatalogItem, "id">, accessTok
       ...supabaseHeaders(accessToken),
       prefer: "return=representation",
     },
-    body: JSON.stringify({
-      catalog_number: item.catalogNumber,
-      product_name: item.productName,
-      sales_description: item.salesDescription,
-      technical_description: item.technicalDescription,
-      category: item.category,
-      manufacturer: item.manufacturer,
-      default_sell_price: item.defaultSellPrice,
-      cost_source: item.costSource,
-      linked_reference: item.linkedReference,
-      datasheet_url: item.datasheetUrl,
-      image_url: item.imageUrl,
-      is_retired: item.isRetired,
-    }),
+    body: JSON.stringify(catalogItemWritePayload(item)),
   });
 
   if (!response.ok) {
@@ -1025,18 +1082,7 @@ export async function updateCatalogItem(id: string, item: Omit<CatalogItem, "id"
       prefer: "return=representation",
     },
     body: JSON.stringify({
-      catalog_number: item.catalogNumber,
-      product_name: item.productName,
-      sales_description: item.salesDescription,
-      technical_description: item.technicalDescription,
-      category: item.category,
-      manufacturer: item.manufacturer,
-      default_sell_price: item.defaultSellPrice,
-      cost_source: item.costSource,
-      linked_reference: item.linkedReference,
-      datasheet_url: item.datasheetUrl,
-      image_url: item.imageUrl,
-      is_retired: item.isRetired,
+      ...catalogItemWritePayload(item),
       retired_at: item.isRetired ? new Date().toISOString() : null,
     }),
   });
@@ -1070,20 +1116,7 @@ export async function bulkCreateCatalogItems(
       prefer: "return=representation",
     },
     body: JSON.stringify(
-      items.map((item) => ({
-        catalog_number: item.catalogNumber || makeCatalogNumber(),
-        product_name: item.productName,
-        sales_description: item.salesDescription,
-        technical_description: item.technicalDescription,
-        category: item.category,
-        manufacturer: item.manufacturer,
-        default_sell_price: item.defaultSellPrice,
-        cost_source: item.costSource,
-        linked_reference: item.linkedReference,
-        datasheet_url: item.datasheetUrl,
-        image_url: item.imageUrl,
-        is_retired: item.isRetired,
-      })),
+      items.map((item) => catalogItemWritePayload({ ...item, catalogNumber: item.catalogNumber || makeCatalogNumber() })),
     ),
   });
 
@@ -1107,6 +1140,140 @@ export async function setCatalogItemRetired(id: string, retired: boolean, access
       is_retired: retired,
       retired_at: retired ? new Date().toISOString() : null,
     }),
+  });
+}
+
+// --- Catalog price-change approval workflow (migration 046) ---------------
+// Product Catalog writes are admin/manager-only (migration 033's RLS), so a
+// Sales rep proposing a cost/markup/price change has no direct write path
+// to product_catalog -- this is that path instead. A manager or admin
+// reviews the request; approving it applies the change to product_catalog
+// using their own already-authorized write access (see
+// approveCatalogPriceChangeRequest below).
+export type CatalogPriceChangeField = "unit_cost" | "markup_percent" | "default_sell_price";
+
+export type CatalogPriceChangeRequest = {
+  id: string;
+  catalogItemId: string;
+  requestedByEmail: string;
+  fieldChanged: CatalogPriceChangeField;
+  previousValue: number;
+  requestedValue: number;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  reviewedByEmail: string;
+  reviewedAt: string | null;
+  createdAt: string;
+};
+
+type CatalogPriceChangeRequestRow = {
+  id: string;
+  catalog_item_id: string;
+  requested_by_email: string;
+  field_changed: CatalogPriceChangeField;
+  previous_value: number | string;
+  requested_value: number | string;
+  reason: string | null;
+  status: "pending" | "approved" | "rejected";
+  reviewed_by_email: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+};
+
+function mapCatalogPriceChangeRequestRow(row: CatalogPriceChangeRequestRow): CatalogPriceChangeRequest {
+  return {
+    id: row.id,
+    catalogItemId: row.catalog_item_id,
+    requestedByEmail: row.requested_by_email,
+    fieldChanged: row.field_changed,
+    previousValue: Number(row.previous_value),
+    requestedValue: Number(row.requested_value),
+    reason: row.reason ?? "",
+    status: row.status,
+    reviewedByEmail: row.reviewed_by_email ?? "",
+    reviewedAt: row.reviewed_at,
+    createdAt: row.created_at,
+  };
+}
+
+// RLS limits what comes back here to the caller's own requests plus, for an
+// admin/manager, every request -- so this is safe to call for any signed-in
+// user (a Sales rep sees the status of their own asks; a manager sees the
+// full queue).
+export async function loadCatalogPriceChangeRequests(accessToken?: string): Promise<CatalogPriceChangeRequest[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("catalog_price_change_requests?select=*&order=created_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as CatalogPriceChangeRequestRow[];
+  return rows.map(mapCatalogPriceChangeRequestRow);
+}
+
+export async function createCatalogPriceChangeRequest(
+  input: { catalogItemId: string; requestedByEmail: string; fieldChanged: CatalogPriceChangeField; previousValue: number; requestedValue: number; reason: string },
+  accessToken?: string,
+): Promise<CatalogPriceChangeRequest | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("catalog_price_change_requests"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      catalog_item_id: input.catalogItemId,
+      requested_by_email: input.requestedByEmail,
+      field_changed: input.fieldChanged,
+      previous_value: input.previousValue,
+      requested_value: input.requestedValue,
+      reason: input.reason || null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not submit price change request: ${response.status}`);
+  }
+  const rows = (await response.json()) as CatalogPriceChangeRequestRow[];
+  return rows[0] ? mapCatalogPriceChangeRequestRow(rows[0]) : null;
+}
+
+// Approving is two writes: apply the requested value to product_catalog
+// (the reviewer's own admin/manager write access, not the requester's),
+// then mark the request approved. Not a real DB transaction, but consistent
+// with how every other multi-step save in this app already works (e.g.
+// task close/reopen, invite acceptance).
+export async function approveCatalogPriceChangeRequest(request: CatalogPriceChangeRequest, reviewerEmail: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const columnByField: Record<CatalogPriceChangeField, string> = {
+    unit_cost: "unit_cost",
+    markup_percent: "markup_percent",
+    default_sell_price: "default_sell_price",
+  };
+  await fetch(supabaseUrl(`product_catalog?id=eq.${request.catalogItemId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ [columnByField[request.fieldChanged]]: request.requestedValue }),
+  });
+  await fetch(supabaseUrl(`catalog_price_change_requests?id=eq.${request.id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ status: "approved", reviewed_by_email: reviewerEmail, reviewed_at: new Date().toISOString() }),
+  });
+}
+
+export async function rejectCatalogPriceChangeRequest(id: string, reviewerEmail: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`catalog_price_change_requests?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ status: "rejected", reviewed_by_email: reviewerEmail, reviewed_at: new Date().toISOString() }),
   });
 }
 
