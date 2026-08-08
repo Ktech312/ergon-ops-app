@@ -1954,6 +1954,16 @@ function App() {
       } else if (updated.assignedRoleKey && updated.assignedRoleKey !== previous?.assignedRoleKey) {
         notifyRoleAssignment(updated.assignedRoleKey, "Task assigned to your team", updated.id, updated.title);
       }
+      if (previous && updated.status !== previous.status) {
+        const statusLabel = TASK_STATUS_OPTIONS.find((option) => option.value === updated.status)?.label ?? updated.status;
+        notifyCurrentTaskAssignees(
+          updated,
+          "task_status_changed",
+          "Task status changed",
+          `"${updated.title}" moved to ${statusLabel}.`,
+          updated.status,
+        );
+      }
       if (updated.status === "in_progress" && previous?.status !== "in_progress") {
         runTaskHardwareAutomation(updated);
       }
@@ -2135,6 +2145,38 @@ function App() {
     }
   }
 
+  // Whoever a task is currently assigned to -- one person, or every member
+  // of a role/group -- should hear about things that happen to it, not just
+  // about being assigned in the first place. Used for task_status_changed;
+  // reusable for any other future per-task event. Skips notifying whoever
+  // just made the change themselves -- no one needs to be told about their
+  // own edit.
+  async function notifyCurrentTaskAssignees(task: EOTask, eventType: string, title: string, body: string, dedupeSuffix: string) {
+    if (!authSession) {
+      return;
+    }
+    const actingEmail = authSession.email?.toLowerCase() ?? "";
+    // Date-scoped, same convention as task_overdue: at most one of these per
+    // recipient per task per day, so a task flip-flopping between two
+    // statuses several times in a row doesn't spam, but a genuine repeat
+    // transition on a later day still notifies.
+    const today = new Date().toISOString().slice(0, 10);
+    if (task.assigneeEmail) {
+      if (task.assigneeEmail.toLowerCase() !== actingEmail) {
+        await notify(eventType, task.assigneeEmail, title, body, "task", task.id, `${eventType}:${task.id}:${task.assigneeEmail}:${dedupeSuffix}:${today}`);
+      }
+      return;
+    }
+    if (task.assignedRoleKey) {
+      const members = await loadUsersByRole(task.assignedRoleKey, authSession.accessToken).catch(() => []);
+      for (const member of members) {
+        if (member.email.toLowerCase() !== actingEmail) {
+          await notify(eventType, member.email, title, body, "task", task.id, `${eventType}:${task.id}:${member.email}:${dedupeSuffix}:${today}`);
+        }
+      }
+    }
+  }
+
   async function handleMarkNotificationRead(id: string) {
     if (!authSession) {
       return;
@@ -2281,11 +2323,16 @@ function App() {
         isInternal: false,
         status: "to_do" as TaskStatus,
         priority: "normal" as TaskPriority,
-        category: phase.defaultRole || "",
+        category: "",
         impactAreas: [],
         assigneeUserId: null,
         assigneeEmail: "",
-        assignedRoleKey: null,
+        // Was previously stuffed into `category` (a free-text label) instead
+        // of actually assigning the task -- meaning every schedule-generated
+        // task landed unassigned and nobody was ever notified about it. This
+        // is the field the "Role" column in Admin -> Schedule Templates
+        // actually means.
+        assignedRoleKey: phase.defaultRole || null,
         startDate: startDate.toISOString().slice(0, 10),
         dueDate: dueDate.toISOString().slice(0, 10),
       };
