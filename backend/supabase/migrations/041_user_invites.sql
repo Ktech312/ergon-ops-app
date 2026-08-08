@@ -34,6 +34,7 @@ create index if not exists idx_user_invites_status on user_invites(status);
 
 alter table user_invites enable row level security;
 
+drop policy if exists "admins manage user_invites" on user_invites;
 create policy "admins manage user_invites"
   on user_invites for all to authenticated
   using (is_app_admin(auth.uid()))
