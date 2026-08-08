@@ -31,10 +31,11 @@ alter table project_bom_lines add column if not exists purchasing_sent_at timest
 
 -- "Purchasing" -> "Procurement" rename: the nav tab and the rest of the UI
 -- now say "Procurement" throughout, so the project lifecycle status needs
--- to match or it'll look inconsistent. The constraint has to be swapped
--- BEFORE the data update below -- otherwise the old constraint (which only
--- allows 'Purchasing') rejects the very rows being updated to 'Procurement'.
+-- to match or it'll look inconsistent. Order matters: the constraint must
+-- be OFF while existing 'Purchasing' rows still exist (ADD CONSTRAINT
+-- validates every existing row immediately), so it's dropped, the data is
+-- updated, and only then is the new constraint added back.
 alter table projects drop constraint if exists projects_app_status_check;
+update projects set app_status = 'Procurement' where app_status = 'Purchasing';
 alter table projects add constraint projects_app_status_check
   check (app_status in ('Draft', 'Planning', 'Procurement', 'Staging', 'Install Ready'));
-update projects set app_status = 'Procurement' where app_status = 'Purchasing';
