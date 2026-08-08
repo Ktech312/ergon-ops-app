@@ -100,6 +100,7 @@ import {
   loadOwnAllowedViews,
   loadOwnRoleKeys,
   loadOwnApprovalStatus,
+  loadAdminEmails,
   loadNotificationRules,
   loadNotifications,
   loadPresalesRules,
@@ -899,6 +900,10 @@ function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationRules, setNotificationRules] = useState<NotificationRule[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [inventorySearchFocus, setInventorySearchFocus] = useState<{ term: string; token: number } | null>(null);
+  const [reportsSearchFocus, setReportsSearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [standardInstallTimes, setStandardInstallTimes] = useState<StandardInstallTime[]>([]);
   const [scheduleTemplates, setScheduleTemplates] = useState<ScheduleTemplate[]>([]);
   const [scheduleStatus, setScheduleStatus] = useState("");
@@ -1318,9 +1323,29 @@ function App() {
       loadUserRoleMode(authSession.userId, authSession.accessToken),
       loadOwnRoleKeys(authSession.userId, authSession.accessToken),
       loadOwnAllowedViews(authSession.userId, authSession.accessToken),
-      ensureOwnApprovalRequest(authSession.userId, authSession.accessToken).then(() =>
-        loadOwnApprovalStatus(authSession.userId, authSession.accessToken),
-      ),
+      ensureOwnApprovalRequest(authSession.userId, authSession.accessToken).then((isNewSignup) => {
+        if (isNewSignup) {
+          // Brand-new pending sign-up -- previously nothing surfaced this
+          // except an admin happening to check Admin -> Pending Approvals.
+          // Fire-and-forget: notify every admin so it shows up as an alert.
+          loadAdminEmails(authSession.accessToken)
+            .then((admins) => {
+              admins.forEach((admin) => {
+                notify(
+                  "user_signup_pending",
+                  admin.email,
+                  "New sign-up needs approval",
+                  `${authSession.email ?? "A new user"} just signed up and is waiting for approval in Admin -> Pending Approvals.`,
+                  "app_user_status",
+                  authSession.userId,
+                  `user_signup_pending:${authSession.userId}`,
+                );
+              });
+            })
+            .catch(() => undefined);
+        }
+        return loadOwnApprovalStatus(authSession.userId, authSession.accessToken);
+      }),
     ]).then(([adminFlag, savedRole, roleKeys, allowedViews, status]) => {
       if (cancelled) {
         return;
@@ -2689,6 +2714,50 @@ function App() {
     window.location.hash = nextView;
   }
 
+  // Global top-nav search -- parts (Inventory), purchase orders (Reports'
+  // Purchasing tab, which already has a real text filter), and projects
+  // (Projects, which already supports deep-linking to a specific project via
+  // #projects/<slug>). Capped at 5 per group; only searches once the query
+  // is at least 2 characters so it doesn't flood the dropdown on every
+  // keystroke of a 1-letter query.
+  const globalSearchTerm = globalSearchQuery.trim().toLowerCase();
+  const globalSearchMatches =
+    globalSearchTerm.length < 2
+      ? { parts: [] as Part[], orders: [] as PurchaseOrder[], projects: [] as ProjectSite[] }
+      : {
+          parts: inventoryItems
+            .filter((part) => `${part.ref} ${part.name} ${part.description} ${part.manufacturer} ${part.category}`.toLowerCase().includes(globalSearchTerm))
+            .slice(0, 5),
+          orders: purchaseOrders
+            .filter((order) => `${order.number} ${order.vendor} ${order.projectRef} ${order.sourceFile ?? ""}`.toLowerCase().includes(globalSearchTerm))
+            .slice(0, 5),
+          projects: projectSites
+            .filter((project) => `${project.name} ${project.ref} ${project.client}`.toLowerCase().includes(globalSearchTerm))
+            .slice(0, 5),
+        };
+
+  function closeGlobalSearch() {
+    setGlobalSearchQuery("");
+    setGlobalSearchOpen(false);
+  }
+
+  function handleSelectSearchProject(project: ProjectSite) {
+    window.location.hash = `projects/${projectSlug(project.name)}`;
+    closeGlobalSearch();
+  }
+
+  function handleSelectSearchPart(part: Part) {
+    setInventorySearchFocus({ term: part.ref, token: Date.now() });
+    navigateToView("inventory");
+    closeGlobalSearch();
+  }
+
+  function handleSelectSearchOrder(order: PurchaseOrder) {
+    setReportsSearchFocus({ term: order.number, token: Date.now() });
+    navigateToView("reports");
+    closeGlobalSearch();
+  }
+
   function pullFromInventory(itemName: string, qty: number, projectName?: string, notes?: string) {
     const part = inventoryItems.find((item) => item.name === itemName);
     const pullQty = Math.max(1, Math.round(Number(qty) || 1));
@@ -3758,7 +3827,62 @@ function App() {
         </div>
         <div className="top-nav-search">
           <Search size={16} />
-          <span>Search parts, POs, projects</span>
+          <input
+            type="text"
+            value={globalSearchQuery}
+            placeholder="Search parts, POs, projects"
+            onChange={(event) => {
+              setGlobalSearchQuery(event.target.value);
+              setGlobalSearchOpen(true);
+            }}
+            onFocus={() => setGlobalSearchOpen(true)}
+            onBlur={() => setTimeout(() => setGlobalSearchOpen(false), 150)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                closeGlobalSearch();
+              }
+            }}
+          />
+          {globalSearchOpen && globalSearchTerm.length >= 2 && (
+            <div className="global-search-results">
+              {globalSearchMatches.projects.length === 0 && globalSearchMatches.parts.length === 0 && globalSearchMatches.orders.length === 0 && (
+                <div className="global-search-empty">No matches for "{globalSearchQuery.trim()}".</div>
+              )}
+              {globalSearchMatches.projects.length > 0 && (
+                <div className="global-search-group">
+                  <span className="global-search-group-label">Projects</span>
+                  {globalSearchMatches.projects.map((project) => (
+                    <button key={project.ref} type="button" className="global-search-result" onMouseDown={(event) => event.preventDefault()} onClick={() => handleSelectSearchProject(project)}>
+                      <strong>{project.name}</strong>
+                      <span>{project.ref} - {project.client}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {globalSearchMatches.parts.length > 0 && (
+                <div className="global-search-group">
+                  <span className="global-search-group-label">Parts</span>
+                  {globalSearchMatches.parts.map((part) => (
+                    <button key={part.ref} type="button" className="global-search-result" onMouseDown={(event) => event.preventDefault()} onClick={() => handleSelectSearchPart(part)}>
+                      <strong>{part.name}</strong>
+                      <span>{part.ref} - {part.stock} on hand</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {globalSearchMatches.orders.length > 0 && (
+                <div className="global-search-group">
+                  <span className="global-search-group-label">Purchase Orders</span>
+                  {globalSearchMatches.orders.map((order) => (
+                    <button key={order.number} type="button" className="global-search-result" onMouseDown={(event) => event.preventDefault()} onClick={() => handleSelectSearchOrder(order)}>
+                      <strong>{order.number}</strong>
+                      <span>{order.vendor} - {order.projectRef}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -3770,7 +3894,7 @@ function App() {
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
+        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} />}
         {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
@@ -3833,7 +3957,7 @@ function App() {
             onDeleteTaskDependency={handleDeleteTaskDependency}
           />
         )}
-        {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} projectDocuments={projectDocuments} />}
+        {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} projectDocuments={projectDocuments} searchFocus={reportsSearchFocus} />}
         {view === "library" && <LibraryPage onBack={() => navigateToView("dashboard")} />}
         {view === "admin" && canReviewApprovals && (
           <AdminPage
@@ -4258,7 +4382,7 @@ function Purchasing({
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
 }) {
-  const [selectedProject, setSelectedProject] = useState("Straud Medical");
+  const [selectedProject, setSelectedProject] = useState("");
   const [manualRequestPartRef, setManualRequestPartRef] = useState(() => inventoryItems.find((item) => !item.retired)?.ref ?? "");
   const [manualRequestQty, setManualRequestQty] = useState(1);
   const [manualRequestNotes, setManualRequestNotes] = useState("");
@@ -4284,6 +4408,12 @@ function Purchasing({
   const openOrders = purchaseOrders.filter((order) => order.status !== "Imported").length;
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
   const documentProjects = Array.from(new Set([...purchaseOrders.map((order) => order.projectRef), ...projectSites.map((project) => project.name)]));
+  useEffect(() => {
+    if (!selectedProject && documentProjects.length > 0) {
+      setSelectedProject(documentProjects[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentProjects.join("|")]);
   const activeProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject || purchaseOrders.some((order) => order.projectRef === selectedProject && order.sourceFile === doc.name));
   const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
@@ -4887,6 +5017,7 @@ function Inventory({
   onUpdateTask,
   onDeleteTask,
   onOpenTasksView,
+  searchFocus,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
@@ -4914,6 +5045,7 @@ function Inventory({
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
+  searchFocus?: { term: string; token: number } | null;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -4945,6 +5077,15 @@ function Inventory({
   const [workOrderBuildId, setWorkOrderBuildId] = useState<string | null>(null);
   const [inventoryTab, setInventoryTab] = useState<"parts" | "finished">("parts");
   const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
+  useEffect(() => {
+    if (!searchFocus) {
+      return;
+    }
+    const matched = inventoryItems.find((part) => part.ref === searchFocus.term);
+    setInventoryTab(matched?.category === "Build" ? "finished" : "parts");
+    setFilters({ ref: searchFocus.term, part: "", category: "All", manufacturer: "", status: "All" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchFocus?.token]);
   const [skuScan, setSkuScan] = useState("");
   const [scanStatus, setScanStatus] = useState("Scan or enter a SKU to pull up the item.");
   const [buildDraft, setBuildDraft] = useState({ recipeName: deviceRecipes.find((recipe) => !recipe.retired)?.name ?? deviceRecipes[0]?.name ?? "", qty: 1 });
@@ -7178,6 +7319,7 @@ function Reports({
   purchaseRequests,
   purchaseOrders,
   projectDocuments,
+  searchFocus,
 }: {
   inventoryItems: Part[];
   deviceRecipes: BuildRecipe[];
@@ -7189,9 +7331,18 @@ function Reports({
   purchaseRequests: PurchaseRequest[];
   purchaseOrders: PurchaseOrder[];
   projectDocuments: UploadedDoc[];
+  searchFocus?: { term: string; token: number } | null;
 }) {
   const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects" | "documents">("purchasing");
   const [reportFilters, setReportFilters] = useState({ search: "", project: "All", vendor: "All", from: "", to: "" });
+  useEffect(() => {
+    if (!searchFocus) {
+      return;
+    }
+    setReportTab("purchasing");
+    setReportFilters((current) => ({ ...current, search: searchFocus.term, project: "All", vendor: "All" }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchFocus?.token]);
   const normalizedSearch = reportFilters.search.trim().toLowerCase();
   const inDateRange = (dateValue?: string) => {
     if (!dateValue) {
@@ -8214,6 +8365,12 @@ function AdminPage({
                   ) : (
                     <input value={draft.bomCategoryFilter} onChange={(event) => setPhaseDrafts((current) => ({ ...current, [template.id]: { ...draft, bomCategoryFilter: event.target.value } }))} placeholder="BOM category (e.g. Communications)" />
                   )}
+                  <select value={draft.defaultRole} onChange={(event) => setPhaseDrafts((current) => ({ ...current, [template.id]: { ...draft, defaultRole: event.target.value } }))}>
+                    <option value="">No default role</option>
+                    {ROLE_KEY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
                   <button
                     className="primary-action mini-action"
                     type="button"

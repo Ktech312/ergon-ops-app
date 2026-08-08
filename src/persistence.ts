@@ -1326,21 +1326,57 @@ export async function markWelcomeSeen(userId: string, accessToken?: string) {
 }
 
 // Creates a pending-approval row for the current user if one doesn't already
-// exist. Safe to call every sign-in: a 409 conflict on the unique user_id just
-// means the row is already there, which is not an error worth surfacing.
-export async function ensureOwnApprovalRequest(userId: string, accessToken?: string) {
+// exist. Safe to call every sign-in: with resolution=ignore-duplicates, an
+// existing row for this user_id is silently skipped rather than erroring.
+// Returns true only when this call actually created the row (a brand-new
+// sign-up), which callers use to fire a one-time "new sign-up" notification
+// to admins -- with ignore-duplicates, PostgREST returns an empty array
+// (not the row) when the insert was skipped because the row already existed.
+export async function ensureOwnApprovalRequest(userId: string, accessToken?: string): Promise<boolean> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return false;
   }
 
-  await fetch(supabaseUrl("app_user_status"), {
+  try {
+    const response = await fetch(supabaseUrl("app_user_status"), {
+      method: "POST",
+      headers: {
+        ...supabaseHeaders(accessToken),
+        prefer: "resolution=ignore-duplicates,return=representation",
+      },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    if (!response.ok) {
+      return false;
+    }
+    const rows = (await response.json().catch(() => [])) as unknown[];
+    return Array.isArray(rows) && rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Admin emails to notify about admin-relevant events (e.g. a new sign-up
+// landing in the pending-approval queue). Mirrors loadUsersByRole, but
+// joins app_admins to app_known_users instead of app_user_roles since
+// "admin" isn't a role_key -- see migration 049.
+export async function loadAdminEmails(accessToken?: string): Promise<Array<{ userId: string; email: string }>> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+
+  const response = await fetch(supabaseUrl("rpc/get_admin_emails"), {
     method: "POST",
-    headers: {
-      ...supabaseHeaders(accessToken),
-      prefer: "resolution=ignore-duplicates",
-    },
-    body: JSON.stringify({ user_id: userId }),
-  }).catch(() => undefined);
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const rows = (await response.json()) as Array<{ user_id: string; email: string }>;
+  return rows.map((row) => ({ userId: row.user_id, email: row.email }));
 }
 
 export async function loadOwnApprovalStatus(userId: string, accessToken?: string): Promise<UserStatus | null> {
