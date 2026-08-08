@@ -49,6 +49,9 @@ import {
   createPurchaseOrder,
   createPurchaseRequestRemote,
   createSalesQuote,
+  updateSalesQuoteStatus,
+  addSalesQuoteBomLines,
+  deleteSalesQuoteBomLine,
   createScheduleTemplate,
   createSubmittal,
   createSubmittalShareToken,
@@ -198,6 +201,7 @@ import {
   type PurchaseRequest,
   type PurchaseUrl,
   type SalesQuote,
+  type SalesQuoteBomLine,
   type SalesQuoteLocation,
   type SalesQuoteLocationImage,
   type TaskActivityEntry,
@@ -1755,6 +1759,41 @@ function App() {
     }
   }
 
+  async function handleUpdateSalesQuoteStatus(quoteId: string, status: SalesQuote["status"]) {
+    if (!authSession) {
+      return;
+    }
+    setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, status } : entry)));
+    await updateSalesQuoteStatus(quoteId, status, authSession.accessToken);
+  }
+
+  // Shared by the manual "add line" form and the Pre-Sales Quick Estimate
+  // calculator below -- both just need to append lines to a quote's
+  // persisted BOM.
+  async function handleAddSalesQuoteBomLines(quoteId: string, lines: Array<{ item: string; qty: number; notes?: string }>) {
+    if (!authSession || lines.length === 0) {
+      return;
+    }
+    const quote = salesQuotes.find((entry) => entry.id === quoteId);
+    if (!quote) {
+      return;
+    }
+    try {
+      const created = await addSalesQuoteBomLines(quoteId, lines, quote.bomLines.length, authSession.accessToken);
+      setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, bomLines: [...entry.bomLines, ...created] } : entry)));
+    } catch (error) {
+      setSalesQuoteStatus(error instanceof Error ? error.message : "Could not update the quote BOM.");
+    }
+  }
+
+  async function handleDeleteSalesQuoteBomLine(quoteId: string, lineId: string) {
+    if (!authSession) {
+      return;
+    }
+    setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, bomLines: entry.bomLines.filter((line) => line.id !== lineId) } : entry)));
+    await deleteSalesQuoteBomLine(lineId, authSession.accessToken);
+  }
+
   async function handleUploadSalesQuoteImage(quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string): Promise<boolean> {
     if (!authSession) {
       return false;
@@ -2434,10 +2473,10 @@ function App() {
   }
 
   // Phase 20: pre-sales hardware rules engine. Evaluates the active rule set
-  // against a tier/node-count/cloud-sync questionnaire and writes ordinary
-  // project_bom_lines-equivalent rows -- for tonight, since Phase 10's BOM
-  // cutover hasn't happened, that means appending to the same blob-backed
-  // `project.bom` the manual "Add Material" button already writes to.
+  // against a category/node-count/cloud-sync questionnaire. Lives in Sales
+  // now (moved off the Projects page -- Sales doesn't manage Projects), so
+  // its output is written into a Sales Quote's persisted BOM instead of a
+  // project's, via handleAddSalesQuoteBomLines below.
   function evaluatePresalesRules(tier: string, nodeCount: number, cloudSync: boolean) {
     return presalesRules
       .filter((rule) => rule.isActive && rule.tier === tier)
@@ -2448,32 +2487,17 @@ function App() {
       }));
   }
 
-  function handleGenerateBaselineBom(projectRef: string, tier: string, nodeCount: number, cloudSync: boolean) {
+  async function handleGenerateBaselineBomForQuote(quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) {
     const lines = evaluatePresalesRules(tier, nodeCount, cloudSync);
     if (lines.length === 0) {
-      setPresalesStatus("No matching rules for that tier -- add some in Admin -> Pre-Sales Rules.");
+      setPresalesStatus("No matching rules for that category -- add some in Admin -> Pre-Sales Rules.");
       return;
     }
-    setProjectSites((current) =>
-      current.map((project) =>
-        project.ref === projectRef
-          ? {
-              ...project,
-              bom: [
-                ...project.bom,
-                ...lines.map((line) => ({
-                  item: line.item,
-                  qty: line.qty,
-                  status: "Not started" as BomLine["status"],
-                  requestSpeed: "Standard" as BomLine["requestSpeed"],
-                  notes: "Auto-generated from pre-sales rules.",
-                })),
-              ],
-            }
-          : project,
-      ),
+    await handleAddSalesQuoteBomLines(
+      quoteId,
+      lines.map((line) => ({ item: line.item, qty: line.qty, notes: "Auto-generated from pre-sales rules." })),
     );
-    setPresalesStatus(`Added ${lines.length} baseline line${lines.length === 1 ? "" : "s"} to the BOM.`);
+    setPresalesStatus(`Added ${lines.length} baseline line${lines.length === 1 ? "" : "s"} to the quote BOM.`);
   }
 
   async function handleAddPresalesRule(rule: Omit<PresalesHardwareRule, "id">) {
@@ -2494,6 +2518,44 @@ function App() {
     }
     await deletePresalesRule(id, authSession.accessToken);
     setPresalesRules((current) => current.filter((rule) => rule.id !== id));
+  }
+
+  // "Pull BOM from Closed Sales" -- the other path onto a project's BOM
+  // alongside the existing PDF-upload extraction (both stay available; the
+  // goal is to move usage toward this one over time, not to replace the PDF
+  // path outright). One-time copy, same as the PDF path: grabs the quote's
+  // current BOM lines and drops them into the project as drafts -- editing
+  // the quote afterward doesn't change the project. Returns how many lines
+  // were pulled (0 = nothing to pull) so the caller can show its own status.
+  function handlePullBomFromClosedQuote(projectRef: string, quoteId: string): number {
+    const quote = salesQuotes.find((entry) => entry.id === quoteId);
+    if (!quote || quote.bomLines.length === 0) {
+      return 0;
+    }
+    setProjectSites((current) =>
+      current.map((project) =>
+        project.ref === projectRef
+          ? {
+              ...project,
+              client: project.client || quote.clientName,
+              address: project.address || quote.city,
+              bom: [
+                ...project.bom,
+                ...quote.bomLines.map((line) => ({
+                  item: line.item,
+                  qty: line.qty,
+                  status: "Not started" as BomLine["status"],
+                  requestSpeed: "Standard" as BomLine["requestSpeed"],
+                  notes: line.notes || `Pulled from closed quote "${quote.siteName}".`,
+                  procurementTrack: "warehouse_stock" as BomLine["procurementTrack"],
+                  sentToPurchasingAt: null,
+                })),
+              ],
+            }
+          : project,
+      ),
+    );
+    return quote.bomLines.length;
   }
 
   async function handleAddSiteHardwareRule(rule: Omit<SiteHardwareRule, "id">) {
@@ -3709,7 +3771,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} presalesRules={presalesRules} presalesStatus={presalesStatus} onGenerateBaselineBom={handleGenerateBaselineBom} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -3731,6 +3793,12 @@ function App() {
             onCreateSalesQuote={handleCreateSalesQuote}
             onAddSalesQuoteLocation={handleAddSalesQuoteLocation}
             onUpdateSalesQuoteLocation={handleUpdateSalesQuoteLocation}
+            onUpdateSalesQuoteStatus={handleUpdateSalesQuoteStatus}
+            onAddSalesQuoteBomLines={handleAddSalesQuoteBomLines}
+            onDeleteSalesQuoteBomLine={handleDeleteSalesQuoteBomLine}
+            presalesRules={presalesRules}
+            presalesStatus={presalesStatus}
+            onGenerateBaselineBomForQuote={handleGenerateBaselineBomForQuote}
             onUploadSalesQuoteImage={handleUploadSalesQuoteImage}
             onUpdateSalesQuoteImageDescription={handleUpdateSalesQuoteImageDescription}
             onDownloadSalesQuoteImage={handleDownloadSalesQuoteImage}
@@ -6023,9 +6091,8 @@ function Projects({
   onCreateHandover,
   onSaveHandoverResponses,
   onSubmitHandover,
-  presalesRules,
-  presalesStatus,
-  onGenerateBaselineBom,
+  salesQuotes,
+  onPullBomFromClosedQuote,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -6057,9 +6124,8 @@ function Projects({
   onCreateHandover: (project: ProjectSite) => void;
   onSaveHandoverResponses: (handoverId: string, responses: Record<string, string>) => void;
   onSubmitHandover: (handoverId: string) => void;
-  presalesRules: PresalesHardwareRule[];
-  presalesStatus: string;
-  onGenerateBaselineBom: (projectRef: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
+  salesQuotes: SalesQuote[];
+  onPullBomFromClosedQuote: (projectRef: string, quoteId: string) => number;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
@@ -6071,9 +6137,7 @@ function Projects({
   const [submittalClientName, setSubmittalClientName] = useState("");
   const [submittalClientEmail, setSubmittalClientEmail] = useState("");
   const [copiedSubmittalId, setCopiedSubmittalId] = useState("");
-  const [presalesTier, setPresalesTier] = useState("");
-  const [presalesNodeCount, setPresalesNodeCount] = useState(1);
-  const [presalesCloudSync, setPresalesCloudSync] = useState(false);
+  const [pullQuoteId, setPullQuoteId] = useState("");
   const [bomImportRows, setBomImportRows] = useState<Array<{ item: string; qty: number }>>([]);
   const [bomImportStatus, setBomImportStatus] = useState("");
   const [showBomModal, setShowBomModal] = useState(false);
@@ -6660,6 +6724,30 @@ function Projects({
             <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} disabled={isExtractingQuote} />
           </label>
           {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
+
+          <div className="quote-pull-row">
+            <select value={pullQuoteId} onChange={(event) => setPullQuoteId(event.target.value)}>
+              <option value="">Or pull from a Closed - Won sales quote...</option>
+              {salesQuotes.filter((quote) => quote.status === "closed_won").map((quote) => (
+                <option key={quote.id} value={quote.id}>{quote.siteName} ({quote.clientName})</option>
+              ))}
+            </select>
+            <button
+              className="secondary-action mini-action"
+              type="button"
+              disabled={!pullQuoteId}
+              onClick={() => {
+                const count = onPullBomFromClosedQuote(selectedProject.ref, pullQuoteId);
+                setActionStatus(count > 0 ? `Pulled ${count} BOM line${count === 1 ? "" : "s"} from the sales quote.` : "That quote has no BOM lines to pull, or it could not be found.");
+                setPullQuoteId("");
+              }}
+            >
+              Pull BOM from Closed Sales
+            </button>
+            {salesQuotes.filter((quote) => quote.status === "closed_won").length === 0 && (
+              <small className="muted">No Closed - Won quotes yet -- mark one Closed - Won in Sales -&gt; Site Builder to pull from it here.</small>
+            )}
+          </div>
         </section>
 
         <section className="panel compact-card">
@@ -6802,32 +6890,6 @@ function Projects({
               )}
             </div>
           ))}
-        </div>
-      </section>
-
-      <section className="panel full">
-        <PanelHeader title="Pre-Sales Quick Estimate" label="Derive a baseline hardware BOM from Product Catalog category, node count, and connectivity. Configure categories and quantities in Admin -> Pre-Sales Rules." />
-        {presalesStatus && <small className="muted">{presalesStatus}</small>}
-        <div className="submittal-create-row">
-          <select value={presalesTier} onChange={(event) => setPresalesTier(event.target.value)}>
-            <option value="">Select category...</option>
-            {Array.from(new Set(presalesRules.map((rule) => rule.tier))).map((tier) => (
-              <option key={tier} value={tier}>{tier}</option>
-            ))}
-          </select>
-          <input type="number" min={1} value={presalesNodeCount} onChange={(event) => setPresalesNodeCount(Number(event.target.value))} placeholder="Node count" />
-          <label className="checkbox-inline-field">
-            <input type="checkbox" checked={presalesCloudSync} onChange={(event) => setPresalesCloudSync(event.target.checked)} />
-            Cloud sync required
-          </label>
-          <button
-            className="primary-action mini-action"
-            type="button"
-            disabled={!presalesTier}
-            onClick={() => onGenerateBaselineBom(selectedProject.ref, presalesTier, presalesNodeCount, presalesCloudSync)}
-          >
-            Generate Baseline BOM
-          </button>
         </div>
       </section>
 
@@ -8584,6 +8646,12 @@ function SalesHome({
   onCreateSalesQuote,
   onAddSalesQuoteLocation,
   onUpdateSalesQuoteLocation,
+  onUpdateSalesQuoteStatus,
+  onAddSalesQuoteBomLines,
+  onDeleteSalesQuoteBomLine,
+  presalesRules,
+  presalesStatus,
+  onGenerateBaselineBomForQuote,
   onUploadSalesQuoteImage,
   onUpdateSalesQuoteImageDescription,
   onDownloadSalesQuoteImage,
@@ -8620,6 +8688,12 @@ function SalesHome({
     locationId: string,
     updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
   ) => void;
+  onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => void;
+  onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string }>) => void;
+  onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
+  presalesRules: PresalesHardwareRule[];
+  presalesStatus: string;
+  onGenerateBaselineBomForQuote: (quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
   onUploadSalesQuoteImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
   onUpdateSalesQuoteImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadSalesQuoteImage: (image: SalesQuoteLocationImage) => void;
@@ -8681,6 +8755,13 @@ function SalesHome({
         onCreateQuote={onCreateSalesQuote}
         onAddLocation={onAddSalesQuoteLocation}
         onUpdateLocation={onUpdateSalesQuoteLocation}
+        onUpdateStatus={onUpdateSalesQuoteStatus}
+        onAddBomLines={onAddSalesQuoteBomLines}
+        onDeleteBomLine={onDeleteSalesQuoteBomLine}
+        presalesRules={presalesRules}
+        presalesStatus={presalesStatus}
+        onGenerateBaselineBom={onGenerateBaselineBomForQuote}
+        catalogItems={catalogItems}
         onUploadImage={onUploadSalesQuoteImage}
         onUpdateImageDescription={onUpdateSalesQuoteImageDescription}
         onDownloadImage={onDownloadSalesQuoteImage}
@@ -9526,6 +9607,13 @@ function SalesQuoteBuilder({
   onCreateQuote,
   onAddLocation,
   onUpdateLocation,
+  onUpdateStatus,
+  onAddBomLines,
+  onDeleteBomLine,
+  presalesRules,
+  presalesStatus,
+  onGenerateBaselineBom,
+  catalogItems,
   onUploadImage,
   onUpdateImageDescription,
   onDownloadImage,
@@ -9545,6 +9633,13 @@ function SalesQuoteBuilder({
     locationId: string,
     updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
   ) => void;
+  onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => void;
+  onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string }>) => void;
+  onDeleteBomLine: (quoteId: string, lineId: string) => void;
+  presalesRules: PresalesHardwareRule[];
+  presalesStatus: string;
+  onGenerateBaselineBom: (quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
+  catalogItems: CatalogItem[];
   onUploadImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
   onUpdateImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadImage: (image: SalesQuoteLocationImage) => void;
@@ -9561,9 +9656,16 @@ function SalesQuoteBuilder({
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
   const [newQuoteDraft, setNewQuoteDraft] = useState(EMPTY_NEW_QUOTE_DRAFT);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [presalesTier, setPresalesTier] = useState("");
+  const [presalesNodeCount, setPresalesNodeCount] = useState(1);
+  const [presalesCloudSync, setPresalesCloudSync] = useState(false);
+  const [bomLineDraft, setBomLineDraft] = useState({ item: "", qty: 1, notes: "" });
 
   const selectedQuote = salesQuotes.find((quote) => quote.id === selectedQuoteId) ?? null;
   const selectedLocation = selectedQuote?.locations.find((location) => location.id === selectedLocationId) ?? null;
+  // Same idea as Admin -> Pre-Sales Rules: categories come straight from the
+  // Product Catalog instead of a freeform typed tier.
+  const catalogCategories = Array.from(new Set(catalogItems.map((item) => item.category.trim()).filter(Boolean))).sort();
 
   function openQuote(id: string) {
     setSelectedQuoteId(id);
@@ -9616,7 +9718,7 @@ function SalesQuoteBuilder({
               {status && <small className="muted">{status}</small>}
               <table>
                 <thead>
-                  <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th>Tasks</th></tr>
+                  <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th>Status</th><th>Tasks</th></tr>
                 </thead>
                 <tbody>
                   {salesQuotes.map((quote) => {
@@ -9630,12 +9732,13 @@ function SalesQuoteBuilder({
                         <td>{quote.city || "-"}</td>
                         <td>{quote.createdByEmail || "-"}</td>
                         <td>{quote.locations.length}</td>
+                        <td><span className={`status ${quote.status === "closed_won" ? "ok" : quote.status === "closed_lost" ? "" : "warn"}`}>{quote.status === "closed_won" ? "Closed - Won" : quote.status === "closed_lost" ? "Closed - Lost" : "Open"}</span></td>
                         <td><span className={taskPillClass}>{taskPillLabel}</span></td>
                       </tr>
                     );
                   })}
                   {salesQuotes.length === 0 && (
-                    <tr><td colSpan={5} className="empty-compact-state">No sites yet. New Site to start scoping one.</td></tr>
+                    <tr><td colSpan={6} className="empty-compact-state">No sites yet. New Site to start scoping one.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -9651,6 +9754,17 @@ function SalesQuoteBuilder({
               <button className="secondary-action mini-action" type="button" onClick={backToList}>&larr; Back to quotes</button>
               <h2>{selectedQuote.siteName}</h2>
               <p>{selectedQuote.clientName} - {selectedQuote.city || "No city set"} - Started by {selectedQuote.createdByEmail || "Unknown"}</p>
+              <label className="quote-status-field">
+                Deal status
+                <select value={selectedQuote.status} onChange={(event) => onUpdateStatus(selectedQuote.id, event.target.value as SalesQuote["status"])}>
+                  <option value="open">Open</option>
+                  <option value="closed_won">Closed - Won</option>
+                  <option value="closed_lost">Closed - Lost</option>
+                </select>
+              </label>
+              {selectedQuote.status === "closed_won" && (
+                <small className="muted">This quote's BOM can now be pulled into a Project from the Projects page.</small>
+              )}
             </div>
             <div className="quote-original-form-slot">
               <span className="label">Original Form</span>
@@ -9742,6 +9856,64 @@ function SalesQuoteBuilder({
                 <li className="empty-compact-state">Nothing recommended yet.</li>
               )}
             </ul>
+          </div>
+
+          <div className="quote-hardware-summary">
+            <span className="label">Quote BOM</span>
+            <p className="muted">Persisted line items for this quote -- this is what a Project pulls in once the quote is marked Closed - Won.</p>
+            <ul className="line-list">
+              {selectedQuote.bomLines.map((line) => (
+                <li className="line-item" key={line.id}>
+                  <div>
+                    <strong>{line.item}</strong>
+                    <span>Qty {line.qty}{line.notes ? ` -- ${line.notes}` : ""}</span>
+                  </div>
+                  <button className="icon-button" type="button" onClick={() => onDeleteBomLine(selectedQuote.id, line.id)} aria-label="Remove line">x</button>
+                </li>
+              ))}
+              {selectedQuote.bomLines.length === 0 && <li className="empty-compact-state">No BOM lines yet.</li>}
+            </ul>
+            <div className="submittal-create-row">
+              <input placeholder="Item name" value={bomLineDraft.item} onChange={(event) => setBomLineDraft({ ...bomLineDraft, item: event.target.value })} />
+              <input type="number" min={0.01} step={0.01} value={bomLineDraft.qty} onChange={(event) => setBomLineDraft({ ...bomLineDraft, qty: Number(event.target.value) || 1 })} />
+              <input placeholder="Notes (optional)" value={bomLineDraft.notes} onChange={(event) => setBomLineDraft({ ...bomLineDraft, notes: event.target.value })} />
+              <button
+                className="secondary-action mini-action"
+                type="button"
+                disabled={!bomLineDraft.item.trim()}
+                onClick={() => {
+                  onAddBomLines(selectedQuote.id, [{ item: bomLineDraft.item.trim(), qty: bomLineDraft.qty, notes: bomLineDraft.notes.trim() || undefined }]);
+                  setBomLineDraft({ item: "", qty: 1, notes: "" });
+                }}
+              >
+                + Add line
+              </button>
+            </div>
+
+            <span className="label">Pre-Sales Quick Estimate</span>
+            <p className="muted">Derive a baseline hardware list from Product Catalog category, node count, and connectivity -- adds straight into the Quote BOM above. Configure categories and quantities in Admin -&gt; Pre-Sales Rules.</p>
+            {presalesStatus && <small className="muted">{presalesStatus}</small>}
+            <div className="submittal-create-row">
+              <select value={presalesTier} onChange={(event) => setPresalesTier(event.target.value)}>
+                <option value="">Select category...</option>
+                {catalogCategories.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+              <input type="number" min={1} value={presalesNodeCount} onChange={(event) => setPresalesNodeCount(Number(event.target.value) || 1)} placeholder="Node count" />
+              <label className="checkbox-inline-field">
+                <input type="checkbox" checked={presalesCloudSync} onChange={(event) => setPresalesCloudSync(event.target.checked)} />
+                Cloud sync required
+              </label>
+              <button
+                className="primary-action mini-action"
+                type="button"
+                disabled={!presalesTier}
+                onClick={() => onGenerateBaselineBom(selectedQuote.id, presalesTier, presalesNodeCount, presalesCloudSync)}
+              >
+                Generate Baseline BOM
+              </button>
+            </div>
           </div>
         </section>
       )}

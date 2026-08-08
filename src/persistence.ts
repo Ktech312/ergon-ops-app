@@ -5006,6 +5006,14 @@ export type SalesQuoteLocation = {
   images: SalesQuoteLocationImage[];
 };
 
+export type SalesQuoteBomLine = {
+  id: string;
+  quoteId: string;
+  item: string;
+  qty: number;
+  notes: string;
+};
+
 export type SalesQuote = {
   id: string;
   clientName: string;
@@ -5013,7 +5021,17 @@ export type SalesQuote = {
   city: string;
   createdByEmail: string;
   createdAt: string;
+  // Deal status -- only "closed_won" quotes are offered as a BOM source
+  // when a PM builds a Project (see main.tsx's "Pull BOM from Closed
+  // Sales"). Defaults to "open" for every quote until someone marks it.
+  status: "open" | "closed_won" | "closed_lost";
   locations: SalesQuoteLocation[];
+  // Persisted, editable hardware/BOM list for this quote -- separate from
+  // the live-computed "Recommended Hardware" summary (which is just a
+  // read-only rollup of the location checkboxes/counts). This is what
+  // actually gets pulled into a Project once the deal closes, and what the
+  // relocated Pre-Sales Quick Estimate calculator writes into.
+  bomLines: SalesQuoteBomLine[];
 };
 
 type SalesQuoteLocationImageRow = {
@@ -5040,6 +5058,15 @@ type SalesQuoteLocationRow = {
   sales_quote_location_images: SalesQuoteLocationImageRow[];
 };
 
+type SalesQuoteBomLineRow = {
+  id: string;
+  quote_id: string;
+  item_name: string;
+  qty: number | string;
+  notes: string | null;
+  line_sort: number;
+};
+
 type SalesQuoteRow = {
   id: string;
   client_name: string;
@@ -5047,7 +5074,9 @@ type SalesQuoteRow = {
   city: string | null;
   created_by_email: string | null;
   created_at: string;
+  status: string | null;
   sales_quote_locations: SalesQuoteLocationRow[];
+  sales_quote_bom_lines: SalesQuoteBomLineRow[];
 };
 
 function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQuoteLocationImage {
@@ -5078,6 +5107,16 @@ function mapSalesQuoteLocationRow(row: SalesQuoteLocationRow): SalesQuoteLocatio
   };
 }
 
+function mapSalesQuoteBomLineRow(row: SalesQuoteBomLineRow): SalesQuoteBomLine {
+  return {
+    id: row.id,
+    quoteId: row.quote_id,
+    item: row.item_name,
+    qty: Number(row.qty) || 0,
+    notes: row.notes ?? "",
+  };
+}
+
 function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
   return {
     id: row.id,
@@ -5086,14 +5125,16 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
     city: row.city ?? "",
     createdByEmail: row.created_by_email ?? "",
     createdAt: row.created_at,
+    status: (row.status as SalesQuote["status"]) ?? "open",
     locations: (row.sales_quote_locations ?? [])
       .map(mapSalesQuoteLocationRow)
       .sort((a, b) => a.lineSort - b.lineSort),
+    bomLines: (row.sales_quote_bom_lines ?? []).map(mapSalesQuoteBomLineRow),
   };
 }
 
 const SALES_QUOTE_SELECT =
-  "id,client_name,site_name,city,created_by_email,created_at,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at))";
+  "id,client_name,site_name,city,created_by_email,created_at,status,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5164,8 +5205,62 @@ export async function createSalesQuote(
     city: input.city,
     createdByEmail: input.createdByEmail,
     createdAt: new Date().toISOString(),
+    status: "open",
     locations: locationRows.map((row) => mapSalesQuoteLocationRow({ ...row, sales_quote_location_images: [] })),
+    bomLines: [],
   };
+}
+
+export async function updateSalesQuoteStatus(id: string, status: SalesQuote["status"], accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ status }),
+  });
+}
+
+// Bulk insert -- used both by the manual "add line" form and by the
+// Pre-Sales Quick Estimate calculator pre-filling a quote's BOM in one shot.
+export async function addSalesQuoteBomLines(
+  quoteId: string,
+  lines: Array<{ item: string; qty: number; notes?: string }>,
+  nextLineSort: number,
+  accessToken?: string,
+): Promise<SalesQuoteBomLine[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || lines.length === 0) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("sales_quote_bom_lines"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify(
+      lines.map((line, index) => ({
+        quote_id: quoteId,
+        item_name: line.item,
+        qty: line.qty,
+        notes: line.notes || null,
+        line_sort: nextLineSort + index,
+      })),
+    ),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not add to the quote BOM: ${response.status}`);
+  }
+  const rows = (await response.json()) as SalesQuoteBomLineRow[];
+  return rows.map(mapSalesQuoteBomLineRow);
+}
+
+export async function deleteSalesQuoteBomLine(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
 }
 
 export async function addSalesQuoteLocation(
