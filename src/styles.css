@@ -4024,7 +4024,7 @@ td.empty-compact-state {
   margin-bottom: 10px;
 }
 
-.submittal-create-row input {
+.submittal-create-row input:not([type="checkbox"]) {
   background: white;
   border: 1px solid #ded7cb;
   border-radius: 8px;
@@ -4032,6 +4032,17 @@ td.empty-compact-state {
   min-height: 34px;
   padding: 0 10px;
   width: 220px;
+}
+
+/* Without this, the rule above's min-height/width still leaks onto any
+   checkbox dropped inside a .submittal-create-row (e.g. Projects' Pre-Sales
+   Quick Estimate "Cloud sync required" toggle), blowing it up to a 34px x
+   220px box instead of a normal checkbox. */
+.submittal-create-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  height: 16px;
+  min-height: 0;
+  width: 16px;
 }
 
 .submittal-list {
