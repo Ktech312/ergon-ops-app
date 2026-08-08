@@ -3081,7 +3081,7 @@ export type ProjectDocument = {
   project: string;
   size: number;
   status: "Uploaded" | "Ready to review" | "Backed up" | "Archived";
-  type?: "Purchasing" | "Sales Quote" | "SOW" | "BOM" | "Project";
+  type?: "Procurement" | "Sales Quote" | "SOW" | "BOM" | "Project";
   storage?: "Browser" | "Google Drive" | "Supabase Storage";
   uploadedAt?: string;
   // Path inside the private "project-documents" Storage bucket -- present
@@ -3104,7 +3104,10 @@ type ProjectDocumentRow = {
 
 function appDocumentType(type: ProjectDocument["type"]): string {
   switch (type) {
-    case "Purchasing": return "purchasing";
+    // Stored value stays "purchasing" (matches the existing DB rows and the
+    // internal view/role keys elsewhere in the app) even though the
+    // user-facing label is now "Procurement" -- only the display text changed.
+    case "Procurement": return "purchasing";
     case "Sales Quote": return "sales_quote";
     case "SOW": return "sow";
     case "BOM": return "bom";
@@ -3115,7 +3118,7 @@ function appDocumentType(type: ProjectDocument["type"]): string {
 
 function pgDocumentType(documentType: string): ProjectDocument["type"] {
   switch (documentType) {
-    case "purchasing": return "Purchasing";
+    case "purchasing": return "Procurement";
     case "sales_quote": return "Sales Quote";
     case "sow": return "SOW";
     case "bom": return "BOM";
@@ -4250,6 +4253,18 @@ export type BomLine = {
   requestSpeed: "ASAP" | "Standard" | "Future";
   po?: string;
   notes?: string;
+  // Procurement approval gate: which fulfillment path this line is meant to
+  // take once it's sent -- "pull" from existing inventory, or a Purchasing
+  // request either into warehouse stock or direct to the project. Set when
+  // the line is added, but not acted on until sentToPurchasingAt is set.
+  // Optional (defaults to "warehouse_stock") so the many hardcoded/demo BOM
+  // arrays elsewhere in the app don't all need updating just to type-check.
+  procurementTrack?: "pull" | "warehouse_stock" | "direct_to_project";
+  // Undefined/null until a manager/PM sends this line to Procurement (only
+  // possible once the project's submittal is client-approved) -- see
+  // main.tsx's handleSendBomToPurchasing. Prevents a repeat click from
+  // double-queuing the same purchase request or inventory pull.
+  sentToPurchasingAt?: string | null;
 };
 
 export type ProjectSite = {
@@ -4259,7 +4274,7 @@ export type ProjectSite = {
   type: "Parking Garage" | "Surface Lot" | "Campus Parking" | "Mixed Parking";
   address: string;
   owner: string;
-  status: "Draft" | "Planning" | "Purchasing" | "Staging" | "Install Ready";
+  status: "Draft" | "Planning" | "Procurement" | "Staging" | "Install Ready";
   due: string;
   package: string;
   cameras: number;
@@ -4300,6 +4315,8 @@ type ProjectBomLineRow = {
   po: string | null;
   notes: string | null;
   line_sort: number;
+  procurement_track: string | null;
+  purchasing_sent_at: string | null;
 };
 
 type ProjectSiteRow = {
@@ -4321,7 +4338,7 @@ type ProjectSiteRow = {
 };
 
 const PROJECT_SITE_SELECT =
-  "project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort)";
+  "project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at)";
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -4347,6 +4364,8 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
       requestSpeed: (line.request_speed as BomLine["requestSpeed"]) ?? "Standard",
       po: line.po ?? undefined,
       notes: line.notes ?? undefined,
+      procurementTrack: (line.procurement_track as BomLine["procurementTrack"]) ?? "warehouse_stock",
+      sentToPurchasingAt: line.purchasing_sent_at ?? null,
     }));
   return {
     ref: row.project_number ?? "",
@@ -4478,6 +4497,8 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
       po: line.po || null,
       notes: line.notes || null,
       line_sort: index,
+      procurement_track: line.procurementTrack ?? "warehouse_stock",
+      purchasing_sent_at: line.sentToPurchasingAt ?? null,
     }));
   });
 

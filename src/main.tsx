@@ -242,7 +242,7 @@ const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "projects", "s
 
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
-  purchasing: "Purchasing",
+  purchasing: "Procurement",
   inventory: "Inventory",
   projects: "Projects",
   sales: "Sales",
@@ -270,7 +270,7 @@ const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
 
 const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
   { value: "warehouse", label: "Warehouse" },
-  { value: "purchasing", label: "Purchasing" },
+  { value: "purchasing", label: "Procurement" },
   { value: "inventory", label: "Inventory" },
   { value: "projects", label: "Projects" },
   { value: "sales_catalog", label: "Sales - Product Catalog" },
@@ -294,7 +294,7 @@ const TASK_PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string }> = [
   { value: "urgent", label: "Urgent" },
 ];
 
-const IMPACT_AREA_OPTIONS = ["Inventory", "Purchasing", "Sales", "Projects", "Reports", "Other"];
+const IMPACT_AREA_OPTIONS = ["Inventory", "Procurement", "Sales", "Projects", "Reports", "Other"];
 type SyncStatus = "local" | "auth" | "loading" | "saving" | "synced" | "error";
 
 // InventoryMovement, BuildTransaction, and ProjectAllocationHistory used to
@@ -608,7 +608,7 @@ const projects: ProjectSite[] = [
     type: "Parking Garage",
     address: "37th Street garage, Newport News, VA",
     owner: "Projects / Implementation",
-    status: "Purchasing",
+    status: "Procurement",
     due: "Aug 09",
     package: "Garage camera + single space sensor rollout",
     cameras: 90,
@@ -635,7 +635,7 @@ const projects: ProjectSite[] = [
     type: "Parking Garage",
     address: "10225 Prospect Ave, Santee CA 92071",
     owner: "Chris Scheppmann",
-    status: "Purchasing",
+    status: "Procurement",
     due: "Jul 30",
     package: "Garage server, camera, sign, and UPS package",
     cameras: 63,
@@ -3606,7 +3606,7 @@ function App() {
           </div>
           <nav className="nav-list">
             {allowedTabs.includes("dashboard") && <NavButton icon={<LayoutDashboard size={16} />} label="Dashboard" active={view === "dashboard"} onClick={() => navigateToView("dashboard")} />}
-            {allowedTabs.includes("purchasing") && <NavButton icon={<ShoppingCart size={16} />} label="Purchasing" active={view === "purchasing"} onClick={() => navigateToView("purchasing")} />}
+            {allowedTabs.includes("purchasing") && <NavButton icon={<ShoppingCart size={16} />} label="Procurement" active={view === "purchasing"} onClick={() => navigateToView("purchasing")} />}
             {allowedTabs.includes("inventory") && <NavButton icon={<Boxes size={16} />} label="Inventory" active={view === "inventory"} onClick={() => navigateToView("inventory")} />}
             {allowedTabs.includes("projects") && <NavButton icon={<ClipboardList size={16} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />}
             {allowedTabs.includes("sales") && <NavButton icon={<DollarSign size={16} />} label="Sales" active={view === "sales"} onClick={() => navigateToView("sales")} />}
@@ -3703,7 +3703,7 @@ function App() {
       <main className="main">
         <div className="page-heading">
           <h1>{pageTitle(view)}</h1>
-          <p>Purchasing, inventory, project transfers, and reports for field packages.</p>
+          <p>Procurement, inventory, project transfers, and reports for field packages.</p>
         </div>
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
@@ -3852,7 +3852,7 @@ function NavButton({ icon, label, active, onClick }: { icon: React.ReactNode; la
 function pageTitle(view: View) {
   const titles: Record<View, string> = {
     dashboard: "Dashboard",
-    purchasing: "Purchasing",
+    purchasing: "Procurement",
     inventory: "Inventory",
     projects: "Projects",
     sales: "Sales",
@@ -3935,12 +3935,12 @@ function Dashboard({
       ],
     },
     purchasing: {
-      title: "Purchasing Focus",
+      title: "Procurement Focus",
       label: "Today: shortages, held orders, and vendor cost changes",
       cards: [
         { label: "Open requests", value: String(activePurchaseRequests.length), note: activePurchaseRequests[0]?.itemName ?? "No queued purchase requests" },
         { label: "Reorder SKUs", value: String(lowStock.length), note: lowStock[0]?.name ?? "Inventory is above reorder points" },
-        { label: "Captured spend", value: money(openPoValue), note: "From imported purchasing data" },
+        { label: "Captured spend", value: money(openPoValue), note: "From imported procurement data" },
       ],
     },
     pm: {
@@ -3949,12 +3949,12 @@ function Dashboard({
       cards: [
         { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
         { label: "Recent transfers", value: String(recentTransfers.length), note: recentTransfers[0]?.projectName ?? "No project transfers yet" },
-        { label: "Purchasing projects", value: String(projectSites.filter((project) => project.status === "Purchasing").length), note: "Need BOM/order follow-through" },
+        { label: "Procurement projects", value: String(projectSites.filter((project) => project.status === "Procurement").length), note: "Need BOM/order follow-through" },
       ],
     },
     manager: {
       title: "Manager Focus",
-      label: "Today: inventory value, purchasing exposure, and manufacturing flow",
+      label: "Today: inventory value, procurement exposure, and manufacturing flow",
       cards: [
         { label: "Inventory value", value: money(inventoryValue), note: "Current stock value" },
         { label: "Request exposure", value: money(requestExposure), note: "Open purchase request estimate" },
@@ -3963,7 +3963,7 @@ function Dashboard({
     },
     sales: {
       title: "Sales Focus",
-      label: "Today: active projects and purchasing exposure across the pipeline",
+      label: "Today: active projects and procurement exposure across the pipeline",
       cards: [
         { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
         { label: "Open requests", value: String(activePurchaseRequests.length), note: activePurchaseRequests[0]?.itemName ?? "No queued purchase requests" },
@@ -3985,12 +3985,12 @@ function Dashboard({
       cards: [
         { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
         { label: "Planned builds", value: String(plannedBuilds.length), note: plannedBuilds[0]?.equipmentName ?? "No planned builds" },
-        { label: "Purchasing projects", value: String(projectSites.filter((project) => project.status === "Purchasing").length), note: "Need BOM/order follow-through" },
+        { label: "Procurement projects", value: String(projectSites.filter((project) => project.status === "Procurement").length), note: "Need BOM/order follow-through" },
       ],
     },
     implementation: {
       title: "Implementation Focus",
-      label: "Today: project readiness, purchasing, and inventory",
+      label: "Today: project readiness, procurement, and inventory",
       cards: [
         { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
         { label: "Open requests", value: String(activePurchaseRequests.length), note: activePurchaseRequests[0]?.itemName ?? "No queued purchase requests" },
@@ -4072,7 +4072,7 @@ function Dashboard({
       </section>
 
       <section className="panel">
-        <PanelHeader title="Purchasing Attention" label="Orders needing follow-up" />
+        <PanelHeader title="Procurement Attention" label="Orders needing follow-up" />
         <div className="stack">
           {heldOrders.map((order) => (
             <div className="row-card" key={order.number}>
@@ -4240,7 +4240,7 @@ function Purchasing({
         project: selectedProject,
         size: file.size,
         status: "Ready to review" as const,
-        type: "Purchasing" as const,
+        type: "Procurement" as const,
         storage: "Browser" as const,
         uploadedAt: new Date(Date.now() + index).toISOString(),
       },
@@ -4407,7 +4407,7 @@ function Purchasing({
       </section>
 
       <TaskMiniPanel
-        title="Purchasing Tasks"
+        title="Procurement Tasks"
         tasks={tasks.filter((task) => task.section === "purchasing")}
         taskActivity={taskActivity}
         teamMembers={teamMembers}
@@ -4586,7 +4586,7 @@ function Purchasing({
       )}
 
       <section className="panel wide">
-        <PanelHeader title="Upload Purchasing Document" label="Assign a PDF or receipt to a project before review" />
+        <PanelHeader title="Upload Procurement Document" label="Assign a PDF or receipt to a project before review" />
         <div className="upload-layout">
           <label className="upload-drop">
             <Upload size={24} />
@@ -4619,7 +4619,7 @@ function Purchasing({
             project: order.projectRef,
             size: 0,
             status: "Ready to review" as const,
-            type: "Purchasing" as const,
+            type: "Procurement" as const,
             storage: "Browser" as const,
           }))).map((doc) => (
             <div className="document-row" key={`${doc.id}-${doc.name}`}>
@@ -4938,7 +4938,7 @@ function Inventory({
   });
   const roleCopy: Record<RoleMode, { title: string; body: string }> = {
     warehouse: { title: "Warehouse workbench", body: "Scan SKUs, receive stock, adjust cycle counts, and transfer parts to projects." },
-    purchasing: { title: "Purchasing workbench", body: "Watch reorder items, receive against POs, and keep vendor costs current." },
+    purchasing: { title: "Procurement workbench", body: "Watch reorder items, receive against POs, and keep vendor costs current." },
     pm: { title: "PM workbench", body: "Transfer stock to projects and review project allocation history from the ledger." },
     manager: { title: "Manager workbench", body: "Review inventory value, build readiness, shortages, and recent transactions." },
     sales: { title: "Inventory (view)", body: "Reference stock levels while scoping a quote. Ask an Admin or Manager for write access if you need it." },
@@ -5419,7 +5419,7 @@ function Inventory({
         <div className="panel-title-row">
           <div>
             <h2>Parts Inventory</h2>
-            <p>{inventoryTab === "finished" ? "Finished manufactured equipment ready for projects" : "Purchasing parts, components, and field hardware"}</p>
+            <p>{inventoryTab === "finished" ? "Finished manufactured equipment ready for projects" : "Procurement parts, components, and field hardware"}</p>
           </div>
           <div className="action-row">
             <button className="secondary-action" type="button" onClick={exportVisibleInventory} disabled={filteredInventoryItems.length === 0}><FileText size={16} /> Export CSV</button>
@@ -5535,7 +5535,7 @@ function Inventory({
             <span>{selectedBuildRecipe.components.length} line items. {selectedBuildRecipe.retired ? "This equipment type is retired." : buildHasShortage ? "Some parts need purchasing before this can be built." : "All current parts are available for this quantity."}</span>
           </div>
         </div>
-        {buildHasShortage && <div className="source-file"><ShoppingCart size={16} /><span>Some build parts are short. Those lines are flagged above so Purchasing knows what needs to be ordered before this build can be completed.</span></div>}
+        {buildHasShortage && <div className="source-file"><ShoppingCart size={16} /><span>Some build parts are short. Those lines are flagged above so Procurement knows what needs to be ordered before this build can be completed.</span></div>}
         <div className="manufactured-inventory-list">
           <div className="manufactured-inventory-head">
             <span>Manufactured inventory</span>
@@ -6100,7 +6100,7 @@ function Projects({
   const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
   const totalProjectValue = projectSites.reduce((sum, project) => sum + project.allocated, 0);
-  const purchasingProjects = projectSites.filter((project) => project.status === "Purchasing").length;
+  const purchasingProjects = projectSites.filter((project) => project.status === "Procurement").length;
   const draftProjects = projectSites.filter((project) => project.status === "Draft" || project.status === "Planning").length;
   const bomItemSuggestions = [
     ...inventoryItems.map((part) => part.name),
@@ -6181,7 +6181,7 @@ function Projects({
       package: "BOM to be built by PM",
       cameras: 0,
       allocated: 0,
-      siteNotes: "Draft project record. Add garage/lot details, install requirements, and BOM lines before sending to Purchasing.",
+      siteNotes: "Draft project record. Add garage/lot details, install requirements, and BOM lines before sending to Procurement.",
       sow: blankSow,
       bom: [
         { item: "Single Lens Camera", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add expected camera count" },
@@ -6292,7 +6292,7 @@ function Projects({
     setBomDraft({
       item: line.item,
       qty: line.qty,
-      action: line.status === "From Inventory" ? "pull" : "order",
+      action: line.procurementTrack === "direct_to_project" ? "direct" : line.procurementTrack === "pull" ? "pull" : "order",
       requestSpeed: line.requestSpeed,
       notes: line.notes ?? "",
     });
@@ -6304,7 +6304,13 @@ function Projects({
     setEditingBomIndex(null);
   }
 
-  async function addBomLine() {
+  // Procurement approval gate: adding/editing a BOM line no longer fires a
+  // purchase request or inventory pull on its own -- it just records the
+  // line and the fulfillment track it's meant to take. Nothing actually
+  // reaches Procurement (or comes out of inventory) until the client has
+  // approved a submittal for this project and someone clicks "Send to
+  // Procurement" below (see handleSendBomToPurchasing).
+  function addBomLine() {
     const item = bomDraft.item.trim();
     const qty = Math.max(1, Math.round(Number(bomDraft.qty) || 1));
     if (!item) {
@@ -6312,14 +6318,21 @@ function Projects({
       return;
     }
 
-    const pullingFromInventory = bomDraft.action === "pull" && selectedInventoryItem && selectedInventoryItem.stock >= qty;
-    const directToProject = bomDraft.action === "direct";
+    const procurementTrack: BomLine["procurementTrack"] = bomDraft.action === "direct" ? "direct_to_project" : bomDraft.action === "pull" ? "pull" : "warehouse_stock";
+    const trackNote =
+      procurementTrack === "pull"
+        ? `Will pull from inventory once approved.${selectedInventoryItem ? ` ${selectedInventoryItem.stock} available now.` : " Not in inventory yet."}`
+        : procurementTrack === "direct_to_project"
+          ? "Will be requested as a direct-to-project purchase once approved."
+          : "Will be requested for Procurement to order into warehouse stock once approved.";
     const line: BomLine = {
       item,
       qty,
-      status: pullingFromInventory ? "From Inventory" : "Need Quote",
+      status: "Not started",
       requestSpeed: bomDraft.requestSpeed,
-      notes: bomDraft.notes || (pullingFromInventory ? `Pulled from inventory. ${selectedInventoryItem.stock - qty} remaining.` : directToProject ? "Requested as direct-to-project purchase." : "Requested for Purchasing to order into warehouse stock."),
+      notes: bomDraft.notes || trackNote,
+      procurementTrack,
+      sentToPurchasingAt: editingBomIndex !== null ? selectedProject.bom[editingBomIndex]?.sentToPurchasingAt ?? null : null,
     };
 
     updateSelectedProject((project) => ({
@@ -6330,21 +6343,68 @@ function Projects({
           : project.bom.map((existingLine, index) => (index === editingBomIndex ? line : existingLine)),
     }));
 
-    if (editingBomIndex !== null) {
-      setActionStatus(`${item} was updated in ${selectedProject.ref}.`);
-    } else if (pullingFromInventory) {
-      onInventoryPull(item, qty, selectedProject.name, bomDraft.notes || `Pulled from inventory for ${selectedProject.ref} BOM.`);
-      setActionStatus(`${qty} ${item} added to ${selectedProject.ref} and pulled from inventory.`);
-    } else if (bomDraft.action === "pull" && selectedInventoryItem) {
-      const queued = await onQueueProjectBomPurchaseRequest(item, qty, selectedProject.name, selectedProject.ref, bomDraft.requestSpeed, bomDraft.notes, "warehouse_stock");
-      setActionStatus(queued ? `${item} was added as Need Quote because only ${selectedInventoryItem.stock} are available in inventory. Purchasing request created.` : `${item} was added as Need Quote, but no SKU match was found for Purchasing.`);
-    } else {
-      const queued = await onQueueProjectBomPurchaseRequest(item, qty, selectedProject.name, selectedProject.ref, bomDraft.requestSpeed, bomDraft.notes, directToProject ? "direct_to_project" : "warehouse_stock");
-      setActionStatus(queued ? `${qty} ${item} added to ${selectedProject.ref} as a ${directToProject ? "direct-to-project" : "warehouse stock"} purchasing request.` : `${qty} ${item} added to ${selectedProject.ref}, but Purchasing request was not created because it is not matched to a SKU.`);
-    }
+    setActionStatus(
+      editingBomIndex !== null
+        ? `${item} was updated in ${selectedProject.ref}.`
+        : `${qty} ${item} added to ${selectedProject.ref} as a draft -- it won't reach Procurement until the client approves a submittal and it's sent.`,
+    );
 
     setBomDraft({ item: parts[0].name, qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
     closeBomModal();
+  }
+
+  // Only unlocked once the project's most recent submittal has been
+  // approved by the client -- this is the one place a BOM line actually
+  // becomes a Purchasing request or an inventory pull.
+  const latestSubmittal = submittals.length > 0 ? submittals.reduce((a, b) => (a.version > b.version ? a : b)) : null;
+  const isBomApprovedForProcurement = latestSubmittal?.status === "approved";
+  // Only lines still in the "Not started" draft state and never sent are
+  // eligible -- this deliberately excludes lines that arrived through other
+  // paths (direct inventory transfers, historical data) already carrying a
+  // fulfilled/terminal status, so the bulk send can't accidentally re-process them.
+  const unsentBomLines = selectedProject.bom.filter((line) => line.status === "Not started" && !line.sentToPurchasingAt);
+
+  async function handleSendBomToPurchasing() {
+    if (!isBomApprovedForProcurement) {
+      setActionStatus("This project's BOM can't be sent to Procurement until the client approves a submittal.");
+      return;
+    }
+    if (unsentBomLines.length === 0) {
+      setActionStatus("Every BOM line has already been sent to Procurement.");
+      return;
+    }
+    const sentAt = new Date().toISOString();
+    const updatedLines = [...selectedProject.bom];
+    let pulledCount = 0;
+    let queuedCount = 0;
+    let unmatchedCount = 0;
+    for (let index = 0; index < updatedLines.length; index += 1) {
+      const line = updatedLines[index];
+      if (line.status !== "Not started" || line.sentToPurchasingAt) {
+        continue;
+      }
+      const track = line.procurementTrack ?? "warehouse_stock";
+      const inventoryPart = inventoryItems.find((part) => part.name === line.item);
+      if (track === "pull" && inventoryPart && !inventoryPart.retired && inventoryPart.stock >= line.qty) {
+        onInventoryPull(line.item, line.qty, selectedProject.name, line.notes || `Pulled from inventory for ${selectedProject.ref} BOM.`);
+        updatedLines[index] = { ...line, status: "From Inventory", sentToPurchasingAt: sentAt };
+        pulledCount += 1;
+      } else {
+        const resolvedTrack: PurchaseRequest["procurementTrack"] = track === "direct_to_project" ? "direct_to_project" : "warehouse_stock";
+        const queued = await onQueueProjectBomPurchaseRequest(line.item, line.qty, selectedProject.name, selectedProject.ref, line.requestSpeed, line.notes ?? "", resolvedTrack);
+        if (queued) {
+          updatedLines[index] = { ...line, status: "Need Quote", sentToPurchasingAt: sentAt };
+          queuedCount += 1;
+        } else {
+          unmatchedCount += 1;
+        }
+      }
+    }
+    updateSelectedProject((project) => ({ ...project, bom: updatedLines }));
+    setActionStatus(
+      `Sent to Procurement: ${pulledCount} pulled from inventory, ${queuedCount} purchase request(s) created` +
+        (unmatchedCount > 0 ? `, ${unmatchedCount} skipped (no matching inventory SKU).` : "."),
+    );
   }
 
   function handleSalesQuoteSelect(event: React.ChangeEvent<HTMLInputElement>) {
@@ -6536,7 +6596,7 @@ function Projects({
         <section className="metric-grid">
           <Metric icon={<ClipboardList size={20} />} label="Projects" value={String(projectSites.length)} />
           <Metric icon={<DollarSign size={20} />} label="Allocated Value" value={money(totalProjectValue)} />
-          <Metric icon={<ShoppingCart size={20} />} label="In Purchasing" value={String(purchasingProjects)} />
+          <Metric icon={<ShoppingCart size={20} />} label="In Procurement" value={String(purchasingProjects)} />
           <Metric icon={<FileText size={20} />} label="Draft / Planning" value={String(draftProjects)} />
         </section>
 
@@ -6561,7 +6621,7 @@ function Projects({
                     <td><strong>{project.ref}</strong></td>
                     <td><strong>{project.name}</strong><small>{project.type} - {project.package}</small></td>
                     <td>{project.client}</td>
-                    <td><span className={`status ${project.status === "Purchasing" ? "warn" : project.status === "Install Ready" ? "ok" : ""}`}>{project.status}</span></td>
+                    <td><span className={`status ${project.status === "Procurement" ? "warn" : project.status === "Install Ready" ? "ok" : ""}`}>{project.status}</span></td>
                     <td>
                       <div className="progress-cell"><span>{completion}%</span><i><b style={{ width: `${completion}%` }} /></i></div>
                     </td>
@@ -6642,7 +6702,7 @@ function Projects({
               <span>{projectCompletion(selectedProject)}%</span>
             </div>
             <div className="progress-points">
-              <div><span>Status</span><strong className={`status ${selectedProject.status === "Purchasing" ? "warn" : selectedProject.status === "Install Ready" ? "ok" : ""}`}>{selectedProject.status}</strong></div>
+              <div><span>Status</span><strong className={`status ${selectedProject.status === "Procurement" ? "warn" : selectedProject.status === "Install Ready" ? "ok" : ""}`}>{selectedProject.status}</strong></div>
               <div><span>Target</span><strong>{selectedProject.due}</strong></div>
               <div><span>Allocated</span><strong>{money(selectedProject.allocated)}</strong></div>
               <div><span>Open BOM</span><strong>{openBomLines}</strong></div>
@@ -6746,11 +6806,11 @@ function Projects({
       </section>
 
       <section className="panel full">
-        <PanelHeader title="Pre-Sales Quick Estimate" label="Derive a baseline hardware BOM from tier, node count, and connectivity" />
+        <PanelHeader title="Pre-Sales Quick Estimate" label="Derive a baseline hardware BOM from Product Catalog category, node count, and connectivity. Configure categories and quantities in Admin -> Pre-Sales Rules." />
         {presalesStatus && <small className="muted">{presalesStatus}</small>}
         <div className="submittal-create-row">
           <select value={presalesTier} onChange={(event) => setPresalesTier(event.target.value)}>
-            <option value="">Select tier...</option>
+            <option value="">Select category...</option>
             {Array.from(new Set(presalesRules.map((rule) => rule.tier))).map((tier) => (
               <option key={tier} value={tier}>{tier}</option>
             ))}
@@ -6850,7 +6910,7 @@ function Projects({
           <label>Site type<select value={selectedProject.type} onChange={(event) => updateProjectField("type", event.target.value as ProjectSite["type"])}><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
           <label>Project owner<input value={selectedProject.owner} onChange={(event) => updateProjectField("owner", event.target.value)} /></label>
           <label className="span-2">Client location / shipping address<input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} /></label>
-          <label>Status<select value={selectedProject.status} onChange={(event) => updateProjectField("status", event.target.value as ProjectSite["status"])}><option>Draft</option><option>Planning</option><option>Purchasing</option><option>Staging</option><option>Install Ready</option></select></label>
+          <label>Status<select value={selectedProject.status} onChange={(event) => updateProjectField("status", event.target.value as ProjectSite["status"])}><option>Draft</option><option>Planning</option><option>Procurement</option><option>Staging</option><option>Install Ready</option></select></label>
           <label>Target date<input value={selectedProject.due} onChange={(event) => updateProjectField("due", event.target.value)} /></label>
           <label className="span-2">Solution / package<input value={selectedProject.package} onChange={(event) => updateProjectField("package", event.target.value)} /></label>
           <label className="span-2">Site notes<textarea value={selectedProject.siteNotes} onChange={(event) => updateProjectField("siteNotes", event.target.value)} /></label>
@@ -6895,7 +6955,7 @@ function Projects({
         <div className="panel-title-row">
           <div>
             <h2>BOM - Bill of Material</h2>
-            <p>Add, edit, pull from inventory, or request Purchasing orders.</p>
+            <p>Add and edit material lines here -- they stay drafts until a submittal for this project is client-approved, then send them to Procurement below.</p>
           </div>
           <div className="report-filter-row">
             <label className="secondary-action mini-action project-doc-upload">
@@ -6904,6 +6964,17 @@ function Projects({
             </label>
             <button className="primary-action" type="button" onClick={openAddBomModal}><Plus size={17} /> Add Material</button>
           </div>
+        </div>
+        <div className="report-filter-row">
+          {isBomApprovedForProcurement ? (
+            <button className="primary-action mini-action" type="button" onClick={handleSendBomToPurchasing} disabled={unsentBomLines.length === 0}>
+              <Truck size={14} /> Send {unsentBomLines.length > 0 ? `${unsentBomLines.length} Line(s) ` : ""}to Procurement
+            </button>
+          ) : (
+            <span className="muted">
+              {latestSubmittal ? `Waiting on client approval (submittal is currently "${latestSubmittal.status}") before this BOM can be sent to Procurement.` : "Create and send a submittal below for client approval before this BOM can be sent to Procurement."}
+            </span>
+          )}
         </div>
         {bomImportStatus && <small className="muted">{bomImportStatus}</small>}
         {bomImportRows.length > 0 && (
@@ -6929,7 +7000,7 @@ function Projects({
               <tr key={`${selectedProject.name}-${line.item}-${index}`}>
                 <td><strong>{line.item}</strong></td>
                 <td>{line.qty}</td>
-                <td><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span></td>
+                <td><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span>{!line.sentToPurchasingAt && <small className="muted"> (draft)</small>}</td>
                 <td>{line.requestSpeed}</td>
                 <td>{line.po ?? "TBD"}</td>
                 <td>{line.notes ?? "Ready for PM details"}</td>
@@ -6946,7 +7017,7 @@ function Projects({
             <div className="modal-header">
               <div>
                 <h2 id="bom-modal-title">{editingBomIndex === null ? "Add BOM Material" : "Edit BOM Material"}</h2>
-                <p>{editingBomIndex === null ? "Add a project material line, then pull from stock or request an order." : "Update this material line. Inventory pulls only happen when adding a new line."}</p>
+                <p>This is saved as a draft -- it won't pull from inventory or reach Procurement until the client approves a submittal and the BOM is sent.</p>
               </div>
               <button className="icon-button" type="button" onClick={closeBomModal} aria-label="Close BOM modal">x</button>
             </div>
@@ -6976,11 +7047,11 @@ function Projects({
                 </label>
                 <label>
                   <input type="radio" name="bom-action" checked={bomDraft.action === "order"} onChange={() => updateBomDraft("action", "order")} />
-                  <span><strong>Request warehouse stock order</strong><small>Purchasing receives this into warehouse inventory</small></span>
+                  <span><strong>Request warehouse stock order</strong><small>Procurement receives this into warehouse inventory</small></span>
                 </label>
                 <label>
                   <input type="radio" name="bom-action" checked={bomDraft.action === "direct"} onChange={() => updateBomDraft("action", "direct")} />
-                  <span><strong>Request direct-to-project order</strong><small>Purchasing receives this against the project, not warehouse stock</small></span>
+                  <span><strong>Request direct-to-project order</strong><small>Procurement receives this against the project, not warehouse stock</small></span>
                 </label>
               </fieldset>
               <label className="span-2">Notes
@@ -7258,12 +7329,12 @@ function Reports({
         <div className="panel-title-row">
           <div>
             <h2>Reports</h2>
-            <p>Purchasing, inventory, manufacturing, and project movement views.</p>
+            <p>Procurement, inventory, manufacturing, and project movement views.</p>
           </div>
           <button className="secondary-action" type="button" onClick={exportActiveReport}><FileText size={16} /> Export CSV</button>
         </div>
         <div className="segmented-tabs report-tabs">
-          <button className={reportTab === "purchasing" ? "active" : ""} type="button" onClick={() => setReportTab("purchasing")}>Purchasing</button>
+          <button className={reportTab === "purchasing" ? "active" : ""} type="button" onClick={() => setReportTab("purchasing")}>Procurement</button>
           <button className={reportTab === "inventory" ? "active" : ""} type="button" onClick={() => setReportTab("inventory")}>Inventory</button>
           <button className={reportTab === "manufacturing" ? "active" : ""} type="button" onClick={() => setReportTab("manufacturing")}>Manufacturing</button>
           <button className={reportTab === "projects" ? "active" : ""} type="button" onClick={() => setReportTab("projects")}>Projects</button>
@@ -7395,7 +7466,7 @@ function Reports({
         <section className="panel wide">
           <PanelHeader title="Ops Snapshot" label="Inventory plus captured purchasing" />
           <div className="report-total">{money(inventoryValue + openPoValue)}</div>
-          <p className="muted">Current inventory value plus recent order PDFs now captured in Purchasing.</p>
+          <p className="muted">Current inventory value plus recent order PDFs now captured in Procurement.</p>
         </section>
       </>}
       {reportTab === "manufacturing" && <section className="panel wide">
@@ -7477,7 +7548,7 @@ function Reports({
 
 const ROLE_KEY_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "warehouse", label: "Warehouse" },
-  { value: "purchasing", label: "Purchasing" },
+  { value: "purchasing", label: "Procurement" },
   { value: "pm", label: "PM" },
   { value: "manager", label: "Manager" },
   { value: "sales", label: "Sales" },
@@ -7525,7 +7596,7 @@ function PendingApprovalRow({
 // rather than fake placeholder articles -- it's a real, working page (back
 // button, real category list matching the app's actual sections) that's
 // ready for real content to be dropped in later.
-const LIBRARY_CATEGORIES = ["Getting Started", "Dashboard", "Inventory", "Purchasing", "Projects", "Sales & Site Builder", "Tasks", "Reports"];
+const LIBRARY_CATEGORIES = ["Getting Started", "Dashboard", "Inventory", "Procurement", "Projects", "Sales & Site Builder", "Tasks", "Reports"];
 
 function LibraryPage({ onBack }: { onBack: () => void }) {
   return (
@@ -7762,6 +7833,12 @@ function AdminPage({
     setCompanyNameDraft(branding.companyName);
   }, [branding.companyName]);
   const logoUrl = branding.logoStoragePath ? companyLogoUrl(branding.logoStoragePath) : null;
+
+  // Pre-Sales Rules are authored against real Sales-maintained categories
+  // instead of a freeform "tier" string an admin has to invent and keep
+  // consistent -- as soon as a product in the catalog has a Category, it
+  // shows up here.
+  const catalogCategories = Array.from(new Set(catalogItems.map((item) => item.category.trim()).filter(Boolean))).sort();
 
   const usersByid = new Map(knownUsers.map((user) => [user.userId, user]));
   const approvalByUserId = new Map(approvalStatuses.map((entry) => [entry.userId, entry]));
@@ -8177,10 +8254,13 @@ function AdminPage({
         </section>
 
         <section className="panel wide">
-          <PanelHeader title="Pre-Sales Rules" label="Baseline hardware derived from tier, node count, and cloud sync at the quoting stage" />
+          <PanelHeader title="Pre-Sales Rules" label="Baseline hardware derived from Product Catalog category, node count, and cloud sync at the quoting stage. Add categories to products in the Sales Catalog first -- they show up here automatically." />
           {presalesStatus && <small className="muted">{presalesStatus}</small>}
+          {catalogCategories.length === 0 && (
+            <p className="muted">No categories found yet -- add a Category to at least one product in the Sales Catalog to start building rules here.</p>
+          )}
           <table>
-            <thead><tr><th>Tier</th><th>Item</th><th>Quantity</th><th>Cloud Sync</th><th></th></tr></thead>
+            <thead><tr><th>Category</th><th>Item</th><th>Quantity</th><th>Cloud Sync</th><th></th></tr></thead>
             <tbody>
               {presalesRules.map((rule) => (
                 <tr key={rule.id}>
@@ -8195,7 +8275,12 @@ function AdminPage({
             </tbody>
           </table>
           <div className="roster-add-row">
-            <input value={presalesRuleDraft.tier} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, tier: event.target.value }))} placeholder="Tier (e.g. Commercial Office)" />
+            <select value={presalesRuleDraft.tier} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, tier: event.target.value }))}>
+              <option value="">Select category...</option>
+              {catalogCategories.map((category) => (
+                <option key={category} value={category}>{category}</option>
+              ))}
+            </select>
             <input value={presalesRuleDraft.baseItemName} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, baseItemName: event.target.value }))} placeholder="Inventory item name" />
             <select value={presalesRuleDraft.quantityMode} onChange={(event) => setPresalesRuleDraft((current) => ({ ...current, quantityMode: event.target.value as PresalesHardwareRule["quantityMode"] }))}>
               <option value="fixed">Fixed quantity</option>
