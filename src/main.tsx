@@ -9090,6 +9090,7 @@ function SalesCatalog({
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importRows, setImportRows] = useState<Array<Omit<CatalogItem, "id" | "catalogNumber">>>([]);
   const [importStatus, setImportStatus] = useState("");
+  const [importStatusIsError, setImportStatusIsError] = useState(false);
   const [isCommittingImport, setIsCommittingImport] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [proposalItem, setProposalItem] = useState<CatalogItem | null>(null);
@@ -9185,6 +9186,7 @@ function SalesCatalog({
       return;
     }
     setImportStatus("Parsing...");
+    setImportStatusIsError(false);
     try {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
@@ -9204,7 +9206,7 @@ function SalesCatalog({
           const unitCost = costKey ? Number(row[costKey]) || 0 : 0;
           const linkedReference = asText(findKey("linked reference", "linked sku", "sku", "equipment"));
           const datasheetUrl = asText(findKey("datasheet url", "datasheet", "datasheet link"));
-          const imageUrl = asText(findKey("image url", "image", "image link"));
+          const imageUrl = asText(findKey("image url", "image", "image link", "images"));
           const salesDescription = asText(findKey("sales description", "description"));
           const technicalDescription = asText(findKey("technical description", "specs", "technical notes"));
           // Gaps filled in from E's PandaDoc export (flat_priced_products.csv):
@@ -9253,8 +9255,10 @@ function SalesCatalog({
           ? `Parsed ${parsed.length} row(s) -- review below, then commit.`
           : "No recognizable rows found -- check column headers (Product Name is required).",
       );
+      setImportStatusIsError(parsed.length === 0);
     } catch (error) {
       setImportStatus("Could not parse that file. Make sure it's a valid .xlsx or .csv.");
+      setImportStatusIsError(true);
     }
   }
 
@@ -9266,9 +9270,13 @@ function SalesCatalog({
     try {
       const count = await onBulkImport(importRows);
       setImportStatus(`Added ${count} item(s) to the catalog.`);
+      setImportStatusIsError(false);
       setImportRows([]);
     } catch (error) {
-      setImportStatus(error instanceof Error ? error.message : "Could not import catalog items.");
+      setImportStatus(
+        `Import failed -- nothing was added to the catalog. ${error instanceof Error ? error.message : "Could not import catalog items."}`,
+      );
+      setImportStatusIsError(true);
     } finally {
       setIsCommittingImport(false);
     }
@@ -9441,7 +9449,9 @@ function SalesCatalog({
               <Upload size={14} /> Choose file
               <input type="file" accept=".xlsx,.xls,.csv" onChange={handleCatalogFileSelect} />
             </label>
-            {importStatus && <small className="muted">{importStatus}</small>}
+            {importStatus && (
+              <small className={importStatusIsError ? "error-text" : "muted"}>{importStatus}</small>
+            )}
             {importRows.length > 0 && (
               <>
                 <table>

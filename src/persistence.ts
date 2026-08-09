@@ -1116,7 +1116,21 @@ export async function bulkCreateCatalogItems(
       prefer: "return=representation",
     },
     body: JSON.stringify(
-      items.map((item) => catalogItemWritePayload({ ...item, catalogNumber: item.catalogNumber || makeCatalogNumber() })),
+      items.map((item, index) =>
+        catalogItemWritePayload({
+          ...item,
+          // makeCatalogNumber() is Date.now()-based; calling it synchronously
+          // in a loop for a multi-row import produces the SAME value for
+          // every row (ms resolution, hundreds of calls per ms), which
+          // violates product_catalog.catalog_number's unique constraint and
+          // silently fails the ENTIRE batched insert (Postgres rejects the
+          // whole statement, so 0 rows land -- a bulk upload of hundreds of
+          // items appears to "do nothing"). Suffix with the row index so
+          // every row in a batch is guaranteed distinct, matching the
+          // pattern already used by createProjectDocuments/createEquipment.
+          catalogNumber: item.catalogNumber || `${makeCatalogNumber()}-${index}`,
+        }),
+      ),
     ),
   });
 
