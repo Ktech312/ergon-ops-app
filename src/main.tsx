@@ -1963,6 +1963,24 @@ function App() {
           `"${updated.title}" moved to ${statusLabel}.`,
           updated.status,
         );
+        // Creator gets told too, not just whoever it's currently assigned
+        // to -- skip if they're also the assignee (already covered above)
+        // or if they're the one who just made the change themselves.
+        const actingEmail = authSession.email?.toLowerCase() ?? "";
+        const creatorEmail = updated.createdByEmail?.toLowerCase() ?? "";
+        const assigneeEmail = updated.assigneeEmail?.toLowerCase() ?? "";
+        if (creatorEmail && creatorEmail !== actingEmail && creatorEmail !== assigneeEmail) {
+          const today = new Date().toISOString().slice(0, 10);
+          notify(
+            "task_status_changed",
+            updated.createdByEmail,
+            "Task status changed",
+            `"${updated.title}" moved to ${statusLabel}.`,
+            "task",
+            updated.id,
+            `task_status_changed:${updated.id}:${updated.createdByEmail}:${updated.status}:${today}`,
+          );
+        }
       }
       if (updated.status === "in_progress" && previous?.status !== "in_progress") {
         runTaskHardwareAutomation(updated);
@@ -2174,6 +2192,81 @@ function App() {
           await notify(eventType, member.email, title, body, "task", task.id, `${eventType}:${task.id}:${member.email}:${dedupeSuffix}:${today}`);
         }
       }
+    }
+  }
+
+  // Purchase request status change -> the person who requested it, plus the
+  // whole Purchasing/Procurement team (they're the ones acting on it day to
+  // day, not just the one requester). Per E: "Both."
+  async function notifyPurchaseRequestStatusChanged(request: PurchaseRequest, newStatus: PurchaseRequest["status"]) {
+    if (!authSession) {
+      return;
+    }
+    const actingEmail = authSession.email?.toLowerCase() ?? "";
+    const title = "Purchase request status changed";
+    const body = `"${request.itemName}" (${request.requestNumber}) moved to ${newStatus}.`;
+    const dedupeKey = (recipient: string) => `purchase_request_status_changed:${request.id}:${recipient}:${newStatus}`;
+    if (request.requestedByEmail && request.requestedByEmail.toLowerCase() !== actingEmail) {
+      await notify("purchase_request_status_changed", request.requestedByEmail, title, body, "purchase_request", request.id, dedupeKey(request.requestedByEmail));
+    }
+    const purchasingTeam = await loadUsersByRole("purchasing", authSession.accessToken).catch(() => []);
+    for (const member of purchasingTeam) {
+      if (member.email.toLowerCase() !== actingEmail && member.email.toLowerCase() !== request.requestedByEmail?.toLowerCase()) {
+        await notify("purchase_request_status_changed", member.email, title, body, "purchase_request", request.id, dedupeKey(member.email));
+      }
+    }
+  }
+
+  // Build stage change -> the Warehouse team, who runs the physical
+  // kitting/assembly/testing workflow. Per E: "a role."
+  async function notifyBuildStageChanged(build: BuildTransaction, newStage: NonNullable<BuildTransaction["stage"]>) {
+    if (!authSession) {
+      return;
+    }
+    const actingEmail = authSession.email?.toLowerCase() ?? "";
+    const stageLabel = newStage.charAt(0).toUpperCase() + newStage.slice(1);
+    const warehouseTeam = await loadUsersByRole("warehouse", authSession.accessToken).catch(() => []);
+    for (const member of warehouseTeam) {
+      if (member.email.toLowerCase() !== actingEmail) {
+        await notify(
+          "build_stage_changed",
+          member.email,
+          "Build stage changed",
+          `${build.buildNumber} (${build.equipmentName}) moved to ${stageLabel}.`,
+          "build",
+          build.id,
+          `build_stage_changed:${build.id}:${member.email}:${newStage}`,
+        );
+      }
+    }
+  }
+
+  // Low stock -> Purchasing, Warehouse, and every Admin. Per E: both
+  // "Purchasing" and "Warehouse/Admin" were selected. Date-scoped dedupe
+  // (like task_overdue) so a part sitting below its reorder point through
+  // many small movements in one day only notifies once per person per item
+  // per day, not on every single pull/adjustment.
+  async function notifyLowStockReached(part: Part) {
+    if (!authSession) {
+      return;
+    }
+    const actingEmail = authSession.email?.toLowerCase() ?? "";
+    const today = new Date().toISOString().slice(0, 10);
+    const title = "Low stock reached";
+    const body = `${part.name} (${part.ref}) is at ${part.stock}, at or below its reorder point of ${part.reorderPoint}.`;
+    const [purchasingTeam, warehouseTeam, admins] = await Promise.all([
+      loadUsersByRole("purchasing", authSession.accessToken).catch(() => []),
+      loadUsersByRole("warehouse", authSession.accessToken).catch(() => []),
+      loadAdminEmails(authSession.accessToken).catch(() => []),
+    ]);
+    const seen = new Set<string>();
+    for (const recipient of [...purchasingTeam, ...warehouseTeam, ...admins]) {
+      const email = recipient.email.toLowerCase();
+      if (email === actingEmail || seen.has(email)) {
+        continue;
+      }
+      seen.add(email);
+      await notify("low_stock_reached", recipient.email, title, body, "inventory_item", part.ref, `low_stock_reached:${part.ref}:${email}:${today}`);
     }
   }
 
@@ -2829,6 +2922,9 @@ function App() {
 
     setInventoryItems((current) => current.map((item) => (item.ref === part.ref ? { ...item, stock: item.stock - pullQty } : item)));
     setInventoryMovements((current) => [movement, ...current]);
+    if (movement.quantityAfter <= part.reorderPoint) {
+      notifyLowStockReached({ ...part, stock: movement.quantityAfter });
+    }
 
     if (projectName) {
       setProjectAllocations((current) => [
@@ -3005,6 +3101,9 @@ function App() {
     };
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: adjustedQty } : item)));
     setInventoryMovements((current) => [movement, ...current]);
+    if (adjustedQty <= part.reorderPoint) {
+      notifyLowStockReached({ ...part, stock: adjustedQty });
+    }
     });
   }
 
@@ -3031,6 +3130,9 @@ function App() {
     };
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: item.stock - transferQty } : item)));
     setInventoryMovements((current) => [movement, ...current]);
+    if (movement.quantityAfter <= part.reorderPoint) {
+      notifyLowStockReached({ ...part, stock: movement.quantityAfter });
+    }
     setProjectAllocations((current) => [
       {
         id: makeId("alloc"),
@@ -3121,6 +3223,13 @@ function App() {
       };
     });
     let completionMovement: InventoryMovement | null = null;
+
+    for (const movement of componentMovements) {
+      const part = inventoryItems.find((item) => item.ref === movement.sku);
+      if (part && movement.quantityAfter <= part.reorderPoint) {
+        notifyLowStockReached({ ...part, stock: movement.quantityAfter });
+      }
+    }
 
     setInventoryItems((current) => {
       const consumed = current.map((part) => {
@@ -3260,7 +3369,11 @@ function App() {
   }
 
   function updateBuildStage(buildId: string, stage: NonNullable<BuildTransaction["stage"]>) {
+    const previous = buildTransactions.find((build) => build.id === buildId);
     setBuildTransactions((current) => current.map((build) => (build.id === buildId ? { ...build, stage } : build)));
+    if (previous && previous.stage !== stage) {
+      notifyBuildStageChanged({ ...previous, stage }, stage);
+    }
   }
 
   function cancelPlannedBuild(buildId: string) {
@@ -3340,6 +3453,7 @@ function App() {
           estimatedUnitCost: part.cost,
           status: reason === "Manual" ? "Draft" : "Need Quote",
           notes,
+          requestedByEmail: authSession.email,
         },
         authSession.accessToken,
       );
@@ -3408,11 +3522,15 @@ function App() {
   }
 
   async function updatePurchaseRequestStatus(requestId: string, status: PurchaseRequest["status"]) {
+    const existing = purchaseRequestsRef.current.find((request) => request.id === requestId);
     const next = purchaseRequestsRef.current.map((request) => (request.id === requestId ? { ...request, status } : request));
     purchaseRequestsRef.current = next;
     setPurchaseRequests(next);
     if (authSession) {
       await updatePurchaseRequestRemote(requestId, { status }, authSession.accessToken);
+    }
+    if (existing && existing.status !== status) {
+      notifyPurchaseRequestStatusChanged({ ...existing, status }, status);
     }
   }
 
@@ -3465,6 +3583,9 @@ function App() {
         },
         authSession.accessToken,
       );
+    }
+    if (existing.status !== nextStatus) {
+      notifyPurchaseRequestStatusChanged({ ...existing, status: nextStatus }, nextStatus);
     }
   }
 
@@ -3540,6 +3661,9 @@ function App() {
         { receivedQuantity: nextReceived, estimatedUnitCost: effectiveUnitCost, status: nextStatus },
         authSession.accessToken,
       );
+    }
+    if (request.status !== nextStatus) {
+      notifyPurchaseRequestStatusChanged({ ...request, receivedQuantity: nextReceived, status: nextStatus }, nextStatus);
     }
   }
 

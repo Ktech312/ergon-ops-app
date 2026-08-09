@@ -3370,6 +3370,7 @@ export type PurchaseRequest = {
   status: "Draft" | "Need Quote" | "Ready to Order" | "Ordered" | "Received" | "Cancelled";
   createdAt: string;
   notes: string;
+  requestedByEmail?: string;
 };
 
 type PurchaseRequestRow = {
@@ -3390,6 +3391,7 @@ type PurchaseRequestRow = {
   status: string;
   created_at: string;
   notes: string | null;
+  requested_by_email: string | null;
 };
 
 function appPurchaseReason(reason: string): PurchaseRequest["reason"] {
@@ -3460,11 +3462,12 @@ function mapPurchaseRequestRow(row: PurchaseRequestRow): PurchaseRequest {
     status: appPurchaseStatus(row.status),
     createdAt: row.created_at,
     notes: row.notes ?? "",
+    requestedByEmail: row.requested_by_email ?? undefined,
   };
 }
 
 const PURCHASE_REQUEST_SELECT =
-  "id,request_number,sku_snapshot,item_name_snapshot,quantity_requested,reason,source_ref,project_name,procurement_track,preferred_vendor,po_number,expected_date,estimated_unit_cost,quantity_received,status,created_at,notes";
+  "id,request_number,sku_snapshot,item_name_snapshot,quantity_requested,reason,source_ref,project_name,procurement_track,preferred_vendor,po_number,expected_date,estimated_unit_cost,quantity_received,status,created_at,notes,requested_by_email";
 
 export async function loadPurchaseRequests(accessToken?: string): Promise<PurchaseRequest[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -3494,6 +3497,7 @@ export async function createPurchaseRequestRemote(
     estimatedUnitCost: number;
     status: PurchaseRequest["status"];
     notes: string;
+    requestedByEmail?: string;
   },
   accessToken?: string,
 ): Promise<PurchaseRequest | null> {
@@ -3514,6 +3518,7 @@ export async function createPurchaseRequestRemote(
     estimated_unit_cost: input.estimatedUnitCost,
     status: pgPurchaseStatus(input.status),
     notes: input.notes,
+    requested_by_email: input.requestedByEmail ?? null,
   };
   const response = await fetch(supabaseUrl("purchase_requests"), {
     method: "POST",
