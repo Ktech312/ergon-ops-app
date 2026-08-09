@@ -51,11 +51,20 @@ import {
   createPurchaseRequestRemote,
   createSalesQuote,
   updateSalesQuoteStatus,
+  updateSalesQuoteProposalFields,
   addSalesQuoteBomLines,
   deleteSalesQuoteBomLine,
+  updateSalesQuoteBomLineCatalogLink,
   createScheduleTemplate,
   createSubmittal,
   createSubmittalShareToken,
+  loadProposalTemplateSections,
+  updateProposalTemplateSection,
+  loadProposalsForQuote,
+  createQuoteProposal,
+  createQuoteProposalShareToken,
+  fetchPublicQuoteProposal,
+  respondToPublicQuoteProposal,
   createInvite,
   createSiteHardwareRule,
   loadSiteHardwareRules,
@@ -199,6 +208,10 @@ import {
   type ProjectSite,
   type ProjectSubmittal,
   type PublicSubmittalView,
+  type ProposalTemplateSection,
+  type ProposalSnapshot,
+  type SalesQuoteProposal,
+  type PublicQuoteProposalView,
   type PurchaseLineCategory,
   type PurchaseOrder,
   type PurchaseOrderLine,
@@ -912,6 +925,9 @@ function App() {
   const [scheduleStatus, setScheduleStatus] = useState("");
   const [submittals, setSubmittals] = useState<ProjectSubmittal[]>([]);
   const [submittalStatus, setSubmittalStatus] = useState("");
+  const [proposalTemplateSections, setProposalTemplateSections] = useState<ProposalTemplateSection[]>([]);
+  const [quoteProposals, setQuoteProposals] = useState<SalesQuoteProposal[]>([]);
+  const [quoteProposalStatus, setQuoteProposalStatus] = useState("");
   const [handoverSchema, setHandoverSchema] = useState<FormSchema | null>(null);
   const [formBuilderStatus, setFormBuilderStatus] = useState("");
   const [handovers, setHandovers] = useState<ProjectHandover[]>([]);
@@ -1821,7 +1837,7 @@ function App() {
   // Shared by the manual "add line" form and the Pre-Sales Quick Estimate
   // calculator below -- both just need to append lines to a quote's
   // persisted BOM.
-  async function handleAddSalesQuoteBomLines(quoteId: string, lines: Array<{ item: string; qty: number; notes?: string }>) {
+  async function handleAddSalesQuoteBomLines(quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) {
     if (!authSession || lines.length === 0) {
       return;
     }
@@ -1835,6 +1851,28 @@ function App() {
     } catch (error) {
       setSalesQuoteStatus(error instanceof Error ? error.message : "Could not update the quote BOM.");
     }
+  }
+
+  async function handleUpdateSalesQuoteBomLineCatalogLink(quoteId: string, lineId: string, catalogItemId: string | null) {
+    if (!authSession) {
+      return;
+    }
+    setSalesQuotes((current) =>
+      current.map((entry) =>
+        entry.id === quoteId
+          ? { ...entry, bomLines: entry.bomLines.map((line) => (line.id === lineId ? { ...line, catalogItemId } : line)) }
+          : entry,
+      ),
+    );
+    await updateSalesQuoteBomLineCatalogLink(lineId, catalogItemId, authSession.accessToken);
+  }
+
+  async function handleUpdateSalesQuoteProposalFields(quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) {
+    if (!authSession) {
+      return;
+    }
+    setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, ...updates } : entry)));
+    await updateSalesQuoteProposalFields(quoteId, updates, authSession.accessToken);
   }
 
   async function handleDeleteSalesQuoteBomLine(quoteId: string, lineId: string) {
@@ -2352,11 +2390,29 @@ function App() {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setStandardInstallTimes([]);
       setScheduleTemplates([]);
+      setProposalTemplateSections([]);
       return;
     }
     loadStandardInstallTimes(authSession.accessToken).then(setStandardInstallTimes).catch(() => {});
     loadScheduleTemplates(authSession.accessToken).then(setScheduleTemplates).catch(() => {});
+    loadProposalTemplateSections(authSession.accessToken).then(setProposalTemplateSections).catch(() => {});
   }, [authSession]);
+
+  async function handleUpdateProposalTemplateSection(id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) {
+    if (!authSession) {
+      return;
+    }
+    const ok = await updateProposalTemplateSection(id, updates, authSession.accessToken);
+    if (ok) {
+      setProposalTemplateSections((current) =>
+        current.map((section) =>
+          section.id === id
+            ? { ...section, ...updates, updatedAt: new Date().toISOString() }
+            : section,
+        ),
+      );
+    }
+  }
 
   async function handleSaveStandardInstallTime(entry: Omit<StandardInstallTime, "id">) {
     if (!authSession) {
@@ -2542,6 +2598,99 @@ function App() {
       }
     } catch (error) {
       setSubmittalStatus(error instanceof Error ? error.message : "Could not create submittal.");
+    }
+  }
+
+  // Migration 053: Quote Proposals. Same shape as Submittals above, just
+  // sourced from a Sales Quote instead of a Project -- freeze a snapshot at
+  // send time (BOM lines resolved against the catalog items they're linked
+  // to, plus the current wording of the shared boilerplate sections), email
+  // a share-token link, and let the client click Approve/Reject/Request
+  // Revision on a public page with no login.
+  function buildProposalSnapshot(quote: SalesQuote): ProposalSnapshot {
+    return {
+      clientName: quote.clientName,
+      siteName: quote.siteName,
+      city: quote.city,
+      quoteRef: quote.id.slice(0, 8).toUpperCase(),
+      proposalSummary: quote.proposalSummary,
+      bom: quote.bomLines.map((line) => {
+        const linked = line.catalogItemId ? catalogItems.find((item) => item.id === line.catalogItemId) : undefined;
+        const datasheetUrl = linked
+          ? linked.datasheetUrl || (linked.datasheetStoragePath ? getCatalogDatasheetPublicUrl(linked.datasheetStoragePath) ?? "" : "")
+          : "";
+        return {
+          item: linked ? linked.productName : line.item,
+          qty: line.qty,
+          notes: line.notes,
+          imageUrl: linked?.imageUrl ?? "",
+          description: linked?.salesDescription ?? "",
+          manufacturer: linked?.manufacturer ?? "",
+          hasDatasheet: Boolean(datasheetUrl),
+          datasheetUrl,
+        };
+      }),
+      templateSections: proposalTemplateSections
+        .slice()
+        .sort((a, b) => a.sequenceOrder - b.sequenceOrder)
+        .map((section) => ({ title: section.title, body: section.body })),
+    };
+  }
+
+  async function reloadQuoteProposals(quoteId: string) {
+    if (!authSession || !quoteId) {
+      setQuoteProposals([]);
+      return;
+    }
+    const rows = await loadProposalsForQuote(quoteId, authSession.accessToken);
+    setQuoteProposals(rows);
+  }
+
+  async function handleCreateQuoteProposal(quote: SalesQuote) {
+    if (!authSession) {
+      return;
+    }
+    if (!quote.clientEmail.trim()) {
+      setQuoteProposalStatus("Enter a client email before creating a proposal.");
+      return;
+    }
+    setQuoteProposalStatus("Creating proposal...");
+    try {
+      const existing = await loadProposalsForQuote(quote.id, authSession.accessToken);
+      const nextVersion = existing.length ? Math.max(...existing.map((entry) => entry.version)) + 1 : 1;
+      const snapshot = buildProposalSnapshot(quote);
+      const created = await createQuoteProposal(
+        { quoteId: quote.id, version: nextVersion, contentSnapshot: snapshot, clientName: quote.clientName, clientEmail: quote.clientEmail },
+        authSession.accessToken,
+      );
+      const shareToken = await createQuoteProposalShareToken(created.id, authSession.accessToken);
+      setQuoteProposals([{ ...created, shareToken }, ...existing]);
+
+      setQuoteProposalStatus(`Proposal v${created.version} created. Sending email to ${quote.clientEmail}...`);
+      const shareUrl = `${window.location.origin}${window.location.pathname}?proposal=${shareToken}`;
+      try {
+        const emailResponse = await fetch("/api/send-proposal-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientEmail: quote.clientEmail,
+            clientName: quote.clientName,
+            siteName: quote.siteName,
+            quoteRef: snapshot.quoteRef,
+            shareUrl,
+          }),
+        });
+        const emailResult = (await emailResponse.json()) as { sent: boolean; reason?: string; error?: string };
+        if (emailResult.sent) {
+          setQuoteProposalStatus(`Proposal v${created.version} created and emailed to ${quote.clientEmail}.`);
+        } else {
+          setQuoteProposalStatus(`Proposal v${created.version} created. ${emailResult.reason || emailResult.error || "Email was not sent."}`);
+        }
+      } catch (emailError) {
+        setQuoteProposalStatus(`Proposal v${created.version} created, but the send request failed. Use Copy client link to share it manually.`);
+      }
+    } catch (error) {
+      setQuoteProposalStatus(error instanceof Error ? error.message : "Could not create proposal.");
     }
   }
 
@@ -4118,6 +4267,12 @@ function App() {
             onUpdateSalesQuoteStatus={handleUpdateSalesQuoteStatus}
             onAddSalesQuoteBomLines={handleAddSalesQuoteBomLines}
             onDeleteSalesQuoteBomLine={handleDeleteSalesQuoteBomLine}
+            onUpdateSalesQuoteBomLineCatalogLink={handleUpdateSalesQuoteBomLineCatalogLink}
+            onUpdateSalesQuoteProposalFields={handleUpdateSalesQuoteProposalFields}
+            quoteProposals={quoteProposals}
+            quoteProposalStatus={quoteProposalStatus}
+            onLoadQuoteProposals={reloadQuoteProposals}
+            onCreateQuoteProposal={handleCreateQuoteProposal}
             presalesRules={presalesRules}
             presalesStatus={presalesStatus}
             onGenerateBaselineBomForQuote={handleGenerateBaselineBomForQuote}
@@ -4216,6 +4371,8 @@ function App() {
             onSendInvite={handleSendInvite}
             onResendInvite={handleResendInvite}
             onRevokeInvite={handleRevokeInvite}
+            proposalTemplateSections={proposalTemplateSections}
+            onUpdateProposalTemplateSection={handleUpdateProposalTemplateSection}
             onRefresh={() => {
               if (!authSession) {
                 return;
@@ -8001,6 +8158,51 @@ function PendingApprovalRow({
   );
 }
 
+// One editable card per shared Proposal Template section (Admin ->
+// Proposal Template). Local draft state + save-on-blur, same reasoning as
+// the Catalog "Details" specification inputs -- these are long boilerplate
+// paragraphs, not something to PATCH on every keystroke.
+function ProposalTemplateSectionEditor({
+  section,
+  onSave,
+}: {
+  section: ProposalTemplateSection;
+  onSave: (id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) => void;
+}) {
+  const [titleDraft, setTitleDraft] = useState(section.title);
+  const [bodyDraft, setBodyDraft] = useState(section.body);
+
+  useEffect(() => {
+    setTitleDraft(section.title);
+    setBodyDraft(section.body);
+  }, [section.id, section.title, section.body]);
+
+  return (
+    <div className="proposal-template-section-editor">
+      <input
+        className="proposal-template-title-input"
+        value={titleDraft}
+        onChange={(event) => setTitleDraft(event.target.value)}
+        onBlur={() => {
+          if (titleDraft.trim() && titleDraft !== section.title) {
+            onSave(section.id, { title: titleDraft.trim() });
+          }
+        }}
+      />
+      <textarea
+        rows={6}
+        value={bodyDraft}
+        onChange={(event) => setBodyDraft(event.target.value)}
+        onBlur={() => {
+          if (bodyDraft !== section.body) {
+            onSave(section.id, { body: bodyDraft });
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 // Learning Library -- reached via the book icon next to Cloud Sync in the
 // top nav. The user guides themselves ("this is where the user guides will
 // live") don't exist yet, so this is an honest empty state per category
@@ -8158,6 +8360,8 @@ function AdminPage({
   onSendInvite,
   onResendInvite,
   onRevokeInvite,
+  proposalTemplateSections,
+  onUpdateProposalTemplateSection,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -8217,6 +8421,8 @@ function AdminPage({
   onSendInvite: (input: { email: string; fullName: string; primaryRole: string; secondaryRoles: string[] }) => void;
   onResendInvite: (invite: UserInvite) => void;
   onRevokeInvite: (id: string) => void;
+  proposalTemplateSections: ProposalTemplateSection[];
+  onUpdateProposalTemplateSection: (id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) => void;
 }) {
   const [inviteDraft, setInviteDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", roleTitle: "" });
@@ -8792,6 +8998,19 @@ function AdminPage({
             </button>
           </div>
         </section>
+
+        <section className="panel wide">
+          <PanelHeader title="Proposal Template" label="Shared boilerplate sent with every Quote Proposal -- Assumptions, Warranty, Payment Terms, etc. Seeded from EnSight's real proposal wording; edit here and every future proposal picks up the change." />
+          <div className="proposal-template-list">
+            {proposalTemplateSections
+              .slice()
+              .sort((a, b) => a.sequenceOrder - b.sequenceOrder)
+              .map((section) => (
+                <ProposalTemplateSectionEditor key={section.id} section={section} onSave={onUpdateProposalTemplateSection} />
+              ))}
+            {proposalTemplateSections.length === 0 && <p className="empty-compact-state">No template sections yet -- run migration 053.</p>}
+          </div>
+        </section>
         </>
       )}
 
@@ -9005,6 +9224,12 @@ function SalesHome({
   onUpdateSalesQuoteStatus,
   onAddSalesQuoteBomLines,
   onDeleteSalesQuoteBomLine,
+  onUpdateSalesQuoteBomLineCatalogLink,
+  onUpdateSalesQuoteProposalFields,
+  quoteProposals,
+  quoteProposalStatus,
+  onLoadQuoteProposals,
+  onCreateQuoteProposal,
   presalesRules,
   presalesStatus,
   onGenerateBaselineBomForQuote,
@@ -9046,8 +9271,14 @@ function SalesHome({
     updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
   ) => void;
   onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => void;
-  onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string }>) => void;
+  onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
+  onUpdateSalesQuoteBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
+  onUpdateSalesQuoteProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
+  quoteProposals: SalesQuoteProposal[];
+  quoteProposalStatus: string;
+  onLoadQuoteProposals: (quoteId: string) => void;
+  onCreateQuoteProposal: (quote: SalesQuote) => void;
   presalesRules: PresalesHardwareRule[];
   presalesStatus: string;
   onGenerateBaselineBomForQuote: (quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
@@ -9116,6 +9347,12 @@ function SalesHome({
         onUpdateStatus={onUpdateSalesQuoteStatus}
         onAddBomLines={onAddSalesQuoteBomLines}
         onDeleteBomLine={onDeleteSalesQuoteBomLine}
+        onUpdateBomLineCatalogLink={onUpdateSalesQuoteBomLineCatalogLink}
+        onUpdateProposalFields={onUpdateSalesQuoteProposalFields}
+        quoteProposals={quoteProposals}
+        quoteProposalStatus={quoteProposalStatus}
+        onLoadQuoteProposals={onLoadQuoteProposals}
+        onCreateQuoteProposal={onCreateQuoteProposal}
         presalesRules={presalesRules}
         presalesStatus={presalesStatus}
         onGenerateBaselineBom={onGenerateBaselineBomForQuote}
@@ -10256,6 +10493,12 @@ function SalesQuoteBuilder({
   onUpdateStatus,
   onAddBomLines,
   onDeleteBomLine,
+  onUpdateBomLineCatalogLink,
+  onUpdateProposalFields,
+  quoteProposals,
+  quoteProposalStatus,
+  onLoadQuoteProposals,
+  onCreateQuoteProposal,
   presalesRules,
   presalesStatus,
   onGenerateBaselineBom,
@@ -10280,8 +10523,14 @@ function SalesQuoteBuilder({
     updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
   ) => void;
   onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => void;
-  onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string }>) => void;
+  onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
+  onUpdateBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
+  onUpdateProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
+  quoteProposals: SalesQuoteProposal[];
+  quoteProposalStatus: string;
+  onLoadQuoteProposals: (quoteId: string) => void;
+  onCreateQuoteProposal: (quote: SalesQuote) => void;
   presalesRules: PresalesHardwareRule[];
   presalesStatus: string;
   onGenerateBaselineBom: (quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
@@ -10305,13 +10554,29 @@ function SalesQuoteBuilder({
   const [presalesTier, setPresalesTier] = useState("");
   const [presalesNodeCount, setPresalesNodeCount] = useState(1);
   const [presalesCloudSync, setPresalesCloudSync] = useState(false);
-  const [bomLineDraft, setBomLineDraft] = useState({ item: "", qty: 1, notes: "" });
+  const [bomLineDraft, setBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "" });
+  const [proposalClientEmailDraft, setProposalClientEmailDraft] = useState("");
+  const [proposalSummaryDraft, setProposalSummaryDraft] = useState("");
+  const [copiedProposalId, setCopiedProposalId] = useState("");
 
   const selectedQuote = salesQuotes.find((quote) => quote.id === selectedQuoteId) ?? null;
   const selectedLocation = selectedQuote?.locations.find((location) => location.id === selectedLocationId) ?? null;
   // Same idea as Admin -> Pre-Sales Rules: categories come straight from the
   // Product Catalog instead of a freeform typed tier.
   const catalogCategories = Array.from(new Set(catalogItems.map((item) => item.category.trim()).filter(Boolean))).sort();
+  const activeCatalogItems = catalogItems.filter((item) => !item.isRetired);
+
+  useEffect(() => {
+    if (selectedQuoteId) {
+      onLoadQuoteProposals(selectedQuoteId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedQuoteId]);
+
+  useEffect(() => {
+    setProposalClientEmailDraft(selectedQuote?.clientEmail ?? "");
+    setProposalSummaryDraft(selectedQuote?.proposalSummary ?? "");
+  }, [selectedQuote?.id, selectedQuote?.clientEmail, selectedQuote?.proposalSummary]);
 
   function openQuote(id: string) {
     setSelectedQuoteId(id);
@@ -10508,28 +10773,50 @@ function SalesQuoteBuilder({
             <span className="label">Quote BOM</span>
             <p className="muted">Persisted line items for this quote -- this is what a Project pulls in once the quote is marked Closed - Won.</p>
             <ul className="line-list">
-              {selectedQuote.bomLines.map((line) => (
-                <li className="line-item" key={line.id}>
-                  <div>
-                    <strong>{line.item}</strong>
-                    <span>Qty {line.qty}{line.notes ? ` -- ${line.notes}` : ""}</span>
-                  </div>
-                  <button className="icon-button" type="button" onClick={() => onDeleteBomLine(selectedQuote.id, line.id)} aria-label="Remove line">x</button>
-                </li>
-              ))}
+              {selectedQuote.bomLines.map((line) => {
+                const linkedItem = line.catalogItemId ? catalogItems.find((item) => item.id === line.catalogItemId) : undefined;
+                return (
+                  <li className="line-item" key={line.id}>
+                    <div>
+                      <strong>{line.item}</strong>
+                      <span>Qty {line.qty}{line.notes ? ` -- ${line.notes}` : ""}</span>
+                      <select
+                        className="bom-line-catalog-link"
+                        value={line.catalogItemId ?? ""}
+                        onChange={(event) => onUpdateBomLineCatalogLink(selectedQuote.id, line.id, event.target.value || null)}
+                      >
+                        <option value="">No catalog link (labor/service line)</option>
+                        {activeCatalogItems.map((item) => (
+                          <option key={item.id} value={item.id}>{item.productName}</option>
+                        ))}
+                      </select>
+                      {linkedItem && <small className="muted">Pulls image, description &amp; datasheet from: {linkedItem.productName}</small>}
+                    </div>
+                    <button className="icon-button" type="button" onClick={() => onDeleteBomLine(selectedQuote.id, line.id)} aria-label="Remove line">x</button>
+                  </li>
+                );
+              })}
               {selectedQuote.bomLines.length === 0 && <li className="empty-compact-state">No BOM lines yet.</li>}
             </ul>
             <div className="submittal-create-row">
               <input placeholder="Item name" value={bomLineDraft.item} onChange={(event) => setBomLineDraft({ ...bomLineDraft, item: event.target.value })} />
               <input type="number" min={0.01} step={0.01} value={bomLineDraft.qty} onChange={(event) => setBomLineDraft({ ...bomLineDraft, qty: Number(event.target.value) || 1 })} />
               <input placeholder="Notes (optional)" value={bomLineDraft.notes} onChange={(event) => setBomLineDraft({ ...bomLineDraft, notes: event.target.value })} />
+              <select value={bomLineDraft.catalogItemId} onChange={(event) => setBomLineDraft({ ...bomLineDraft, catalogItemId: event.target.value })}>
+                <option value="">No catalog link (optional)</option>
+                {activeCatalogItems.map((item) => (
+                  <option key={item.id} value={item.id}>{item.productName}</option>
+                ))}
+              </select>
               <button
                 className="secondary-action mini-action"
                 type="button"
                 disabled={!bomLineDraft.item.trim()}
                 onClick={() => {
-                  onAddBomLines(selectedQuote.id, [{ item: bomLineDraft.item.trim(), qty: bomLineDraft.qty, notes: bomLineDraft.notes.trim() || undefined }]);
-                  setBomLineDraft({ item: "", qty: 1, notes: "" });
+                  onAddBomLines(selectedQuote.id, [
+                    { item: bomLineDraft.item.trim(), qty: bomLineDraft.qty, notes: bomLineDraft.notes.trim() || undefined, catalogItemId: bomLineDraft.catalogItemId || undefined },
+                  ]);
+                  setBomLineDraft({ item: "", qty: 1, notes: "", catalogItemId: "" });
                 }}
               >
                 + Add line
@@ -10559,6 +10846,84 @@ function SalesQuoteBuilder({
               >
                 Generate Baseline BOM
               </button>
+            </div>
+
+            <span className="label">Quote Proposal</span>
+            <p className="muted">
+              Client-facing proposal built from this quote's BOM plus the shared boilerplate wording (edit that wording in Admin -&gt; Proposal Template).
+              v1 is a shareable web page, not a generated PDF file -- use your browser's Print/Save as PDF for a PDF copy once a client approves.
+            </p>
+            <div className="submittal-create-row">
+              <input
+                placeholder="Client email"
+                value={proposalClientEmailDraft}
+                onChange={(event) => setProposalClientEmailDraft(event.target.value)}
+                onBlur={() => {
+                  if (proposalClientEmailDraft.trim() !== (selectedQuote.clientEmail ?? "")) {
+                    onUpdateProposalFields(selectedQuote.id, { clientEmail: proposalClientEmailDraft.trim() });
+                  }
+                }}
+              />
+            </div>
+            <label className="quote-status-field">
+              Executive summary (hand-written per deal)
+              <textarea
+                value={proposalSummaryDraft}
+                onChange={(event) => setProposalSummaryDraft(event.target.value)}
+                onBlur={() => {
+                  if (proposalSummaryDraft !== (selectedQuote.proposalSummary ?? "")) {
+                    onUpdateProposalFields(selectedQuote.id, { proposalSummary: proposalSummaryDraft });
+                  }
+                }}
+                rows={3}
+                placeholder="A short paragraph introducing this proposal to the client..."
+              />
+            </label>
+            <button
+              className="primary-action mini-action"
+              type="button"
+              disabled={!proposalClientEmailDraft.trim()}
+              onClick={() => onCreateQuoteProposal(selectedQuote)}
+            >
+              Create &amp; Send Proposal
+            </button>
+            {quoteProposalStatus && <small className="muted">{quoteProposalStatus}</small>}
+            <div className="submittal-list">
+              {quoteProposals.filter((proposal) => proposal.quoteId === selectedQuote.id).length === 0 && (
+                <div className="empty-compact-state">No proposals yet for this quote.</div>
+              )}
+              {quoteProposals
+                .filter((proposal) => proposal.quoteId === selectedQuote.id)
+                .map((proposal) => (
+                  <div className="submittal-row" key={proposal.id}>
+                    <div className="submittal-row-head">
+                      <strong>Version {proposal.version}</strong>
+                      <span className={`status-pill submittal-status-${proposal.status}`}>{proposal.status.replace(/_/g, " ")}</span>
+                    </div>
+                    <div className="submittal-meta">
+                      <span>Sent {proposal.sentAt ? new Date(proposal.sentAt).toLocaleDateString() : "-"}</span>
+                      {proposal.respondedAt && (
+                        <span>Responded {new Date(proposal.respondedAt).toLocaleDateString()} by {proposal.approvalName || "client"}</span>
+                      )}
+                    </div>
+                    {proposal.responseNotes && <p className="submittal-notes">"{proposal.responseNotes}"</p>}
+                    {proposal.shareToken && (
+                      <button
+                        className="secondary-action mini-action"
+                        type="button"
+                        onClick={() => {
+                          const link = `${window.location.origin}${window.location.pathname}?proposal=${proposal.shareToken}`;
+                          navigator.clipboard?.writeText(link).then(() => {
+                            setCopiedProposalId(proposal.id);
+                            setTimeout(() => setCopiedProposalId(""), 2000);
+                          });
+                        }}
+                      >
+                        {copiedProposalId === proposal.id ? "Copied!" : "Copy client link"}
+                      </button>
+                    )}
+                  </div>
+                ))}
             </div>
           </div>
         </section>
@@ -11940,6 +12305,153 @@ function SubmittalPublicPage({ token }: { token: string }) {
   );
 }
 
+// Public, no-login client view for a Quote Proposal. Reached via
+// ?proposal=<token> on the root URL, same pattern as SubmittalPublicPage
+// above -- anon-key RPCs only, no auth state. v1 has no generated PDF file;
+// the "Print / Save as PDF" button below just calls window.print() against
+// a dedicated print stylesheet (see styles.css .proposal-public-page
+// @media print rules), which is the agreed amount of scope for now.
+type ProposalResponseStatus = "approved" | "rejected" | "revision_requested";
+
+function ProposalPublicPage({ token }: { token: string }) {
+  const [phase, setPhase] = useState<"loading" | "error" | "ready" | "responded">("loading");
+  const [data, setData] = useState<PublicQuoteProposalView | null>(null);
+  const [approverName, setApproverName] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [respondedStatus, setRespondedStatus] = useState<ProposalResponseStatus | null>(null);
+
+  useEffect(() => {
+    fetchPublicQuoteProposal(token)
+      .then((result) => {
+        if (!result) {
+          setPhase("error");
+          return;
+        }
+        setData(result);
+        if (result.status === "sent") {
+          setPhase("ready");
+        } else {
+          setPhase("responded");
+          if (result.status === "approved" || result.status === "rejected" || result.status === "revision_requested") {
+            setRespondedStatus(result.status);
+          }
+        }
+      })
+      .catch(() => setPhase("error"));
+  }, [token]);
+
+  async function respond(newStatus: ProposalResponseStatus) {
+    if (!approverName.trim()) {
+      setSubmitError("Please enter your name before responding.");
+      return;
+    }
+    setSubmitError("");
+    setSubmitting(true);
+    const ok = await respondToPublicQuoteProposal(token, newStatus, approverName.trim(), notes.trim());
+    setSubmitting(false);
+    if (ok) {
+      setRespondedStatus(newStatus);
+      setPhase("responded");
+    } else {
+      setSubmitError("Could not submit your response. Please try again or contact your Ergon representative.");
+    }
+  }
+
+  if (phase === "loading") {
+    return (
+      <div className="submittal-public-page">
+        <p>Loading proposal...</p>
+      </div>
+    );
+  }
+
+  if (phase === "error" || !data) {
+    return (
+      <div className="submittal-public-page">
+        <h1>Link not found</h1>
+        <p>This proposal link is invalid or has expired. Please contact your Ergon representative for a new link.</p>
+      </div>
+    );
+  }
+
+  const snapshot = data.contentSnapshot;
+
+  return (
+    <div className="submittal-public-page proposal-public-page">
+      <div className="proposal-print-actions">
+        <button type="button" className="secondary-action mini-action" onClick={() => window.print()}>Print / Save as PDF</button>
+      </div>
+
+      <header className="submittal-public-header">
+        <h1>{snapshot.siteName}</h1>
+        <p>Proposal v{data.version}{snapshot.clientName ? ` - ${snapshot.clientName}` : ""}{snapshot.city ? ` - ${snapshot.city}` : ""}</p>
+        {snapshot.quoteRef && <p className="muted">Reference {snapshot.quoteRef}</p>}
+      </header>
+
+      {phase === "responded" && respondedStatus && (
+        <div className={`submittal-response-banner submittal-status-${respondedStatus}`}>
+          {respondedStatus === "approved" && "Thank you - this proposal has been approved."}
+          {respondedStatus === "rejected" && "This proposal has been marked as rejected. Your Ergon representative will follow up."}
+          {respondedStatus === "revision_requested" && "Thanks - a revision has been requested. Your Ergon representative will follow up."}
+        </div>
+      )}
+
+      {snapshot.proposalSummary && (
+        <section className="submittal-public-section">
+          <h2>Executive Summary</h2>
+          <p>{snapshot.proposalSummary}</p>
+        </section>
+      )}
+
+      <section className="submittal-public-section">
+        <h2>Pricing &amp; Bill of Material</h2>
+        <table className="proposal-bom-table">
+          <thead><tr><th></th><th>Item</th><th>Description</th><th>Qty</th><th>Datasheet</th></tr></thead>
+          <tbody>
+            {snapshot.bom.map((line, index) => (
+              <tr key={`${line.item}-${index}`}>
+                <td>{line.imageUrl ? <img className="proposal-bom-thumb" src={line.imageUrl} alt={line.item} /> : null}</td>
+                <td><strong>{line.item}</strong>{line.manufacturer ? <span className="muted"> - {line.manufacturer}</span> : null}</td>
+                <td>{line.description || line.notes || "-"}</td>
+                <td>{line.qty}</td>
+                <td>{line.hasDatasheet ? <a href={line.datasheetUrl} target="_blank" rel="noreferrer">View datasheet</a> : "-"}</td>
+              </tr>
+            ))}
+            {snapshot.bom.length === 0 && (
+              <tr><td colSpan={5} className="empty-compact-state">No line items on this proposal.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      {snapshot.templateSections.map((section) => (
+        <section className="submittal-public-section" key={section.title}>
+          <h2>{section.title}</h2>
+          {section.body.split("\n").map((paragraph, index) => (
+            paragraph.trim() ? <p key={index}>{paragraph}</p> : <br key={index} />
+          ))}
+        </section>
+      ))}
+
+      {phase === "ready" && (
+        <section className="submittal-public-section submittal-response-form proposal-no-print">
+          <h2>Your Response</h2>
+          <label>Your name<input value={approverName} onChange={(event) => setApproverName(event.target.value)} /></label>
+          <label>Notes (optional)<textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
+          {submitError && <small className="error-text">{submitError}</small>}
+          <div className="submittal-response-actions">
+            <button type="button" className="primary-action" disabled={submitting} onClick={() => respond("approved")}>Approve</button>
+            <button type="button" className="secondary-action" disabled={submitting} onClick={() => respond("revision_requested")}>Request Revision</button>
+            <button type="button" className="secondary-action" disabled={submitting} onClick={() => respond("rejected")}>Reject</button>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 // Public, pre-login landing page for a real invite. Reached via
 // ?invite=<token> on the root URL and rendered instead of <App/> entirely,
 // same pattern as SubmittalPublicPage above -- it talks to Supabase only
@@ -12067,11 +12579,20 @@ function InviteLandingPage({ token }: { token: string }) {
 }
 
 const submittalToken = new URLSearchParams(window.location.search).get("submittal");
+const proposalToken = new URLSearchParams(window.location.search).get("proposal");
 const inviteToken = new URLSearchParams(window.location.search).get("invite");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    {inviteToken ? <InviteLandingPage token={inviteToken} /> : submittalToken ? <SubmittalPublicPage token={submittalToken} /> : <App />}
+    {inviteToken ? (
+      <InviteLandingPage token={inviteToken} />
+    ) : submittalToken ? (
+      <SubmittalPublicPage token={submittalToken} />
+    ) : proposalToken ? (
+      <ProposalPublicPage token={proposalToken} />
+    ) : (
+      <App />
+    )}
   </StrictMode>
 );
 

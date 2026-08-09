@@ -5134,6 +5134,12 @@ export type SalesQuoteBomLine = {
   item: string;
   qty: number;
   notes: string;
+  // Optional link to a real Product Catalog item (migration 053). Nullable
+  // on purpose: real proposals mix catalog-backed product rows (which pull
+  // image/description/datasheet automatically) with free-text labor/service
+  // rows -- "Project Management Hours", "Travel and Related Expenses" --
+  // that have no catalog entry at all.
+  catalogItemId: string | null;
 };
 
 export type SalesQuote = {
@@ -5154,6 +5160,12 @@ export type SalesQuote = {
   // actually gets pulled into a Project once the deal closes, and what the
   // relocated Pre-Sales Quick Estimate calculator writes into.
   bomLines: SalesQuoteBomLine[];
+  // Migration 053: needed to actually send a Quote Proposal to a client.
+  clientEmail: string;
+  // Per-deal executive-summary paragraph a rep types -- the one
+  // hand-written part of a proposal; everything else pulls from the BOM or
+  // the shared proposal_template_sections boilerplate.
+  proposalSummary: string;
 };
 
 type SalesQuoteLocationImageRow = {
@@ -5187,6 +5199,7 @@ type SalesQuoteBomLineRow = {
   qty: number | string;
   notes: string | null;
   line_sort: number;
+  catalog_item_id: string | null;
 };
 
 type SalesQuoteRow = {
@@ -5199,6 +5212,8 @@ type SalesQuoteRow = {
   status: string | null;
   sales_quote_locations: SalesQuoteLocationRow[];
   sales_quote_bom_lines: SalesQuoteBomLineRow[];
+  client_email: string | null;
+  proposal_summary: string | null;
 };
 
 function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQuoteLocationImage {
@@ -5236,6 +5251,7 @@ function mapSalesQuoteBomLineRow(row: SalesQuoteBomLineRow): SalesQuoteBomLine {
     item: row.item_name,
     qty: Number(row.qty) || 0,
     notes: row.notes ?? "",
+    catalogItemId: row.catalog_item_id ?? null,
   };
 }
 
@@ -5252,11 +5268,13 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
       .map(mapSalesQuoteLocationRow)
       .sort((a, b) => a.lineSort - b.lineSort),
     bomLines: (row.sales_quote_bom_lines ?? []).map(mapSalesQuoteBomLineRow),
+    clientEmail: row.client_email ?? "",
+    proposalSummary: row.proposal_summary ?? "",
   };
 }
 
 const SALES_QUOTE_SELECT =
-  "id,client_name,site_name,city,created_by_email,created_at,status,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort)";
+  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5330,6 +5348,8 @@ export async function createSalesQuote(
     status: "open",
     locations: locationRows.map((row) => mapSalesQuoteLocationRow({ ...row, sales_quote_location_images: [] })),
     bomLines: [],
+    clientEmail: "",
+    proposalSummary: "",
   };
 }
 
@@ -5344,11 +5364,34 @@ export async function updateSalesQuoteStatus(id: string, status: SalesQuote["sta
   });
 }
 
+// Migration 053: client email + proposal summary, edited from the Quote
+// detail page's new "Create & Send Proposal" panel.
+export async function updateSalesQuoteProposalFields(
+  id: string,
+  updates: Partial<{ clientEmail: string; proposalSummary: string }>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.clientEmail !== undefined) payload.client_email = updates.clientEmail || null;
+  if (updates.proposalSummary !== undefined) payload.proposal_summary = updates.proposalSummary || null;
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
 // Bulk insert -- used both by the manual "add line" form and by the
 // Pre-Sales Quick Estimate calculator pre-filling a quote's BOM in one shot.
 export async function addSalesQuoteBomLines(
   quoteId: string,
-  lines: Array<{ item: string; qty: number; notes?: string }>,
+  lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>,
   nextLineSort: number,
   accessToken?: string,
 ): Promise<SalesQuoteBomLine[]> {
@@ -5365,6 +5408,7 @@ export async function addSalesQuoteBomLines(
         qty: line.qty,
         notes: line.notes || null,
         line_sort: nextLineSort + index,
+        catalog_item_id: line.catalogItemId || null,
       })),
     ),
   });
@@ -5373,6 +5417,17 @@ export async function addSalesQuoteBomLines(
   }
   const rows = (await response.json()) as SalesQuoteBomLineRow[];
   return rows.map(mapSalesQuoteBomLineRow);
+}
+
+export async function updateSalesQuoteBomLineCatalogLink(id: string, catalogItemId: string | null, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ catalog_item_id: catalogItemId }),
+  });
 }
 
 export async function deleteSalesQuoteBomLine(id: string, accessToken?: string): Promise<void> {
@@ -5528,6 +5583,288 @@ export async function updateSalesQuoteLocationImageDescription(imageId: string, 
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ description: description || null }),
+  });
+  return response.ok;
+}
+
+// --- Migration 053: Quote Proposals ----------------------------------------
+// A client-facing, e-signable proposal built from a Sales Quote's BOM + a
+// shared, admin-editable boilerplate template. Deliberately built native
+// in-app (not a PandaDoc integration) per E, cloning the exact same
+// share-token / security-definer-RPC / click-to-approve pattern already
+// proven by Project Submittals above -- just sourced from a sales_quote
+// instead of a project. v1 ships as an HTML page with a browser
+// Print/Save as PDF affordance; no PDF-generation library exists in this
+// app, and that's the agreed amount of scope for now.
+
+export type ProposalTemplateSection = {
+  id: string;
+  sectionKey: string;
+  title: string;
+  body: string;
+  sequenceOrder: number;
+  updatedAt: string;
+};
+
+type ProposalTemplateSectionRow = {
+  id: string;
+  section_key: string;
+  title: string;
+  body: string;
+  sequence_order: number;
+  updated_at: string;
+};
+
+function mapProposalTemplateSectionRow(row: ProposalTemplateSectionRow): ProposalTemplateSection {
+  return {
+    id: row.id,
+    sectionKey: row.section_key,
+    title: row.title,
+    body: row.body,
+    sequenceOrder: row.sequence_order,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function loadProposalTemplateSections(accessToken?: string): Promise<ProposalTemplateSection[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("proposal_template_sections?select=*&order=sequence_order.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ProposalTemplateSectionRow[];
+  return rows.map(mapProposalTemplateSectionRow);
+}
+
+// Public (anon) read, used by the client-facing proposal page to render
+// section titles/bodies -- these are gated select-open to authenticated
+// only at the RLS layer, so the public page instead receives the sections
+// baked into content_snapshot at send time (see createQuoteProposal),
+// exactly like Submittals freeze their SOW text. This loader is for the
+// authenticated Admin template editor screen only.
+export async function updateProposalTemplateSection(
+  id: string,
+  updates: Partial<{ title: string; body: string; sequenceOrder: number }>,
+  accessToken?: string,
+): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.title !== undefined) payload.title = updates.title;
+  if (updates.body !== undefined) payload.body = updates.body;
+  if (updates.sequenceOrder !== undefined) payload.sequence_order = updates.sequenceOrder;
+  payload.updated_at = new Date().toISOString();
+  const response = await fetch(supabaseUrl(`proposal_template_sections?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+  return response.ok;
+}
+
+export type ProposalBomLineSnapshot = {
+  item: string;
+  qty: number;
+  notes: string;
+  // Pulled from the linked catalog item (if any) at send time and frozen
+  // into the snapshot, same reasoning as Submittals freezing the BOM --
+  // if the catalog item changes later, already-sent proposals shouldn't
+  // silently change under the client.
+  imageUrl: string;
+  description: string;
+  manufacturer: string;
+  hasDatasheet: boolean;
+  datasheetUrl: string;
+};
+
+export type ProposalTemplateSectionSnapshot = { title: string; body: string };
+
+export type ProposalSnapshot = {
+  clientName: string;
+  siteName: string;
+  city: string;
+  quoteRef: string;
+  proposalSummary: string;
+  bom: ProposalBomLineSnapshot[];
+  templateSections: ProposalTemplateSectionSnapshot[];
+};
+
+export type SalesQuoteProposal = {
+  id: string;
+  quoteId: string;
+  version: number;
+  status: "draft" | "sent" | "approved" | "rejected" | "revision_requested";
+  contentSnapshot: ProposalSnapshot;
+  clientName: string;
+  clientEmail: string;
+  sentAt: string | null;
+  respondedAt: string | null;
+  responseNotes: string;
+  approvalName: string;
+  shareToken: string | null;
+  createdAt: string;
+};
+
+export type PublicQuoteProposalView = {
+  proposalId: string;
+  status: SalesQuoteProposal["status"];
+  version: number;
+  contentSnapshot: ProposalSnapshot;
+  clientName: string;
+};
+
+type SalesQuoteProposalRow = {
+  id: string;
+  quote_id: string;
+  version: number;
+  status: string;
+  content_snapshot: ProposalSnapshot;
+  client_name: string | null;
+  client_email: string | null;
+  sent_at: string | null;
+  responded_at: string | null;
+  response_notes: string | null;
+  approval_name: string | null;
+  created_at: string;
+};
+
+function mapQuoteProposalRow(row: SalesQuoteProposalRow, shareToken: string | null): SalesQuoteProposal {
+  return {
+    id: row.id,
+    quoteId: row.quote_id,
+    version: row.version,
+    status: row.status as SalesQuoteProposal["status"],
+    contentSnapshot: row.content_snapshot,
+    clientName: row.client_name ?? "",
+    clientEmail: row.client_email ?? "",
+    sentAt: row.sent_at,
+    respondedAt: row.responded_at,
+    responseNotes: row.response_notes ?? "",
+    approvalName: row.approval_name ?? "",
+    shareToken,
+    createdAt: row.created_at,
+  };
+}
+
+export async function loadProposalsForQuote(quoteId: string, accessToken?: string): Promise<SalesQuoteProposal[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !quoteId) {
+    return [];
+  }
+  const [proposalsRes, tokensRes] = await Promise.all([
+    fetch(supabaseUrl(`sales_quote_proposals?quote_id=eq.${quoteId}&select=*&order=version.desc`), {
+      headers: supabaseHeaders(accessToken),
+    }),
+    fetch(supabaseUrl(`public_share_tokens?entity_type=eq.sales_quote_proposal&select=token,entity_id`), {
+      headers: supabaseHeaders(accessToken),
+    }),
+  ]);
+  if (!proposalsRes.ok) {
+    return [];
+  }
+  const rows = (await proposalsRes.json()) as SalesQuoteProposalRow[];
+  const tokenRows = tokensRes.ok ? ((await tokensRes.json()) as ShareTokenRow[]) : [];
+  return rows.map((row) => mapQuoteProposalRow(row, tokenRows.find((entry) => entry.entity_id === row.id)?.token ?? null));
+}
+
+export async function createQuoteProposal(
+  input: { quoteId: string; version: number; contentSnapshot: ProposalSnapshot; clientName: string; clientEmail: string },
+  accessToken?: string,
+): Promise<SalesQuoteProposal> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("sales_quote_proposals"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      quote_id: input.quoteId,
+      version: input.version,
+      status: "sent",
+      content_snapshot: input.contentSnapshot,
+      client_name: input.clientName || null,
+      client_email: input.clientEmail || null,
+      sent_at: new Date().toISOString(),
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not create proposal: ${response.status}`);
+  }
+  const rows = (await response.json()) as SalesQuoteProposalRow[];
+  return mapQuoteProposalRow(rows[0], null);
+}
+
+export async function createQuoteProposalShareToken(proposalId: string, accessToken?: string): Promise<string> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const token = generateShareToken();
+  const response = await fetch(supabaseUrl("public_share_tokens"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ token, entity_type: "sales_quote_proposal", entity_id: proposalId }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not create share link: ${response.status}`);
+  }
+  return token;
+}
+
+export async function fetchPublicQuoteProposal(token: string): Promise<PublicQuoteProposalView | null> {
+  if (!isRemotePersistenceConfigured() || !token) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("rpc/get_quote_proposal_by_token"), {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ share_token: token }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as Array<{
+    proposal_id: string;
+    status: string;
+    version: number;
+    content_snapshot: ProposalSnapshot;
+    client_name: string | null;
+  }>;
+  if (!rows.length) {
+    return null;
+  }
+  const row = rows[0];
+  return {
+    proposalId: row.proposal_id,
+    status: row.status as SalesQuoteProposal["status"],
+    version: row.version,
+    contentSnapshot: row.content_snapshot,
+    clientName: row.client_name ?? "",
+  };
+}
+
+export async function respondToPublicQuoteProposal(
+  token: string,
+  newStatus: "approved" | "rejected" | "revision_requested",
+  approverName: string,
+  notes: string,
+): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !token) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl("rpc/respond_to_quote_proposal"), {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({
+      share_token: token,
+      new_status: newStatus,
+      approver_name: approverName || "Unknown",
+      approver_ip: "",
+      notes: notes || "",
+    }),
   });
   return response.ok;
 }

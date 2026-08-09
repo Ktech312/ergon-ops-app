@@ -4289,6 +4289,92 @@ td.empty-compact-state {
   margin-top: 12px;
 }
 
+/* Migration 053: Quote Proposals ------------------------------------------
+   Reuses .submittal-public-page/.submittal-public-section almost verbatim
+   (same "client review page" shape) -- this block only adds what's unique
+   to a proposal: the pricing table's thumbnail/datasheet columns, the
+   Admin template editor cards, the BOM-line catalog-link picker, and the
+   print stylesheet that stands in for real PDF generation in v1. */
+
+.proposal-bom-table th,
+.proposal-bom-table td {
+  padding: 8px 6px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.proposal-bom-thumb {
+  border-radius: 6px;
+  height: 40px;
+  object-fit: contain;
+  width: 40px;
+}
+
+.proposal-print-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.bom-line-catalog-link {
+  margin-top: 6px;
+  max-width: 260px;
+}
+
+.proposal-template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.proposal-template-section-editor {
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.proposal-template-title-input {
+  border: none;
+  background: transparent;
+  color: #a01029;
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  padding: 0;
+  width: 100%;
+}
+
+.proposal-template-section-editor textarea {
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  font: inherit;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+/* Print/Save as PDF affordance -- the agreed v1 stand-in for real PDF
+   generation (no PDF-writing library exists in this app). Hides chrome
+   that only makes sense on-screen and lets the proposal content flow as a
+   normal printed document. */
+@media print {
+  .proposal-no-print,
+  .proposal-print-actions {
+    display: none !important;
+  }
+
+  .proposal-public-page {
+    max-width: none;
+    padding: 0;
+  }
+
+  .submittal-public-section {
+    border: none;
+    box-shadow: none;
+    page-break-inside: avoid;
+  }
+}
+
 /* Phase 6 addendum: Gantt ------------------------------------------------- */
 
 .task-gantt {
