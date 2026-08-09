@@ -40,7 +40,7 @@ button {
   background: white;
   border: 1px solid #ded7cb;
   border-radius: 7px;
-  color: #a02f0d;
+  color: #a51c12;
   font: inherit;
   min-height: 32px;
   padding: 0 8px;
@@ -91,7 +91,7 @@ button {
 }
 
 .view-mode-tab.active {
-  background: linear-gradient(135deg, #d05011, #8e250b);
+  background: linear-gradient(135deg, #e25112, #ae132d);
   color: white;
 }
 
@@ -223,7 +223,7 @@ button {
   background: #f4f2f1;
   border: none;
   border-radius: 4px;
-  color: #a02f0d;
+  color: #a51c12;
   cursor: pointer;
   font-size: 10px;
   overflow: hidden;
@@ -309,7 +309,7 @@ button {
 }
 
 .workload-chip strong {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 12px;
 }
 
@@ -365,7 +365,7 @@ button {
 .status-to_do { background: #f1efee; color: #68594a; }
 .status-in_progress { background: #fff1d6; color: #906313; }
 .status-ready_for_review { background: #eff3e8; color: #627a29; }
-.status-done { background: #f0ecea; color: #a02f0d; }
+.status-done { background: #f0ecea; color: #a51c12; }
 .status-blocked { background: #fbe3df; color: #9a2f20; }
 
 .priority-pill {
@@ -628,7 +628,7 @@ button {
 
 .nav-button.active,
 .nav-button:hover {
-  background: linear-gradient(135deg, #d05011, #8e250b);
+  background: linear-gradient(135deg, #e25112, #ae132d);
   color: white;
 }
 
@@ -812,7 +812,7 @@ button {
 }
 
 .account-menu-admin-link.active {
-  background: linear-gradient(135deg, #d05011, #8e250b);
+  background: linear-gradient(135deg, #e25112, #ae132d);
   color: white;
 }
 
@@ -828,7 +828,7 @@ button {
   background: #fffdf9;
   border: 1px solid #ded7cb;
   border-radius: 8px;
-  color: #a02f0d;
+  color: #a51c12;
   font: inherit;
   min-height: 38px;
   min-width: 160px;
@@ -862,7 +862,7 @@ button {
 
 .sync-status.synced {
   background: #f0ecea;
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .sync-status.error {
@@ -959,7 +959,7 @@ button {
 }
 
 .metric div {
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .metric span,
@@ -1037,7 +1037,7 @@ td small {
 }
 
 .package-cost {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 24px;
   font-weight: 800;
   margin-bottom: 8px;
@@ -1165,7 +1165,7 @@ td small {
 }
 
 .role-workbench strong {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 14px;
 }
 
@@ -1185,7 +1185,7 @@ td small {
   background: #fffdf9;
   border: 1px solid #ded7cb;
   border-radius: 4px;
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 10px;
   font-weight: 900;
   line-height: 1;
@@ -1243,7 +1243,7 @@ td small {
   background: #f8f5ef;
   border: 1px solid #e8e1d5;
   border-radius: 6px;
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 12px;
   font-weight: 900;
   min-height: 28px;
@@ -1324,7 +1324,7 @@ td small {
   background: #f8f5ef;
   border: 1px solid #ded7cb;
   border-radius: 8px;
-  color: #a02f0d;
+  color: #a51c12;
   cursor: pointer;
   display: inline-flex;
   height: 36px;
@@ -1350,7 +1350,7 @@ td small {
   background: #f8f5ef;
   border: 1px dashed #b8ad9b;
   border-radius: 8px;
-  color: #a02f0d;
+  color: #a51c12;
   cursor: pointer;
   display: grid;
   gap: 6px;
@@ -1408,7 +1408,7 @@ td small {
 }
 
 .drive-card {
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .drive-card div,
@@ -1439,7 +1439,7 @@ td small {
   background: #fffdf9;
   border: 1px solid #ded7cb;
   border-radius: 8px;
-  color: #a02f0d;
+  color: #a51c12;
   font: inherit;
   font-size: 12px;
   font-weight: 800;
@@ -1504,7 +1504,7 @@ td small {
 
 .status.ok {
   background: #f0ecea;
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .status.retired {
@@ -1530,7 +1530,7 @@ td small {
 
 .status-select.ok {
   background: #f0ecea;
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .inline-form {
@@ -1569,8 +1569,8 @@ td small {
 
 .primary-action {
   align-items: center;
-  background: linear-gradient(135deg, #d05011, #8e250b);
-  border: 1px solid #8e250b;
+  background: linear-gradient(135deg, #e25112, #ae132d);
+  border: 1px solid #ae132d;
   border-radius: 8px;
   color: white;
   cursor: pointer;
@@ -1601,7 +1601,7 @@ td small {
   background: #fffdf9;
   border: 1px solid #ded7cb;
   border-radius: 8px;
-  color: #a02f0d;
+  color: #a51c12;
   cursor: pointer;
   display: inline-flex;
   font-weight: 800;
@@ -1676,7 +1676,7 @@ td small {
 }
 
 .segmented-tabs button.active {
-  background: linear-gradient(135deg, #d05011, #8e250b);
+  background: linear-gradient(135deg, #e25112, #ae132d);
   color: white;
 }
 
@@ -1703,7 +1703,7 @@ td small {
 }
 
 .locked-ref strong {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 14px;
 }
 
@@ -1751,7 +1751,7 @@ td small {
 }
 
 .locked-ref-inline strong {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 13px;
 }
 
@@ -1808,7 +1808,7 @@ td small {
 
 .progress-ring {
   aspect-ratio: 1;
-  background: conic-gradient(#a02f0d calc(var(--pct) * 1%), #f3f2f1 0);
+  background: conic-gradient(#a51c12 calc(var(--pct) * 1%), #f3f2f1 0);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1827,7 +1827,7 @@ td small {
 }
 
 .progress-ring span {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 13px;
   font-weight: 800;
   position: relative;
@@ -1863,8 +1863,8 @@ td small {
 }
 
 .table-action {
-  background: linear-gradient(135deg, #d05011, #8e250b);
-  border: 1px solid #8e250b;
+  background: linear-gradient(135deg, #e25112, #ae132d);
+  border: 1px solid #ae132d;
   border-radius: 8px;
   color: white;
   cursor: pointer;
@@ -1891,7 +1891,7 @@ td small {
 .secondary-table-action {
   background: #fffdf9;
   border-color: #ded7cb;
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .request-queue {
@@ -1999,7 +1999,7 @@ td small {
   background: #fffdf9;
   border: 1px solid #ded7cb;
   border-radius: 7px;
-  color: #a02f0d;
+  color: #a51c12;
   font: inherit;
   font-size: 13px;
   font-weight: 800;
@@ -2047,7 +2047,7 @@ td small {
 
 .receive-request-summary strong,
 .request-edit-summary strong {
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .danger-action {
@@ -2075,7 +2075,7 @@ td small {
 }
 
 .progress-cell b {
-  background: linear-gradient(90deg, #8e250b, #d05011);
+  background: linear-gradient(90deg, #ae132d, #e25112);
   display: block;
   height: 100%;
 }
@@ -2103,8 +2103,8 @@ td small {
 
 .project-select-card.active,
 .project-select-card:hover {
-  border-color: #a02f0d;
-  box-shadow: inset 0 0 0 1px #a02f0d;
+  border-color: #a51c12;
+  box-shadow: inset 0 0 0 1px #a51c12;
 }
 
 .project-select-card div {
@@ -2166,7 +2166,7 @@ td small {
   background: #f8f5ef;
   border: 1px dashed #b8ad9b;
   border-radius: 8px;
-  color: #a02f0d;
+  color: #a51c12;
   cursor: pointer;
   display: grid;
   gap: 6px;
@@ -2181,17 +2181,17 @@ td small {
 
 .sales-dropzone:hover {
   background: #f3efe7;
-  border-color: #a02f0d;
+  border-color: #a51c12;
 }
 
 .sales-dropzone.is-working {
   background: #eef5f1;
-  border-color: #a02f0d;
+  border-color: #a51c12;
   cursor: progress;
 }
 
 .sales-dropzone strong {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 15px;
 }
 
@@ -2221,7 +2221,7 @@ td small {
 }
 
 .source-file svg {
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .source-file span {
@@ -2330,7 +2330,7 @@ td small {
   background: white;
   border: 1px solid #ded7cb;
   border-radius: 7px;
-  color: #a02f0d;
+  color: #a51c12;
   font: inherit;
   min-height: 34px;
   padding: 0 8px;
@@ -2717,7 +2717,7 @@ td small {
   background: #f8f5ef;
   border: 1px dashed #b8ad9b;
   border-radius: 8px;
-  color: #a02f0d;
+  color: #a51c12;
   cursor: pointer;
   display: grid;
   gap: 7px;
@@ -2839,7 +2839,7 @@ td.empty-compact-state {
 .tag-toggle.selected {
   background: #f0ecea;
   border-color: #b8d8ca;
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .image-modal-panel {
@@ -2988,7 +2988,7 @@ td.empty-compact-state {
   background: #f8f5ef;
   border: 1px dashed #b8ad9b;
   border-radius: 8px;
-  color: #a02f0d;
+  color: #a51c12;
   cursor: pointer;
   display: grid;
   gap: 6px;
@@ -3260,7 +3260,7 @@ td.empty-compact-state {
 }
 
 .build-confirm-audit strong {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 20px;
 }
 
@@ -3647,7 +3647,7 @@ td.empty-compact-state {
 }
 
 .site-info-list svg {
-  color: #a02f0d;
+  color: #a51c12;
 }
 
 .site-info-list span,
@@ -3788,7 +3788,7 @@ td.empty-compact-state {
 }
 
 .report-total {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 36px;
   font-weight: 800;
 }
@@ -3813,7 +3813,7 @@ td.empty-compact-state {
 }
 
 .bar-row i {
-  background: linear-gradient(90deg, #8e250b, #d05011);
+  background: linear-gradient(90deg, #ae132d, #e25112);
   display: block;
   height: 100%;
 }
@@ -3872,7 +3872,7 @@ td.empty-compact-state {
 }
 
 .cost-down {
-  color: #a02f0d;
+  color: #a51c12;
   font-weight: 900;
 }
 
@@ -3910,7 +3910,7 @@ td.empty-compact-state {
   background: #fffdf9;
   border: 1px solid #ded7cb;
   border-radius: 999px;
-  color: #a02f0d;
+  color: #a51c12;
   display: inline-flex;
   font-size: 12px;
   font-weight: 800;
@@ -4166,7 +4166,7 @@ td.empty-compact-state {
 
 .status-pill.submittal-status-draft { background: #ebe5d8; color: #443c2d; }
 .status-pill.submittal-status-sent { background: #eff3e8; color: #627a29; }
-.status-pill.submittal-status-approved { background: #f0ecea; color: #a02f0d; }
+.status-pill.submittal-status-approved { background: #f0ecea; color: #a51c12; }
 .status-pill.submittal-status-rejected { background: #fbe3df; color: #9a2f20; }
 .status-pill.submittal-status-revision_requested { background: #fff1d6; color: #906313; }
 
@@ -4186,7 +4186,7 @@ td.empty-compact-state {
 }
 
 .submittal-public-header h1 {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 24px;
   margin: 0 0 6px;
 }
@@ -4205,7 +4205,7 @@ td.empty-compact-state {
   width: auto;
 }
 
-.submittal-response-banner.submittal-status-approved { background: #f0ecea; color: #a02f0d; }
+.submittal-response-banner.submittal-status-approved { background: #f0ecea; color: #a51c12; }
 .submittal-response-banner.submittal-status-rejected { background: #fbe3df; color: #9a2f20; }
 .submittal-response-banner.submittal-status-revision_requested { background: #fff1d6; color: #906313; }
 
@@ -4218,7 +4218,7 @@ td.empty-compact-state {
 }
 
 .submittal-public-section h2 {
-  color: #a02f0d;
+  color: #a51c12;
   font-size: 15px;
   margin: 0 0 12px;
 }
@@ -4318,7 +4318,7 @@ td.empty-compact-state {
 }
 
 .task-gantt-bar {
-  background: #a02f0d;
+  background: #a51c12;
   border: none;
   border-radius: 6px;
   color: white;
