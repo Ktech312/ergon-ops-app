@@ -1766,8 +1766,18 @@ function App() {
   // per-row create/update pattern as Purchase Orders/Requests.
   function reloadSalesQuotes(accessToken: string) {
     loadSalesQuotes(accessToken)
-      .then(setSalesQuotes)
-      .catch(() => setSalesQuoteStatus("Could not load sales quotes."));
+      .then((quotes) => {
+        setSalesQuotes(quotes);
+        setSalesQuoteStatus("");
+      })
+      .catch((error) => {
+        // Deliberately NOT clearing salesQuotes here -- a failed reload
+        // should never blank out quotes that are already showing on
+        // screen (that's what made a stale-columns query look like
+        // deleted data). Keep whatever was last successfully loaded and
+        // surface the real error instead.
+        setSalesQuoteStatus(error instanceof Error ? error.message : "Could not load sales quotes.");
+      });
   }
 
   useEffect(() => {

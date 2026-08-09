@@ -5284,7 +5284,12 @@ export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok) {
-    return [];
+    // Throw rather than silently returning [] -- this previously masked a
+    // real failure (e.g. querying columns from a migration that hasn't
+    // been run yet) as "no quotes exist", which looked exactly like data
+    // loss even though nothing in the database had actually changed.
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`Could not load sales quotes (${response.status}): ${errorBody || "unknown error"}`);
   }
   const rows = (await response.json()) as SalesQuoteRow[];
   return rows.map(mapSalesQuoteRow);

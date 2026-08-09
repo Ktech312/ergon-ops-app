@@ -15,12 +15,19 @@
 -- follow-up fix, flagging rather than silently bundling it into this
 -- unrelated migration.
 
+-- Full accumulated list as of migration 049, plus quote_proposal_responded.
+-- (An earlier version of this migration dropped the constraint back down
+-- to migration 024's original 7 values, which would have violated the
+-- check for any existing row using a value added by 046 or 049 -- fixed
+-- before this migration was ever successfully applied.)
 alter table notification_rules drop constraint if exists notification_rules_event_type_check;
 alter table notification_rules add constraint notification_rules_event_type_check
   check (event_type in (
     'task_assigned', 'task_overdue', 'task_status_changed',
     'purchase_request_status_changed', 'build_stage_changed',
-    'submittal_responded', 'low_stock_reached', 'quote_proposal_responded'
+    'submittal_responded', 'low_stock_reached',
+    'catalog_price_change_requested', 'catalog_price_change_reviewed',
+    'user_signup_pending', 'quote_proposal_responded'
   ));
 
 insert into notification_rules (event_type, channels, is_active) values
