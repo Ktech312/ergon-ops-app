@@ -941,6 +941,11 @@ export type CatalogItem = {
   builtinFlasherModule: string;
   additionalSpaceMultiplier: number | null;
   insertQuantity: number | null;
+  // Free-text tags (comma-separated in the UI), same text[] shape as
+  // inventory_items.inventory_tags -- unlike Inventory's fixed-vocabulary
+  // chip picker, Catalog tags aren't tied to any BOM-matching logic, so
+  // there's no fixed list to enforce here.
+  tags: string[];
 };
 
 type CatalogItemRow = {
@@ -968,6 +973,7 @@ type CatalogItemRow = {
   builtin_flasher_module: string | null;
   additional_space_multiplier: number | string | null;
   insert_quantity: number | string | null;
+  tags: string[] | null;
 };
 
 function mapCatalogRow(row: CatalogItemRow): CatalogItem {
@@ -996,6 +1002,7 @@ function mapCatalogRow(row: CatalogItemRow): CatalogItem {
     builtinFlasherModule: row.builtin_flasher_module ?? "",
     additionalSpaceMultiplier: row.additional_space_multiplier === null || row.additional_space_multiplier === undefined ? null : Number(row.additional_space_multiplier),
     insertQuantity: row.insert_quantity === null || row.insert_quantity === undefined ? null : Number(row.insert_quantity),
+    tags: row.tags ?? [],
   };
 }
 
@@ -1024,6 +1031,7 @@ function catalogItemWritePayload(item: Omit<CatalogItem, "id">) {
     builtin_flasher_module: item.builtinFlasherModule || null,
     additional_space_multiplier: item.additionalSpaceMultiplier,
     insert_quantity: item.insertQuantity,
+    tags: item.tags ?? [],
   };
 }
 

@@ -9144,12 +9144,30 @@ function computeCatalogSellPrice(item: CatalogItem, inventoryItems: Part[]): num
   return item.defaultSellPrice;
 }
 
+// Fixed category list per E, in display order. "Uncategorized" is a
+// catch-all appended at the end -- not one of E's real categories -- used
+// as the safe default for new items and for the 304 items imported from
+// the PandaDoc export whose original category strings didn't fit any of
+// these (see migration 051).
+const CATALOG_CATEGORY_OPTIONS = [
+  "VPUs",
+  "Cameras",
+  "Signage",
+  "Camera Accessories",
+  "Sign Accessories",
+  "Network/Coms.",
+  "EnSight Kits",
+  "Power",
+  "Lighting",
+  "Uncategorized",
+];
+
 const EMPTY_CATALOG_DRAFT = {
   catalogNumber: "",
   productName: "",
   salesDescription: "",
   technicalDescription: "",
-  category: "",
+  category: "Uncategorized",
   manufacturer: "",
   defaultSellPrice: 0,
   costSource: "manual" as CatalogItem["costSource"],
@@ -9168,6 +9186,7 @@ const EMPTY_CATALOG_DRAFT = {
   builtinFlasherModule: "",
   additionalSpaceMultiplier: null as number | null,
   insertQuantity: null as number | null,
+  tags: [] as string[],
 };
 
 function SalesCatalog({
@@ -9210,7 +9229,8 @@ function SalesCatalog({
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState(EMPTY_CATALOG_DRAFT);
-  const [showRetired, setShowRetired] = useState(false);
+  const [previewItem, setPreviewItem] = useState<CatalogItem | null>(null);
+  const [filters, setFilters] = useState({ search: "", category: "All", manufacturer: "", status: "All" });
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importRows, setImportRows] = useState<Array<Omit<CatalogItem, "id" | "catalogNumber">>>([]);
   const [importStatus, setImportStatus] = useState("");
@@ -9222,7 +9242,15 @@ function SalesCatalog({
   const [proposalValue, setProposalValue] = useState(0);
   const [proposalReason, setProposalReason] = useState("");
 
-  const visibleItems = catalogItems.filter((item) => showRetired || !item.isRetired);
+  const visibleItems = catalogItems.filter((item) => {
+    const status = item.isRetired ? "Retired" : "Active";
+    return (
+      `${item.productName} ${(item.tags ?? []).join(" ")}`.toLowerCase().includes(filters.search.toLowerCase()) &&
+      (filters.category === "All" || item.category === filters.category) &&
+      item.manufacturer.toLowerCase().includes(filters.manufacturer.toLowerCase()) &&
+      (filters.status === "All" || status === filters.status)
+    );
+  });
   const myPendingRequests = priceChangeRequests.filter((request) => request.status === "pending" && request.requestedByEmail.toLowerCase() === currentUserEmail.toLowerCase());
 
   function openAddModal() {
@@ -9257,18 +9285,31 @@ function SalesCatalog({
       builtinFlasherModule: item.builtinFlasherModule,
       additionalSpaceMultiplier: item.additionalSpaceMultiplier,
       insertQuantity: item.insertQuantity,
+      tags: [...(item.tags ?? [])],
     });
     setModalOpen(true);
+  }
+
+  function uploadCatalogImage(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setDraft((current) => ({ ...current, imageUrl: String(reader.result ?? "") }));
+    };
+    reader.readAsDataURL(file);
   }
 
   function submitDraft() {
     if (!draft.productName.trim()) {
       return;
     }
+    const cleaned = { ...draft, tags: [...new Set((draft.tags ?? []).map((tag) => tag.trim()).filter(Boolean))] };
     if (editingId) {
-      onUpdate(editingId, draft);
+      onUpdate(editingId, cleaned);
     } else {
-      onCreate(draft);
+      onCreate(cleaned);
     }
     setModalOpen(false);
   }
@@ -9322,7 +9363,13 @@ function SalesCatalog({
           const findKey = (...candidates: string[]) => keys.find((key) => candidates.includes(key.trim().toLowerCase()));
           const asText = (key: string | undefined) => (key ? String(row[key]).trim() : "");
           const productName = asText(findKey("product name", "product", "name", "item"));
-          const category = asText(findKey("category"));
+          // The source file's Category column is free text (often a whole
+          // nested path like "EnSight Signage/Signal Tech/Standard
+          // Catalog/..."), not one of the fixed CATALOG_CATEGORY_OPTIONS --
+          // rather than guess a mapping, every import lands in
+          // "Uncategorized" and the original text is preserved as a tag so
+          // nothing is lost and it's still searchable/filterable.
+          const rawCategory = asText(findKey("category"));
           const manufacturer = asText(findKey("manufacturer", "brand", "vendor"));
           const priceKey = findKey("default sell price", "sell price", "price");
           const defaultSellPrice = priceKey ? Number(row[priceKey]) || 0 : 0;
@@ -9348,7 +9395,8 @@ function SalesCatalog({
           const insertQuantity = insertQuantityKey && String(row[insertQuantityKey]).trim() !== "" ? Number(row[insertQuantityKey]) || 0 : null;
           const item: Omit<CatalogItem, "id" | "catalogNumber"> = {
             productName,
-            category,
+            category: "Uncategorized",
+            tags: rawCategory ? [rawCategory] : [],
             manufacturer,
             defaultSellPrice,
             costSource: "manual",
@@ -9430,7 +9478,6 @@ function SalesCatalog({
               )}
               <RequestTaskButton section="sales_catalog" teamMembers={teamMembers} projectSites={projectSites} onCreate={onCreateTask} />
               <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
-              <label className="checkbox-inline"><input type="checkbox" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} /> Show retired</label>
               {!isConfigured && <span className="muted">Set Supabase env vars to manage the catalog.</span>}
               {!canManage && <span className="muted">Only Admins and Managers can add, edit, or retire catalog items -- propose a price change instead.</span>}
               {status && <span className="muted">{status}</span>}
@@ -9442,6 +9489,7 @@ function SalesCatalog({
             <table>
               <thead>
                 <tr>
+                  <th></th>
                   <th>Catalog #</th>
                   <th>Product</th>
                   <th>Category</th>
@@ -9453,6 +9501,30 @@ function SalesCatalog({
                   <th>Status</th>
                   <th></th>
                 </tr>
+                <tr className="filter-row">
+                  <th></th>
+                  <th></th>
+                  <th><input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Filter product/tag" /></th>
+                  <th>
+                    <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
+                      <option>All</option>
+                      {CATALOG_CATEGORY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+                    </select>
+                  </th>
+                  <th><input value={filters.manufacturer} onChange={(event) => setFilters((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Filter vendor" /></th>
+                  <th></th>
+                  <th></th>
+                  <th></th>
+                  <th></th>
+                  <th>
+                    <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
+                      <option>All</option>
+                      <option>Active</option>
+                      <option>Retired</option>
+                    </select>
+                  </th>
+                  <th></th>
+                </tr>
               </thead>
               <tbody>
                 {visibleItems.map((item) => {
@@ -9461,8 +9533,16 @@ function SalesCatalog({
                   const computedSellPrice = computeCatalogSellPrice(item, inventoryItems);
                   return (
                     <tr key={item.id} className={item.isRetired ? "muted-row" : ""}>
+                      <td>
+                        <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(item)} aria-label={`Open image for ${item.productName}`}>
+                          {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Image size={18} />}
+                        </button>
+                      </td>
                       <td>{item.catalogNumber}</td>
-                      <td>{item.productName}</td>
+                      <td>
+                        {item.productName}
+                        {(item.tags ?? []).length > 0 && <div className="tag-chip-row">{(item.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
+                      </td>
                       <td>{item.category}</td>
                       <td>{item.manufacturer}</td>
                       <td>{money(liveUnitCost)}{isLiveInventoryLinked && <small className="muted"> (live)</small>}</td>
@@ -9491,7 +9571,7 @@ function SalesCatalog({
                 })}
                 {visibleItems.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="empty-compact-state">
+                    <td colSpan={11} className="empty-compact-state">
                       No catalog items yet. Add a product to start building the sales catalog.
                     </td>
                   </tr>
@@ -9512,10 +9592,34 @@ function SalesCatalog({
               </div>
               <button className="icon-button" type="button" onClick={() => setModalOpen(false)} aria-label="Close product editor">x</button>
             </div>
+            <div className="inventory-editor-hero">
+              <label className="item-image-upload">
+                {draft.imageUrl ? <img src={draft.imageUrl} alt={`${draft.productName || "Product"} preview`} /> : <><Image size={28} /><span>Upload Image</span></>}
+                <input type="file" accept="image/*" onChange={(event) => uploadCatalogImage(event.target.files?.[0])} />
+              </label>
+              <div className="item-identity-fields">
+                <label>Product name<input value={draft.productName} onChange={(event) => setDraft((current) => ({ ...current, productName: event.target.value }))} placeholder="Product name" /></label>
+                <label>Image URL (or upload above)<input value={draft.imageUrl} onChange={(event) => setDraft((current) => ({ ...current, imageUrl: event.target.value }))} placeholder="Paste a direct image link instead" /></label>
+              </div>
+            </div>
             <div className="bom-modal-grid">
-              <label className="span-2">Product name<input value={draft.productName} onChange={(event) => setDraft((current) => ({ ...current, productName: event.target.value }))} placeholder="Product name" /></label>
-              <label>Category<input value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))} placeholder="Category" /></label>
+              <label>Category<select value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))}>
+                {CATALOG_CATEGORY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select></label>
               <label>Manufacturer<input value={draft.manufacturer} onChange={(event) => setDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Manufacturer" /></label>
+              <label className="span-2">
+                Tags (comma-separated)
+                <input
+                  value={draft.tags.join(", ")}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      tags: event.target.value.split(",").map((tag) => tag.trimStart()),
+                    }))
+                  }
+                  placeholder="e.g. Featured, Discontinued Soon"
+                />
+              </label>
               <label>Cost source<select value={draft.costSource} onChange={(event) => setDraft((current) => ({ ...current, costSource: event.target.value as CatalogItem["costSource"] }))}>
                 <option value="manual">Manual</option>
                 <option value="inventory_unit_cost">Inventory unit cost (live)</option>
@@ -9535,7 +9639,6 @@ function SalesCatalog({
               <label className="span-2">Sales description<textarea value={draft.salesDescription} onChange={(event) => setDraft((current) => ({ ...current, salesDescription: event.target.value }))} placeholder="Customer-facing description for quotes" /></label>
               <label className="span-2">Technical description<textarea value={draft.technicalDescription} onChange={(event) => setDraft((current) => ({ ...current, technicalDescription: event.target.value }))} placeholder="Specs, dimensions, technical notes" /></label>
               <label>Datasheet URL<input value={draft.datasheetUrl} onChange={(event) => setDraft((current) => ({ ...current, datasheetUrl: event.target.value }))} placeholder="Link to a datasheet" /></label>
-              <label>Image URL<input value={draft.imageUrl} onChange={(event) => setDraft((current) => ({ ...current, imageUrl: event.target.value }))} placeholder="Product image link" /></label>
               <label>Item type<select value={draft.itemType} onChange={(event) => setDraft((current) => ({ ...current, itemType: event.target.value as CatalogItem["itemType"] }))}>
                 <option value="regular">Regular</option>
                 <option value="bundle">Bundle</option>
@@ -9578,11 +9681,12 @@ function SalesCatalog({
             )}
             {importRows.length > 0 && (
               <>
+                <p className="muted">Category will be set to "Uncategorized" for all rows -- sort them into your real categories afterward. The source file's category text is kept as a tag so nothing's lost.</p>
                 <table>
                   <thead>
                     <tr>
                       <th>Product</th>
-                      <th>Category</th>
+                      <th>Tags (from source category)</th>
                       <th>Manufacturer</th>
                       <th>Sell Price</th>
                       <th>Linked Ref</th>
@@ -9592,7 +9696,7 @@ function SalesCatalog({
                     {importRows.map((row, index) => (
                       <tr key={index}>
                         <td>{row.productName}</td>
-                        <td>{row.category}</td>
+                        <td>{(row.tags ?? []).join(", ")}</td>
                         <td>{row.manufacturer}</td>
                         <td>{money(row.defaultSellPrice)}</td>
                         <td>{row.linkedReference}</td>
@@ -9608,6 +9712,23 @@ function SalesCatalog({
                 </div>
               </>
             )}
+          </section>
+        </div>
+      )}
+
+      {previewItem && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-image-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="catalog-image-modal-title">{previewItem.productName}</h2>
+                <p>{previewItem.catalogNumber} -- {previewItem.manufacturer}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setPreviewItem(null)} aria-label="Close image preview">x</button>
+            </div>
+            <div className="large-image-preview">
+              {previewItem.imageUrl ? <img src={previewItem.imageUrl} alt={previewItem.productName} /> : <><Image size={42} /><span>No image added yet. Use Edit to upload an image.</span></>}
+            </div>
           </section>
         </div>
       )}
