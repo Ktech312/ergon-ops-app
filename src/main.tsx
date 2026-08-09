@@ -57,6 +57,7 @@ import {
   updateSalesQuoteProposalFields,
   addSalesQuoteBomLines,
   deleteSalesQuoteBomLine,
+  deleteSalesQuoteBomLinesByLocationSource,
   updateSalesQuoteBomLineCatalogLink,
   createScheduleTemplate,
   createSubmittal,
@@ -1928,6 +1929,88 @@ function App() {
       ),
     );
     await deleteSalesQuoteLocationItem(itemId, authSession.accessToken);
+  }
+
+  // "Pull Location Hardware into Quote BOM" -- rolls every location's real
+  // catalog-linked selections (FLI/LPR/People Counting camera picks, Sign,
+  // Space Sensor, Misc lines) up into the one flat Quote BOM that actually
+  // becomes the pricing table on a Quote Proposal (migration 053), mirroring
+  // how the real EnSight proposals E shared list one row per product with a
+  // qty rather than per physical location. Regenerate-safe: it only ever
+  // replaces the lines it previously created (source_location_id set),
+  // never touches lines a rep typed in by hand at the quote level, so
+  // clicking it again after editing a location's hardware just refreshes
+  // the pulled-in rows instead of duplicating them.
+  async function handlePullLocationHardwareIntoQuoteBom(quoteId: string) {
+    if (!authSession) {
+      return;
+    }
+    const quote = salesQuotes.find((entry) => entry.id === quoteId);
+    if (!quote) {
+      return;
+    }
+    setSalesQuoteStatus("Pulling location hardware into the Quote BOM...");
+    try {
+      const lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null; sourceLocationId?: string | null }> = [];
+
+      for (const location of quote.locations) {
+        const locationLabel = location.name || (location.locationType === "garage" ? "Garage" : "Lot");
+
+        const pushCamera = (catalogItemId: string | null, capability: string) => {
+          if (!catalogItemId) {
+            return;
+          }
+          const catalogItem = catalogItems.find((item) => item.id === catalogItemId);
+          lines.push({
+            item: catalogItem ? catalogItem.productName : "Item removed from catalog",
+            qty: 1,
+            notes: `${locationLabel} -- ${capability}`,
+            catalogItemId,
+            sourceLocationId: location.id,
+          });
+        };
+        // qty is always 1 here -- there's no separate "how many FLI/LPR/
+        // People Counting cameras" count, just a single model pick per
+        // capability per location. Entry/Exit/Level camera counts stay in
+        // the Recommended Hardware estimate only, since those aren't tied
+        // to a specific catalog item yet.
+        if (location.fli) pushCamera(location.fliCameraItemId, "FLI camera");
+        if (location.lpr) pushCamera(location.lprCameraItemId, "LPR camera");
+        if (location.peopleCounting) pushCamera(location.peopleCountingCameraItemId, "People counting camera");
+
+        const pushLines = (items: SalesQuoteLocationItem[], sectionLabel: string) => {
+          for (const lineItem of items) {
+            if (!lineItem.catalogItemId) {
+              continue;
+            }
+            const catalogItem = catalogItems.find((item) => item.id === lineItem.catalogItemId);
+            lines.push({
+              item: catalogItem ? catalogItem.productName : "Item removed from catalog",
+              qty: lineItem.qty,
+              notes: `${locationLabel} -- ${sectionLabel}`,
+              catalogItemId: lineItem.catalogItemId,
+              sourceLocationId: location.id,
+            });
+          }
+        };
+        pushLines(location.signLines, "Sign");
+        pushLines(location.sensorLines, "Space Sensor");
+        pushLines(location.miscLines, "Misc.");
+      }
+
+      if (lines.length === 0) {
+        setSalesQuoteStatus("No location hardware selections yet -- pick camera models or add Sign/Space Sensor/Misc lines first.");
+        return;
+      }
+
+      await deleteSalesQuoteBomLinesByLocationSource(quoteId, authSession.accessToken);
+      const manualLines = quote.bomLines.filter((line) => !line.sourceLocationId);
+      const created = await addSalesQuoteBomLines(quoteId, lines, manualLines.length, authSession.accessToken);
+      setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, bomLines: [...manualLines, ...created] } : entry)));
+      setSalesQuoteStatus(`Pulled ${created.length} line(s) from ${quote.locations.length} location(s) into the Quote BOM.`);
+    } catch (error) {
+      setSalesQuoteStatus(error instanceof Error ? error.message : "Could not pull location hardware into the Quote BOM.");
+    }
   }
 
   async function handleUpdateSalesQuoteStatus(quoteId: string, status: SalesQuote["status"]) {
@@ -4371,6 +4454,7 @@ function App() {
             onAddSalesQuoteLocationItem={handleAddSalesQuoteLocationItem}
             onUpdateSalesQuoteLocationItemQty={handleUpdateSalesQuoteLocationItemQty}
             onDeleteSalesQuoteLocationItem={handleDeleteSalesQuoteLocationItem}
+            onPullLocationHardwareIntoQuoteBom={handlePullLocationHardwareIntoQuoteBom}
             onUpdateSalesQuoteStatus={handleUpdateSalesQuoteStatus}
             onAddSalesQuoteBomLines={handleAddSalesQuoteBomLines}
             onDeleteSalesQuoteBomLine={handleDeleteSalesQuoteBomLine}
@@ -9331,6 +9415,7 @@ function SalesHome({
   onAddSalesQuoteLocationItem,
   onUpdateSalesQuoteLocationItemQty,
   onDeleteSalesQuoteLocationItem,
+  onPullLocationHardwareIntoQuoteBom,
   onUpdateSalesQuoteStatus,
   onAddSalesQuoteBomLines,
   onDeleteSalesQuoteBomLine,
@@ -9394,6 +9479,7 @@ function SalesHome({
   onAddSalesQuoteLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number) => void;
   onUpdateSalesQuoteLocationItemQty: (quoteId: string, locationId: string, itemId: string, qty: number) => void;
   onDeleteSalesQuoteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
+  onPullLocationHardwareIntoQuoteBom: (quoteId: string) => void;
   onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => void;
   onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
@@ -9471,6 +9557,7 @@ function SalesHome({
         onAddLocationItem={onAddSalesQuoteLocationItem}
         onUpdateLocationItemQty={onUpdateSalesQuoteLocationItemQty}
         onDeleteLocationItem={onDeleteSalesQuoteLocationItem}
+        onPullLocationHardware={onPullLocationHardwareIntoQuoteBom}
         onUpdateStatus={onUpdateSalesQuoteStatus}
         onAddBomLines={onAddSalesQuoteBomLines}
         onDeleteBomLine={onDeleteSalesQuoteBomLine}
@@ -10703,6 +10790,7 @@ function SalesQuoteBuilder({
   onAddLocationItem,
   onUpdateLocationItemQty,
   onDeleteLocationItem,
+  onPullLocationHardware,
   onUpdateStatus,
   onAddBomLines,
   onDeleteBomLine,
@@ -10749,6 +10837,7 @@ function SalesQuoteBuilder({
   onAddLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number) => void;
   onUpdateLocationItemQty: (quoteId: string, locationId: string, itemId: string, qty: number) => void;
   onDeleteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
+  onPullLocationHardware: (quoteId: string) => void;
   onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => void;
   onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
@@ -11015,15 +11104,32 @@ function SalesQuoteBuilder({
 
           <div className="quote-hardware-summary">
             <span className="label">Quote BOM</span>
-            <p className="muted">Persisted line items for this quote -- this is what a Project pulls in once the quote is marked Closed - Won.</p>
+            <p className="muted">Persisted line items for this quote -- this is what a Project pulls in once the quote is marked Closed - Won, and what a Quote Proposal's pricing table is built from.</p>
+            <div className="submittal-create-row">
+              <button
+                className="primary-action mini-action"
+                type="button"
+                disabled={selectedQuote.locations.length === 0}
+                onClick={() => onPullLocationHardware(selectedQuote.id)}
+              >
+                Pull Location Hardware into Quote BOM
+              </button>
+              <small className="muted">Rolls up every location's camera picks + Sign/Space Sensor/Misc lines. Safe to click again after editing a location -- it only replaces the lines it previously pulled in.</small>
+            </div>
             <ul className="line-list">
               {selectedQuote.bomLines.map((line) => {
                 const linkedItem = line.catalogItemId ? catalogItems.find((item) => item.id === line.catalogItemId) : undefined;
+                const sourceLocation = line.sourceLocationId ? selectedQuote.locations.find((location) => location.id === line.sourceLocationId) : undefined;
                 return (
                   <li className="line-item" key={line.id}>
                     <div>
                       <strong>{line.item}</strong>
                       <span>Qty {line.qty}{line.notes ? ` -- ${line.notes}` : ""}</span>
+                      {line.sourceLocationId && (
+                        <small className="muted">
+                          {sourceLocation ? `Pulled from ${sourceLocation.name || "a location"}` : "Pulled from a location (since removed)"}
+                        </small>
+                      )}
                       <select
                         className="bom-line-catalog-link"
                         value={line.catalogItemId ?? ""}
