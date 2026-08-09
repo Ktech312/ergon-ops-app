@@ -946,6 +946,16 @@ export type CatalogItem = {
   // chip picker, Catalog tags aren't tied to any BOM-matching logic, so
   // there's no fixed list to enforce here.
   tags: string[];
+  // Category-specific "Details" fields (everything except Signage, which
+  // keeps using the typed height/width/pixelPitch/etc. fields above).
+  // Keyed by field label from CATALOG_CATEGORY_FIELDS in main.tsx -- kept
+  // as a flexible bag rather than named columns so a category's field
+  // list can change without a migration (migration 052).
+  specifications: Record<string, string>;
+  // Path to an uploaded PDF in the catalog-datasheets Storage bucket
+  // (migration 052), distinct from datasheetUrl which is just a pasted
+  // external link -- a product can have either or both.
+  datasheetStoragePath: string;
 };
 
 type CatalogItemRow = {
@@ -974,6 +984,8 @@ type CatalogItemRow = {
   additional_space_multiplier: number | string | null;
   insert_quantity: number | string | null;
   tags: string[] | null;
+  specifications: Record<string, string> | null;
+  datasheet_storage_path: string | null;
 };
 
 function mapCatalogRow(row: CatalogItemRow): CatalogItem {
@@ -1003,6 +1015,8 @@ function mapCatalogRow(row: CatalogItemRow): CatalogItem {
     additionalSpaceMultiplier: row.additional_space_multiplier === null || row.additional_space_multiplier === undefined ? null : Number(row.additional_space_multiplier),
     insertQuantity: row.insert_quantity === null || row.insert_quantity === undefined ? null : Number(row.insert_quantity),
     tags: row.tags ?? [],
+    specifications: row.specifications ?? {},
+    datasheetStoragePath: row.datasheet_storage_path ?? "",
   };
 }
 
@@ -1032,11 +1046,53 @@ function catalogItemWritePayload(item: Omit<CatalogItem, "id">) {
     additional_space_multiplier: item.additionalSpaceMultiplier,
     insert_quantity: item.insertQuantity,
     tags: item.tags ?? [],
+    specifications: item.specifications ?? {},
+    datasheet_storage_path: item.datasheetStoragePath || null,
   };
 }
 
 export function makeCatalogNumber() {
   return `CAT-${Date.now().toString(36).toUpperCase()}`;
+}
+
+// Real Storage for catalog datasheets (migration 052) -- same
+// upload-a-raw-file pattern as project-documents (see uploadDocumentFile
+// above), but this bucket is public so a plain object URL works directly
+// (no signed-URL round trip), since datasheets need to be linkable from
+// client-facing Quotes/Submittals down the line.
+const CATALOG_DATASHEET_BUCKET = "catalog-datasheets";
+
+export function buildCatalogDatasheetStoragePath(catalogNumber: string, fileName: string): string {
+  const stamp = Date.now().toString(36);
+  return `${sanitizeStoragePathSegment(catalogNumber || "item")}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
+}
+
+export async function uploadCatalogDatasheetFile(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  const response = await fetch(
+    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${CATALOG_DATASHEET_BUCKET}/${storagePath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": file.type || "application/octet-stream",
+        "x-upsert": "true",
+      },
+      body: file,
+    },
+  );
+  return response.ok;
+}
+
+export function getCatalogDatasheetPublicUrl(storagePath: string): string | null {
+  if (!isRemotePersistenceConfigured() || !storagePath) {
+    return null;
+  }
+  return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/public/${CATALOG_DATASHEET_BUCKET}/${storagePath}`;
 }
 
 export async function loadCatalogItems(accessToken?: string): Promise<CatalogItem[]> {

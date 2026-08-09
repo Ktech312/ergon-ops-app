@@ -35,6 +35,7 @@ import {
   addScheduleTemplatePhase,
   addTaskActivity,
   addTaskHardwareDependency,
+  buildCatalogDatasheetStoragePath,
   buildDocumentStoragePath,
   checkIsAdmin,
   consumeOAuthRedirectSession,
@@ -73,6 +74,7 @@ import {
   acceptInvite,
   loadInvites,
   revokeInvite,
+  getCatalogDatasheetPublicUrl,
   getDocumentDownloadUrl,
   getQuoteImageDownloadUrl,
   grantAdmin,
@@ -163,6 +165,7 @@ import {
   updateTeamMember,
   upsertKnownUser,
   upsertStandardInstallTime,
+  uploadCatalogDatasheetFile,
   uploadDocumentFile,
   companyLogoUrl,
   loadCompanyBranding,
@@ -1585,6 +1588,29 @@ function App() {
     } catch (error) {
       setCatalogStatus(error instanceof Error ? error.message : "Could not update catalog item.");
     }
+  }
+
+  // Uploads a datasheet PDF to the catalog-datasheets Storage bucket
+  // (migration 052) and records its path on the catalog item. Only works
+  // for an already-saved item (needs its real catalogNumber for the
+  // storage path and its id to PATCH) -- the Add/Edit modal only shows
+  // this control once editingId is set.
+  async function handleUploadCatalogDatasheet(catalogItemId: string, file: File): Promise<string | null> {
+    if (!authSession) {
+      return null;
+    }
+    const item = catalogItems.find((entry) => entry.id === catalogItemId);
+    if (!item) {
+      return null;
+    }
+    const storagePath = buildCatalogDatasheetStoragePath(item.catalogNumber, file.name);
+    const uploaded = await uploadCatalogDatasheetFile(file, storagePath, authSession.accessToken);
+    if (!uploaded) {
+      setCatalogStatus("Could not upload that datasheet.");
+      return null;
+    }
+    await handleUpdateCatalogItem(catalogItemId, { ...item, datasheetStoragePath: storagePath });
+    return storagePath;
   }
 
   async function handleSetCatalogItemRetired(id: string, retired: boolean) {
@@ -4078,6 +4104,7 @@ function App() {
             onSetCatalogItemRetired={handleSetCatalogItemRetired}
             onBulkImportCatalogItems={handleBulkCreateCatalogItems}
             onRefreshCatalog={() => authSession && reloadCatalog(authSession.accessToken)}
+            onUploadCatalogDatasheet={handleUploadCatalogDatasheet}
             inventoryItems={inventoryItems}
             currentUserEmail={authSession?.email ?? ""}
             priceChangeRequests={catalogPriceChangeRequests}
@@ -8964,6 +8991,7 @@ function SalesHome({
   onSetCatalogItemRetired,
   onBulkImportCatalogItems,
   onRefreshCatalog,
+  onUploadCatalogDatasheet,
   inventoryItems,
   currentUserEmail,
   priceChangeRequests,
@@ -9002,6 +9030,7 @@ function SalesHome({
   onSetCatalogItemRetired: (id: string, retired: boolean) => void;
   onBulkImportCatalogItems: (items: Array<Omit<CatalogItem, "id" | "catalogNumber">>) => Promise<number>;
   onRefreshCatalog: () => void;
+  onUploadCatalogDatasheet: (catalogItemId: string, file: File) => Promise<string | null>;
   inventoryItems: Part[];
   currentUserEmail: string;
   priceChangeRequests: CatalogPriceChangeRequest[];
@@ -9066,6 +9095,7 @@ function SalesHome({
         onSetRetired={onSetCatalogItemRetired}
         onBulkImport={onBulkImportCatalogItems}
         onRefresh={onRefreshCatalog}
+        onUploadDatasheet={onUploadCatalogDatasheet}
         inventoryItems={inventoryItems}
         currentUserEmail={currentUserEmail}
         priceChangeRequests={priceChangeRequests}
@@ -9187,6 +9217,64 @@ const EMPTY_CATALOG_DRAFT = {
   additionalSpaceMultiplier: null as number | null,
   insertQuantity: null as number | null,
   tags: [] as string[],
+  specifications: {} as Record<string, string>,
+  datasheetStoragePath: "",
+};
+
+// Category-specific "Details" fields for the Add/Edit Product modal.
+// Signage is deliberately excluded here -- it keeps using the existing
+// typed columns (heightIn/widthIn/pixelPitchMm/etc.) added for the
+// PandaDoc import gap-fill (migration 046). Everything else stores its
+// details in the flexible `specifications` bag (migration 052). E asked
+// for "a few specifications for each one" as filler/starting points --
+// these are best-guess placeholders meant to be refined once E gives
+// exact field lists per category, not a final spec.
+const CATALOG_CATEGORY_FIELDS: Record<string, Array<{ key: string; label: string; placeholder?: string }>> = {
+  VPUs: [
+    { key: "dimensions", label: "Dimensions (H x W x D)", placeholder: `e.g. 17" x 12" x 4"` },
+    { key: "powerDraw", label: "Power Draw (W)", placeholder: "e.g. 65" },
+    { key: "operatingTemp", label: "Operating Temp Range", placeholder: "e.g. -20C to 50C" },
+    { key: "portsInputs", label: "Ports / Inputs", placeholder: "e.g. 4x PoE, HDMI, USB-C" },
+    { key: "mountingType", label: "Mounting Type", placeholder: "e.g. Rack, DIN rail, wall" },
+  ],
+  Cameras: [
+    { key: "resolution", label: "Resolution", placeholder: "e.g. 4K / 8MP" },
+    { key: "fieldOfView", label: "Field of View", placeholder: "e.g. 110 degrees" },
+    { key: "lensType", label: "Lens Type", placeholder: "e.g. Fixed, varifocal" },
+    { key: "ipRating", label: "IP Rating", placeholder: "e.g. IP66" },
+    { key: "dimensions", label: "Dimensions (H x W x D)" },
+  ],
+  "Camera Accessories": [
+    { key: "compatibleModels", label: "Compatible Camera Models" },
+    { key: "mountType", label: "Mount Type", placeholder: "e.g. Pole, wall, ceiling" },
+    { key: "material", label: "Material", placeholder: "e.g. Aluminum, polycarbonate" },
+  ],
+  "Sign Accessories": [
+    { key: "compatibleModels", label: "Compatible Sign Models" },
+    { key: "material", label: "Material" },
+    { key: "dimensions", label: "Dimensions" },
+  ],
+  "Network/Coms.": [
+    { key: "bandwidth", label: "Bandwidth", placeholder: "e.g. 1 Gbps" },
+    { key: "connectorType", label: "Connector Type", placeholder: "e.g. RJ45, SFP+" },
+    { key: "range", label: "Range", placeholder: "e.g. 300ft" },
+    { key: "protocol", label: "Protocol", placeholder: "e.g. LTE, Wi-Fi 6, PoE+" },
+  ],
+  "EnSight Kits": [
+    { key: "kitContents", label: "Kit Contents" },
+    { key: "itemsIncluded", label: "Number of Items Included" },
+    { key: "useCase", label: "Use Case" },
+  ],
+  Power: [
+    { key: "wattage", label: "Wattage" },
+    { key: "voltage", label: "Voltage" },
+    { key: "batteryCapacity", label: "Battery Capacity (if applicable)" },
+  ],
+  Lighting: [
+    { key: "lumens", label: "Lumens" },
+    { key: "colorTemperature", label: "Color Temperature", placeholder: "e.g. 5000K" },
+    { key: "beamAngle", label: "Beam Angle" },
+  ],
 };
 
 function SalesCatalog({
@@ -9199,6 +9287,7 @@ function SalesCatalog({
   onSetRetired,
   onBulkImport,
   onRefresh,
+  onUploadDatasheet,
   inventoryItems,
   currentUserEmail,
   priceChangeRequests,
@@ -9217,6 +9306,7 @@ function SalesCatalog({
   onSetRetired: (id: string, retired: boolean) => void;
   onBulkImport: (items: Array<Omit<CatalogItem, "id" | "catalogNumber">>) => Promise<number>;
   onRefresh: () => void;
+  onUploadDatasheet: (catalogItemId: string, file: File) => Promise<string | null>;
   inventoryItems: Part[];
   currentUserEmail: string;
   priceChangeRequests: CatalogPriceChangeRequest[];
@@ -9241,6 +9331,7 @@ function SalesCatalog({
   const [proposalField, setProposalField] = useState<CatalogPriceChangeField>("markup_percent");
   const [proposalValue, setProposalValue] = useState(0);
   const [proposalReason, setProposalReason] = useState("");
+  const [isUploadingDatasheet, setIsUploadingDatasheet] = useState(false);
 
   const visibleItems = catalogItems.filter((item) => {
     const status = item.isRetired ? "Retired" : "Active";
@@ -9286,8 +9377,22 @@ function SalesCatalog({
       additionalSpaceMultiplier: item.additionalSpaceMultiplier,
       insertQuantity: item.insertQuantity,
       tags: [...(item.tags ?? [])],
+      specifications: { ...(item.specifications ?? {}) },
+      datasheetStoragePath: item.datasheetStoragePath ?? "",
     });
     setModalOpen(true);
+  }
+
+  async function handleDatasheetFileSelect(file: File | undefined) {
+    if (!file || !editingId) {
+      return;
+    }
+    setIsUploadingDatasheet(true);
+    const storagePath = await onUploadDatasheet(editingId, file);
+    if (storagePath) {
+      setDraft((current) => ({ ...current, datasheetStoragePath: storagePath }));
+    }
+    setIsUploadingDatasheet(false);
   }
 
   function uploadCatalogImage(file: File | undefined) {
@@ -9417,6 +9522,8 @@ function SalesCatalog({
             builtinFlasherModule,
             additionalSpaceMultiplier,
             insertQuantity,
+            specifications: {},
+            datasheetStoragePath: "",
           };
           return item;
         })
@@ -9529,13 +9636,14 @@ function SalesCatalog({
               <tbody>
                 {visibleItems.map((item) => {
                   const liveUnitCost = resolveCatalogUnitCost(item, inventoryItems);
-                  const isLiveInventoryLinked = item.costSource === "inventory_unit_cost" && Boolean(findLinkedInventoryPart(item, inventoryItems));
+                  const linkedInventoryPart = findLinkedInventoryPart(item, inventoryItems);
+                  const isLiveInventoryLinked = item.costSource === "inventory_unit_cost" && Boolean(linkedInventoryPart);
                   const computedSellPrice = computeCatalogSellPrice(item, inventoryItems);
                   return (
                     <tr key={item.id} className={item.isRetired ? "muted-row" : ""}>
                       <td>
                         <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(item)} aria-label={`Open image for ${item.productName}`}>
-                          {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Image size={18} />}
+                          {item.imageUrl || linkedInventoryPart?.imageUrl ? <img src={item.imageUrl || linkedInventoryPart?.imageUrl} alt="" /> : <Image size={18} />}
                         </button>
                       </td>
                       <td>{item.catalogNumber}</td>
@@ -9548,7 +9656,16 @@ function SalesCatalog({
                       <td>{money(liveUnitCost)}{isLiveInventoryLinked && <small className="muted"> (live)</small>}</td>
                       <td>{item.markupPercent}%</td>
                       <td>{money(computedSellPrice)}</td>
-                      <td>{item.linkedReference}</td>
+                      <td>
+                        {item.linkedReference}
+                        {linkedInventoryPart && (
+                          <div>
+                            <small className="muted" title={`Cross-referenced with Inventory item ${linkedInventoryPart.ref}`}>
+                              &#x2713; Linked to Inventory
+                            </small>
+                          </div>
+                        )}
+                      </td>
                       <td>{item.isRetired ? "Retired" : "Active"}</td>
                       <td>
                         {canManage ? (
@@ -9625,7 +9742,17 @@ function SalesCatalog({
                 <option value="inventory_unit_cost">Inventory unit cost (live)</option>
                 <option value="vendor_quote">Vendor quote</option>
               </select></label>
-              <label className="span-2">Linked SKU / equipment<input value={draft.linkedReference} onChange={(event) => setDraft((current) => ({ ...current, linkedReference: event.target.value }))} placeholder="e.g. SKU-1234 or VPU Server Recipe" /></label>
+              <label className="span-2">
+                Linked SKU / equipment
+                <input value={draft.linkedReference} onChange={(event) => setDraft((current) => ({ ...current, linkedReference: event.target.value }))} placeholder="e.g. SKU-1234 or VPU Server Recipe" />
+              </label>
+              {draft.linkedReference.trim() && (
+                <div className="span-2 muted">
+                  {findLinkedInventoryPart(draft as CatalogItem, inventoryItems)
+                    ? `Cross-referenced with Inventory: ${findLinkedInventoryPart(draft as CatalogItem, inventoryItems)?.name} (${findLinkedInventoryPart(draft as CatalogItem, inventoryItems)?.ref}).`
+                    : "No exact match in Inventory for that SKU/name yet."}
+                </div>
+              )}
               <label>
                 {draft.costSource === "inventory_unit_cost" ? "Fallback unit cost (used if no inventory match)" : "Unit cost"}
                 <input type="number" min={0} step="0.01" value={draft.unitCost} onChange={(event) => setDraft((current) => ({ ...current, unitCost: Number(event.target.value) }))} />
@@ -9638,21 +9765,77 @@ function SalesCatalog({
               </div>
               <label className="span-2">Sales description<textarea value={draft.salesDescription} onChange={(event) => setDraft((current) => ({ ...current, salesDescription: event.target.value }))} placeholder="Customer-facing description for quotes" /></label>
               <label className="span-2">Technical description<textarea value={draft.technicalDescription} onChange={(event) => setDraft((current) => ({ ...current, technicalDescription: event.target.value }))} placeholder="Specs, dimensions, technical notes" /></label>
-              <label>Datasheet URL<input value={draft.datasheetUrl} onChange={(event) => setDraft((current) => ({ ...current, datasheetUrl: event.target.value }))} placeholder="Link to a datasheet" /></label>
+              <label>Datasheet URL (external link)<input value={draft.datasheetUrl} onChange={(event) => setDraft((current) => ({ ...current, datasheetUrl: event.target.value }))} placeholder="Link to a datasheet" /></label>
+              <div className="field-group">
+                <span>Datasheet file</span>
+                {editingId ? (
+                  <div className="datasheet-upload-row">
+                    <label className="secondary-action mini-action hidden-file-label">
+                      <Upload size={14} /> {isUploadingDatasheet ? "Uploading..." : draft.datasheetStoragePath ? "Replace PDF" : "Upload PDF"}
+                      <input type="file" accept=".pdf" disabled={isUploadingDatasheet} onChange={(event) => handleDatasheetFileSelect(event.target.files?.[0])} />
+                    </label>
+                    {draft.datasheetStoragePath && (
+                      <a href={getCatalogDatasheetPublicUrl(draft.datasheetStoragePath) ?? "#"} target="_blank" rel="noreferrer">
+                        View uploaded PDF
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <span className="muted">Save the product first, then come back to Edit to upload a datasheet PDF.</span>
+                )}
+              </div>
               <label>Item type<select value={draft.itemType} onChange={(event) => setDraft((current) => ({ ...current, itemType: event.target.value as CatalogItem["itemType"] }))}>
                 <option value="regular">Regular</option>
                 <option value="bundle">Bundle</option>
               </select></label>
-              <label>Billing frequency<input value={draft.billingFrequency} onChange={(event) => setDraft((current) => ({ ...current, billingFrequency: event.target.value }))} placeholder="e.g. one-time, monthly, annual" /></label>
               {draft.itemType === "bundle" && (
                 <label className="span-2">Bundle components<input value={draft.bundleComponents} onChange={(event) => setDraft((current) => ({ ...current, bundleComponents: event.target.value }))} placeholder="SKU:qty, SKU:qty" /></label>
               )}
-              <label>Height (in)<input value={draft.heightIn} onChange={(event) => setDraft((current) => ({ ...current, heightIn: event.target.value }))} placeholder="e.g. 48" /></label>
-              <label>Width (in)<input value={draft.widthIn} onChange={(event) => setDraft((current) => ({ ...current, widthIn: event.target.value }))} placeholder="e.g. 36" /></label>
-              <label>Pixel pitch (mm)<input value={draft.pixelPitchMm} onChange={(event) => setDraft((current) => ({ ...current, pixelPitchMm: event.target.value }))} placeholder="Digital signage only" /></label>
-              <label>Built-in flasher module<input value={draft.builtinFlasherModule} onChange={(event) => setDraft((current) => ({ ...current, builtinFlasherModule: event.target.value }))} /></label>
-              <label>Additional space multiplier<input type="number" step="0.01" value={draft.additionalSpaceMultiplier ?? ""} onChange={(event) => setDraft((current) => ({ ...current, additionalSpaceMultiplier: event.target.value === "" ? null : Number(event.target.value) }))} /></label>
-              <label>Insert quantity<input type="number" step="1" value={draft.insertQuantity ?? ""} onChange={(event) => setDraft((current) => ({ ...current, insertQuantity: event.target.value === "" ? null : Number(event.target.value) }))} /></label>
+            </div>
+            <div className="compact-edit-section">
+              <div className="compact-section-header">
+                <div>
+                  <h3>Details</h3>
+                  <p>
+                    {draft.category === "Signage"
+                      ? "Physical specs for digital signage."
+                      : CATALOG_CATEGORY_FIELDS[draft.category]
+                        ? `Specs for ${draft.category}. Starter fields -- tell me the exact ones you want and I'll adjust.`
+                        : "No details fields set up yet for this category."}
+                  </p>
+                </div>
+              </div>
+              {draft.category === "Signage" ? (
+                <div className="bom-modal-grid">
+                  <label>Billing frequency<input value={draft.billingFrequency} onChange={(event) => setDraft((current) => ({ ...current, billingFrequency: event.target.value }))} placeholder="e.g. one-time, monthly, annual" /></label>
+                  <label>Height (in)<input value={draft.heightIn} onChange={(event) => setDraft((current) => ({ ...current, heightIn: event.target.value }))} placeholder="e.g. 48" /></label>
+                  <label>Width (in)<input value={draft.widthIn} onChange={(event) => setDraft((current) => ({ ...current, widthIn: event.target.value }))} placeholder="e.g. 36" /></label>
+                  <label>Pixel pitch (mm)<input value={draft.pixelPitchMm} onChange={(event) => setDraft((current) => ({ ...current, pixelPitchMm: event.target.value }))} placeholder="Digital signage only" /></label>
+                  <label>Built-in flasher module<input value={draft.builtinFlasherModule} onChange={(event) => setDraft((current) => ({ ...current, builtinFlasherModule: event.target.value }))} /></label>
+                  <label>Additional space multiplier<input type="number" step="0.01" value={draft.additionalSpaceMultiplier ?? ""} onChange={(event) => setDraft((current) => ({ ...current, additionalSpaceMultiplier: event.target.value === "" ? null : Number(event.target.value) }))} /></label>
+                  <label>Insert quantity<input type="number" step="1" value={draft.insertQuantity ?? ""} onChange={(event) => setDraft((current) => ({ ...current, insertQuantity: event.target.value === "" ? null : Number(event.target.value) }))} /></label>
+                </div>
+              ) : CATALOG_CATEGORY_FIELDS[draft.category] ? (
+                <div className="bom-modal-grid">
+                  {CATALOG_CATEGORY_FIELDS[draft.category].map((field) => (
+                    <label key={field.key}>
+                      {field.label}
+                      <input
+                        value={draft.specifications[field.key] ?? ""}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            specifications: { ...current.specifications, [field.key]: event.target.value },
+                          }))
+                        }
+                        placeholder={field.placeholder}
+                      />
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">Uncategorized items don't have a details template -- pick a real category above to see its fields.</p>
+              )}
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setModalOpen(false)}>Cancel</button>
@@ -9727,7 +9910,11 @@ function SalesCatalog({
               <button className="icon-button" type="button" onClick={() => setPreviewItem(null)} aria-label="Close image preview">x</button>
             </div>
             <div className="large-image-preview">
-              {previewItem.imageUrl ? <img src={previewItem.imageUrl} alt={previewItem.productName} /> : <><Image size={42} /><span>No image added yet. Use Edit to upload an image.</span></>}
+              {previewItem.imageUrl || findLinkedInventoryPart(previewItem, inventoryItems)?.imageUrl ? (
+                <img src={previewItem.imageUrl || findLinkedInventoryPart(previewItem, inventoryItems)?.imageUrl} alt={previewItem.productName} />
+              ) : (
+                <><Image size={42} /><span>No image added yet. Use Edit to upload an image.</span></>
+              )}
             </div>
           </section>
         </div>

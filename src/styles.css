@@ -2466,6 +2466,21 @@ td small {
   gap: 7px;
 }
 
+.bom-modal-grid .field-group {
+  color: #514b43;
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 7px;
+}
+
+.datasheet-upload-row {
+  align-items: center;
+  display: flex;
+  font-weight: 400;
+  gap: 10px;
+}
+
 .bom-modal-grid input,
 .bom-modal-grid select,
 .bom-modal-grid textarea {
