@@ -1094,6 +1094,22 @@ table {
   min-width: 1180px;
 }
 
+/* Product Catalog: same "show ~10 rows, scroll inside the panel" pattern as
+   Inventory above -- without this, a large catalog (hundreds of rows, e.g.
+   the 304-item bulk import) pushes the whole page down instead of scrolling
+   in place. The sticky th/.filter-row th rules further down already apply
+   globally, so wrapping the table in this scroll container is the only
+   change needed to make the header + filter row stick while scrolling. */
+.catalog-table-scroll {
+  border: 1px solid #eee7dc;
+  border-radius: 8px;
+  max-height: 640px;
+  max-width: 100%;
+  overflow: auto;
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
 th,
 td {
   border-bottom: 1px solid #eee7dc;

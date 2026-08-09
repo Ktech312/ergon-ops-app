@@ -9840,6 +9840,7 @@ function SalesCatalog({
             {myPendingRequests.length > 0 && (
               <p className="muted">You have {myPendingRequests.length} price change request(s) awaiting manager approval.</p>
             )}
+            <div className="catalog-table-scroll">
             <table>
               <thead>
                 <tr>
@@ -9942,6 +9943,7 @@ function SalesCatalog({
                 )}
               </tbody>
             </table>
+            </div>
           </>
         )}
       </section>
