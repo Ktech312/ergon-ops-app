@@ -69,6 +69,9 @@ import {
   createQuoteProposalShareToken,
   fetchPublicQuoteProposal,
   respondToPublicQuoteProposal,
+  loadSalesQuoteIntakeResponse,
+  upsertSalesQuoteIntakeResponse,
+  updateSalesQuoteInfo,
   createInvite,
   createSiteHardwareRule,
   loadSiteHardwareRules,
@@ -216,6 +219,7 @@ import {
   type ProposalSnapshot,
   type SalesQuoteProposal,
   type PublicQuoteProposalView,
+  type SalesQuoteIntakeResponse,
   type PurchaseLineCategory,
   type PurchaseOrder,
   type PurchaseOrderLine,
@@ -937,6 +941,10 @@ function App() {
   const [formBuilderStatus, setFormBuilderStatus] = useState("");
   const [handovers, setHandovers] = useState<ProjectHandover[]>([]);
   const [handoverStatus, setHandoverStatus] = useState("");
+  const [siteIntakeSchema, setSiteIntakeSchema] = useState<FormSchema | null>(null);
+  const [siteIntakeFormBuilderStatus, setSiteIntakeFormBuilderStatus] = useState("");
+  const [quoteIntakeResponses, setQuoteIntakeResponses] = useState<Record<string, SalesQuoteIntakeResponse>>({});
+  const [quoteIntakeStatus, setQuoteIntakeStatus] = useState("");
   const [presalesRules, setPresalesRules] = useState<PresalesHardwareRule[]>([]);
   const [siteHardwareRules, setSiteHardwareRules] = useState<SiteHardwareRule[]>([]);
   const [siteHardwareRuleStatus, setSiteHardwareRuleStatus] = useState("");
@@ -2062,6 +2070,53 @@ function App() {
     await updateSalesQuoteProposalFields(quoteId, updates, authSession.accessToken);
   }
 
+  // #164 -- lets a rep get back to the original "New Site" intake fields
+  // (client/site name, city) and correct them after the quote already
+  // exists, instead of those being fixed at creation time forever.
+  async function handleUpdateSalesQuoteInfo(quoteId: string, updates: Partial<{ clientName: string; siteName: string; city: string }>) {
+    if (!authSession) {
+      return;
+    }
+    setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, ...updates } : entry)));
+    try {
+      await updateSalesQuoteInfo(quoteId, updates, authSession.accessToken);
+    } catch (error) {
+      setSalesQuoteStatus(error instanceof Error ? error.message : "Could not update site info.");
+    }
+  }
+
+  // #165 -- growing, admin-configurable questionnaire of sales/client-facing
+  // questions tied to each quote (Phase 18 Fluid Form Engine, form_key
+  // "sales_site_intake"). One response row per quote, upserted as the rep
+  // fills in answers -- mirrors the After-Sales Handover pattern but keyed
+  // by quote instead of a separate handover record.
+  function handleLoadSalesQuoteIntakeResponse(quoteId: string) {
+    if (!authSession) {
+      return;
+    }
+    loadSalesQuoteIntakeResponse(quoteId, authSession.accessToken)
+      .then((response) => {
+        if (response) {
+          setQuoteIntakeResponses((current) => ({ ...current, [quoteId]: response }));
+        }
+      })
+      .catch((error) => setQuoteIntakeStatus(error instanceof Error ? error.message : "Could not load the site intake questionnaire."));
+  }
+
+  async function handleSaveSalesQuoteIntakeResponses(quoteId: string, responses: Record<string, string>) {
+    if (!authSession || !siteIntakeSchema) {
+      return;
+    }
+    try {
+      const saved = await upsertSalesQuoteIntakeResponse(quoteId, siteIntakeSchema.id, responses, authSession.accessToken);
+      if (saved) {
+        setQuoteIntakeResponses((current) => ({ ...current, [quoteId]: saved }));
+      }
+    } catch (error) {
+      setQuoteIntakeStatus(error instanceof Error ? error.message : "Could not save the site intake questionnaire.");
+    }
+  }
+
   async function handleDeleteSalesQuoteBomLine(quoteId: string, lineId: string) {
     if (!authSession) {
       return;
@@ -2892,6 +2947,7 @@ function App() {
       return;
     }
     loadFormSchema("after_sales_handover", authSession.accessToken).then(setHandoverSchema).catch(() => {});
+    loadFormSchema("sales_site_intake", authSession.accessToken).then(setSiteIntakeSchema).catch(() => {});
     loadPresalesRules(authSession.accessToken).then(setPresalesRules).catch(() => {});
     loadSiteHardwareRules(authSession.accessToken).then(setSiteHardwareRules).catch(() => {});
     loadTaskHardwareDependencies(authSession.accessToken).then(async (deps) => {
@@ -2945,6 +3001,52 @@ function App() {
     const b = sorted[targetIndex];
     handleUpdateFormField(a.id, { sequenceOrder: b.sequenceOrder });
     handleUpdateFormField(b.id, { sequenceOrder: a.sequenceOrder });
+  }
+
+  async function handleAddSiteIntakeField(field: Omit<FormSchemaField, "id" | "formSchemaId">) {
+    if (!authSession || !siteIntakeSchema) {
+      return;
+    }
+    try {
+      const created = await addFormSchemaField(siteIntakeSchema.id, field, authSession.accessToken);
+      setSiteIntakeSchema((current) => (current ? { ...current, fields: [...current.fields, created].sort((a, b) => a.sequenceOrder - b.sequenceOrder) } : current));
+    } catch (error) {
+      setSiteIntakeFormBuilderStatus(error instanceof Error ? error.message : "Could not add field.");
+    }
+  }
+
+  async function handleUpdateSiteIntakeField(id: string, patch: Partial<Omit<FormSchemaField, "id" | "formSchemaId">>) {
+    if (!authSession) {
+      return;
+    }
+    await updateFormSchemaField(id, patch, authSession.accessToken);
+    setSiteIntakeSchema((current) =>
+      current ? { ...current, fields: current.fields.map((field) => (field.id === id ? { ...field, ...patch } : field)).sort((a, b) => a.sequenceOrder - b.sequenceOrder) } : current,
+    );
+  }
+
+  async function handleDeleteSiteIntakeField(id: string) {
+    if (!authSession) {
+      return;
+    }
+    await deleteFormSchemaField(id, authSession.accessToken);
+    setSiteIntakeSchema((current) => (current ? { ...current, fields: current.fields.filter((field) => field.id !== id) } : current));
+  }
+
+  function handleReorderSiteIntakeField(id: string, direction: "up" | "down") {
+    if (!siteIntakeSchema) {
+      return;
+    }
+    const sorted = [...siteIntakeSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+    const index = sorted.findIndex((field) => field.id === id);
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || targetIndex < 0 || targetIndex >= sorted.length) {
+      return;
+    }
+    const a = sorted[index];
+    const b = sorted[targetIndex];
+    handleUpdateSiteIntakeField(a.id, { sequenceOrder: b.sequenceOrder });
+    handleUpdateSiteIntakeField(b.id, { sequenceOrder: a.sequenceOrder });
   }
 
   async function reloadHandovers(projectName: string) {
@@ -4460,6 +4562,12 @@ function App() {
             onDeleteSalesQuoteBomLine={handleDeleteSalesQuoteBomLine}
             onUpdateSalesQuoteBomLineCatalogLink={handleUpdateSalesQuoteBomLineCatalogLink}
             onUpdateSalesQuoteProposalFields={handleUpdateSalesQuoteProposalFields}
+            onUpdateSalesQuoteInfo={handleUpdateSalesQuoteInfo}
+            siteIntakeSchema={siteIntakeSchema}
+            quoteIntakeResponses={quoteIntakeResponses}
+            quoteIntakeStatus={quoteIntakeStatus}
+            onLoadSalesQuoteIntakeResponse={handleLoadSalesQuoteIntakeResponse}
+            onSaveSalesQuoteIntakeResponses={handleSaveSalesQuoteIntakeResponses}
             quoteProposals={quoteProposals}
             quoteProposalStatus={quoteProposalStatus}
             onLoadQuoteProposals={reloadQuoteProposals}
@@ -4543,6 +4651,12 @@ function App() {
             onUpdateFormField={handleUpdateFormField}
             onDeleteFormField={handleDeleteFormField}
             onReorderFormField={handleReorderFormField}
+            siteIntakeSchema={siteIntakeSchema}
+            siteIntakeFormBuilderStatus={siteIntakeFormBuilderStatus}
+            onAddSiteIntakeField={handleAddSiteIntakeField}
+            onUpdateSiteIntakeField={handleUpdateSiteIntakeField}
+            onDeleteSiteIntakeField={handleDeleteSiteIntakeField}
+            onReorderSiteIntakeField={handleReorderSiteIntakeField}
             presalesRules={presalesRules}
             presalesStatus={presalesStatus}
             onAddPresalesRule={handleAddPresalesRule}
@@ -8394,6 +8508,113 @@ function ProposalTemplateSectionEditor({
   );
 }
 
+// Phase 18 Fluid Form Engine editor -- generic over any form_schema (After-
+// Sales Handover, Site Intake Questionnaire, ...), since form_schemas/
+// form_schema_fields are keyed by form_key rather than tied to one
+// specific form. Extracted out once a second schema needed this exact
+// same table + add-question row, rather than duplicating the JSX.
+function FormBuilderPanel({
+  title,
+  label,
+  schema,
+  status,
+  defaultSection,
+  onAddField,
+  onUpdateField,
+  onDeleteField,
+  onReorderField,
+}: {
+  title: string;
+  label: string;
+  schema: FormSchema | null;
+  status: string;
+  defaultSection: string;
+  onAddField: (field: Omit<FormSchemaField, "id" | "formSchemaId">) => void;
+  onUpdateField: (id: string, patch: Partial<Omit<FormSchemaField, "id" | "formSchemaId">>) => void;
+  onDeleteField: (id: string) => void;
+  onReorderField: (id: string, direction: "up" | "down") => void;
+}) {
+  const [draft, setDraft] = useState({ section: defaultSection, label: "", fieldType: "text" as FormSchemaField["fieldType"], placeholder: "", isRequired: false, optionsRaw: "" });
+
+  return (
+    <section className="panel wide">
+      <PanelHeader title={title} label={label} />
+      {status && <small className="muted">{status}</small>}
+      {!schema ? (
+        <div className="empty-compact-state">Loading form schema...</div>
+      ) : (
+        <>
+          <table>
+            <thead><tr><th>#</th><th>Section</th><th>Label</th><th>Type</th><th>Required</th><th></th></tr></thead>
+            <tbody>
+              {[...schema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field, index, sorted) => (
+                <tr key={field.id}>
+                  <td>{field.sequenceOrder}</td>
+                  <td>{field.section}</td>
+                  <td>{field.label}{field.fieldType === "select" && field.options.length > 0 ? ` [${field.options.join(" | ")}]` : ""}</td>
+                  <td>{field.fieldType}</td>
+                  <td>
+                    <label className="checkbox-inline">
+                      <input type="checkbox" checked={field.isRequired} onChange={(event) => onUpdateField(field.id, { isRequired: event.target.checked })} />
+                    </label>
+                  </td>
+                  <td>
+                    <button className="secondary-action mini-action" type="button" disabled={index === 0} onClick={() => onReorderField(field.id, "up")}>&uarr;</button>{" "}
+                    <button className="secondary-action mini-action" type="button" disabled={index === sorted.length - 1} onClick={() => onReorderField(field.id, "down")}>&darr;</button>{" "}
+                    <button className="secondary-action mini-action" type="button" onClick={() => onDeleteField(field.id)}>Remove</button>
+                  </td>
+                </tr>
+              ))}
+              {schema.fields.length === 0 && <tr><td colSpan={6} className="empty-compact-state">No questions yet.</td></tr>}
+            </tbody>
+          </table>
+          <div className="roster-add-row">
+            <input value={draft.section} onChange={(event) => setDraft((current) => ({ ...current, section: event.target.value }))} placeholder={`Section (e.g. ${defaultSection})`} />
+            <input value={draft.label} onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))} placeholder="Question label" />
+            <select value={draft.fieldType} onChange={(event) => setDraft((current) => ({ ...current, fieldType: event.target.value as FormSchemaField["fieldType"] }))}>
+              <option value="text">Text</option>
+              <option value="textarea">Paragraph</option>
+              <option value="number">Number</option>
+              <option value="select">Dropdown</option>
+              <option value="checkbox">Checkbox</option>
+              <option value="date">Date</option>
+            </select>
+            {draft.fieldType === "select" ? (
+              <input value={draft.optionsRaw} onChange={(event) => setDraft((current) => ({ ...current, optionsRaw: event.target.value }))} placeholder="Option A, Option B, Option C" />
+            ) : (
+              <input value={draft.placeholder} onChange={(event) => setDraft((current) => ({ ...current, placeholder: event.target.value }))} placeholder="Placeholder text" />
+            )}
+            <label className="checkbox-inline-field">
+              <input type="checkbox" checked={draft.isRequired} onChange={(event) => setDraft((current) => ({ ...current, isRequired: event.target.checked }))} />
+              Required
+            </label>
+            <button
+              className="primary-action mini-action"
+              type="button"
+              disabled={!draft.label.trim()}
+              onClick={() => {
+                onAddField({
+                  section: draft.section || "general",
+                  fieldKey: `field_${Date.now().toString(36)}`,
+                  label: draft.label,
+                  fieldType: draft.fieldType,
+                  placeholder: draft.placeholder,
+                  isRequired: draft.isRequired,
+                  options: draft.fieldType === "select" ? draft.optionsRaw.split(",").map((option) => option.trim()).filter(Boolean) : [],
+                  sequenceOrder: schema.fields.length,
+                });
+                setDraft({ section: draft.section, label: "", fieldType: "text", placeholder: "", isRequired: false, optionsRaw: "" });
+              }}
+            >
+              <Plus size={14} /> Add Question
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 // Learning Library -- reached via the book icon next to Cloud Sync in the
 // top nav. The user guides themselves ("this is where the user guides will
 // live") don't exist yet, so this is an honest empty state per category
@@ -8532,6 +8753,12 @@ function AdminPage({
   onUpdateFormField,
   onDeleteFormField,
   onReorderFormField,
+  siteIntakeSchema,
+  siteIntakeFormBuilderStatus,
+  onAddSiteIntakeField,
+  onUpdateSiteIntakeField,
+  onDeleteSiteIntakeField,
+  onReorderSiteIntakeField,
   presalesRules,
   presalesStatus,
   onAddPresalesRule,
@@ -8593,6 +8820,12 @@ function AdminPage({
   onUpdateFormField: (id: string, patch: Partial<Omit<FormSchemaField, "id" | "formSchemaId">>) => void;
   onDeleteFormField: (id: string) => void;
   onReorderFormField: (id: string, direction: "up" | "down") => void;
+  siteIntakeSchema: FormSchema | null;
+  siteIntakeFormBuilderStatus: string;
+  onAddSiteIntakeField: (field: Omit<FormSchemaField, "id" | "formSchemaId">) => void;
+  onUpdateSiteIntakeField: (id: string, patch: Partial<Omit<FormSchemaField, "id" | "formSchemaId">>) => void;
+  onDeleteSiteIntakeField: (id: string) => void;
+  onReorderSiteIntakeField: (id: string, direction: "up" | "down") => void;
   presalesRules: PresalesHardwareRule[];
   presalesStatus: string;
   onAddPresalesRule: (rule: Omit<PresalesHardwareRule, "id">) => void;
@@ -8620,7 +8853,6 @@ function AdminPage({
   const [timeDraft, setTimeDraft] = useState({ category: "", hoursPerUnit: 0, notes: "" });
   const [templateNameDraft, setTemplateNameDraft] = useState("");
   const [phaseDrafts, setPhaseDrafts] = useState<Record<string, { phaseName: string; durationMode: "fixed_hours" | "per_bom_unit"; fixedHours: number; bomCategoryFilter: string; defaultRole: string }>>({});
-  const [formFieldDraft, setFormFieldDraft] = useState({ section: "site_requirements", label: "", fieldType: "text" as FormSchemaField["fieldType"], placeholder: "", isRequired: false, optionsRaw: "" });
   const [presalesRuleDraft, setPresalesRuleDraft] = useState({ tier: "", baseItemName: "", quantityMode: "fixed" as PresalesHardwareRule["quantityMode"], fixedQty: 1, perNodeDivisor: 16, requiresCloudSync: "any" as "any" | "yes" | "no" });
   const [siteHardwareRuleDraft, setSiteHardwareRuleDraft] = useState({ metric: "lpr" as SiteHardwareMetric, itemName: "", qtyPerUnit: 1, notes: "" });
 
@@ -8991,81 +9223,29 @@ function AdminPage({
           {scheduleTemplates.length === 0 && <div className="empty-compact-state">No templates yet. Create one above, then add phases to it.</div>}
         </section>
 
-        <section className="panel wide">
-          <PanelHeader title="Form Builder - After-Sales Handover" label="Add, edit, reorder, or remove handover questions with no code change" />
-          {formBuilderStatus && <small className="muted">{formBuilderStatus}</small>}
-          {!handoverSchema ? (
-            <div className="empty-compact-state">Loading form schema...</div>
-          ) : (
-            <>
-              <table>
-                <thead><tr><th>#</th><th>Section</th><th>Label</th><th>Type</th><th>Required</th><th></th></tr></thead>
-                <tbody>
-                  {[...handoverSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field, index, sorted) => (
-                    <tr key={field.id}>
-                      <td>{field.sequenceOrder}</td>
-                      <td>{field.section}</td>
-                      <td>{field.label}{field.fieldType === "select" && field.options.length > 0 ? ` [${field.options.join(" | ")}]` : ""}</td>
-                      <td>{field.fieldType}</td>
-                      <td>
-                        <label className="checkbox-inline">
-                          <input type="checkbox" checked={field.isRequired} onChange={(event) => onUpdateFormField(field.id, { isRequired: event.target.checked })} />
-                        </label>
-                      </td>
-                      <td>
-                        <button className="secondary-action mini-action" type="button" disabled={index === 0} onClick={() => onReorderFormField(field.id, "up")}>&uarr;</button>{" "}
-                        <button className="secondary-action mini-action" type="button" disabled={index === sorted.length - 1} onClick={() => onReorderFormField(field.id, "down")}>&darr;</button>{" "}
-                        <button className="secondary-action mini-action" type="button" onClick={() => onDeleteFormField(field.id)}>Remove</button>
-                      </td>
-                    </tr>
-                  ))}
-                  {handoverSchema.fields.length === 0 && <tr><td colSpan={6} className="empty-compact-state">No questions yet.</td></tr>}
-                </tbody>
-              </table>
-              <div className="roster-add-row">
-                <input value={formFieldDraft.section} onChange={(event) => setFormFieldDraft((current) => ({ ...current, section: event.target.value }))} placeholder="Section (e.g. site_requirements)" />
-                <input value={formFieldDraft.label} onChange={(event) => setFormFieldDraft((current) => ({ ...current, label: event.target.value }))} placeholder="Question label" />
-                <select value={formFieldDraft.fieldType} onChange={(event) => setFormFieldDraft((current) => ({ ...current, fieldType: event.target.value as FormSchemaField["fieldType"] }))}>
-                  <option value="text">Text</option>
-                  <option value="textarea">Paragraph</option>
-                  <option value="number">Number</option>
-                  <option value="select">Dropdown</option>
-                  <option value="checkbox">Checkbox</option>
-                  <option value="date">Date</option>
-                </select>
-                {formFieldDraft.fieldType === "select" ? (
-                  <input value={formFieldDraft.optionsRaw} onChange={(event) => setFormFieldDraft((current) => ({ ...current, optionsRaw: event.target.value }))} placeholder="Option A, Option B, Option C" />
-                ) : (
-                  <input value={formFieldDraft.placeholder} onChange={(event) => setFormFieldDraft((current) => ({ ...current, placeholder: event.target.value }))} placeholder="Placeholder text" />
-                )}
-                <label className="checkbox-inline-field">
-                  <input type="checkbox" checked={formFieldDraft.isRequired} onChange={(event) => setFormFieldDraft((current) => ({ ...current, isRequired: event.target.checked }))} />
-                  Required
-                </label>
-                <button
-                  className="primary-action mini-action"
-                  type="button"
-                  disabled={!formFieldDraft.label.trim()}
-                  onClick={() => {
-                    onAddFormField({
-                      section: formFieldDraft.section || "general",
-                      fieldKey: `field_${Date.now().toString(36)}`,
-                      label: formFieldDraft.label,
-                      fieldType: formFieldDraft.fieldType,
-                      placeholder: formFieldDraft.placeholder,
-                      isRequired: formFieldDraft.isRequired,
-                      options: formFieldDraft.fieldType === "select" ? formFieldDraft.optionsRaw.split(",").map((option) => option.trim()).filter(Boolean) : [],
-                      sequenceOrder: handoverSchema.fields.length,
-                    });
-                    setFormFieldDraft({ section: formFieldDraft.section, label: "", fieldType: "text", placeholder: "", isRequired: false, optionsRaw: "" });
-                  }}
-                >
-                  <Plus size={14} /> Add Question
-                </button>
-              </div>
-            </>
-          )}
-        </section>
+        <FormBuilderPanel
+          title="Form Builder - After-Sales Handover"
+          label="Add, edit, reorder, or remove handover questions with no code change"
+          schema={handoverSchema}
+          status={formBuilderStatus}
+          defaultSection="site_requirements"
+          onAddField={onAddFormField}
+          onUpdateField={onUpdateFormField}
+          onDeleteField={onDeleteFormField}
+          onReorderField={onReorderFormField}
+        />
+
+        <FormBuilderPanel
+          title="Form Builder - Site Intake Questionnaire"
+          label="Questions a sales rep asks the client while scoping a new site (Site Builder). Add, edit, reorder, or remove with no code change."
+          schema={siteIntakeSchema}
+          status={siteIntakeFormBuilderStatus}
+          defaultSection="client_details"
+          onAddField={onAddSiteIntakeField}
+          onUpdateField={onUpdateSiteIntakeField}
+          onDeleteField={onDeleteSiteIntakeField}
+          onReorderField={onReorderSiteIntakeField}
+        />
 
         <section className="panel wide">
           <PanelHeader title="Pre-Sales Rules" label="Baseline hardware derived from Product Catalog category, node count, and cloud sync at the quoting stage. Add categories to products in the Sales Catalog first -- they show up here automatically." />
@@ -9421,6 +9601,12 @@ function SalesHome({
   onDeleteSalesQuoteBomLine,
   onUpdateSalesQuoteBomLineCatalogLink,
   onUpdateSalesQuoteProposalFields,
+  onUpdateSalesQuoteInfo,
+  siteIntakeSchema,
+  quoteIntakeResponses,
+  quoteIntakeStatus,
+  onLoadSalesQuoteIntakeResponse,
+  onSaveSalesQuoteIntakeResponses,
   quoteProposals,
   quoteProposalStatus,
   onLoadQuoteProposals,
@@ -9485,6 +9671,12 @@ function SalesHome({
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateSalesQuoteBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateSalesQuoteProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
+  onUpdateSalesQuoteInfo: (quoteId: string, updates: Partial<{ clientName: string; siteName: string; city: string }>) => void;
+  siteIntakeSchema: FormSchema | null;
+  quoteIntakeResponses: Record<string, SalesQuoteIntakeResponse>;
+  quoteIntakeStatus: string;
+  onLoadSalesQuoteIntakeResponse: (quoteId: string) => void;
+  onSaveSalesQuoteIntakeResponses: (quoteId: string, responses: Record<string, string>) => void;
   quoteProposals: SalesQuoteProposal[];
   quoteProposalStatus: string;
   onLoadQuoteProposals: (quoteId: string) => void;
@@ -9563,6 +9755,12 @@ function SalesHome({
         onDeleteBomLine={onDeleteSalesQuoteBomLine}
         onUpdateBomLineCatalogLink={onUpdateSalesQuoteBomLineCatalogLink}
         onUpdateProposalFields={onUpdateSalesQuoteProposalFields}
+        onUpdateQuoteInfo={onUpdateSalesQuoteInfo}
+        siteIntakeSchema={siteIntakeSchema}
+        quoteIntakeResponses={quoteIntakeResponses}
+        quoteIntakeStatus={quoteIntakeStatus}
+        onLoadQuoteIntakeResponse={onLoadSalesQuoteIntakeResponse}
+        onSaveQuoteIntakeResponses={onSaveSalesQuoteIntakeResponses}
         quoteProposals={quoteProposals}
         quoteProposalStatus={quoteProposalStatus}
         onLoadQuoteProposals={onLoadQuoteProposals}
@@ -10796,6 +10994,12 @@ function SalesQuoteBuilder({
   onDeleteBomLine,
   onUpdateBomLineCatalogLink,
   onUpdateProposalFields,
+  onUpdateQuoteInfo,
+  siteIntakeSchema,
+  quoteIntakeResponses,
+  quoteIntakeStatus,
+  onLoadQuoteIntakeResponse,
+  onSaveQuoteIntakeResponses,
   quoteProposals,
   quoteProposalStatus,
   onLoadQuoteProposals,
@@ -10843,6 +11047,12 @@ function SalesQuoteBuilder({
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
+  onUpdateQuoteInfo: (quoteId: string, updates: Partial<{ clientName: string; siteName: string; city: string }>) => void;
+  siteIntakeSchema: FormSchema | null;
+  quoteIntakeResponses: Record<string, SalesQuoteIntakeResponse>;
+  quoteIntakeStatus: string;
+  onLoadQuoteIntakeResponse: (quoteId: string) => void;
+  onSaveQuoteIntakeResponses: (quoteId: string, responses: Record<string, string>) => void;
   quoteProposals: SalesQuoteProposal[];
   quoteProposalStatus: string;
   onLoadQuoteProposals: (quoteId: string) => void;
@@ -10879,6 +11089,11 @@ function SalesQuoteBuilder({
   const [signItemDraft, setSignItemDraft] = useState({ catalogItemId: "", qty: 1 });
   const [sensorItemDraft, setSensorItemDraft] = useState({ catalogItemId: "", qty: 1 });
   const [miscItemDraft, setMiscItemDraft] = useState({ catalogItemId: "", qty: 1 });
+  // #164 -- lets a rep get back to the original "New Site" intake fields
+  // (client/site name, city) and correct them after the quote already
+  // exists.
+  const [isEditingSiteInfo, setIsEditingSiteInfo] = useState(false);
+  const [siteInfoDraft, setSiteInfoDraft] = useState({ clientName: "", siteName: "", city: "" });
 
   const selectedQuote = salesQuotes.find((quote) => quote.id === selectedQuoteId) ?? null;
   const selectedLocation = selectedQuote?.locations.find((location) => location.id === selectedLocationId) ?? null;
@@ -10902,6 +11117,7 @@ function SalesQuoteBuilder({
   useEffect(() => {
     if (selectedQuoteId) {
       onLoadQuoteProposals(selectedQuoteId);
+      onLoadQuoteIntakeResponse(selectedQuoteId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedQuoteId]);
@@ -10910,6 +11126,11 @@ function SalesQuoteBuilder({
     setProposalClientEmailDraft(selectedQuote?.clientEmail ?? "");
     setProposalSummaryDraft(selectedQuote?.proposalSummary ?? "");
   }, [selectedQuote?.id, selectedQuote?.clientEmail, selectedQuote?.proposalSummary]);
+
+  useEffect(() => {
+    setIsEditingSiteInfo(false);
+    setSiteInfoDraft({ clientName: selectedQuote?.clientName ?? "", siteName: selectedQuote?.siteName ?? "", city: selectedQuote?.city ?? "" });
+  }, [selectedQuote?.id, selectedQuote?.clientName, selectedQuote?.siteName, selectedQuote?.city]);
 
   function openQuote(id: string) {
     setSelectedQuoteId(id);
@@ -10928,6 +11149,14 @@ function SalesQuoteBuilder({
     onCreateQuote(newQuoteDraft);
     setNewQuoteDraft(EMPTY_NEW_QUOTE_DRAFT);
     setShowNewQuoteModal(false);
+  }
+
+  function saveSiteInfo() {
+    if (!selectedQuote || !siteInfoDraft.clientName.trim() || !siteInfoDraft.siteName.trim()) {
+      return;
+    }
+    onUpdateQuoteInfo(selectedQuote.id, siteInfoDraft);
+    setIsEditingSiteInfo(false);
   }
 
   function handleImageSelect(locationId: string, imageType: "photo" | "drawing", event: React.ChangeEvent<HTMLInputElement>) {
@@ -10996,8 +11225,36 @@ function SalesQuoteBuilder({
           <div className="panel-title-row">
             <div>
               <button className="secondary-action mini-action" type="button" onClick={backToList}>&larr; Back to quotes</button>
-              <h2>{selectedQuote.siteName}</h2>
-              <p>{selectedQuote.clientName} - {selectedQuote.city || "No city set"} - Started by {selectedQuote.createdByEmail || "Unknown"}</p>
+              {isEditingSiteInfo ? (
+                <div className="site-info-edit-row">
+                  <input
+                    value={siteInfoDraft.siteName}
+                    placeholder="Site name"
+                    onChange={(event) => setSiteInfoDraft((current) => ({ ...current, siteName: event.target.value }))}
+                  />
+                  <input
+                    value={siteInfoDraft.clientName}
+                    placeholder="Client name"
+                    onChange={(event) => setSiteInfoDraft((current) => ({ ...current, clientName: event.target.value }))}
+                  />
+                  <input
+                    value={siteInfoDraft.city}
+                    placeholder="City"
+                    onChange={(event) => setSiteInfoDraft((current) => ({ ...current, city: event.target.value }))}
+                  />
+                  <button className="primary-action mini-action mini-action-sm" type="button" onClick={saveSiteInfo}>Save</button>
+                  <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => setIsEditingSiteInfo(false)}>Cancel</button>
+                </div>
+              ) : (
+                <>
+                  <h2>{selectedQuote.siteName}</h2>
+                  <p>
+                    {selectedQuote.clientName} - {selectedQuote.city || "No city set"} - Started by {selectedQuote.createdByEmail || "Unknown"}
+                    {" "}
+                    <button className="link-button" type="button" onClick={() => setIsEditingSiteInfo(true)}>Edit</button>
+                  </p>
+                </>
+              )}
               <label className="quote-status-field">
                 Deal status
                 <select value={selectedQuote.status} onChange={(event) => onUpdateStatus(selectedQuote.id, event.target.value as SalesQuote["status"])}>
@@ -11009,10 +11266,6 @@ function SalesQuoteBuilder({
               {selectedQuote.status === "closed_won" && (
                 <small className="muted">This quote's BOM can now be pulled into a Project from the Projects page.</small>
               )}
-            </div>
-            <div className="quote-original-form-slot">
-              <span className="label">Original Form</span>
-              <p>Placeholder for the original intake form this quote was scoped from -- we'll wire this up next.</p>
             </div>
             <div className="quote-detail-actions">
               <div className="stacked-mini-actions">
@@ -11030,6 +11283,49 @@ function SalesQuoteBuilder({
               />
             </div>
           </div>
+
+          <div className="quote-hardware-summary">
+            <span className="label">Site Intake Questionnaire</span>
+            <p className="muted">Questions to ask the client while scoping this site. Grows over time -- add/edit/reorder questions in Admin -&gt; Form Builder.</p>
+            {quoteIntakeStatus && <small className="muted">{quoteIntakeStatus}</small>}
+            {siteIntakeSchema && siteIntakeSchema.fields.length > 0 ? (
+              <div className="form-grid">
+                {[...siteIntakeSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field) => {
+                  const responses = quoteIntakeResponses[selectedQuote.id]?.responses ?? {};
+                  const saveField = (value: string) => onSaveQuoteIntakeResponses(selectedQuote.id, { ...responses, [field.fieldKey]: value });
+                  return (
+                    <label key={field.id} className={field.fieldType === "textarea" ? "span-2" : undefined}>
+                      {field.label}{field.isRequired ? " *" : ""}
+                      {field.fieldType === "select" ? (
+                        <select value={responses[field.fieldKey] ?? ""} onChange={(event) => saveField(event.target.value)}>
+                          <option value="">Select...</option>
+                          {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      ) : field.fieldType === "textarea" ? (
+                        <textarea value={responses[field.fieldKey] ?? ""} placeholder={field.placeholder} onChange={(event) => saveField(event.target.value)} />
+                      ) : field.fieldType === "checkbox" ? (
+                        <input
+                          type="checkbox"
+                          checked={responses[field.fieldKey] === "true"}
+                          onChange={(event) => saveField(event.target.checked ? "true" : "false")}
+                        />
+                      ) : (
+                        <input
+                          type={field.fieldType === "date" ? "date" : field.fieldType === "number" ? "number" : "text"}
+                          value={responses[field.fieldKey] ?? ""}
+                          placeholder={field.placeholder}
+                          onChange={(event) => saveField(event.target.value)}
+                        />
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <span className="empty-compact-state">No intake questions configured yet -- add some in Admin -&gt; Form Builder.</span>
+            )}
+          </div>
+
           <table>
             <thead>
               <tr><th>Type</th><th>Name</th><th></th><th>Photos</th></tr>

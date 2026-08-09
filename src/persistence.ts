@@ -6003,3 +6003,99 @@ export async function respondToPublicQuoteProposal(
   });
   return response.ok;
 }
+
+// --- Migration 058: Site Intake Questionnaire ------------------------------
+// Reuses the Phase 18 Fluid Form Engine's generic form_schemas/
+// form_schema_fields (loadFormSchema/addFormSchemaField/etc. above already
+// work for any form_key, including the new 'sales_site_intake' one) --
+// only the response storage is new, since project_handovers is
+// project-specific. One row per quote (unique quote_id): this is the
+// sales team's ongoing working notes on a client, not a one-time signed
+// capture, so it's a plain upsert rather than draft/submitted like
+// Handovers.
+
+export type SalesQuoteIntakeResponse = {
+  id: string;
+  quoteId: string;
+  formSchemaId: string;
+  responses: Record<string, string>;
+  updatedAt: string;
+};
+
+type SalesQuoteIntakeResponseRow = {
+  id: string;
+  quote_id: string;
+  form_schema_id: string;
+  responses: Record<string, string>;
+  updated_at: string;
+};
+
+function mapSalesQuoteIntakeResponseRow(row: SalesQuoteIntakeResponseRow): SalesQuoteIntakeResponse {
+  return {
+    id: row.id,
+    quoteId: row.quote_id,
+    formSchemaId: row.form_schema_id,
+    responses: row.responses ?? {},
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function loadSalesQuoteIntakeResponse(quoteId: string, accessToken?: string): Promise<SalesQuoteIntakeResponse | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !quoteId) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl(`sales_quote_intake_responses?quote_id=eq.${quoteId}&select=*&limit=1`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as SalesQuoteIntakeResponseRow[];
+  return rows[0] ? mapSalesQuoteIntakeResponseRow(rows[0]) : null;
+}
+
+export async function upsertSalesQuoteIntakeResponse(
+  quoteId: string,
+  formSchemaId: string,
+  responses: Record<string, string>,
+  accessToken?: string,
+): Promise<SalesQuoteIntakeResponse | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("sales_quote_intake_responses?on_conflict=quote_id"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify({ quote_id: quoteId, form_schema_id: formSchemaId, responses }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not save the site intake questionnaire: ${response.status}`);
+  }
+  const rows = (await response.json()) as SalesQuoteIntakeResponseRow[];
+  return rows[0] ? mapSalesQuoteIntakeResponseRow(rows[0]) : null;
+}
+
+// Lets a rep go back and view/edit a quote's original "New Site" intake
+// fields -- previously client_name/site_name/city were only ever set once
+// at creation, with no screen to revisit them afterward.
+export async function updateSalesQuoteInfo(
+  quoteId: string,
+  updates: Partial<{ clientName: string; siteName: string; city: string }>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.clientName !== undefined) payload.client_name = updates.clientName;
+  if (updates.siteName !== undefined) payload.site_name = updates.siteName;
+  if (updates.city !== undefined) payload.city = updates.city;
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl(`sales_quotes?id=eq.${quoteId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}

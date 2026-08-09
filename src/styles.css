@@ -2605,15 +2605,6 @@ td small {
   gap: 10px;
 }
 
-.quote-original-form-slot {
-  background: #f8f5ef;
-  border: 1px dashed #d8cfbe;
-  border-radius: 8px;
-  max-width: 260px;
-  padding: 8px 10px;
-}
-
-.quote-original-form-slot .label,
 .quote-hardware-summary .label {
   color: #756d62;
   font-size: 11px;
@@ -2622,10 +2613,33 @@ td small {
   text-transform: uppercase;
 }
 
-.quote-original-form-slot p {
-  color: #8a8272;
+/* #164 -- inline editable Site Builder header (client/site name, city),
+   replaces the old static header + "Original Form" placeholder. */
+.site-info-edit-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.site-info-edit-row input {
+  max-width: 180px;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #7a6a4a;
+  cursor: pointer;
   font-size: 12px;
-  margin: 4px 0 0;
+  font-weight: 700;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.link-button:hover {
+  color: #55492f;
 }
 
 .icon-count-button {
