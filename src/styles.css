@@ -2514,6 +2514,18 @@ td small {
   resize: vertical;
 }
 
+/* Entries/Exits/Levels (bom-modal-grid) and the Sign/Space Sensor/Misc
+   quantity inputs (line-item + submittal-create-row) only ever hold a
+   small number -- without this they stretch to the full width of their
+   grid cell/row like every other text input. !important because
+   .submittal-create-row input:not([type="checkbox"]) further down this
+   file sets a fixed 220px width with higher selector specificity, which
+   would otherwise win over a plain .qty-input-narrow rule. */
+.qty-input-narrow {
+  flex: 0 0 auto !important;
+  width: 4.5em !important;
+}
+
 /* Checkboxes inside a .bom-modal-grid (or .form-grid/.sow-grid below) would
    otherwise inherit the text-input styling above -- a checkbox getting
    min-height:42px + padding + a bordered background renders as a large

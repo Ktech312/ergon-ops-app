@@ -5113,6 +5113,20 @@ export type SalesQuoteLocationImage = {
   uploadedAt: string;
 };
 
+// Migration 056: an addable Sign/Space Sensor/Misc line at a specific
+// location -- always tied to a real catalog item (unlike the quote-level
+// BOM lines, which allow free text for labor/service rows), so the
+// dropdown for these is always populated from the catalog, filtered
+// differently per lineType in the UI.
+export type SalesQuoteLocationItem = {
+  id: string;
+  quoteLocationId: string;
+  lineType: "sign" | "sensor" | "misc";
+  catalogItemId: string | null;
+  qty: number;
+  lineSort: number;
+};
+
 export type SalesQuoteLocation = {
   id: string;
   quoteId: string;
@@ -5122,10 +5136,19 @@ export type SalesQuoteLocation = {
   fli: boolean;
   lpr: boolean;
   peopleCounting: boolean;
+  // Migration 056: which specific catalog camera model is used for each
+  // checked-on capability, instead of just recording that the capability
+  // exists. Null until a rep picks a model.
+  fliCameraItemId: string | null;
+  lprCameraItemId: string | null;
+  peopleCountingCameraItemId: string | null;
   entriesCount: number;
   exitsCount: number;
   levelsCount: number;
   images: SalesQuoteLocationImage[];
+  signLines: SalesQuoteLocationItem[];
+  sensorLines: SalesQuoteLocationItem[];
+  miscLines: SalesQuoteLocationItem[];
 };
 
 export type SalesQuoteBomLine = {
@@ -5177,6 +5200,15 @@ type SalesQuoteLocationImageRow = {
   uploaded_at: string;
 };
 
+type SalesQuoteLocationItemRow = {
+  id: string;
+  quote_location_id: string;
+  line_type: string;
+  catalog_item_id: string | null;
+  qty: number | string;
+  line_sort: number;
+};
+
 type SalesQuoteLocationRow = {
   id: string;
   quote_id: string;
@@ -5186,10 +5218,14 @@ type SalesQuoteLocationRow = {
   fli: boolean;
   lpr: boolean;
   people_counting: boolean;
+  fli_camera_item_id: string | null;
+  lpr_camera_item_id: string | null;
+  people_counting_camera_item_id: string | null;
   entries_count: number | string;
   exits_count: number | string;
   levels_count: number | string;
   sales_quote_location_images: SalesQuoteLocationImageRow[];
+  sales_quote_location_items: SalesQuoteLocationItemRow[];
 };
 
 type SalesQuoteBomLineRow = {
@@ -5227,7 +5263,19 @@ function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQu
   };
 }
 
+function mapSalesQuoteLocationItemRow(row: SalesQuoteLocationItemRow): SalesQuoteLocationItem {
+  return {
+    id: row.id,
+    quoteLocationId: row.quote_location_id,
+    lineType: row.line_type as SalesQuoteLocationItem["lineType"],
+    catalogItemId: row.catalog_item_id ?? null,
+    qty: Number(row.qty) || 0,
+    lineSort: row.line_sort,
+  };
+}
+
 function mapSalesQuoteLocationRow(row: SalesQuoteLocationRow): SalesQuoteLocation {
+  const items = (row.sales_quote_location_items ?? []).map(mapSalesQuoteLocationItemRow).sort((a, b) => a.lineSort - b.lineSort);
   return {
     id: row.id,
     quoteId: row.quote_id,
@@ -5237,10 +5285,16 @@ function mapSalesQuoteLocationRow(row: SalesQuoteLocationRow): SalesQuoteLocatio
     fli: row.fli,
     lpr: row.lpr,
     peopleCounting: row.people_counting,
+    fliCameraItemId: row.fli_camera_item_id ?? null,
+    lprCameraItemId: row.lpr_camera_item_id ?? null,
+    peopleCountingCameraItemId: row.people_counting_camera_item_id ?? null,
     entriesCount: Number(row.entries_count) || 0,
     exitsCount: Number(row.exits_count) || 0,
     levelsCount: Number(row.levels_count) || 0,
     images: (row.sales_quote_location_images ?? []).map(mapSalesQuoteLocationImageRow),
+    signLines: items.filter((item) => item.lineType === "sign"),
+    sensorLines: items.filter((item) => item.lineType === "sensor"),
+    miscLines: items.filter((item) => item.lineType === "misc"),
   };
 }
 
@@ -5274,7 +5328,7 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
 }
 
 const SALES_QUOTE_SELECT =
-  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id)";
+  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5351,7 +5405,7 @@ export async function createSalesQuote(
     createdByEmail: input.createdByEmail,
     createdAt: new Date().toISOString(),
     status: "open",
-    locations: locationRows.map((row) => mapSalesQuoteLocationRow({ ...row, sales_quote_location_images: [] })),
+    locations: locationRows.map((row) => mapSalesQuoteLocationRow({ ...row, sales_quote_location_images: [], sales_quote_location_items: [] })),
     bomLines: [],
     clientEmail: "",
     proposalSummary: "",
@@ -5464,7 +5518,7 @@ export async function addSalesQuoteLocation(
     return null;
   }
   const rows = (await response.json()) as SalesQuoteLocationRow[];
-  return rows[0] ? mapSalesQuoteLocationRow({ ...rows[0], sales_quote_location_images: [] }) : null;
+  return rows[0] ? mapSalesQuoteLocationRow({ ...rows[0], sales_quote_location_images: [], sales_quote_location_items: [] }) : null;
 }
 
 export async function updateSalesQuoteLocation(
@@ -5474,6 +5528,9 @@ export async function updateSalesQuoteLocation(
     fli: boolean;
     lpr: boolean;
     peopleCounting: boolean;
+    fliCameraItemId: string | null;
+    lprCameraItemId: string | null;
+    peopleCountingCameraItemId: string | null;
     entriesCount: number;
     exitsCount: number;
     levelsCount: number;
@@ -5488,6 +5545,9 @@ export async function updateSalesQuoteLocation(
   if (updates.fli !== undefined) payload.fli = updates.fli;
   if (updates.lpr !== undefined) payload.lpr = updates.lpr;
   if (updates.peopleCounting !== undefined) payload.people_counting = updates.peopleCounting;
+  if (updates.fliCameraItemId !== undefined) payload.fli_camera_item_id = updates.fliCameraItemId;
+  if (updates.lprCameraItemId !== undefined) payload.lpr_camera_item_id = updates.lprCameraItemId;
+  if (updates.peopleCountingCameraItemId !== undefined) payload.people_counting_camera_item_id = updates.peopleCountingCameraItemId;
   if (updates.entriesCount !== undefined) payload.entries_count = updates.entriesCount;
   if (updates.exitsCount !== undefined) payload.exits_count = updates.exitsCount;
   if (updates.levelsCount !== undefined) payload.levels_count = updates.levelsCount;
@@ -5495,6 +5555,51 @@ export async function updateSalesQuoteLocation(
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify(payload),
+  });
+}
+
+// Migration 056: addable Sign/Space Sensor/Misc lines at a location.
+export async function addSalesQuoteLocationItem(
+  quoteLocationId: string,
+  lineType: SalesQuoteLocationItem["lineType"],
+  catalogItemId: string,
+  qty: number,
+  lineSort: number,
+  accessToken?: string,
+): Promise<SalesQuoteLocationItem | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("sales_quote_location_items"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ quote_location_id: quoteLocationId, line_type: lineType, catalog_item_id: catalogItemId, qty, line_sort: lineSort }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as SalesQuoteLocationItemRow[];
+  return rows[0] ? mapSalesQuoteLocationItemRow(rows[0]) : null;
+}
+
+export async function updateSalesQuoteLocationItemQty(id: string, qty: number, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`sales_quote_location_items?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ qty }),
+  });
+}
+
+export async function deleteSalesQuoteLocationItem(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`sales_quote_location_items?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
   });
 }
 

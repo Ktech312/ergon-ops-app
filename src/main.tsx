@@ -45,6 +45,9 @@ import {
   createNotification,
   createPresalesRule,
   addSalesQuoteLocation,
+  addSalesQuoteLocationItem,
+  updateSalesQuoteLocationItemQty,
+  deleteSalesQuoteLocationItem,
   addSalesQuoteLocationImage,
   createProjectDocuments,
   createPurchaseOrder,
@@ -221,6 +224,7 @@ import {
   type SalesQuoteBomLine,
   type SalesQuoteLocation,
   type SalesQuoteLocationImage,
+  type SalesQuoteLocationItem,
   type TaskActivityEntry,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
@@ -1834,6 +1838,96 @@ function App() {
     if (authSession) {
       await updateSalesQuoteLocation(locationId, updates, authSession.accessToken);
     }
+  }
+
+  // Migration 056: addable Sign/Space Sensor/Misc lines within a location's
+  // details modal -- same optimistic-update-then-persist shape as the
+  // handlers above.
+  async function handleAddSalesQuoteLocationItem(
+    quoteId: string,
+    locationId: string,
+    lineType: SalesQuoteLocationItem["lineType"],
+    catalogItemId: string,
+    qty: number,
+  ) {
+    if (!authSession || !catalogItemId) {
+      return;
+    }
+    const quote = salesQuotes.find((entry) => entry.id === quoteId);
+    const location = quote?.locations.find((entry) => entry.id === locationId);
+    if (!location) {
+      return;
+    }
+    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : "miscLines";
+    const nextLineSort = location[listKey].length;
+    const created = await addSalesQuoteLocationItem(locationId, lineType, catalogItemId, qty, nextLineSort, authSession.accessToken);
+    if (!created) {
+      return;
+    }
+    setSalesQuotes((current) =>
+      current.map((entryQuote) =>
+        entryQuote.id === quoteId
+          ? {
+              ...entryQuote,
+              locations: entryQuote.locations.map((entryLocation) =>
+                entryLocation.id === locationId ? { ...entryLocation, [listKey]: [...entryLocation[listKey], created] } : entryLocation,
+              ),
+            }
+          : entryQuote,
+      ),
+    );
+  }
+
+  async function handleUpdateSalesQuoteLocationItemQty(quoteId: string, locationId: string, itemId: string, qty: number) {
+    if (!authSession) {
+      return;
+    }
+    setSalesQuotes((current) =>
+      current.map((entryQuote) =>
+        entryQuote.id === quoteId
+          ? {
+              ...entryQuote,
+              locations: entryQuote.locations.map((entryLocation) =>
+                entryLocation.id === locationId
+                  ? {
+                      ...entryLocation,
+                      signLines: entryLocation.signLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
+                      sensorLines: entryLocation.sensorLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
+                      miscLines: entryLocation.miscLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
+                    }
+                  : entryLocation,
+              ),
+            }
+          : entryQuote,
+      ),
+    );
+    await updateSalesQuoteLocationItemQty(itemId, qty, authSession.accessToken);
+  }
+
+  async function handleDeleteSalesQuoteLocationItem(quoteId: string, locationId: string, itemId: string) {
+    if (!authSession) {
+      return;
+    }
+    setSalesQuotes((current) =>
+      current.map((entryQuote) =>
+        entryQuote.id === quoteId
+          ? {
+              ...entryQuote,
+              locations: entryQuote.locations.map((entryLocation) =>
+                entryLocation.id === locationId
+                  ? {
+                      ...entryLocation,
+                      signLines: entryLocation.signLines.filter((line) => line.id !== itemId),
+                      sensorLines: entryLocation.sensorLines.filter((line) => line.id !== itemId),
+                      miscLines: entryLocation.miscLines.filter((line) => line.id !== itemId),
+                    }
+                  : entryLocation,
+              ),
+            }
+          : entryQuote,
+      ),
+    );
+    await deleteSalesQuoteLocationItem(itemId, authSession.accessToken);
   }
 
   async function handleUpdateSalesQuoteStatus(quoteId: string, status: SalesQuote["status"]) {
@@ -4274,6 +4368,9 @@ function App() {
             onCreateSalesQuote={handleCreateSalesQuote}
             onAddSalesQuoteLocation={handleAddSalesQuoteLocation}
             onUpdateSalesQuoteLocation={handleUpdateSalesQuoteLocation}
+            onAddSalesQuoteLocationItem={handleAddSalesQuoteLocationItem}
+            onUpdateSalesQuoteLocationItemQty={handleUpdateSalesQuoteLocationItemQty}
+            onDeleteSalesQuoteLocationItem={handleDeleteSalesQuoteLocationItem}
             onUpdateSalesQuoteStatus={handleUpdateSalesQuoteStatus}
             onAddSalesQuoteBomLines={handleAddSalesQuoteBomLines}
             onDeleteSalesQuoteBomLine={handleDeleteSalesQuoteBomLine}
@@ -9231,6 +9328,9 @@ function SalesHome({
   onCreateSalesQuote,
   onAddSalesQuoteLocation,
   onUpdateSalesQuoteLocation,
+  onAddSalesQuoteLocationItem,
+  onUpdateSalesQuoteLocationItemQty,
+  onDeleteSalesQuoteLocationItem,
   onUpdateSalesQuoteStatus,
   onAddSalesQuoteBomLines,
   onDeleteSalesQuoteBomLine,
@@ -9278,8 +9378,22 @@ function SalesHome({
   onUpdateSalesQuoteLocation: (
     quoteId: string,
     locationId: string,
-    updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
+    updates: Partial<{
+      name: string;
+      fli: boolean;
+      lpr: boolean;
+      peopleCounting: boolean;
+      fliCameraItemId: string | null;
+      lprCameraItemId: string | null;
+      peopleCountingCameraItemId: string | null;
+      entriesCount: number;
+      exitsCount: number;
+      levelsCount: number;
+    }>,
   ) => void;
+  onAddSalesQuoteLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number) => void;
+  onUpdateSalesQuoteLocationItemQty: (quoteId: string, locationId: string, itemId: string, qty: number) => void;
+  onDeleteSalesQuoteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => void;
   onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
@@ -9354,6 +9468,9 @@ function SalesHome({
         onCreateQuote={onCreateSalesQuote}
         onAddLocation={onAddSalesQuoteLocation}
         onUpdateLocation={onUpdateSalesQuoteLocation}
+        onAddLocationItem={onAddSalesQuoteLocationItem}
+        onUpdateLocationItemQty={onUpdateSalesQuoteLocationItemQty}
+        onDeleteLocationItem={onDeleteSalesQuoteLocationItem}
         onUpdateStatus={onUpdateSalesQuoteStatus}
         onAddBomLines={onAddSalesQuoteBomLines}
         onDeleteBomLine={onDeleteSalesQuoteBomLine}
@@ -9436,6 +9553,10 @@ const CATALOG_CATEGORY_OPTIONS = [
   "EnSight Kits",
   "Power",
   "Lighting",
+  // Added for the Site Builder location "Space Sensor" section (E asked
+  // sensors to have a real Category, not just a tag) -- not part of E's
+  // original 9-category list, flagging that this is a new addition.
+  "Space Sensors",
   "Uncategorized",
 ];
 
@@ -10495,6 +10616,83 @@ function CameraCaptureModal({
   );
 }
 
+// Shared "addable catalog-linked line" list used by the Sign / Space
+// Sensor / Misc sections in a location's details modal -- same
+// list-plus-add-row shape as the Quote BOM list above, just always tied to
+// a real catalog item (no free-text option) and scoped to one location
+// instead of the whole quote.
+function LocationItemLineSection({
+  title,
+  hint,
+  items,
+  catalogItems,
+  options,
+  draft,
+  onDraftChange,
+  onAdd,
+  onUpdateQty,
+  onDelete,
+}: {
+  title: string;
+  hint: string;
+  items: SalesQuoteLocationItem[];
+  catalogItems: CatalogItem[];
+  options: CatalogItem[];
+  draft: { catalogItemId: string; qty: number };
+  onDraftChange: (draft: { catalogItemId: string; qty: number }) => void;
+  onAdd: () => void;
+  onUpdateQty: (itemId: string, qty: number) => void;
+  onDelete: (itemId: string) => void;
+}) {
+  return (
+    <div className="quote-hardware-summary">
+      <span className="label">{title}</span>
+      <p className="muted">{hint}</p>
+      <ul className="line-list">
+        {items.map((line) => {
+          const catalogItem = line.catalogItemId ? catalogItems.find((item) => item.id === line.catalogItemId) : undefined;
+          return (
+            <li className="line-item" key={line.id}>
+              <div>
+                <strong>{catalogItem ? catalogItem.productName : "Item removed from catalog"}</strong>
+                <input
+                  className="qty-input-narrow"
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  value={line.qty}
+                  onChange={(event) => onUpdateQty(line.id, Number(event.target.value) || 0)}
+                />
+              </div>
+              <button className="icon-button" type="button" onClick={() => onDelete(line.id)} aria-label="Remove line">x</button>
+            </li>
+          );
+        })}
+        {items.length === 0 && <li className="empty-compact-state">No lines yet.</li>}
+      </ul>
+      <div className="submittal-create-row">
+        <select value={draft.catalogItemId} onChange={(event) => onDraftChange({ ...draft, catalogItemId: event.target.value })}>
+          <option value="">Select item...</option>
+          {options.map((item) => (
+            <option key={item.id} value={item.id}>{item.productName}</option>
+          ))}
+        </select>
+        <input
+          className="qty-input-narrow"
+          type="number"
+          min={0.01}
+          step={0.01}
+          value={draft.qty}
+          onChange={(event) => onDraftChange({ ...draft, qty: Number(event.target.value) || 1 })}
+        />
+        <button className="secondary-action mini-action" type="button" disabled={!draft.catalogItemId} onClick={onAdd}>
+          + Add line
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SalesQuoteBuilder({
   salesQuotes,
   status,
@@ -10502,6 +10700,9 @@ function SalesQuoteBuilder({
   onCreateQuote,
   onAddLocation,
   onUpdateLocation,
+  onAddLocationItem,
+  onUpdateLocationItemQty,
+  onDeleteLocationItem,
   onUpdateStatus,
   onAddBomLines,
   onDeleteBomLine,
@@ -10532,8 +10733,22 @@ function SalesQuoteBuilder({
   onUpdateLocation: (
     quoteId: string,
     locationId: string,
-    updates: Partial<{ name: string; fli: boolean; lpr: boolean; peopleCounting: boolean; entriesCount: number; exitsCount: number; levelsCount: number }>,
+    updates: Partial<{
+      name: string;
+      fli: boolean;
+      lpr: boolean;
+      peopleCounting: boolean;
+      fliCameraItemId: string | null;
+      lprCameraItemId: string | null;
+      peopleCountingCameraItemId: string | null;
+      entriesCount: number;
+      exitsCount: number;
+      levelsCount: number;
+    }>,
   ) => void;
+  onAddLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number) => void;
+  onUpdateLocationItemQty: (quoteId: string, locationId: string, itemId: string, qty: number) => void;
+  onDeleteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => void;
   onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
@@ -10570,6 +10785,11 @@ function SalesQuoteBuilder({
   const [proposalClientEmailDraft, setProposalClientEmailDraft] = useState("");
   const [proposalSummaryDraft, setProposalSummaryDraft] = useState("");
   const [copiedProposalId, setCopiedProposalId] = useState("");
+  // Migration 056: addable Sign/Space Sensor/Misc lines at the location
+  // level -- one small draft per section, reset after each add.
+  const [signItemDraft, setSignItemDraft] = useState({ catalogItemId: "", qty: 1 });
+  const [sensorItemDraft, setSensorItemDraft] = useState({ catalogItemId: "", qty: 1 });
+  const [miscItemDraft, setMiscItemDraft] = useState({ catalogItemId: "", qty: 1 });
 
   const selectedQuote = salesQuotes.find((quote) => quote.id === selectedQuoteId) ?? null;
   const selectedLocation = selectedQuote?.locations.find((location) => location.id === selectedLocationId) ?? null;
@@ -10577,6 +10797,18 @@ function SalesQuoteBuilder({
   // Product Catalog instead of a freeform typed tier.
   const catalogCategories = Array.from(new Set(catalogItems.map((item) => item.category.trim()).filter(Boolean))).sort();
   const activeCatalogItems = catalogItems.filter((item) => !item.isRetired);
+  // Camera model picker for FLI/LPR/People Counting -- narrowed to the
+  // Cameras category, since these are specifically "which camera model."
+  const cameraCatalogItems = activeCatalogItems.filter((item) => item.category === "Cameras");
+  // Signs section: catalog items categorized as Signage.
+  const signCatalogItems = activeCatalogItems.filter((item) => item.category === "Signage");
+  // Space Sensor section: E asked for a real Category (Space Sensors,
+  // added to CATALOG_CATEGORY_OPTIONS above) but also mentioned tags --
+  // matching on either covers items that predate the new category and
+  // only have the free-text tag set.
+  const sensorCatalogItems = activeCatalogItems.filter(
+    (item) => item.category === "Space Sensors" || (item.tags ?? []).some((tag) => tag.toLowerCase().includes("sensor")),
+  );
 
   useEffect(() => {
     if (selectedQuoteId) {
@@ -10955,15 +11187,51 @@ function SalesQuoteBuilder({
               <label className="checkbox-inline span-2">
                 <input type="checkbox" checked={selectedLocation.fli} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { fli: event.target.checked })} /> FLI
               </label>
+              <label className="span-2">Camera model
+                <select
+                  disabled={!selectedLocation.fli}
+                  value={selectedLocation.fliCameraItemId ?? ""}
+                  onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { fliCameraItemId: event.target.value || null })}
+                >
+                  <option value="">Select camera model...</option>
+                  {cameraCatalogItems.map((item) => (
+                    <option key={item.id} value={item.id}>{item.productName}</option>
+                  ))}
+                </select>
+              </label>
               <label className="checkbox-inline span-2">
                 <input type="checkbox" checked={selectedLocation.lpr} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { lpr: event.target.checked })} /> LPR
+              </label>
+              <label className="span-2">Camera model
+                <select
+                  disabled={!selectedLocation.lpr}
+                  value={selectedLocation.lprCameraItemId ?? ""}
+                  onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { lprCameraItemId: event.target.value || null })}
+                >
+                  <option value="">Select camera model...</option>
+                  {cameraCatalogItems.map((item) => (
+                    <option key={item.id} value={item.id}>{item.productName}</option>
+                  ))}
+                </select>
               </label>
               <label className="checkbox-inline span-2">
                 <input type="checkbox" checked={selectedLocation.peopleCounting} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { peopleCounting: event.target.checked })} /> People counting
               </label>
-              <label>Entries<input type="number" min={0} value={selectedLocation.entriesCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { entriesCount: Number(event.target.value) || 0 })} /></label>
-              <label>Exits<input type="number" min={0} value={selectedLocation.exitsCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { exitsCount: Number(event.target.value) || 0 })} /></label>
-              <label>Levels<input type="number" min={0} value={selectedLocation.levelsCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { levelsCount: Number(event.target.value) || 0 })} /></label>
+              <label className="span-2">Camera model
+                <select
+                  disabled={!selectedLocation.peopleCounting}
+                  value={selectedLocation.peopleCountingCameraItemId ?? ""}
+                  onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { peopleCountingCameraItemId: event.target.value || null })}
+                >
+                  <option value="">Select camera model...</option>
+                  {cameraCatalogItems.map((item) => (
+                    <option key={item.id} value={item.id}>{item.productName}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Entries<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.entriesCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { entriesCount: Number(event.target.value) || 0 })} /></label>
+              <label>Exits<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.exitsCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { exitsCount: Number(event.target.value) || 0 })} /></label>
+              <label>Levels<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.levelsCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { levelsCount: Number(event.target.value) || 0 })} /></label>
             </div>
             <div className="note-list">
               <p><strong>Recommended Hardware</strong> -- v1 estimate from the Site Hardware Rules in Admin, based on the checkboxes and counts above. Tune the rules there as real numbers come in.</p>
@@ -10980,6 +11248,55 @@ function SalesQuoteBuilder({
                 );
               })()}
             </div>
+
+            <LocationItemLineSection
+              title="Signs"
+              hint="Signage for this facility, pulled straight from the Product Catalog."
+              items={selectedLocation.signLines}
+              catalogItems={catalogItems}
+              options={signCatalogItems}
+              draft={signItemDraft}
+              onDraftChange={setSignItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedQuote.id, selectedLocation.id, "sign", signItemDraft.catalogItemId, signItemDraft.qty);
+                setSignItemDraft({ catalogItemId: "", qty: 1 });
+              }}
+              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedQuote.id, selectedLocation.id, itemId, qty)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedQuote.id, selectedLocation.id, itemId)}
+            />
+
+            <LocationItemLineSection
+              title="Space Sensor"
+              hint="Sensors for this facility -- catalog items tagged sensor or filed under the Space Sensors category."
+              items={selectedLocation.sensorLines}
+              catalogItems={catalogItems}
+              options={sensorCatalogItems}
+              draft={sensorItemDraft}
+              onDraftChange={setSensorItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedQuote.id, selectedLocation.id, "sensor", sensorItemDraft.catalogItemId, sensorItemDraft.qty);
+                setSensorItemDraft({ catalogItemId: "", qty: 1 });
+              }}
+              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedQuote.id, selectedLocation.id, itemId, qty)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedQuote.id, selectedLocation.id, itemId)}
+            />
+
+            <LocationItemLineSection
+              title="Misc."
+              hint="Anything else for this facility -- the whole Product Catalog is available here."
+              items={selectedLocation.miscLines}
+              catalogItems={catalogItems}
+              options={activeCatalogItems}
+              draft={miscItemDraft}
+              onDraftChange={setMiscItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedQuote.id, selectedLocation.id, "misc", miscItemDraft.catalogItemId, miscItemDraft.qty);
+                setMiscItemDraft({ catalogItemId: "", qty: 1 });
+              }}
+              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedQuote.id, selectedLocation.id, itemId, qty)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedQuote.id, selectedLocation.id, itemId)}
+            />
+
             {selectedLocation.images.length > 0 && (
               <div className="line-list">
                 {selectedLocation.images.map((image) => (
