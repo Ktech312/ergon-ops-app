@@ -91,7 +91,9 @@ button {
 }
 
 .view-mode-tab.active {
-  background: linear-gradient(135deg, #e25112, #ae132d);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, #7a1f0a 0%, #ae132d 22%, #e25112 45%, #f6c667 55%, #e25112 65%, #ae132d 85%, #7a1f0a 100%);
   color: white;
 }
 
@@ -628,7 +630,9 @@ button {
 
 .nav-button.active,
 .nav-button:hover {
-  background: linear-gradient(135deg, #e25112, #ae132d);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, #7a1f0a 0%, #ae132d 22%, #e25112 45%, #f6c667 55%, #e25112 65%, #ae132d 85%, #7a1f0a 100%);
   color: white;
 }
 
@@ -812,7 +816,9 @@ button {
 }
 
 .account-menu-admin-link.active {
-  background: linear-gradient(135deg, #e25112, #ae132d);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, #7a1f0a 0%, #ae132d 22%, #e25112 45%, #f6c667 55%, #e25112 65%, #ae132d 85%, #7a1f0a 100%);
   color: white;
 }
 
@@ -1569,9 +1575,12 @@ td small {
 
 .primary-action {
   align-items: center;
-  background: linear-gradient(135deg, #e25112, #ae132d);
-  border: 1px solid #ae132d;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, #7a1f0a 0%, #ae132d 22%, #e25112 45%, #f6c667 55%, #e25112 65%, #ae132d 85%, #7a1f0a 100%);
+  border: 1px solid #7a1f0a;
   border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.25);
   color: white;
   cursor: pointer;
   display: inline-flex;
@@ -1676,7 +1685,9 @@ td small {
 }
 
 .segmented-tabs button.active {
-  background: linear-gradient(135deg, #e25112, #ae132d);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, #7a1f0a 0%, #ae132d 22%, #e25112 45%, #f6c667 55%, #e25112 65%, #ae132d 85%, #7a1f0a 100%);
   color: white;
 }
 
@@ -1863,9 +1874,12 @@ td small {
 }
 
 .table-action {
-  background: linear-gradient(135deg, #e25112, #ae132d);
-  border: 1px solid #ae132d;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, #7a1f0a 0%, #ae132d 22%, #e25112 45%, #f6c667 55%, #e25112 65%, #ae132d 85%, #7a1f0a 100%);
+  border: 1px solid #7a1f0a;
   border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.25);
   color: white;
   cursor: pointer;
   font-weight: 800;
@@ -2075,7 +2089,9 @@ td small {
 }
 
 .progress-cell b {
-  background: linear-gradient(90deg, #ae132d, #e25112);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(90deg, #7a1f0a 0%, #ae132d 22%, #e25112 45%, #f6c667 55%, #e25112 65%, #ae132d 85%, #7a1f0a 100%);
   display: block;
   height: 100%;
 }
@@ -3813,7 +3829,9 @@ td.empty-compact-state {
 }
 
 .bar-row i {
-  background: linear-gradient(90deg, #ae132d, #e25112);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(90deg, #7a1f0a 0%, #ae132d 22%, #e25112 45%, #f6c667 55%, #e25112 65%, #ae132d 85%, #7a1f0a 100%);
   display: block;
   height: 100%;
 }
