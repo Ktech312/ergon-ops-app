@@ -1063,7 +1063,8 @@ export async function createCatalogItem(item: Omit<CatalogItem, "id">, accessTok
   });
 
   if (!response.ok) {
-    throw new Error(`Could not create catalog item: ${response.status}`);
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Could not create catalog item (${response.status})${detail ? `: ${detail}` : ""}`);
   }
 
   const rows = (await response.json()) as CatalogItemRow[];
@@ -1088,7 +1089,8 @@ export async function updateCatalogItem(id: string, item: Omit<CatalogItem, "id"
   });
 
   if (!response.ok) {
-    throw new Error(`Could not update catalog item: ${response.status}`);
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Could not update catalog item (${response.status})${detail ? `: ${detail}` : ""}`);
   }
 
   const rows = (await response.json()) as CatalogItemRow[];
@@ -1135,7 +1137,8 @@ export async function bulkCreateCatalogItems(
   });
 
   if (!response.ok) {
-    throw new Error(`Could not import catalog items: ${response.status}`);
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Could not import catalog items (${response.status})${detail ? `: ${detail}` : ""}`);
   }
 
   const rows = (await response.json()) as CatalogItemRow[];
