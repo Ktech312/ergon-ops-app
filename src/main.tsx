@@ -7746,7 +7746,7 @@ function Projects({
               <div className="form-grid">
                 {[...handoverSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field) => (
                   <label key={field.id} className={field.fieldType === "textarea" ? "span-2" : undefined}>
-                    {field.label}{field.isRequired ? " *" : ""}
+                    <span>{field.label}{field.isRequired ? " *" : ""}</span>
                     {field.fieldType === "select" ? (
                       <select
                         value={handover.responses[field.fieldKey] ?? ""}
@@ -11161,6 +11161,21 @@ function SalesQuoteBuilder({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedQuoteId]);
 
+  // #172 -- Company Name is asked twice (the New/Edit Site sheet and the
+  // Site Intake Questionnaire); pull it from the sheet the first time the
+  // questionnaire is opened instead of making a rep retype it. Only fills
+  // when the questionnaire's answer is still blank, so it never overwrites
+  // something already typed there.
+  useEffect(() => {
+    if (!showIntakeModal || !selectedQuote) {
+      return;
+    }
+    if (!siteIntakeResponses.company_name && selectedQuote.clientName) {
+      onSaveQuoteIntakeResponses(selectedQuote.id, { ...siteIntakeResponses, company_name: selectedQuote.clientName });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showIntakeModal]);
+
   useEffect(() => {
     setProposalClientEmailDraft(selectedQuote?.clientEmail ?? "");
     setProposalSummaryDraft(selectedQuote?.proposalSummary ?? "");
@@ -11725,7 +11740,7 @@ function SalesQuoteBuilder({
               <button className="icon-button" type="button" onClick={() => setShowNewQuoteModal(false)} aria-label="Close new quote form">x</button>
             </div>
             <div className="bom-modal-grid">
-              <label className="span-2">Client name<input value={newQuoteDraft.clientName} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, clientName: event.target.value }))} placeholder="Client name" /></label>
+              <label className="span-2">Company Name<input value={newQuoteDraft.clientName} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, clientName: event.target.value }))} placeholder="Company Name" /></label>
               <label className="span-2">Site name<input value={newQuoteDraft.siteName} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, siteName: event.target.value }))} placeholder="Site name" /></label>
               <label>City<input value={newQuoteDraft.city} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, city: event.target.value }))} placeholder="City" /></label>
               <label>Garages<input type="number" min={0} value={newQuoteDraft.garageCount} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, garageCount: Number(event.target.value) || 0 }))} /></label>
@@ -11757,7 +11772,7 @@ function SalesQuoteBuilder({
               <button className="icon-button" type="button" onClick={() => setIsEditingSiteInfo(false)} aria-label="Close edit site form">x</button>
             </div>
             <div className="bom-modal-grid">
-              <label className="span-2">Client name<input value={siteInfoDraft.clientName} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, clientName: event.target.value }))} placeholder="Client name" /></label>
+              <label className="span-2">Company Name<input value={siteInfoDraft.clientName} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, clientName: event.target.value }))} placeholder="Company Name" /></label>
               <label className="span-2">Site name<input value={siteInfoDraft.siteName} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, siteName: event.target.value }))} placeholder="Site name" /></label>
               <label>City<input value={siteInfoDraft.city} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, city: event.target.value }))} placeholder="City" /></label>
               <label>
@@ -11799,7 +11814,7 @@ function SalesQuoteBuilder({
                   const saveField = (value: string) => onSaveQuoteIntakeResponses(selectedQuote.id, { ...responses, [field.fieldKey]: value });
                   return (
                     <label key={field.id} className={field.fieldType === "textarea" ? "span-2" : undefined}>
-                      {field.label}{field.isRequired ? " *" : ""}
+                      <span>{field.label}{field.isRequired ? " *" : ""}</span>
                       {field.fieldType === "select" ? (
                         <select value={responses[field.fieldKey] ?? ""} onChange={(event) => saveField(event.target.value)}>
                           <option value="">Select...</option>
