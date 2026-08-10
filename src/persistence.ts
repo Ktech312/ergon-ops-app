@@ -5202,6 +5202,15 @@ export type SalesQuote = {
   contactFullName: string;
   contactPhone: string;
   preferredCommunication: string;
+  // Migration 061: real addresses for both the site and the client company
+  // -- city (site) already existed above.
+  siteStreetAddress: string;
+  siteState: string;
+  siteZip: string;
+  clientStreetAddress: string;
+  clientCity: string;
+  clientState: string;
+  clientZip: string;
 };
 
 type SalesQuoteLocationImageRow = {
@@ -5267,6 +5276,13 @@ type SalesQuoteRow = {
   contact_full_name: string | null;
   contact_phone: string | null;
   preferred_communication: string | null;
+  site_street_address: string | null;
+  site_state: string | null;
+  site_zip: string | null;
+  client_street_address: string | null;
+  client_city: string | null;
+  client_state: string | null;
+  client_zip: string | null;
 };
 
 function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQuoteLocationImage {
@@ -5345,11 +5361,18 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
     contactFullName: row.contact_full_name ?? "",
     contactPhone: row.contact_phone ?? "",
     preferredCommunication: row.preferred_communication ?? "",
+    siteStreetAddress: row.site_street_address ?? "",
+    siteState: row.site_state ?? "",
+    siteZip: row.site_zip ?? "",
+    clientStreetAddress: row.client_street_address ?? "",
+    clientCity: row.client_city ?? "",
+    clientState: row.client_state ?? "",
+    clientZip: row.client_zip ?? "",
   };
 }
 
 const SALES_QUOTE_SELECT =
-  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
+  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5382,6 +5405,13 @@ export async function createSalesQuote(
     contactFullName?: string;
     contactPhone?: string;
     preferredCommunication?: string;
+    siteStreetAddress?: string;
+    siteState?: string;
+    siteZip?: string;
+    clientStreetAddress?: string;
+    clientCity?: string;
+    clientState?: string;
+    clientZip?: string;
   },
   accessToken?: string,
 ): Promise<SalesQuote | null> {
@@ -5400,6 +5430,13 @@ export async function createSalesQuote(
       contact_full_name: input.contactFullName || null,
       contact_phone: input.contactPhone || null,
       preferred_communication: input.preferredCommunication || null,
+      site_street_address: input.siteStreetAddress || null,
+      site_state: input.siteState || null,
+      site_zip: input.siteZip || null,
+      client_street_address: input.clientStreetAddress || null,
+      client_city: input.clientCity || null,
+      client_state: input.clientState || null,
+      client_zip: input.clientZip || null,
     }),
   });
   if (!quoteResponse.ok) {
@@ -5448,6 +5485,13 @@ export async function createSalesQuote(
     contactFullName: input.contactFullName ?? "",
     contactPhone: input.contactPhone ?? "",
     preferredCommunication: input.preferredCommunication ?? "",
+    siteStreetAddress: input.siteStreetAddress ?? "",
+    siteState: input.siteState ?? "",
+    siteZip: input.siteZip ?? "",
+    clientStreetAddress: input.clientStreetAddress ?? "",
+    clientCity: input.clientCity ?? "",
+    clientState: input.clientState ?? "",
+    clientZip: input.clientZip ?? "",
   };
 }
 
@@ -6118,6 +6162,13 @@ export async function updateSalesQuoteInfo(
     contactFullName: string;
     contactPhone: string;
     preferredCommunication: string;
+    siteStreetAddress: string;
+    siteState: string;
+    siteZip: string;
+    clientStreetAddress: string;
+    clientCity: string;
+    clientState: string;
+    clientZip: string;
   }>,
   accessToken?: string,
 ): Promise<void> {
@@ -6132,6 +6183,13 @@ export async function updateSalesQuoteInfo(
   if (updates.contactFullName !== undefined) payload.contact_full_name = updates.contactFullName;
   if (updates.contactPhone !== undefined) payload.contact_phone = updates.contactPhone;
   if (updates.preferredCommunication !== undefined) payload.preferred_communication = updates.preferredCommunication;
+  if (updates.siteStreetAddress !== undefined) payload.site_street_address = updates.siteStreetAddress;
+  if (updates.siteState !== undefined) payload.site_state = updates.siteState;
+  if (updates.siteZip !== undefined) payload.site_zip = updates.siteZip;
+  if (updates.clientStreetAddress !== undefined) payload.client_street_address = updates.clientStreetAddress;
+  if (updates.clientCity !== undefined) payload.client_city = updates.clientCity;
+  if (updates.clientState !== undefined) payload.client_state = updates.clientState;
+  if (updates.clientZip !== undefined) payload.client_zip = updates.clientZip;
   if (Object.keys(payload).length === 0) {
     return;
   }

@@ -2493,6 +2493,30 @@ td small {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+/* #179-184 -- sections a longer modal form (Site/Company/Contact Info)
+   into clearly divided groups, used by SiteContactFields. */
+.modal-section {
+  border-top: 1px solid #e8e1d5;
+  margin-top: 18px;
+  padding-top: 16px;
+}
+
+.modal-section:first-child {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.modal-section-title {
+  color: #756d62;
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
 .bom-modal-grid label {
   color: #514b43;
   display: grid;
@@ -2618,10 +2642,25 @@ td small {
   gap: 4px;
 }
 
-/* #168 -- compact trigger row for the Site Intake Questionnaire pop-up,
-   replaces what used to be a fully expanded inline panel. */
-.quote-intake-trigger-row {
-  margin: 12px 0;
+/* #184 -- "Export / Save as PDF" for the Site Intake Questionnaire modal.
+   Same window.print() pattern as the Quote Proposal/Submittal public pages,
+   but since this content lives in a modal over the rest of the app, print
+   media has to explicitly hide everything else and blow up just the
+   marked print area to fill the page. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .quote-intake-print-area,
+  .quote-intake-print-area * {
+    visibility: visible;
+  }
+  .quote-intake-print-area {
+    left: 0;
+    position: absolute;
+    top: 0;
+    width: 100%;
+  }
 }
 
 .quote-detail-actions {
