@@ -11082,62 +11082,78 @@ function SiteContactFields({
     <>
       <div className="modal-section">
         <span className="modal-section-title">Site Information</span>
-        <div className="form-grid">
-          <label><span>Site name</span><input value={values.siteName} onChange={(event) => onChange({ siteName: event.target.value })} placeholder="Site name" /></label>
-          <label><span>Street Address</span><input value={values.siteStreetAddress} onChange={(event) => onChange({ siteStreetAddress: event.target.value })} placeholder="Street address" /></label>
-          <label><span>City</span><input value={values.city} onChange={(event) => onChange({ city: event.target.value })} placeholder="City" /></label>
-          <label><span>State</span><input value={values.siteState} onChange={(event) => onChange({ siteState: event.target.value })} placeholder="State" /></label>
-          <label><span>Zip</span><input value={values.siteZip} onChange={(event) => onChange({ siteZip: event.target.value })} placeholder="Zip" /></label>
-          <label>
-            <span>Garages</span>
-            <input
-              type="number"
-              min={0}
-              value={garageCount}
-              disabled={!garageLotEditable}
-              onChange={(event) => onGarageCountChange?.(Number(event.target.value) || 0)}
-            />
-          </label>
-          <label>
-            <span>Parking lots</span>
-            <input
-              type="number"
-              min={0}
-              value={lotCount}
-              disabled={!garageLotEditable}
-              onChange={(event) => onLotCountChange?.(Number(event.target.value) || 0)}
-            />
-          </label>
-          {!garageLotEditable && <small className="muted">Use the + Garage / + Lot buttons on the site page to add more locations.</small>}
+        <div className="tight-form-rows">
+          <div className="tight-form-row">
+            <label className="tight-field tight-field-wide"><span>Site name</span><input value={values.siteName} onChange={(event) => onChange({ siteName: event.target.value })} placeholder="Site name" /></label>
+            <label className="tight-field tight-field-wide"><span>Street Address</span><input value={values.siteStreetAddress} onChange={(event) => onChange({ siteStreetAddress: event.target.value })} placeholder="Street address" /></label>
+          </div>
+          <div className="tight-form-row">
+            <label className="tight-field tight-field-medium"><span>City</span><input value={values.city} onChange={(event) => onChange({ city: event.target.value })} placeholder="City" /></label>
+            <label className="tight-field tight-field-tiny"><span>State</span><input value={values.siteState} onChange={(event) => onChange({ siteState: event.target.value })} placeholder="State" /></label>
+            <label className="tight-field tight-field-tiny"><span>Zip</span><input value={values.siteZip} onChange={(event) => onChange({ siteZip: event.target.value })} placeholder="Zip" maxLength={7} /></label>
+          </div>
+          <div className="tight-form-row">
+            <label className="tight-field tight-field-tiny">
+              <span>Garages</span>
+              <input
+                type="number"
+                min={0}
+                maxLength={3}
+                value={garageCount}
+                disabled={!garageLotEditable}
+                onChange={(event) => onGarageCountChange?.(Number(event.target.value) || 0)}
+              />
+            </label>
+            <label className="tight-field tight-field-tiny">
+              <span>Parking lots</span>
+              <input
+                type="number"
+                min={0}
+                maxLength={3}
+                value={lotCount}
+                disabled={!garageLotEditable}
+                onChange={(event) => onLotCountChange?.(Number(event.target.value) || 0)}
+              />
+            </label>
+            {!garageLotEditable && <span className="field-hint">Use the + Garage / + Lot buttons on the site page to add more locations.</span>}
+          </div>
         </div>
       </div>
 
       <div className="modal-section">
         <span className="modal-section-title">Company Information</span>
-        <div className="form-grid">
-          <label><span>Company Name</span><input value={values.clientName} onChange={(event) => onChange({ clientName: event.target.value })} placeholder="Company Name" /></label>
-          <label><span>Street Address</span><input value={values.clientStreetAddress} onChange={(event) => onChange({ clientStreetAddress: event.target.value })} placeholder="Street address" /></label>
-          <label><span>City</span><input value={values.clientCity} onChange={(event) => onChange({ clientCity: event.target.value })} placeholder="City" /></label>
-          <label><span>State</span><input value={values.clientState} onChange={(event) => onChange({ clientState: event.target.value })} placeholder="State" /></label>
-          <label><span>Zip</span><input value={values.clientZip} onChange={(event) => onChange({ clientZip: event.target.value })} placeholder="Zip" /></label>
+        <div className="tight-form-rows">
+          <div className="tight-form-row">
+            <label className="tight-field tight-field-wide"><span>Company Name</span><input value={values.clientName} onChange={(event) => onChange({ clientName: event.target.value })} placeholder="Company Name" /></label>
+            <label className="tight-field tight-field-wide"><span>Street Address</span><input value={values.clientStreetAddress} onChange={(event) => onChange({ clientStreetAddress: event.target.value })} placeholder="Street address" /></label>
+          </div>
+          <div className="tight-form-row">
+            <label className="tight-field tight-field-medium"><span>City</span><input value={values.clientCity} onChange={(event) => onChange({ clientCity: event.target.value })} placeholder="City" /></label>
+            <label className="tight-field tight-field-tiny"><span>State</span><input value={values.clientState} onChange={(event) => onChange({ clientState: event.target.value })} placeholder="State" /></label>
+            <label className="tight-field tight-field-tiny"><span>Zip</span><input value={values.clientZip} onChange={(event) => onChange({ clientZip: event.target.value })} placeholder="Zip" maxLength={7} /></label>
+          </div>
         </div>
       </div>
 
       <div className="modal-section">
         <span className="modal-section-title">Contact Information</span>
-        <div className="form-grid">
-          <label><span>Full Name</span><input value={values.contactFullName} onChange={(event) => onChange({ contactFullName: event.target.value })} placeholder="Full name" /></label>
-          <label><span>Business Email</span><input value={values.clientEmail} onChange={(event) => onChange({ clientEmail: event.target.value })} placeholder="Business email" /></label>
-          <label><span>Phone Number</span><input value={values.contactPhone} onChange={(event) => onChange({ contactPhone: event.target.value })} placeholder="Phone number" /></label>
-          <label>
-            <span>Preferred Communication Method</span>
-            <select value={values.preferredCommunication} onChange={(event) => onChange({ preferredCommunication: event.target.value })}>
-              <option value="">Select...</option>
-              <option value="Email">Email</option>
-              <option value="Phone Call">Phone Call</option>
-              <option value="Video Meeting (Zoom/Teams)">Video Meeting (Zoom/Teams)</option>
-            </select>
-          </label>
+        <div className="tight-form-rows">
+          <div className="tight-form-row">
+            <label className="tight-field tight-field-medium"><span>Full Name</span><input value={values.contactFullName} onChange={(event) => onChange({ contactFullName: event.target.value })} placeholder="Full name" /></label>
+            <label className="tight-field tight-field-wide"><span>Business Email</span><input value={values.clientEmail} onChange={(event) => onChange({ clientEmail: event.target.value })} placeholder="Business email" /></label>
+          </div>
+          <div className="tight-form-row">
+            <label className="tight-field tight-field-medium"><span>Phone Number</span><input value={values.contactPhone} onChange={(event) => onChange({ contactPhone: event.target.value })} placeholder="Phone number" /></label>
+            <label className="tight-field tight-field-medium">
+              <span>Preferred Communication</span>
+              <select value={values.preferredCommunication} onChange={(event) => onChange({ preferredCommunication: event.target.value })}>
+                <option value="">Select...</option>
+                <option value="Email">Email</option>
+                <option value="Phone Call">Phone Call</option>
+                <option value="Video Meeting (Zoom/Teams)">Video Meeting (Zoom/Teams)</option>
+              </select>
+            </label>
+          </div>
         </div>
       </div>
     </>
@@ -11452,7 +11468,7 @@ function SalesQuoteBuilder({
               )}
             </div>
             <div className="quote-detail-actions">
-              <div className="stacked-mini-actions">
+              <div className="quote-header-pill-row">
                 <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => onAddLocation(selectedQuote.id, "garage")}>+ Garage</button>
                 <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => onAddLocation(selectedQuote.id, "lot")}>+ Lot</button>
                 <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => setShowIntakeModal(true)}>

@@ -2517,6 +2517,96 @@ td small {
   text-transform: uppercase;
 }
 
+/* #190 -- SiteContactFields rebuilt as tight bordered rows (medical-intake-
+   form reference) instead of a CSS Grid. A shared grid/table forces every
+   field in the same column to match the widest field's width -- there is no
+   way to make a Zip field narrow while a Street Address field in the same
+   column is wide. Independent per-row flex containers fix that: each row
+   sizes only its own fields, to their own content, with no shared tracks. */
+.tight-form-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tight-form-row {
+  align-items: end;
+  border-bottom: 1px solid #efe9dd;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding-bottom: 10px;
+}
+
+.tight-form-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.tight-field {
+  color: #514b43;
+  display: inline-flex;
+  flex-direction: column;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 4px;
+}
+
+.tight-field > span:first-child {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tight-field input,
+.tight-field select {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 6px;
+  color: #1b1a18;
+  font: inherit;
+  font-weight: 400;
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+/* Site name, Street Address, Company Name, Business Email -- the only
+   fields that genuinely need room to grow. */
+.tight-field-wide {
+  flex: 1 1 200px;
+}
+
+.tight-field-wide input {
+  width: 100%;
+}
+
+/* City, Full Name, Phone Number, Preferred Communication -- medium-length
+   content, doesn't need to stretch edge to edge. */
+.tight-field-medium {
+  flex: 0 0 auto;
+}
+
+.tight-field-medium input,
+.tight-field-medium select {
+  width: 12em;
+}
+
+/* State/Zip/Garages/Parking lots -- explicitly small per E's instructions:
+   "A zip code is 4 numbers sometimes 7 max", "Garages and parking lots...
+   max 3 digits". */
+.tight-field-tiny {
+  flex: 0 0 auto;
+}
+
+.tight-field-tiny input {
+  width: 4.5em;
+}
+
+.tight-form-row .field-hint {
+  color: #948c7f;
+  font-size: 11px;
+  font-weight: 400;
+}
+
 .bom-modal-grid label {
   color: #514b43;
   display: grid;
@@ -2640,6 +2730,16 @@ td small {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* #189 -- +Garage/+Lot/Intake/Export PDF side by side, not stacked in a
+   narrow column (which was wrapping and overlapping itself). Wraps to a
+   second line only if the header is genuinely too narrow to fit all 4. */
+.quote-header-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 320px;
 }
 
 /* #184 -- "Export / Save as PDF" for the Site Intake Questionnaire modal.
