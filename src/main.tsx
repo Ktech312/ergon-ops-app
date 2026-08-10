@@ -11225,36 +11225,12 @@ function SalesQuoteBuilder({
           <div className="panel-title-row">
             <div>
               <button className="secondary-action mini-action" type="button" onClick={backToList}>&larr; Back to quotes</button>
-              {isEditingSiteInfo ? (
-                <div className="site-info-edit-row">
-                  <input
-                    value={siteInfoDraft.siteName}
-                    placeholder="Site name"
-                    onChange={(event) => setSiteInfoDraft((current) => ({ ...current, siteName: event.target.value }))}
-                  />
-                  <input
-                    value={siteInfoDraft.clientName}
-                    placeholder="Client name"
-                    onChange={(event) => setSiteInfoDraft((current) => ({ ...current, clientName: event.target.value }))}
-                  />
-                  <input
-                    value={siteInfoDraft.city}
-                    placeholder="City"
-                    onChange={(event) => setSiteInfoDraft((current) => ({ ...current, city: event.target.value }))}
-                  />
-                  <button className="primary-action mini-action mini-action-sm" type="button" onClick={saveSiteInfo}>Save</button>
-                  <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => setIsEditingSiteInfo(false)}>Cancel</button>
-                </div>
-              ) : (
-                <>
-                  <h2>{selectedQuote.siteName}</h2>
-                  <p>
-                    {selectedQuote.clientName} - {selectedQuote.city || "No city set"} - Started by {selectedQuote.createdByEmail || "Unknown"}
-                    {" "}
-                    <button className="link-button" type="button" onClick={() => setIsEditingSiteInfo(true)}>Edit</button>
-                  </p>
-                </>
-              )}
+              <h2>{selectedQuote.siteName}</h2>
+              <p>
+                {selectedQuote.clientName} - {selectedQuote.city || "No city set"} - Started by {selectedQuote.createdByEmail || "Unknown"}
+                {" "}
+                <button className="link-button" type="button" onClick={() => setIsEditingSiteInfo(true)}>Edit</button>
+              </p>
               <label className="quote-status-field">
                 Deal status
                 <select value={selectedQuote.status} onChange={(event) => onUpdateStatus(selectedQuote.id, event.target.value as SalesQuote["status"])}>
@@ -11755,6 +11731,45 @@ function SalesQuoteBuilder({
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowNewQuoteModal(false)}>Cancel</button>
               <button className="primary-action" type="button" onClick={submitNewQuote} disabled={!newQuoteDraft.clientName.trim() || !newQuoteDraft.siteName.trim()}>Create Quote</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* #164 follow-up -- E asked for the original "New Site" sheet itself to
+          reopen as a pop-up (not an inline edit row), since more fields are
+          still coming to it. Garages/Parking lots are shown read-only here --
+          those counts only ever drove one-time location creation; adding more
+          after the fact is what the "+ Garage"/"+ Lot" buttons in the header
+          are for, so letting this modal's counters silently create/destroy
+          named locations would be surprising. */}
+      {isEditingSiteInfo && selectedQuote && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="edit-site-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="edit-site-title">Edit Site</h2>
+                <p>Update the original intake info for this site.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setIsEditingSiteInfo(false)} aria-label="Close edit site form">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">Client name<input value={siteInfoDraft.clientName} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, clientName: event.target.value }))} placeholder="Client name" /></label>
+              <label className="span-2">Site name<input value={siteInfoDraft.siteName} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, siteName: event.target.value }))} placeholder="Site name" /></label>
+              <label>City<input value={siteInfoDraft.city} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, city: event.target.value }))} placeholder="City" /></label>
+              <label>
+                Garages
+                <input type="number" value={selectedQuote.locations.filter((location) => location.locationType === "garage").length} disabled />
+              </label>
+              <label>
+                Parking lots
+                <input type="number" value={selectedQuote.locations.filter((location) => location.locationType === "lot").length} disabled />
+              </label>
+              <small className="muted span-2">Use the + Garage / + Lot buttons on the site page to add more locations.</small>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setIsEditingSiteInfo(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={saveSiteInfo} disabled={!siteInfoDraft.clientName.trim() || !siteInfoDraft.siteName.trim()}>Save</button>
             </div>
           </section>
         </div>
