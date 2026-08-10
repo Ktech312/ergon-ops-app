@@ -11083,8 +11083,8 @@ function SiteContactFields({
       <div className="modal-section">
         <span className="modal-section-title">Site Information</span>
         <div className="form-grid">
-          <label className="span-2"><span>Site name</span><input value={values.siteName} onChange={(event) => onChange({ siteName: event.target.value })} placeholder="Site name" /></label>
-          <label className="span-2"><span>Street Address</span><input value={values.siteStreetAddress} onChange={(event) => onChange({ siteStreetAddress: event.target.value })} placeholder="Street address" /></label>
+          <label><span>Site name</span><input value={values.siteName} onChange={(event) => onChange({ siteName: event.target.value })} placeholder="Site name" /></label>
+          <label><span>Street Address</span><input value={values.siteStreetAddress} onChange={(event) => onChange({ siteStreetAddress: event.target.value })} placeholder="Street address" /></label>
           <label><span>City</span><input value={values.city} onChange={(event) => onChange({ city: event.target.value })} placeholder="City" /></label>
           <label><span>State</span><input value={values.siteState} onChange={(event) => onChange({ siteState: event.target.value })} placeholder="State" /></label>
           <label><span>Zip</span><input value={values.siteZip} onChange={(event) => onChange({ siteZip: event.target.value })} placeholder="Zip" /></label>
@@ -11108,15 +11108,15 @@ function SiteContactFields({
               onChange={(event) => onLotCountChange?.(Number(event.target.value) || 0)}
             />
           </label>
-          {!garageLotEditable && <small className="muted span-2">Use the + Garage / + Lot buttons on the site page to add more locations.</small>}
+          {!garageLotEditable && <small className="muted">Use the + Garage / + Lot buttons on the site page to add more locations.</small>}
         </div>
       </div>
 
       <div className="modal-section">
         <span className="modal-section-title">Company Information</span>
         <div className="form-grid">
-          <label className="span-2"><span>Company Name</span><input value={values.clientName} onChange={(event) => onChange({ clientName: event.target.value })} placeholder="Company Name" /></label>
-          <label className="span-2"><span>Street Address</span><input value={values.clientStreetAddress} onChange={(event) => onChange({ clientStreetAddress: event.target.value })} placeholder="Street address" /></label>
+          <label><span>Company Name</span><input value={values.clientName} onChange={(event) => onChange({ clientName: event.target.value })} placeholder="Company Name" /></label>
+          <label><span>Street Address</span><input value={values.clientStreetAddress} onChange={(event) => onChange({ clientStreetAddress: event.target.value })} placeholder="Street address" /></label>
           <label><span>City</span><input value={values.clientCity} onChange={(event) => onChange({ clientCity: event.target.value })} placeholder="City" /></label>
           <label><span>State</span><input value={values.clientState} onChange={(event) => onChange({ clientState: event.target.value })} placeholder="State" /></label>
           <label><span>Zip</span><input value={values.clientZip} onChange={(event) => onChange({ clientZip: event.target.value })} placeholder="Zip" /></label>
@@ -11455,13 +11455,11 @@ function SalesQuoteBuilder({
               <div className="stacked-mini-actions">
                 <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => onAddLocation(selectedQuote.id, "garage")}>+ Garage</button>
                 <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => onAddLocation(selectedQuote.id, "lot")}>+ Lot</button>
-              </div>
-              <div className="stacked-mini-actions">
-                <button className="secondary-action mini-action" type="button" onClick={() => setShowIntakeModal(true)}>
-                  Site Intake Questionnaire{siteIntakeFieldCount > 0 ? ` (${siteIntakeAnsweredCount}/${siteIntakeFieldCount} answered)` : ""}
+                <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => setShowIntakeModal(true)}>
+                  Intake{siteIntakeFieldCount > 0 ? ` (${siteIntakeAnsweredCount}/${siteIntakeFieldCount})` : ""}
                 </button>
                 <button
-                  className="secondary-action mini-action"
+                  className="secondary-action mini-action mini-action-sm"
                   type="button"
                   onClick={() => {
                     // Print CSS only shows .quote-intake-print-area, which
@@ -11471,7 +11469,7 @@ function SalesQuoteBuilder({
                     setTimeout(() => window.print(), 100);
                   }}
                 >
-                  Export / Save as PDF
+                  Export PDF
                 </button>
               </div>
               <RequestTaskButton
