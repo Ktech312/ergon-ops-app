@@ -811,6 +811,36 @@ function scrollKey(hash = window.location.hash) {
   return `ergon:scroll:${hash || "#dashboard"}`;
 }
 
+// Remembers a collapsible panel's open/closed state across refreshes (e.g.
+// Product Catalog, Site Builder) -- same "ergon:" localStorage convention as
+// the scroll-position/last-hash restore above. Falls back to defaultValue
+// when nothing's saved yet or storage isn't available.
+function usePersistedCollapse(storageKey: string, defaultValue = false) {
+  const key = `ergon:collapsed:${storageKey}`;
+  const [collapsed, setCollapsedState] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem(key);
+      return saved === null ? defaultValue : saved === "1";
+    } catch {
+      return defaultValue;
+    }
+  });
+
+  function setCollapsed(value: boolean | ((current: boolean) => boolean)) {
+    setCollapsedState((current) => {
+      const next = typeof value === "function" ? (value as (current: boolean) => boolean)(current) : value;
+      try {
+        window.localStorage.setItem(key, next ? "1" : "0");
+      } catch {
+        // Storage unavailable -- state still updates for this session.
+      }
+      return next;
+    });
+  }
+
+  return [collapsed, setCollapsed] as const;
+}
+
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -9979,7 +10009,7 @@ function SalesCatalog({
   const [importStatus, setImportStatus] = useState("");
   const [importStatusIsError, setImportStatusIsError] = useState(false);
   const [isCommittingImport, setIsCommittingImport] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = usePersistedCollapse("product_catalog");
   const [proposalItem, setProposalItem] = useState<CatalogItem | null>(null);
   const [proposalField, setProposalField] = useState<CatalogPriceChangeField>("markup_percent");
   const [proposalValue, setProposalValue] = useState(0);
@@ -11076,7 +11106,7 @@ function SalesQuoteBuilder({
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
   const [newQuoteDraft, setNewQuoteDraft] = useState(EMPTY_NEW_QUOTE_DRAFT);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = usePersistedCollapse("site_builder");
   const [presalesTier, setPresalesTier] = useState("");
   const [presalesNodeCount, setPresalesNodeCount] = useState(1);
   const [presalesCloudSync, setPresalesCloudSync] = useState(false);
@@ -11094,6 +11124,10 @@ function SalesQuoteBuilder({
   // exists.
   const [isEditingSiteInfo, setIsEditingSiteInfo] = useState(false);
   const [siteInfoDraft, setSiteInfoDraft] = useState({ clientName: "", siteName: "", city: "" });
+  // #168 -- the Site Intake Questionnaire used to render fully expanded
+  // inline (a lot of scrolling on a long site); now it's a compact trigger
+  // that opens a pop-up, same pattern as the Edit Site modal above.
+  const [showIntakeModal, setShowIntakeModal] = useState(false);
 
   const selectedQuote = salesQuotes.find((quote) => quote.id === selectedQuoteId) ?? null;
   const selectedLocation = selectedQuote?.locations.find((location) => location.id === selectedLocationId) ?? null;
@@ -11113,6 +11147,11 @@ function SalesQuoteBuilder({
   const sensorCatalogItems = activeCatalogItems.filter(
     (item) => item.category === "Space Sensors" || (item.tags ?? []).some((tag) => tag.toLowerCase().includes("sensor")),
   );
+  // Small "x/y answered" hint on the compact Site Intake Questionnaire
+  // trigger button (#168) -- lets a rep see progress without opening it.
+  const siteIntakeResponses = selectedQuote ? quoteIntakeResponses[selectedQuote.id]?.responses ?? {} : {};
+  const siteIntakeFieldCount = siteIntakeSchema?.fields.length ?? 0;
+  const siteIntakeAnsweredCount = (siteIntakeSchema?.fields ?? []).filter((field) => (siteIntakeResponses[field.fieldKey] ?? "").toString().trim() !== "").length;
 
   useEffect(() => {
     if (selectedQuoteId) {
@@ -11260,46 +11299,10 @@ function SalesQuoteBuilder({
             </div>
           </div>
 
-          <div className="quote-hardware-summary">
-            <span className="label">Site Intake Questionnaire</span>
-            <p className="muted">Questions to ask the client while scoping this site. Grows over time -- add/edit/reorder questions in Admin -&gt; Form Builder.</p>
-            {quoteIntakeStatus && <small className="muted">{quoteIntakeStatus}</small>}
-            {siteIntakeSchema && siteIntakeSchema.fields.length > 0 ? (
-              <div className="form-grid">
-                {[...siteIntakeSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field) => {
-                  const responses = quoteIntakeResponses[selectedQuote.id]?.responses ?? {};
-                  const saveField = (value: string) => onSaveQuoteIntakeResponses(selectedQuote.id, { ...responses, [field.fieldKey]: value });
-                  return (
-                    <label key={field.id} className={field.fieldType === "textarea" ? "span-2" : undefined}>
-                      {field.label}{field.isRequired ? " *" : ""}
-                      {field.fieldType === "select" ? (
-                        <select value={responses[field.fieldKey] ?? ""} onChange={(event) => saveField(event.target.value)}>
-                          <option value="">Select...</option>
-                          {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
-                        </select>
-                      ) : field.fieldType === "textarea" ? (
-                        <textarea value={responses[field.fieldKey] ?? ""} placeholder={field.placeholder} onChange={(event) => saveField(event.target.value)} />
-                      ) : field.fieldType === "checkbox" ? (
-                        <input
-                          type="checkbox"
-                          checked={responses[field.fieldKey] === "true"}
-                          onChange={(event) => saveField(event.target.checked ? "true" : "false")}
-                        />
-                      ) : (
-                        <input
-                          type={field.fieldType === "date" ? "date" : field.fieldType === "number" ? "number" : "text"}
-                          value={responses[field.fieldKey] ?? ""}
-                          placeholder={field.placeholder}
-                          onChange={(event) => saveField(event.target.value)}
-                        />
-                      )}
-                    </label>
-                  );
-                })}
-              </div>
-            ) : (
-              <span className="empty-compact-state">No intake questions configured yet -- add some in Admin -&gt; Form Builder.</span>
-            )}
+          <div className="quote-intake-trigger-row">
+            <button className="secondary-action mini-action" type="button" onClick={() => setShowIntakeModal(true)}>
+              Site Intake Questionnaire{siteIntakeFieldCount > 0 ? ` (${siteIntakeAnsweredCount}/${siteIntakeFieldCount} answered)` : ""}
+            </button>
           </div>
 
           <table>
@@ -11770,6 +11773,63 @@ function SalesQuoteBuilder({
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setIsEditingSiteInfo(false)}>Cancel</button>
               <button className="primary-action" type="button" onClick={saveSiteInfo} disabled={!siteInfoDraft.clientName.trim() || !siteInfoDraft.siteName.trim()}>Save</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* #168 -- was a fully-expanded inline panel, causing a lot of
+          scrolling on a long site. Now opened on demand from the compact
+          trigger button above the locations table. */}
+      {showIntakeModal && selectedQuote && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="site-intake-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="site-intake-title">Site Intake Questionnaire</h2>
+                <p>Questions to ask the client while scoping this site. Grows over time -- add/edit/reorder questions in Admin -&gt; Form Builder.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowIntakeModal(false)} aria-label="Close site intake questionnaire">x</button>
+            </div>
+            {quoteIntakeStatus && <small className="muted">{quoteIntakeStatus}</small>}
+            {siteIntakeSchema && siteIntakeSchema.fields.length > 0 ? (
+              <div className="form-grid">
+                {[...siteIntakeSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field) => {
+                  const responses = siteIntakeResponses;
+                  const saveField = (value: string) => onSaveQuoteIntakeResponses(selectedQuote.id, { ...responses, [field.fieldKey]: value });
+                  return (
+                    <label key={field.id} className={field.fieldType === "textarea" ? "span-2" : undefined}>
+                      {field.label}{field.isRequired ? " *" : ""}
+                      {field.fieldType === "select" ? (
+                        <select value={responses[field.fieldKey] ?? ""} onChange={(event) => saveField(event.target.value)}>
+                          <option value="">Select...</option>
+                          {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      ) : field.fieldType === "textarea" ? (
+                        <textarea value={responses[field.fieldKey] ?? ""} placeholder={field.placeholder} onChange={(event) => saveField(event.target.value)} />
+                      ) : field.fieldType === "checkbox" ? (
+                        <input
+                          type="checkbox"
+                          checked={responses[field.fieldKey] === "true"}
+                          onChange={(event) => saveField(event.target.checked ? "true" : "false")}
+                        />
+                      ) : (
+                        <input
+                          type={field.fieldType === "date" ? "date" : field.fieldType === "number" ? "number" : "text"}
+                          value={responses[field.fieldKey] ?? ""}
+                          placeholder={field.placeholder}
+                          onChange={(event) => saveField(event.target.value)}
+                        />
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <span className="empty-compact-state">No intake questions configured yet -- add some in Admin -&gt; Form Builder.</span>
+            )}
+            <div className="modal-actions">
+              <button className="primary-action" type="button" onClick={() => setShowIntakeModal(false)}>Done</button>
             </div>
           </section>
         </div>

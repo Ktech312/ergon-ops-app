@@ -2599,6 +2599,12 @@ td small {
   gap: 4px;
 }
 
+/* #168 -- compact trigger row for the Site Intake Questionnaire pop-up,
+   replaces what used to be a fully expanded inline panel. */
+.quote-intake-trigger-row {
+  margin: 12px 0;
+}
+
 .quote-detail-actions {
   align-items: flex-start;
   display: flex;
