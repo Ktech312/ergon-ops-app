@@ -1831,7 +1831,17 @@ function App() {
     reloadSalesQuotes(authSession.accessToken);
   }, [authSession]);
 
-  async function handleCreateSalesQuote(input: { clientName: string; siteName: string; city: string; garageCount: number; lotCount: number }) {
+  async function handleCreateSalesQuote(input: {
+    clientName: string;
+    siteName: string;
+    city: string;
+    garageCount: number;
+    lotCount: number;
+    contactFullName: string;
+    clientEmail: string;
+    contactPhone: string;
+    preferredCommunication: string;
+  }) {
     if (!authSession) {
       setSalesQuoteStatus("Sign in to create a quote.");
       return;
@@ -2103,7 +2113,10 @@ function App() {
   // #164 -- lets a rep get back to the original "New Site" intake fields
   // (client/site name, city) and correct them after the quote already
   // exists, instead of those being fixed at creation time forever.
-  async function handleUpdateSalesQuoteInfo(quoteId: string, updates: Partial<{ clientName: string; siteName: string; city: string }>) {
+  async function handleUpdateSalesQuoteInfo(
+    quoteId: string,
+    updates: Partial<{ clientName: string; siteName: string; city: string; clientEmail: string; contactFullName: string; contactPhone: string; preferredCommunication: string }>,
+  ) {
     if (!authSession) {
       return;
     }
@@ -9674,7 +9687,17 @@ function SalesHome({
   onProposePriceChange: (catalogItemId: string, fieldChanged: CatalogPriceChangeField, previousValue: number, requestedValue: number, reason: string) => void;
   salesQuotes: SalesQuote[];
   salesQuoteStatus: string;
-  onCreateSalesQuote: (input: { clientName: string; siteName: string; city: string; garageCount: number; lotCount: number }) => void;
+  onCreateSalesQuote: (input: {
+    clientName: string;
+    siteName: string;
+    city: string;
+    garageCount: number;
+    lotCount: number;
+    contactFullName: string;
+    clientEmail: string;
+    contactPhone: string;
+    preferredCommunication: string;
+  }) => void;
   onAddSalesQuoteLocation: (quoteId: string, locationType: "garage" | "lot") => void;
   onUpdateSalesQuoteLocation: (
     quoteId: string,
@@ -9701,7 +9724,10 @@ function SalesHome({
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateSalesQuoteBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateSalesQuoteProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
-  onUpdateSalesQuoteInfo: (quoteId: string, updates: Partial<{ clientName: string; siteName: string; city: string }>) => void;
+  onUpdateSalesQuoteInfo: (
+    quoteId: string,
+    updates: Partial<{ clientName: string; siteName: string; city: string; clientEmail: string; contactFullName: string; contactPhone: string; preferredCommunication: string }>,
+  ) => void;
   siteIntakeSchema: FormSchema | null;
   quoteIntakeResponses: Record<string, SalesQuoteIntakeResponse>;
   quoteIntakeStatus: string;
@@ -10709,7 +10735,17 @@ const SITE_HARDWARE_METRIC_OPTIONS: Array<{ value: SiteHardwareMetric; label: st
   { value: "per_level", label: "Per level" },
 ];
 
-const EMPTY_NEW_QUOTE_DRAFT = { clientName: "", siteName: "", city: "", garageCount: 1, lotCount: 0 };
+const EMPTY_NEW_QUOTE_DRAFT = {
+  clientName: "",
+  siteName: "",
+  city: "",
+  garageCount: 1,
+  lotCount: 0,
+  contactFullName: "",
+  clientEmail: "",
+  contactPhone: "",
+  preferredCommunication: "",
+};
 
 // Sale Design and Quote Builder. A quote starts with a client/site and a
 // count of garages and parking lots -- entering those counts generates one
@@ -11050,7 +11086,17 @@ function SalesQuoteBuilder({
   salesQuotes: SalesQuote[];
   status: string;
   isConfigured: boolean;
-  onCreateQuote: (input: { clientName: string; siteName: string; city: string; garageCount: number; lotCount: number }) => void;
+  onCreateQuote: (input: {
+    clientName: string;
+    siteName: string;
+    city: string;
+    garageCount: number;
+    lotCount: number;
+    contactFullName: string;
+    clientEmail: string;
+    contactPhone: string;
+    preferredCommunication: string;
+  }) => void;
   onAddLocation: (quoteId: string, locationType: "garage" | "lot") => void;
   onUpdateLocation: (
     quoteId: string,
@@ -11077,7 +11123,10 @@ function SalesQuoteBuilder({
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
-  onUpdateQuoteInfo: (quoteId: string, updates: Partial<{ clientName: string; siteName: string; city: string }>) => void;
+  onUpdateQuoteInfo: (
+    quoteId: string,
+    updates: Partial<{ clientName: string; siteName: string; city: string; clientEmail: string; contactFullName: string; contactPhone: string; preferredCommunication: string }>,
+  ) => void;
   siteIntakeSchema: FormSchema | null;
   quoteIntakeResponses: Record<string, SalesQuoteIntakeResponse>;
   quoteIntakeStatus: string;
@@ -11123,7 +11172,15 @@ function SalesQuoteBuilder({
   // (client/site name, city) and correct them after the quote already
   // exists.
   const [isEditingSiteInfo, setIsEditingSiteInfo] = useState(false);
-  const [siteInfoDraft, setSiteInfoDraft] = useState({ clientName: "", siteName: "", city: "" });
+  const [siteInfoDraft, setSiteInfoDraft] = useState({
+    clientName: "",
+    siteName: "",
+    city: "",
+    contactFullName: "",
+    clientEmail: "",
+    contactPhone: "",
+    preferredCommunication: "",
+  });
   // #168 -- the Site Intake Questionnaire used to render fully expanded
   // inline (a lot of scrolling on a long site); now it's a compact trigger
   // that opens a pop-up, same pattern as the Edit Site modal above.
@@ -11161,17 +11218,31 @@ function SalesQuoteBuilder({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedQuoteId]);
 
-  // #172 -- Company Name is asked twice (the New/Edit Site sheet and the
-  // Site Intake Questionnaire); pull it from the sheet the first time the
-  // questionnaire is opened instead of making a rep retype it. Only fills
-  // when the questionnaire's answer is still blank, so it never overwrites
-  // something already typed there.
+  // #172/#177 -- the Client & Contact Details questions are asked twice (the
+  // New/Edit Site sheet and the Site Intake Questionnaire); pull them from
+  // the sheet the first time the questionnaire is opened instead of making a
+  // rep retype them. Only fills fields the questionnaire doesn't already
+  // have an answer for, so it never overwrites something already typed
+  // there.
   useEffect(() => {
     if (!showIntakeModal || !selectedQuote) {
       return;
     }
-    if (!siteIntakeResponses.company_name && selectedQuote.clientName) {
-      onSaveQuoteIntakeResponses(selectedQuote.id, { ...siteIntakeResponses, company_name: selectedQuote.clientName });
+    const prefill: Record<string, string> = {
+      company_name: selectedQuote.clientName,
+      full_name: selectedQuote.contactFullName,
+      business_email: selectedQuote.clientEmail,
+      phone_number: selectedQuote.contactPhone,
+      preferred_communication: selectedQuote.preferredCommunication,
+    };
+    const updates: Record<string, string> = {};
+    for (const [fieldKey, value] of Object.entries(prefill)) {
+      if (!siteIntakeResponses[fieldKey] && value) {
+        updates[fieldKey] = value;
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      onSaveQuoteIntakeResponses(selectedQuote.id, { ...siteIntakeResponses, ...updates });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showIntakeModal]);
@@ -11183,8 +11254,25 @@ function SalesQuoteBuilder({
 
   useEffect(() => {
     setIsEditingSiteInfo(false);
-    setSiteInfoDraft({ clientName: selectedQuote?.clientName ?? "", siteName: selectedQuote?.siteName ?? "", city: selectedQuote?.city ?? "" });
-  }, [selectedQuote?.id, selectedQuote?.clientName, selectedQuote?.siteName, selectedQuote?.city]);
+    setSiteInfoDraft({
+      clientName: selectedQuote?.clientName ?? "",
+      siteName: selectedQuote?.siteName ?? "",
+      city: selectedQuote?.city ?? "",
+      contactFullName: selectedQuote?.contactFullName ?? "",
+      clientEmail: selectedQuote?.clientEmail ?? "",
+      contactPhone: selectedQuote?.contactPhone ?? "",
+      preferredCommunication: selectedQuote?.preferredCommunication ?? "",
+    });
+  }, [
+    selectedQuote?.id,
+    selectedQuote?.clientName,
+    selectedQuote?.siteName,
+    selectedQuote?.city,
+    selectedQuote?.contactFullName,
+    selectedQuote?.clientEmail,
+    selectedQuote?.contactPhone,
+    selectedQuote?.preferredCommunication,
+  ]);
 
   function openQuote(id: string) {
     setSelectedQuoteId(id);
@@ -11745,6 +11833,18 @@ function SalesQuoteBuilder({
               <label>City<input value={newQuoteDraft.city} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, city: event.target.value }))} placeholder="City" /></label>
               <label>Garages<input type="number" min={0} value={newQuoteDraft.garageCount} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, garageCount: Number(event.target.value) || 0 }))} /></label>
               <label>Parking lots<input type="number" min={0} value={newQuoteDraft.lotCount} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, lotCount: Number(event.target.value) || 0 }))} /></label>
+              <label>Full Name<input value={newQuoteDraft.contactFullName} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, contactFullName: event.target.value }))} placeholder="Full name" /></label>
+              <label>Business Email<input value={newQuoteDraft.clientEmail} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, clientEmail: event.target.value }))} placeholder="Business email" /></label>
+              <label>Phone Number<input value={newQuoteDraft.contactPhone} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, contactPhone: event.target.value }))} placeholder="Phone number" /></label>
+              <label>
+                Preferred Communication Method
+                <select value={newQuoteDraft.preferredCommunication} onChange={(event) => setNewQuoteDraft((current) => ({ ...current, preferredCommunication: event.target.value }))}>
+                  <option value="">Select...</option>
+                  <option value="Email">Email</option>
+                  <option value="Phone Call">Phone Call</option>
+                  <option value="Video Meeting (Zoom/Teams)">Video Meeting (Zoom/Teams)</option>
+                </select>
+              </label>
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowNewQuoteModal(false)}>Cancel</button>
@@ -11784,6 +11884,18 @@ function SalesQuoteBuilder({
                 <input type="number" value={selectedQuote.locations.filter((location) => location.locationType === "lot").length} disabled />
               </label>
               <small className="muted span-2">Use the + Garage / + Lot buttons on the site page to add more locations.</small>
+              <label>Full Name<input value={siteInfoDraft.contactFullName} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, contactFullName: event.target.value }))} placeholder="Full name" /></label>
+              <label>Business Email<input value={siteInfoDraft.clientEmail} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, clientEmail: event.target.value }))} placeholder="Business email" /></label>
+              <label>Phone Number<input value={siteInfoDraft.contactPhone} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, contactPhone: event.target.value }))} placeholder="Phone number" /></label>
+              <label>
+                Preferred Communication Method
+                <select value={siteInfoDraft.preferredCommunication} onChange={(event) => setSiteInfoDraft((current) => ({ ...current, preferredCommunication: event.target.value }))}>
+                  <option value="">Select...</option>
+                  <option value="Email">Email</option>
+                  <option value="Phone Call">Phone Call</option>
+                  <option value="Video Meeting (Zoom/Teams)">Video Meeting (Zoom/Teams)</option>
+                </select>
+              </label>
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setIsEditingSiteInfo(false)}>Cancel</button>

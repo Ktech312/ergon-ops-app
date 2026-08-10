@@ -5196,6 +5196,12 @@ export type SalesQuote = {
   // hand-written part of a proposal; everything else pulls from the BOM or
   // the shared proposal_template_sections boilerplate.
   proposalSummary: string;
+  // Migration 060: rest of the Site Intake Questionnaire's "Client &
+  // Contact Details" fields, moved up to the quick sheet so a rep only
+  // types them once (the questionnaire pre-fills from these).
+  contactFullName: string;
+  contactPhone: string;
+  preferredCommunication: string;
 };
 
 type SalesQuoteLocationImageRow = {
@@ -5258,6 +5264,9 @@ type SalesQuoteRow = {
   sales_quote_bom_lines: SalesQuoteBomLineRow[];
   client_email: string | null;
   proposal_summary: string | null;
+  contact_full_name: string | null;
+  contact_phone: string | null;
+  preferred_communication: string | null;
 };
 
 function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQuoteLocationImage {
@@ -5333,11 +5342,14 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
     bomLines: (row.sales_quote_bom_lines ?? []).map(mapSalesQuoteBomLineRow),
     clientEmail: row.client_email ?? "",
     proposalSummary: row.proposal_summary ?? "",
+    contactFullName: row.contact_full_name ?? "",
+    contactPhone: row.contact_phone ?? "",
+    preferredCommunication: row.preferred_communication ?? "",
   };
 }
 
 const SALES_QUOTE_SELECT =
-  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
+  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5359,7 +5371,18 @@ export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[
 }
 
 export async function createSalesQuote(
-  input: { clientName: string; siteName: string; city: string; createdByEmail: string; garageCount: number; lotCount: number },
+  input: {
+    clientName: string;
+    siteName: string;
+    city: string;
+    createdByEmail: string;
+    garageCount: number;
+    lotCount: number;
+    clientEmail?: string;
+    contactFullName?: string;
+    contactPhone?: string;
+    preferredCommunication?: string;
+  },
   accessToken?: string,
 ): Promise<SalesQuote | null> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5373,6 +5396,10 @@ export async function createSalesQuote(
       site_name: input.siteName,
       city: input.city || null,
       created_by_email: input.createdByEmail || null,
+      client_email: input.clientEmail || null,
+      contact_full_name: input.contactFullName || null,
+      contact_phone: input.contactPhone || null,
+      preferred_communication: input.preferredCommunication || null,
     }),
   });
   if (!quoteResponse.ok) {
@@ -5416,8 +5443,11 @@ export async function createSalesQuote(
     status: "open",
     locations: locationRows.map((row) => mapSalesQuoteLocationRow({ ...row, sales_quote_location_images: [], sales_quote_location_items: [] })),
     bomLines: [],
-    clientEmail: "",
+    clientEmail: input.clientEmail ?? "",
     proposalSummary: "",
+    contactFullName: input.contactFullName ?? "",
+    contactPhone: input.contactPhone ?? "",
+    preferredCommunication: input.preferredCommunication ?? "",
   };
 }
 
@@ -6080,7 +6110,15 @@ export async function upsertSalesQuoteIntakeResponse(
 // at creation, with no screen to revisit them afterward.
 export async function updateSalesQuoteInfo(
   quoteId: string,
-  updates: Partial<{ clientName: string; siteName: string; city: string }>,
+  updates: Partial<{
+    clientName: string;
+    siteName: string;
+    city: string;
+    clientEmail: string;
+    contactFullName: string;
+    contactPhone: string;
+    preferredCommunication: string;
+  }>,
   accessToken?: string,
 ): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -6090,6 +6128,10 @@ export async function updateSalesQuoteInfo(
   if (updates.clientName !== undefined) payload.client_name = updates.clientName;
   if (updates.siteName !== undefined) payload.site_name = updates.siteName;
   if (updates.city !== undefined) payload.city = updates.city;
+  if (updates.clientEmail !== undefined) payload.client_email = updates.clientEmail;
+  if (updates.contactFullName !== undefined) payload.contact_full_name = updates.contactFullName;
+  if (updates.contactPhone !== undefined) payload.contact_phone = updates.contactPhone;
+  if (updates.preferredCommunication !== undefined) payload.preferred_communication = updates.preferredCommunication;
   if (Object.keys(payload).length === 0) {
     return;
   }
