@@ -7763,7 +7763,7 @@ function Projects({
               {submittal.responseNotes && <p className="submittal-notes">"{submittal.responseNotes}"</p>}
               {submittal.shareToken && (
                 <button
-                  className="secondary-action mini-action"
+                  className={`secondary-action mini-action ${copiedSubmittalId === submittal.id ? "just-copied" : ""}`}
                   type="button"
                   onClick={() => {
                     const link = `${window.location.origin}${window.location.pathname}?submittal=${submittal.shareToken}`;
@@ -8937,6 +8937,7 @@ function AdminPage({
 }) {
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
   const [editingRosterId, setEditingRosterId] = useState<string | null>(null);
+  const [copiedInviteId, setCopiedInviteId] = useState("");
   const knownUserByEmail = new Map(knownUsers.map((user) => [user.email.toLowerCase(), user]));
   const [timeDraft, setTimeDraft] = useState({ category: "", hoursPerUnit: 0, notes: "" });
   const [templateNameDraft, setTemplateNameDraft] = useState("");
@@ -9162,11 +9163,16 @@ function AdminPage({
                           <>
                             <button className="secondary-action mini-action" type="button" onClick={() => onResendInvite(matchingInvite)}>Resend</button>
                             <button
-                              className="secondary-action mini-action"
+                              className={`secondary-action mini-action ${copiedInviteId === matchingInvite.id ? "just-copied" : ""}`}
                               type="button"
-                              onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/?invite=${matchingInvite.token}`)}
+                              onClick={() => {
+                                navigator.clipboard?.writeText(`${window.location.origin}/?invite=${matchingInvite.token}`).then(() => {
+                                  setCopiedInviteId(matchingInvite.id);
+                                  setTimeout(() => setCopiedInviteId(""), 2000);
+                                });
+                              }}
                             >
-                              Copy link
+                              {copiedInviteId === matchingInvite.id ? "Copied!" : "Copy link"}
                             </button>
                             <button className="secondary-action mini-action" type="button" onClick={() => onRevokeInvite(matchingInvite.id)}>Revoke</button>
                           </>
@@ -11926,7 +11932,7 @@ function SalesQuoteBuilder({
                     {proposal.responseNotes && <p className="submittal-notes">"{proposal.responseNotes}"</p>}
                     {proposal.shareToken && (
                       <button
-                        className="secondary-action mini-action"
+                        className={`secondary-action mini-action ${copiedProposalId === proposal.id ? "just-copied" : ""}`}
                         type="button"
                         onClick={() => {
                           const link = `${window.location.origin}${window.location.pathname}?proposal=${proposal.shareToken}`;

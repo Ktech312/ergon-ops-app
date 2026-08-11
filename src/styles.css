@@ -2726,6 +2726,26 @@ td small {
   padding: 0 8px;
 }
 
+/* "Copy link"/"Copy client link" buttons swap their label to "Copied!" but
+   gave no other feedback -- E: "it doesn't indicate anything happening,
+   can you make the button glow or light up". Briefly flashes the button on
+   click so it's obvious something happened even if you don't notice the
+   text change. */
+@keyframes copy-link-glow {
+  0% {
+    background: #fff1d6;
+    box-shadow: 0 0 0 3px rgba(144, 99, 19, 0.35);
+  }
+  100% {
+    background: #fffdf9;
+    box-shadow: none;
+  }
+}
+
+.just-copied {
+  animation: copy-link-glow 900ms ease-out;
+}
+
 /* Team Roster rows toggle an inline group-assignment editor on click. */
 .clickable-row {
   cursor: pointer;
