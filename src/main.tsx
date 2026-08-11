@@ -849,6 +849,35 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// "Download" buttons across the app (project documents, sales quote
+// photos/drawings) were all just window.open()-ing a signed URL -- since
+// most images/PDFs render inline, that just shows the file in a new tab
+// instead of actually saving it to disk, which is what "Download" implies.
+// Fetching it as a blob first and clicking a same-origin blob: link with a
+// `download` attribute forces a real save-to-disk with the right file
+// name, regardless of how the file's content-type wants to render.
+async function triggerBrowserDownload(url: string, fileName: string) {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Download fetch failed: ${response.status}`);
+    }
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = fileName || "download";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+  } catch {
+    // Fall back to just opening it (e.g. a CORS-blocked fetch) -- better
+    // than the download silently doing nothing.
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 function csvValue(value: string | number | undefined | null) {
   const normalized = String(value ?? "");
   return /[",\n\r]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
@@ -1315,7 +1344,7 @@ function App() {
       setAuthStatus("Could not generate a download link for this file.");
       return;
     }
-    window.open(url, "_blank", "noopener,noreferrer");
+    await triggerBrowserDownload(url, doc.name || "document");
   }
 
   async function handleUpdateProjectDocumentStatus(id: UploadedDoc["id"], status: UploadedDoc["status"]) {
@@ -2282,7 +2311,7 @@ function App() {
     }
     const url = await getQuoteImageDownloadUrl(image.storagePath, authSession.accessToken);
     if (url) {
-      window.open(url, "_blank", "noopener,noreferrer");
+      await triggerBrowserDownload(url, image.fileName || "photo");
     }
   }
 
@@ -11210,12 +11239,52 @@ function CameraCaptureModal({
 // actually see or manage what had been uploaded -- this gives that a real
 // list with Download/Delete, plus the upload control itself so it's not
 // spread across two different UI spots.
+// A quick "is this actually the right file" check before trusting it --
+// PDFs render in an <iframe> (browsers natively display PDFs there) and
+// images in an <img>; anything else (Word/Excel) has no reliable in-browser
+// renderer, so it just says so and points at Download instead.
+function isPreviewablePdf(fileName: string): boolean {
+  return /\.pdf$/i.test(fileName);
+}
+
+function isPreviewableImage(fileName: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fileName);
+}
+
+function FilePreviewModal({
+  fileName,
+  url,
+  onClose,
+}: {
+  fileName: string;
+  url: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="file-preview-title">
+        <div className="modal-header">
+          <h2 id="file-preview-title">{fileName}</h2>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close preview">x</button>
+        </div>
+        {!url && <p className="muted">Loading preview...</p>}
+        {url && isPreviewablePdf(fileName) && <iframe src={url} className="file-preview-frame" title={fileName} />}
+        {url && isPreviewableImage(fileName) && <img src={url} alt={fileName} className="file-preview-image" />}
+        {url && !isPreviewablePdf(fileName) && !isPreviewableImage(fileName) && (
+          <p className="empty-compact-state">Preview isn't available for this file type -- use Download instead.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function LocationFilesModal({
   locationName,
   files,
   onUpload,
   onDownload,
   onDelete,
+  onGetUrl,
   onClose,
 }: {
   locationName: string;
@@ -11223,9 +11292,12 @@ function LocationFilesModal({
   onUpload: (file: File) => void;
   onDownload: (image: SalesQuoteLocationImage) => void;
   onDelete: (image: SalesQuoteLocationImage) => Promise<boolean>;
+  onGetUrl: (image: SalesQuoteLocationImage) => Promise<string | null>;
   onClose: () => void;
 }) {
   const [deletingId, setDeletingId] = useState("");
+  const [previewFile, setPreviewFile] = useState<SalesQuoteLocationImage | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   async function handleDelete(image: SalesQuoteLocationImage) {
     if (!window.confirm(`Delete "${image.fileName}"? This can't be undone.`)) {
@@ -11234,6 +11306,13 @@ function LocationFilesModal({
     setDeletingId(image.id);
     await onDelete(image);
     setDeletingId("");
+  }
+
+  async function handlePreview(image: SalesQuoteLocationImage) {
+    setPreviewFile(image);
+    setPreviewUrl(null);
+    const url = await onGetUrl(image);
+    setPreviewUrl(url);
   }
 
   return (
@@ -11268,6 +11347,9 @@ function LocationFilesModal({
                 {file.description && <span>{file.description}</span>}
               </div>
               <div className="quote-header-pill-row">
+                {(isPreviewablePdf(file.fileName) || isPreviewableImage(file.fileName)) && (
+                  <button className="secondary-action mini-action" type="button" onClick={() => handlePreview(file)}>Preview</button>
+                )}
                 <button className="secondary-action mini-action" type="button" onClick={() => onDownload(file)}>Download</button>
                 <button className="secondary-action mini-action" type="button" disabled={deletingId === file.id} onClick={() => handleDelete(file)}>
                   {deletingId === file.id ? "Deleting..." : "Delete"}
@@ -11281,6 +11363,9 @@ function LocationFilesModal({
           <button className="secondary-action" type="button" onClick={onClose}>Close</button>
         </div>
       </section>
+      {previewFile && (
+        <FilePreviewModal fileName={previewFile.fileName} url={previewUrl} onClose={() => setPreviewFile(null)} />
+      )}
     </div>
   );
 }
@@ -11364,17 +11449,20 @@ function SiteGalleryModal({
     setSelectedIds(new Set());
   }
 
-  function downloadSelected() {
-    groups.forEach((group) => {
-      group.photos.forEach((photo) => {
+  async function downloadSelected() {
+    for (const group of groups) {
+      for (const photo of group.photos) {
         if (selectedIds.has(photo.id)) {
           const url = urlsByImageId[photo.id];
           if (url) {
-            window.open(url, "_blank", "noopener,noreferrer");
+            // Sequential, not Promise.all -- most browsers block a burst of
+            // simultaneous downloads/tabs as popups, so these go one at a
+            // time instead of all firing at once.
+            await triggerBrowserDownload(url, photo.fileName || "photo");
           }
         }
-      });
-    });
+      }
+    }
   }
 
   async function deleteSelected() {
@@ -12374,7 +12462,7 @@ function SalesQuoteBuilder({
                         />
                       )}
                     </div>
-                    <button className="secondary-action mini-action" type="button" onClick={() => onDownloadImage(image)}>View</button>
+                    <button className="secondary-action mini-action" type="button" onClick={() => onDownloadImage(image)}>Download</button>
                   </div>
                 ))}
               </div>
@@ -12403,6 +12491,7 @@ function SalesQuoteBuilder({
           onUpload={(file) => onUploadImage(selectedQuote.id, filesLocationId, "drawing", file)}
           onDownload={onDownloadImage}
           onDelete={(image) => onDeleteImage(selectedQuote.id, filesLocationId, image.id, image.storagePath)}
+          onGetUrl={onGetImageUrl}
           onClose={() => setFilesLocationId(null)}
         />
       )}

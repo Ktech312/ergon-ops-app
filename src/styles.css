@@ -2895,6 +2895,26 @@ td small {
   justify-content: center;
 }
 
+/* Quick "is this the right file" check before trusting an upload -- opens
+   over the Files list rather than replacing it. */
+.file-preview-modal {
+  max-width: 720px;
+  max-height: 85vh;
+}
+
+.file-preview-frame {
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  height: 70vh;
+  width: 100%;
+}
+
+.file-preview-image {
+  border-radius: 8px;
+  max-height: 70vh;
+  max-width: 100%;
+}
+
 .site-gallery-caption {
   color: #756d62;
   font-size: 11px;
