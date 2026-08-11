@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { Fragment, StrictMode, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx";
 import {
@@ -8881,8 +8881,9 @@ function AdminPage({
   proposalTemplateSections: ProposalTemplateSection[];
   onUpdateProposalTemplateSection: (id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) => void;
 }) {
-  const [inviteDraft, setInviteDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
-  const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", roleTitle: "" });
+  const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
+  const [editingRosterId, setEditingRosterId] = useState<string | null>(null);
+  const knownUserByEmail = new Map(knownUsers.map((user) => [user.email.toLowerCase(), user]));
   const [timeDraft, setTimeDraft] = useState({ category: "", hoursPerUnit: 0, notes: "" });
   const [templateNameDraft, setTemplateNameDraft] = useState("");
   const [phaseDrafts, setPhaseDrafts] = useState<Record<string, { phaseName: string; durationMode: "fixed_hours" | "per_bom_unit"; fixedHours: number; bomCategoryFilter: string; defaultRole: string }>>({});
@@ -8894,11 +8895,42 @@ function AdminPage({
   }
 
   function submitRosterDraft() {
-    if (!rosterDraft.fullName.trim()) {
+    const email = rosterDraft.email.trim();
+    if (!email || !rosterDraft.primaryRole) {
       return;
     }
-    onAddTeamMember({ fullName: rosterDraft.fullName.trim(), email: rosterDraft.email.trim(), roleTitle: rosterDraft.roleTitle.trim(), isActive: true });
-    setRosterDraft({ fullName: "", email: "", roleTitle: "" });
+    const roleLabel = ROLE_KEY_OPTIONS.find((option) => option.value === rosterDraft.primaryRole)?.label ?? rosterDraft.primaryRole;
+    onAddTeamMember({
+      fullName: rosterDraft.fullName.trim(),
+      email,
+      roleTitle: roleLabel,
+      isActive: true,
+      primaryRole: rosterDraft.primaryRole,
+      secondaryRoles: rosterDraft.secondaryRoles,
+    });
+    onSendInvite({ email, fullName: rosterDraft.fullName.trim(), primaryRole: rosterDraft.primaryRole, secondaryRoles: rosterDraft.secondaryRoles });
+    setRosterDraft({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] });
+  }
+
+  // A roster row's "groups" can be edited even before the person has ever
+  // logged in (team_members.primary_role/secondary_roles). If they've since
+  // confirmed their invite and are a real logged-in account (matched by
+  // email), also push the same change into the real user_roles system so
+  // the two stay in sync instead of silently drifting apart.
+  function updateRosterRoles(member: TeamMember, patch: Partial<{ primaryRole: string; secondaryRoles: string[] }>) {
+    const nextPrimary = patch.primaryRole !== undefined ? patch.primaryRole : member.primaryRole;
+    const nextSecondary = patch.secondaryRoles !== undefined ? patch.secondaryRoles : member.secondaryRoles;
+    const roleLabel = ROLE_KEY_OPTIONS.find((option) => option.value === nextPrimary)?.label ?? nextPrimary;
+    onUpdateTeamMember(member.id, { primaryRole: nextPrimary, secondaryRoles: nextSecondary, roleTitle: roleLabel });
+    const linkedUser = member.email ? knownUserByEmail.get(member.email.toLowerCase()) : undefined;
+    if (linkedUser) {
+      if (patch.primaryRole !== undefined) {
+        onSetRole(linkedUser.userId, patch.primaryRole);
+      }
+      if (patch.secondaryRoles !== undefined) {
+        onSetSecondaryRoles(linkedUser.userId, patch.secondaryRoles);
+      }
+    }
   }
 
   const [companyNameDraft, setCompanyNameDraft] = useState(branding.companyName);
@@ -8946,104 +8978,6 @@ function AdminPage({
         </section>
       )}
 
-      {isAdmin && (
-        <section className="panel wide">
-          <PanelHeader title="Invite Someone" label="Email is mandatory, primary role is mandatory -- secondary roles are optional. Accepting the invite skips Pending Approvals entirely." />
-          <div className="roster-add-row">
-            <input value={inviteDraft.fullName} onChange={(event) => setInviteDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name (optional)" />
-            <input value={inviteDraft.email} onChange={(event) => setInviteDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email (required)" type="email" />
-            <select value={inviteDraft.primaryRole} onChange={(event) => setInviteDraft((current) => ({ ...current, primaryRole: event.target.value, secondaryRoles: current.secondaryRoles.filter((key) => key !== event.target.value) }))}>
-              <option value="">Primary role (required)</option>
-              {ROLE_KEY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <button
-              className="primary-action mini-action"
-              type="button"
-              disabled={!inviteDraft.email.trim() || !inviteDraft.primaryRole}
-              onClick={() => {
-                onSendInvite(inviteDraft);
-                setInviteDraft({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] });
-              }}
-            >
-              <Plus size={14} /> Send Invite
-            </button>
-          </div>
-          {inviteDraft.primaryRole && (
-            <div className="secondary-role-picker">
-              <span className="muted">Also part of:</span>
-              <div className="tag-picker-grid">
-                {ROLE_KEY_OPTIONS.filter((option) => option.value !== inviteDraft.primaryRole).map((option) => (
-                  <label key={option.value} className="checkbox-inline">
-                    <input
-                      type="checkbox"
-                      checked={inviteDraft.secondaryRoles.includes(option.value)}
-                      onChange={(event) => {
-                        setInviteDraft((current) => {
-                          const next = new Set(current.secondaryRoles);
-                          if (event.target.checked) {
-                            next.add(option.value);
-                          } else {
-                            next.delete(option.value);
-                          }
-                          return { ...current, secondaryRoles: Array.from(next) };
-                        });
-                      }}
-                    />
-                    {option.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-          {inviteStatus && <small className="muted">{inviteStatus}</small>}
-          <table>
-            <thead>
-              <tr>
-                <th>Email</th>
-                <th>Name</th>
-                <th>Primary role</th>
-                <th>Also part of</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {invites.map((invite) => (
-                <tr key={invite.id}>
-                  <td>{invite.email}</td>
-                  <td>{invite.fullName || "-"}</td>
-                  <td>{ROLE_KEY_OPTIONS.find((option) => option.value === invite.primaryRole)?.label ?? invite.primaryRole}</td>
-                  <td>{invite.secondaryRoles.map((key) => ROLE_KEY_OPTIONS.find((option) => option.value === key)?.label ?? key).join(", ") || "-"}</td>
-                  <td>{invite.status === "pending" ? "Waiting" : invite.status === "accepted" ? "Accepted" : "Revoked"}</td>
-                  <td>
-                    {invite.status === "pending" && (
-                      <>
-                        <button className="secondary-action mini-action" type="button" onClick={() => onResendInvite(invite)}>Resend</button>
-                        <button
-                          className="secondary-action mini-action"
-                          type="button"
-                          onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/?invite=${invite.token}`)}
-                        >
-                          Copy link
-                        </button>
-                        <button className="secondary-action mini-action" type="button" onClick={() => onRevokeInvite(invite.id)}>Revoke</button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {invites.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="empty-compact-state">No invites sent yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </section>
-      )}
-
       <section className="panel wide">
         <PanelHeader title="Pending Approvals" label="New sign-ins wait here until a Manager or Admin lets them in" />
         <div className="report-filter-row">
@@ -9083,43 +9017,160 @@ function AdminPage({
       {(isAdmin || isManagerRole) && (
         <>
         <section className="panel wide">
-          <PanelHeader title="Team Roster" label="People who can be assigned tasks, whether or not they've ever logged in" />
+          <PanelHeader title="Team Roster" label="Invite teammates by email -- they must confirm before they can sign in. Click a row to assign their group(s)." />
           <div className="report-filter-row">
             {teamMemberStatus && <span className="muted">{teamMemberStatus}</span>}
+            {inviteStatus && <span className="muted">{inviteStatus}</span>}
           </div>
-          <div className="roster-add-row">
-            <input value={rosterDraft.fullName} onChange={(event) => setRosterDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name" />
-            <input value={rosterDraft.email} onChange={(event) => setRosterDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email (optional)" />
-            <input value={rosterDraft.roleTitle} onChange={(event) => setRosterDraft((current) => ({ ...current, roleTitle: event.target.value }))} placeholder="Role / title (optional)" />
-            <button className="primary-action mini-action" type="button" onClick={submitRosterDraft} disabled={!rosterDraft.fullName.trim()}><Plus size={14} /> Add person</button>
-          </div>
+          {isAdmin && (
+            <>
+              <div className="roster-add-row">
+                <input value={rosterDraft.fullName} onChange={(event) => setRosterDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name (optional)" />
+                <input value={rosterDraft.email} onChange={(event) => setRosterDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email (required)" type="email" />
+                <select value={rosterDraft.primaryRole} onChange={(event) => setRosterDraft((current) => ({ ...current, primaryRole: event.target.value, secondaryRoles: current.secondaryRoles.filter((key) => key !== event.target.value) }))}>
+                  <option value="">Group (required)</option>
+                  {ROLE_KEY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button className="primary-action mini-action" type="button" onClick={submitRosterDraft} disabled={!rosterDraft.email.trim() || !rosterDraft.primaryRole}>
+                  <Plus size={14} /> Send Invite
+                </button>
+              </div>
+              {rosterDraft.primaryRole && (
+                <div className="secondary-role-picker">
+                  <span className="muted">Also part of:</span>
+                  <div className="tag-picker-grid">
+                    {ROLE_KEY_OPTIONS.filter((option) => option.value !== rosterDraft.primaryRole).map((option) => (
+                      <label key={option.value} className="checkbox-inline">
+                        <input
+                          type="checkbox"
+                          checked={rosterDraft.secondaryRoles.includes(option.value)}
+                          onChange={(event) => {
+                            setRosterDraft((current) => {
+                              const next = new Set(current.secondaryRoles);
+                              if (event.target.checked) {
+                                next.add(option.value);
+                              } else {
+                                next.delete(option.value);
+                              }
+                              return { ...current, secondaryRoles: Array.from(next) };
+                            });
+                          }}
+                        />
+                        {option.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
           <table>
             <thead>
               <tr>
                 <th>Name</th>
                 <th>Email</th>
-                <th>Role / title</th>
+                <th>Group(s)</th>
+                <th>Invite status</th>
                 <th>Status</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {teamMembers.map((member) => (
-                <tr key={member.id}>
-                  <td>{member.fullName}</td>
-                  <td>{member.email || "-"}</td>
-                  <td>{member.roleTitle || "-"}</td>
-                  <td>{member.isActive ? "Active" : "Inactive"}</td>
-                  <td>
-                    <button className="secondary-action mini-action" type="button" onClick={() => onUpdateTeamMember(member.id, { isActive: !member.isActive })}>
-                      {member.isActive ? "Deactivate" : "Reactivate"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {teamMembers.map((member) => {
+                const matchingInvite = member.email
+                  ? invites.find((invite) => invite.email.toLowerCase() === member.email.toLowerCase())
+                  : undefined;
+                const isLoggedIn = member.email ? knownUserByEmail.has(member.email.toLowerCase()) : false;
+                const inviteStatusLabel = isLoggedIn
+                  ? "Confirmed"
+                  : matchingInvite
+                    ? (matchingInvite.status === "pending" ? "Waiting on confirmation" : matchingInvite.status === "accepted" ? "Confirmed" : "Revoked")
+                    : "-";
+                const isEditing = editingRosterId === member.id;
+                return (
+                  <Fragment key={member.id}>
+                    <tr className="clickable-row" onClick={() => setEditingRosterId(isEditing ? null : member.id)}>
+                      <td>{member.fullName || "-"}</td>
+                      <td>{member.email || "-"}</td>
+                      <td>
+                        {member.primaryRole
+                          ? [member.primaryRole, ...member.secondaryRoles]
+                              .map((key) => ROLE_KEY_OPTIONS.find((option) => option.value === key)?.label ?? key)
+                              .join(", ")
+                          : "-"}
+                      </td>
+                      <td>{inviteStatusLabel}</td>
+                      <td>{member.isActive ? "Active" : "Inactive"}</td>
+                      <td onClick={(event) => event.stopPropagation()}>
+                        {matchingInvite && matchingInvite.status === "pending" && (
+                          <>
+                            <button className="secondary-action mini-action" type="button" onClick={() => onResendInvite(matchingInvite)}>Resend</button>
+                            <button
+                              className="secondary-action mini-action"
+                              type="button"
+                              onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/?invite=${matchingInvite.token}`)}
+                            >
+                              Copy link
+                            </button>
+                            <button className="secondary-action mini-action" type="button" onClick={() => onRevokeInvite(matchingInvite.id)}>Revoke</button>
+                          </>
+                        )}
+                        <button className="secondary-action mini-action" type="button" onClick={() => onUpdateTeamMember(member.id, { isActive: !member.isActive })}>
+                          {member.isActive ? "Deactivate" : "Reactivate"}
+                        </button>
+                      </td>
+                    </tr>
+                    {isEditing && (
+                      <tr>
+                        <td colSpan={6}>
+                          <div className="secondary-role-picker">
+                            <span className="muted">Primary group:</span>
+                            <select
+                              value={member.primaryRole}
+                              onChange={(event) => updateRosterRoles(member, { primaryRole: event.target.value })}
+                            >
+                              <option value="" disabled>Not set</option>
+                              {ROLE_KEY_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                          {member.primaryRole && (
+                            <div className="secondary-role-picker">
+                              <span className="muted">Also part of:</span>
+                              <div className="tag-picker-grid">
+                                {ROLE_KEY_OPTIONS.filter((option) => option.value !== member.primaryRole).map((option) => (
+                                  <label key={option.value} className="checkbox-inline">
+                                    <input
+                                      type="checkbox"
+                                      checked={member.secondaryRoles.includes(option.value)}
+                                      onChange={(event) => {
+                                        const next = new Set(member.secondaryRoles);
+                                        if (event.target.checked) {
+                                          next.add(option.value);
+                                        } else {
+                                          next.delete(option.value);
+                                        }
+                                        updateRosterRoles(member, { secondaryRoles: Array.from(next) });
+                                      }}
+                                    />
+                                    {option.label}
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
               {teamMembers.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="empty-compact-state">No one on the roster yet. Add teammates above so tasks can be assigned to them.</td>
+                  <td colSpan={6} className="empty-compact-state">No one on the roster yet. Invite teammates above so tasks can be assigned to them.</td>
                 </tr>
               )}
             </tbody>

@@ -2726,6 +2726,15 @@ td small {
   padding: 0 8px;
 }
 
+/* Team Roster rows toggle an inline group-assignment editor on click. */
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover {
+  background: #faf6ee;
+}
+
 .stacked-mini-actions {
   display: flex;
   flex-direction: column;

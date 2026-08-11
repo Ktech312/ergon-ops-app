@@ -1849,6 +1849,8 @@ export type TeamMember = {
   email: string;
   roleTitle: string;
   isActive: boolean;
+  primaryRole: string;
+  secondaryRoles: string[];
 };
 
 type TeamMemberRow = {
@@ -1857,6 +1859,8 @@ type TeamMemberRow = {
   email: string | null;
   role_title: string | null;
   is_active: boolean;
+  primary_role: string | null;
+  secondary_roles: string[] | null;
 };
 
 function mapTeamMemberRow(row: TeamMemberRow): TeamMember {
@@ -1866,6 +1870,8 @@ function mapTeamMemberRow(row: TeamMemberRow): TeamMember {
     email: row.email ?? "",
     roleTitle: row.role_title ?? "",
     isActive: row.is_active,
+    primaryRole: row.primary_role ?? "",
+    secondaryRoles: row.secondary_roles ?? [],
   };
 }
 
@@ -1902,6 +1908,8 @@ export async function createTeamMember(member: Omit<TeamMember, "id">, accessTok
       email: member.email || null,
       role_title: member.roleTitle,
       is_active: member.isActive,
+      primary_role: member.primaryRole || null,
+      secondary_roles: member.secondaryRoles ?? [],
     }),
   });
 
@@ -1923,6 +1931,8 @@ export async function updateTeamMember(id: string, member: Partial<Omit<TeamMemb
   if (member.email !== undefined) payload.email = member.email || null;
   if (member.roleTitle !== undefined) payload.role_title = member.roleTitle;
   if (member.isActive !== undefined) payload.is_active = member.isActive;
+  if (member.primaryRole !== undefined) payload.primary_role = member.primaryRole || null;
+  if (member.secondaryRoles !== undefined) payload.secondary_roles = member.secondaryRoles;
 
   const response = await fetch(supabaseUrl(`team_members?id=eq.${id}`), {
     method: "PATCH",
