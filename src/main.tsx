@@ -1046,13 +1046,27 @@ function App() {
           // invite now that we have a real session -- assigns the roles the
           // admin picked and auto-approves the account.
           const pendingInviteToken = window.sessionStorage.getItem("pendingInviteToken");
+          let inviteFailure: string | null = null;
           if (pendingInviteToken) {
             window.sessionStorage.removeItem("pendingInviteToken");
-            await acceptInvite(pendingInviteToken, session.accessToken).catch(() => undefined);
+            try {
+              await acceptInvite(pendingInviteToken, session.accessToken);
+            } catch (error) {
+              // Don't swallow this silently -- if the invite failed to apply
+              // (already used, expired, etc.) the user is now signed in as a
+              // brand-new account with no role and no approval, and will land
+              // on the generic "Waiting for approval" screen with no
+              // indication this was supposed to be an invite acceptance.
+              inviteFailure = error instanceof Error ? error.message : "Could not finish accepting your invite.";
+            }
           }
           setAuthSession(session);
-          setAuthStatus(`Signed in as ${session.email}.`);
-          setSyncStatus("loading");
+          setAuthStatus(
+            inviteFailure
+              ? `Signed in as ${session.email}, but your invite could not be applied: ${inviteFailure}. Ask an admin to resend the invite or approve your account.`
+              : `Signed in as ${session.email}.`
+          );
+          setSyncStatus(inviteFailure ? "error" : "loading");
         }
       })
       .catch((error) => {
@@ -4624,10 +4638,30 @@ function App() {
   async function handleSignIn() {
     try {
       const session = await signInWithPassword(authEmail.trim(), authPassword);
+      // If this account was created from an invite link but the project
+      // requires email confirmation, the invite couldn't be applied at
+      // signup time (no session existed yet) -- it was stashed instead. Now
+      // that we have a real session, finish applying it so the account gets
+      // its role + auto-approval instead of falling back to the manual
+      // Pending Approvals queue.
+      const pendingInviteToken = window.localStorage.getItem("pendingInviteToken");
+      let inviteFailure: string | null = null;
+      if (pendingInviteToken) {
+        window.localStorage.removeItem("pendingInviteToken");
+        try {
+          await acceptInvite(pendingInviteToken, session.accessToken);
+        } catch (error) {
+          inviteFailure = error instanceof Error ? error.message : "Could not finish accepting your invite.";
+        }
+      }
       setAuthSession(session);
       setAuthPassword("");
-      setAuthStatus(`Signed in as ${session.email}.`);
-      setSyncStatus("loading");
+      setAuthStatus(
+        inviteFailure
+          ? `Signed in as ${session.email}, but your invite could not be applied: ${inviteFailure}. Ask an admin to resend the invite or approve your account.`
+          : `Signed in as ${session.email}.`
+      );
+      setSyncStatus(inviteFailure ? "error" : "loading");
     } catch (error) {
       setAuthStatus(error instanceof Error ? error.message : "Sign in failed.");
       setSyncStatus("error");
@@ -14901,7 +14935,12 @@ function InviteLandingPage({ token }: { token: string }) {
     try {
       const session = await signUpWithPassword(invite.email, password);
       if (!session) {
-        setFormError("Account created, but could not sign in automatically. Please check your email to confirm, then sign in and your invite will finish applying.");
+        // Project has "confirm email" enabled, so there's no session yet to
+        // call accept_invite with. Stash the token so the normal sign-in
+        // gate can finish applying it once they confirm and sign in for
+        // real -- otherwise this invite would silently never get applied.
+        window.localStorage.setItem("pendingInviteToken", token);
+        setFormError("Account created. Check your email to confirm it, then come back and sign in -- your invite will finish applying automatically.");
         setPhase("ready");
         return;
       }
