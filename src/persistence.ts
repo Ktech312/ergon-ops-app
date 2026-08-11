@@ -4399,7 +4399,65 @@ export type BomLine = {
   sentToPurchasingAt?: string | null;
 };
 
+// Migration 064: the Project-side mirror of SalesQuoteLocation/Image/Item
+// (see below in this file) -- same per-garage/lot shape (camera picks,
+// entries/exits/levels, signs/sensors/misc lines, photos/drawings) so a
+// closed-won quote's site breakdown carries over into its Project in the
+// same format, and the PM/field team can keep adding to it through
+// implementation and closeout. Deliberately structurally identical to
+// SalesQuoteLocation/Image/Item (not the same type) so the shared UI
+// components (LocationFilesModal, SiteGalleryModal, CameraCaptureModal)
+// can work against either via a common "Like" shape without caring which
+// side it's on.
+export type ProjectLocationImage = {
+  id: string;
+  imageType: "photo" | "drawing";
+  storagePath: string;
+  fileName: string;
+  description: string;
+  uploadedAt: string;
+  uploadedByEmail: string;
+  lat: number | null;
+  lng: number | null;
+};
+
+export type ProjectLocationItem = {
+  id: string;
+  projectLocationId: string;
+  lineType: "sign" | "sensor" | "misc";
+  catalogItemId: string | null;
+  qty: number;
+  lineSort: number;
+};
+
+export type ProjectLocation = {
+  id: string;
+  projectId: string;
+  locationType: "garage" | "lot";
+  name: string;
+  lineSort: number;
+  fli: boolean;
+  lpr: boolean;
+  peopleCounting: boolean;
+  fliCameraItemId: string | null;
+  lprCameraItemId: string | null;
+  peopleCountingCameraItemId: string | null;
+  entriesCount: number;
+  exitsCount: number;
+  levelsCount: number;
+  sourceQuoteLocationId: string | null;
+  images: ProjectLocationImage[];
+  signLines: ProjectLocationItem[];
+  sensorLines: ProjectLocationItem[];
+  miscLines: ProjectLocationItem[];
+};
+
 export type ProjectSite = {
+  // Real projects.id (uuid) -- optional/absent for the many hardcoded/demo
+  // ProjectSite objects sprinkled around this file that predate the real
+  // backend cutover; only needed for the Locations feature
+  // (project_locations FKs to this, not to the name/ref).
+  id?: string;
   ref: string;
   name: string;
   client: string;
@@ -4415,6 +4473,7 @@ export type ProjectSite = {
   salesQuoteFile?: string;
   sow: ScopeOfWork;
   bom: BomLine[];
+  locations?: ProjectLocation[];
 };
 
 const EMPTY_SCOPE_OF_WORK: ScopeOfWork = {
@@ -4451,7 +4510,102 @@ type ProjectBomLineRow = {
   purchasing_sent_at: string | null;
 };
 
+type ProjectLocationImageRow = {
+  id: string;
+  image_type: string;
+  storage_path: string;
+  file_name: string | null;
+  description: string | null;
+  uploaded_at: string;
+  uploaded_by_email: string | null;
+  photo_lat: number | string | null;
+  photo_lng: number | string | null;
+};
+
+type ProjectLocationItemRow = {
+  id: string;
+  project_location_id: string;
+  line_type: string;
+  catalog_item_id: string | null;
+  qty: number | string;
+  line_sort: number;
+};
+
+type ProjectLocationRow = {
+  id: string;
+  project_id: string;
+  location_type: string;
+  name: string;
+  line_sort: number;
+  fli: boolean;
+  lpr: boolean;
+  people_counting: boolean;
+  fli_camera_item_id: string | null;
+  lpr_camera_item_id: string | null;
+  people_counting_camera_item_id: string | null;
+  entries_count: number | string;
+  exits_count: number | string;
+  levels_count: number | string;
+  source_quote_location_id: string | null;
+  project_location_images: ProjectLocationImageRow[];
+  project_location_items: ProjectLocationItemRow[];
+};
+
+function mapProjectLocationImageRow(row: ProjectLocationImageRow): ProjectLocationImage {
+  return {
+    id: row.id,
+    imageType: row.image_type === "drawing" ? "drawing" : "photo",
+    storagePath: row.storage_path,
+    fileName: row.file_name ?? "",
+    description: row.description ?? "",
+    uploadedAt: row.uploaded_at,
+    uploadedByEmail: row.uploaded_by_email ?? "",
+    lat: row.photo_lat === null || row.photo_lat === undefined ? null : Number(row.photo_lat),
+    lng: row.photo_lng === null || row.photo_lng === undefined ? null : Number(row.photo_lng),
+  };
+}
+
+function mapProjectLocationItemRow(row: ProjectLocationItemRow): ProjectLocationItem {
+  return {
+    id: row.id,
+    projectLocationId: row.project_location_id,
+    lineType: row.line_type as ProjectLocationItem["lineType"],
+    catalogItemId: row.catalog_item_id ?? null,
+    qty: Number(row.qty) || 0,
+    lineSort: row.line_sort,
+  };
+}
+
+function mapProjectLocationRow(row: ProjectLocationRow): ProjectLocation {
+  const items = (row.project_location_items ?? []).map(mapProjectLocationItemRow).sort((a, b) => a.lineSort - b.lineSort);
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    locationType: row.location_type === "lot" ? "lot" : "garage",
+    name: row.name,
+    lineSort: row.line_sort,
+    fli: row.fli,
+    lpr: row.lpr,
+    peopleCounting: row.people_counting,
+    fliCameraItemId: row.fli_camera_item_id ?? null,
+    lprCameraItemId: row.lpr_camera_item_id ?? null,
+    peopleCountingCameraItemId: row.people_counting_camera_item_id ?? null,
+    entriesCount: Number(row.entries_count) || 0,
+    exitsCount: Number(row.exits_count) || 0,
+    levelsCount: Number(row.levels_count) || 0,
+    sourceQuoteLocationId: row.source_quote_location_id ?? null,
+    images: (row.project_location_images ?? []).map(mapProjectLocationImageRow),
+    signLines: items.filter((item) => item.lineType === "sign"),
+    sensorLines: items.filter((item) => item.lineType === "sensor"),
+    miscLines: items.filter((item) => item.lineType === "misc"),
+  };
+}
+
+const PROJECT_LOCATION_SELECT =
+  "id,project_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,source_quote_location_id,project_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),project_location_items(id,project_location_id,line_type,catalog_item_id,qty,line_sort)";
+
 type ProjectSiteRow = {
+  id: string;
   project_name: string;
   project_number: string | null;
   customer_name: string | null;
@@ -4467,10 +4621,11 @@ type ProjectSiteRow = {
   notes: string | null;
   project_scope_of_work: ProjectScopeRow | ProjectScopeRow[] | null;
   project_bom_lines: ProjectBomLineRow[] | null;
+  project_locations: ProjectLocationRow[] | null;
 };
 
 const PROJECT_SITE_SELECT =
-  "project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at)";
+  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -4500,6 +4655,7 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
       sentToPurchasingAt: line.purchasing_sent_at ?? null,
     }));
   return {
+    id: row.id,
     ref: row.project_number ?? "",
     name: row.project_name,
     client: row.customer_name ?? "",
@@ -4515,6 +4671,7 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
     salesQuoteFile: row.sales_quote_file ?? undefined,
     sow,
     bom,
+    locations: (row.project_locations ?? []).map(mapProjectLocationRow).sort((a, b) => a.lineSort - b.lineSort),
   };
 }
 
@@ -5121,6 +5278,12 @@ export type SalesQuoteLocationImage = {
   fileName: string;
   description: string;
   uploadedAt: string;
+  // Migration 064: who took/uploaded it and, best-effort, where -- captured
+  // going forward only (existing rows have these as null/"" forever, since
+  // the data was never recorded at the time).
+  uploadedByEmail: string;
+  lat: number | null;
+  lng: number | null;
 };
 
 // Migration 056: an addable Sign/Space Sensor/Misc line at a specific
@@ -5230,6 +5393,9 @@ type SalesQuoteLocationImageRow = {
   file_name: string | null;
   description: string | null;
   uploaded_at: string;
+  uploaded_by_email: string | null;
+  photo_lat: number | string | null;
+  photo_lng: number | string | null;
 };
 
 type SalesQuoteLocationItemRow = {
@@ -5303,6 +5469,9 @@ function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQu
     fileName: row.file_name ?? "",
     description: row.description ?? "",
     uploadedAt: row.uploaded_at,
+    uploadedByEmail: row.uploaded_by_email ?? "",
+    lat: row.photo_lat === null || row.photo_lat === undefined ? null : Number(row.photo_lat),
+    lng: row.photo_lng === null || row.photo_lng === undefined ? null : Number(row.photo_lng),
   };
 }
 
@@ -5382,7 +5551,7 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
 }
 
 const SALES_QUOTE_SELECT =
-  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
+  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5713,20 +5882,24 @@ export async function deleteSalesQuoteLocationItem(id: string, accessToken?: str
 }
 
 const SALES_QUOTE_IMAGE_BUCKET = "sales-quote-images";
+const PROJECT_LOCATION_IMAGE_BUCKET = "project-location-images";
 
 export function buildQuoteImageStoragePath(quoteLocationId: string, fileName: string): string {
   const stamp = Date.now().toString(36);
   return `${quoteLocationId}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
 }
 
-export async function uploadQuoteImageFile(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
+// Generic Storage REST upload, shared by the Sales quote-image bucket and
+// the Project location-image bucket (same private-bucket-plus-user-JWT
+// pattern for both).
+async function uploadStorageObjectFile(bucket: string, file: File, storagePath: string, accessToken?: string): Promise<boolean> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return false;
   }
   try {
     const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
     const response = await fetch(
-      `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${SALES_QUOTE_IMAGE_BUCKET}/${storagePath}`,
+      `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${bucket}/${storagePath}`,
       {
         method: "POST",
         headers: {
@@ -5743,25 +5916,58 @@ export async function uploadQuoteImageFile(file: File, storagePath: string, acce
       // a missing/misnamed bucket, an RLS policy rejection, or a bad
       // request. Logging the real status/body means opening DevTools shows
       // the actual reason instead of everyone assuming "no connection."
-      console.error("uploadQuoteImageFile failed", response.status, await response.text().catch(() => ""));
+      console.error("uploadStorageObjectFile failed", bucket, response.status, await response.text().catch(() => ""));
     }
     return response.ok;
   } catch (error) {
     // A rejected fetch can mean the device has no connection (common in a
     // parking garage), but it can also mean a CORS failure or other client
     // error -- log it either way so it's not a silent mystery.
-    console.error("uploadQuoteImageFile threw", error);
+    console.error("uploadStorageObjectFile threw", bucket, error);
     return false;
   }
 }
 
-export async function getQuoteImageDownloadUrl(storagePath: string, accessToken?: string): Promise<string | null> {
+// Server-side copy of a storage object -- used to clone a Sales Quote's
+// photos/drawings into a Project's own bucket at conversion time, so each
+// side owns an independent object it can delete without touching the
+// other's copy (no download+reupload round trip needed).
+async function copyStorageObject(sourceBucket: string, sourceKey: string, destinationBucket: string, destinationKey: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  try {
+    const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+    const response = await fetch(`${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/copy`, {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ bucketId: sourceBucket, sourceKey, destinationKey, destinationBucket }),
+    });
+    if (!response.ok) {
+      console.error("copyStorageObject failed", sourceBucket, "->", destinationBucket, response.status, await response.text().catch(() => ""));
+    }
+    return response.ok;
+  } catch (error) {
+    console.error("copyStorageObject threw", error);
+    return false;
+  }
+}
+
+export async function uploadQuoteImageFile(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
+  return uploadStorageObjectFile(SALES_QUOTE_IMAGE_BUCKET, file, storagePath, accessToken);
+}
+
+async function getStorageObjectSignedUrl(bucket: string, storagePath: string, accessToken?: string): Promise<string | null> {
   if (!isRemotePersistenceConfigured() || !accessToken || !storagePath) {
     return null;
   }
   const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
   const response = await fetch(
-    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/sign/${SALES_QUOTE_IMAGE_BUCKET}/${storagePath}`,
+    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/sign/${bucket}/${storagePath}`,
     {
       method: "POST",
       headers: {
@@ -5782,26 +5988,45 @@ export async function getQuoteImageDownloadUrl(storagePath: string, accessToken?
   return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1${body.signedURL}`;
 }
 
+export async function getQuoteImageDownloadUrl(storagePath: string, accessToken?: string): Promise<string | null> {
+  return getStorageObjectSignedUrl(SALES_QUOTE_IMAGE_BUCKET, storagePath, accessToken);
+}
+
+export async function getProjectLocationImageDownloadUrl(storagePath: string, accessToken?: string): Promise<string | null> {
+  return getStorageObjectSignedUrl(PROJECT_LOCATION_IMAGE_BUCKET, storagePath, accessToken);
+}
+
 export async function addSalesQuoteLocationImage(
   quoteLocationId: string,
   imageType: "photo" | "drawing",
   file: File,
   accessToken?: string,
   description?: string,
+  uploaderEmail?: string,
+  coords?: { lat: number; lng: number } | null,
 ): Promise<SalesQuoteLocationImage | null> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return null;
   }
   try {
     const storagePath = buildQuoteImageStoragePath(quoteLocationId, file.name);
-    const uploaded = await uploadQuoteImageFile(file, storagePath, accessToken);
+    const uploaded = await uploadStorageObjectFile(SALES_QUOTE_IMAGE_BUCKET, file, storagePath, accessToken);
     if (!uploaded) {
       return null;
     }
     const response = await fetch(supabaseUrl("sales_quote_location_images"), {
       method: "POST",
       headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-      body: JSON.stringify({ quote_location_id: quoteLocationId, image_type: imageType, storage_path: storagePath, file_name: file.name, description: description || null }),
+      body: JSON.stringify({
+        quote_location_id: quoteLocationId,
+        image_type: imageType,
+        storage_path: storagePath,
+        file_name: file.name,
+        description: description || null,
+        uploaded_by_email: uploaderEmail || null,
+        photo_lat: coords?.lat ?? null,
+        photo_lng: coords?.lng ?? null,
+      }),
     });
     if (!response.ok) {
       console.error("addSalesQuoteLocationImage insert failed", response.status, await response.text().catch(() => ""));
@@ -5833,6 +6058,10 @@ const PENDING_PHOTO_DB_VERSION = 1;
 
 export type PendingSitePhoto = {
   id: string;
+  // "quoteId" is really just "owner id" (a Sales quote id or, once
+  // ownerType is "project", a Project ref) -- kept as quoteId for backward
+  // compatibility with photos already queued in a device's IndexedDB before
+  // Projects got their own camera capture.
   quoteId: string;
   locationId: string;
   fileName: string;
@@ -5840,6 +6069,12 @@ export type PendingSitePhoto = {
   description: string;
   blob: Blob;
   createdAt: string;
+  // Missing/undefined on anything queued before this field existed --
+  // treat as "quote" (the only owner type that existed then).
+  ownerType?: "quote" | "project";
+  uploaderEmail?: string;
+  lat?: number | null;
+  lng?: number | null;
 };
 
 function openPendingPhotoDb(): Promise<IDBDatabase> {
@@ -5929,18 +6164,23 @@ export async function updateSalesQuoteLocationImageDescription(imageId: string, 
 // Gallery's bulk-delete -- removes the storage object first (best-effort;
 // a missing/already-gone object shouldn't block clearing the DB row) then
 // the sales_quote_location_images row itself.
+async function deleteStorageObject(bucket: string, storagePath: string, accessToken: string): Promise<void> {
+  if (!storagePath) {
+    return;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  await fetch(`${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${bucket}/${storagePath}`, {
+    method: "DELETE",
+    headers: { apikey: anonKey, authorization: `Bearer ${accessToken}` },
+  }).catch(() => undefined);
+}
+
 export async function deleteSalesQuoteLocationImage(imageId: string, storagePath: string, accessToken?: string): Promise<boolean> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return false;
   }
   try {
-    if (storagePath) {
-      const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
-      await fetch(`${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${SALES_QUOTE_IMAGE_BUCKET}/${storagePath}`, {
-        method: "DELETE",
-        headers: { apikey: anonKey, authorization: `Bearer ${accessToken}` },
-      }).catch(() => undefined);
-    }
+    await deleteStorageObject(SALES_QUOTE_IMAGE_BUCKET, storagePath, accessToken);
     const response = await fetch(supabaseUrl(`sales_quote_location_images?id=eq.${imageId}`), {
       method: "DELETE",
       headers: supabaseHeaders(accessToken),
@@ -5949,6 +6189,391 @@ export async function deleteSalesQuoteLocationImage(imageId: string, storagePath
   } catch (error) {
     console.error("deleteSalesQuoteLocationImage threw", error);
     return false;
+  }
+}
+
+// --- Project Locations -------------------------------------------------
+// Mirror of the Sales Quote location/image/item functions above, one-to-one,
+// so Projects get the exact same per-garage/lot photo+drawing+hardware
+// breakdown -- both a brand-new project can build its own from scratch, and
+// createProjectFromClosedWonQuote (below) can populate one from a quote.
+
+export async function addProjectLocation(
+  projectId: string,
+  locationType: "garage" | "lot",
+  nextLineSort: number,
+  accessToken?: string,
+): Promise<ProjectLocation | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const label = locationType === "garage" ? "Garage" : "Lot";
+  const response = await fetch(supabaseUrl("project_locations"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ project_id: projectId, location_type: locationType, name: `${label} ${nextLineSort + 1}`, line_sort: nextLineSort }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as ProjectLocationRow[];
+  return rows[0] ? mapProjectLocationRow({ ...rows[0], project_location_images: [], project_location_items: [] }) : null;
+}
+
+export async function updateProjectLocation(
+  id: string,
+  updates: Partial<{
+    name: string;
+    fli: boolean;
+    lpr: boolean;
+    peopleCounting: boolean;
+    fliCameraItemId: string | null;
+    lprCameraItemId: string | null;
+    peopleCountingCameraItemId: string | null;
+    entriesCount: number;
+    exitsCount: number;
+    levelsCount: number;
+  }>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.fli !== undefined) payload.fli = updates.fli;
+  if (updates.lpr !== undefined) payload.lpr = updates.lpr;
+  if (updates.peopleCounting !== undefined) payload.people_counting = updates.peopleCounting;
+  if (updates.fliCameraItemId !== undefined) payload.fli_camera_item_id = updates.fliCameraItemId;
+  if (updates.lprCameraItemId !== undefined) payload.lpr_camera_item_id = updates.lprCameraItemId;
+  if (updates.peopleCountingCameraItemId !== undefined) payload.people_counting_camera_item_id = updates.peopleCountingCameraItemId;
+  if (updates.entriesCount !== undefined) payload.entries_count = updates.entriesCount;
+  if (updates.exitsCount !== undefined) payload.exits_count = updates.exitsCount;
+  if (updates.levelsCount !== undefined) payload.levels_count = updates.levelsCount;
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl(`project_locations?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteProjectLocation(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`project_locations?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+}
+
+export async function addProjectLocationItem(
+  projectLocationId: string,
+  lineType: ProjectLocationItem["lineType"],
+  catalogItemId: string,
+  qty: number,
+  lineSort: number,
+  accessToken?: string,
+): Promise<ProjectLocationItem | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("project_location_items"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ project_location_id: projectLocationId, line_type: lineType, catalog_item_id: catalogItemId, qty, line_sort: lineSort }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as ProjectLocationItemRow[];
+  return rows[0] ? mapProjectLocationItemRow(rows[0]) : null;
+}
+
+export async function updateProjectLocationItemQty(id: string, qty: number, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`project_location_items?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ qty }),
+  });
+}
+
+export async function deleteProjectLocationItem(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`project_location_items?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+}
+
+export function buildProjectImageStoragePath(projectLocationId: string, fileName: string): string {
+  const stamp = Date.now().toString(36);
+  return `${projectLocationId}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
+}
+
+export async function addProjectLocationImage(
+  projectLocationId: string,
+  imageType: "photo" | "drawing",
+  file: File,
+  accessToken?: string,
+  description?: string,
+  uploaderEmail?: string,
+  coords?: { lat: number; lng: number } | null,
+): Promise<ProjectLocationImage | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  try {
+    const storagePath = buildProjectImageStoragePath(projectLocationId, file.name);
+    const uploaded = await uploadStorageObjectFile(PROJECT_LOCATION_IMAGE_BUCKET, file, storagePath, accessToken);
+    if (!uploaded) {
+      return null;
+    }
+    const response = await fetch(supabaseUrl("project_location_images"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+      body: JSON.stringify({
+        project_location_id: projectLocationId,
+        image_type: imageType,
+        storage_path: storagePath,
+        file_name: file.name,
+        description: description || null,
+        uploaded_by_email: uploaderEmail || null,
+        photo_lat: coords?.lat ?? null,
+        photo_lng: coords?.lng ?? null,
+      }),
+    });
+    if (!response.ok) {
+      console.error("addProjectLocationImage insert failed", response.status, await response.text().catch(() => ""));
+      return null;
+    }
+    const rows = (await response.json()) as ProjectLocationImageRow[];
+    return rows[0] ? mapProjectLocationImageRow(rows[0]) : null;
+  } catch (error) {
+    console.error("addProjectLocationImage threw", error);
+    return null;
+  }
+}
+
+export async function updateProjectLocationImageDescription(imageId: string, description: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`project_location_images?id=eq.${imageId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ description: description || null }),
+  });
+  return response.ok;
+}
+
+export async function deleteProjectLocationImage(imageId: string, storagePath: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  try {
+    await deleteStorageObject(PROJECT_LOCATION_IMAGE_BUCKET, storagePath, accessToken);
+    const response = await fetch(supabaseUrl(`project_location_images?id=eq.${imageId}`), {
+      method: "DELETE",
+      headers: supabaseHeaders(accessToken),
+    });
+    return response.ok;
+  } catch (error) {
+    console.error("deleteProjectLocationImage threw", error);
+    return false;
+  }
+}
+
+// "Create Project" from a Closed - Won Sales Quote -- E's request: closing a
+// deal should offer to spin up a Project that starts with everything the
+// quote already has (contact/address info, BOM, and the full per-garage/lot
+// breakdown including photos/drawings), in the same format, so media can be
+// tracked from presale through implementation to closeout. One-time copy
+// (same "copy on link" shape as the older "Pull BOM from Closed Sales"): the
+// two stay independent after this runs. Idempotent -- calling it again for
+// a quote that was already converted just returns the existing project
+// instead of creating a duplicate or re-copying its media.
+export async function createProjectFromClosedWonQuote(quote: SalesQuote, accessToken?: string): Promise<ProjectSite | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  try {
+    // Idempotency guard: if this quote was already converted, just return
+    // that project instead of creating a second one.
+    const existingResponse = await fetch(
+      supabaseUrl(`projects?source_sales_quote_id=eq.${quote.id}&select=${PROJECT_SITE_SELECT}`),
+      { headers: supabaseHeaders(accessToken) },
+    );
+    if (existingResponse.ok) {
+      const existingRows = (await existingResponse.json()) as ProjectSiteRow[];
+      if (existingRows[0]) {
+        return mapProjectSiteRow(existingRows[0]);
+      }
+    }
+
+    const garageCount = quote.locations.filter((location) => location.locationType === "garage").length;
+    const lotCount = quote.locations.filter((location) => location.locationType === "lot").length;
+    const siteType: ProjectSite["type"] =
+      garageCount > 0 && lotCount > 0 ? "Mixed Parking" : lotCount > 0 ? "Surface Lot" : "Parking Garage";
+    const address = [quote.siteStreetAddress, quote.city, quote.siteState, quote.siteZip].filter(Boolean).join(", ");
+    const cameraCount = quote.locations.reduce(
+      (sum, location) => sum + (location.fli ? 1 : 0) + (location.lpr ? 1 : 0) + (location.peopleCounting ? 1 : 0),
+      0,
+    );
+
+    const projectPayload = {
+      project_name: quote.siteName,
+      customer_name: quote.clientName || null,
+      site_type: siteType,
+      site_address: address || null,
+      app_status: "Draft",
+      camera_count: cameraCount,
+      notes: `Created from Closed - Won Sales Quote "${quote.siteName}".`,
+      source_sales_quote_id: quote.id,
+      converted_from_quote_at: new Date().toISOString(),
+    };
+
+    const projectResponse = await fetch(supabaseUrl("projects?on_conflict=project_name"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(projectPayload),
+    });
+    if (!projectResponse.ok) {
+      console.error("createProjectFromClosedWonQuote: project insert failed", projectResponse.status, await projectResponse.text().catch(() => ""));
+      return null;
+    }
+    const projectRows = (await projectResponse.json()) as Array<{ id: string }>;
+    const projectId = projectRows[0]?.id;
+    if (!projectId) {
+      return null;
+    }
+
+    await fetch(supabaseUrl("project_scope_of_work?on_conflict=project_id"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({
+        project_id: projectId,
+        summary: EMPTY_SCOPE_OF_WORK.summary,
+        preparation: EMPTY_SCOPE_OF_WORK.preparation,
+        infrastructure: EMPTY_SCOPE_OF_WORK.infrastructure,
+        installation: EMPTY_SCOPE_OF_WORK.installation,
+        commissioning: EMPTY_SCOPE_OF_WORK.commissioning,
+        fine_tuning: EMPTY_SCOPE_OF_WORK.fineTuning,
+        assumptions: EMPTY_SCOPE_OF_WORK.assumptions,
+        exclusions: EMPTY_SCOPE_OF_WORK.exclusions,
+      }),
+    });
+
+    if (quote.bomLines.length > 0) {
+      await fetch(supabaseUrl("project_bom_lines"), {
+        method: "POST",
+        headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
+        body: JSON.stringify(
+          quote.bomLines.map((line, index) => ({
+            project_id: projectId,
+            item_name: line.item,
+            qty: line.qty,
+            status: "Not started",
+            request_speed: "Standard",
+            notes: line.notes || `Copied from closed-won quote "${quote.siteName}".`,
+            line_sort: index,
+            procurement_track: "warehouse_stock",
+          })),
+        ),
+      });
+    }
+
+    for (const location of quote.locations) {
+      const locationResponse = await fetch(supabaseUrl("project_locations"), {
+        method: "POST",
+        headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+        body: JSON.stringify({
+          project_id: projectId,
+          location_type: location.locationType,
+          name: location.name,
+          line_sort: location.lineSort,
+          fli: location.fli,
+          lpr: location.lpr,
+          people_counting: location.peopleCounting,
+          fli_camera_item_id: location.fliCameraItemId,
+          lpr_camera_item_id: location.lprCameraItemId,
+          people_counting_camera_item_id: location.peopleCountingCameraItemId,
+          entries_count: location.entriesCount,
+          exits_count: location.exitsCount,
+          levels_count: location.levelsCount,
+          source_quote_location_id: location.id,
+        }),
+      });
+      if (!locationResponse.ok) {
+        console.error("createProjectFromClosedWonQuote: location insert failed", locationResponse.status, await locationResponse.text().catch(() => ""));
+        continue;
+      }
+      const locationRows = (await locationResponse.json()) as Array<{ id: string }>;
+      const projectLocationId = locationRows[0]?.id;
+      if (!projectLocationId) {
+        continue;
+      }
+
+      const allItems = [...location.signLines, ...location.sensorLines, ...location.miscLines];
+      if (allItems.length > 0) {
+        await fetch(supabaseUrl("project_location_items"), {
+          method: "POST",
+          headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
+          body: JSON.stringify(
+            allItems.map((item) => ({
+              project_location_id: projectLocationId,
+              line_type: item.lineType,
+              catalog_item_id: item.catalogItemId,
+              qty: item.qty,
+              line_sort: item.lineSort,
+            })),
+          ),
+        });
+      }
+
+      for (const image of location.images) {
+        const destinationPath = buildProjectImageStoragePath(projectLocationId, image.fileName || "file");
+        const copied = await copyStorageObject(SALES_QUOTE_IMAGE_BUCKET, image.storagePath, PROJECT_LOCATION_IMAGE_BUCKET, destinationPath, accessToken);
+        if (!copied) {
+          continue;
+        }
+        await fetch(supabaseUrl("project_location_images"), {
+          method: "POST",
+          headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
+          body: JSON.stringify({
+            project_location_id: projectLocationId,
+            image_type: image.imageType,
+            storage_path: destinationPath,
+            file_name: image.fileName || null,
+            description: image.description || null,
+            uploaded_at: image.uploadedAt,
+            uploaded_by_email: image.uploadedByEmail || null,
+            photo_lat: image.lat,
+            photo_lng: image.lng,
+          }),
+        });
+      }
+    }
+
+    const finalResponse = await fetch(supabaseUrl(`projects?id=eq.${projectId}&select=${PROJECT_SITE_SELECT}`), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (!finalResponse.ok) {
+      return null;
+    }
+    const finalRows = (await finalResponse.json()) as ProjectSiteRow[];
+    return finalRows[0] ? mapProjectSiteRow(finalRows[0]) : null;
+  } catch (error) {
+    console.error("createProjectFromClosedWonQuote threw", error);
+    return null;
   }
 }
 

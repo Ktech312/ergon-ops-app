@@ -49,6 +49,16 @@ import {
   updateSalesQuoteLocationItemQty,
   deleteSalesQuoteLocationItem,
   addSalesQuoteLocationImage,
+  addProjectLocation,
+  updateProjectLocation,
+  addProjectLocationItem,
+  updateProjectLocationItemQty,
+  deleteProjectLocationItem,
+  addProjectLocationImage,
+  updateProjectLocationImageDescription,
+  deleteProjectLocationImage,
+  getProjectLocationImageDownloadUrl,
+  createProjectFromClosedWonQuote,
   createProjectDocuments,
   createPurchaseOrder,
   createPurchaseRequestRemote,
@@ -217,6 +227,9 @@ import {
   type ProjectDocument,
   type ProjectHandover,
   type ProjectSite,
+  type ProjectLocation,
+  type ProjectLocationImage,
+  type ProjectLocationItem,
   type ProjectSubmittal,
   type PublicSubmittalView,
   type ProposalTemplateSection,
@@ -2211,11 +2224,18 @@ function App() {
     await deleteSalesQuoteBomLine(lineId, authSession.accessToken);
   }
 
-  async function handleUploadSalesQuoteImage(quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string): Promise<boolean> {
+  async function handleUploadSalesQuoteImage(
+    quoteId: string,
+    locationId: string,
+    imageType: "photo" | "drawing",
+    file: File,
+    description?: string,
+    coords?: { lat: number; lng: number } | null,
+  ): Promise<boolean> {
     if (!authSession) {
       return false;
     }
-    const image = await addSalesQuoteLocationImage(locationId, imageType, file, authSession.accessToken, description);
+    const image = await addSalesQuoteLocationImage(locationId, imageType, file, authSession.accessToken, description, authSession.email, coords ?? null);
     if (image) {
       setSalesQuotes((current) =>
         current.map((entry) =>
@@ -2246,7 +2266,11 @@ function App() {
     }
     for (const item of pending) {
       const file = new File([item.blob], item.fileName, { type: item.fileType || "image/jpeg" });
-      const ok = await handleUploadSalesQuoteImage(item.quoteId, item.locationId, "photo", file, item.description).catch(() => false);
+      const coords = item.lat != null && item.lng != null ? { lat: item.lat, lng: item.lng } : null;
+      const ok =
+        item.ownerType === "project"
+          ? await handleUploadProjectLocationImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false)
+          : await handleUploadSalesQuoteImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false);
       if (ok) {
         await removePendingSitePhoto(item.id);
       }
@@ -2305,11 +2329,245 @@ function App() {
     return getQuoteImageDownloadUrl(image.storagePath, authSession.accessToken);
   }
 
+  // --- Project Locations ---------------------------------------------------
+  // Mirror of the Sales Quote location handlers above, one-to-one, so a
+  // Project's own "Locations" tab (built from scratch, or pre-populated by
+  // createProjectFromClosedWonQuote) behaves identically. Keyed by
+  // projectRef (like onPullBomFromClosedQuote) since that's what the
+  // Project detail UI already threads around; the underlying persistence
+  // calls need the real project_id, resolved from the matching ProjectSite.
+
+  async function handleAddProjectLocation(projectRef: string, locationType: "garage" | "lot") {
+    if (!authSession) {
+      return;
+    }
+    const project = projectSites.find((entry) => entry.ref === projectRef);
+    if (!project?.id) {
+      return;
+    }
+    const nextLineSort = (project.locations ?? []).length;
+    const created = await addProjectLocation(project.id, locationType, nextLineSort, authSession.accessToken);
+    if (created) {
+      setProjectSites((current) =>
+        current.map((entry) => (entry.ref === projectRef ? { ...entry, locations: [...(entry.locations ?? []), created] } : entry)),
+      );
+    }
+  }
+
+  async function handleUpdateProjectLocation(projectRef: string, locationId: string, updates: Parameters<typeof updateProjectLocation>[1]) {
+    setProjectSites((current) =>
+      current.map((entry) =>
+        entry.ref === projectRef
+          ? { ...entry, locations: (entry.locations ?? []).map((location) => (location.id === locationId ? { ...location, ...updates } : location)) }
+          : entry,
+      ),
+    );
+    if (authSession) {
+      await updateProjectLocation(locationId, updates, authSession.accessToken);
+    }
+  }
+
+  async function handleAddProjectLocationItem(
+    projectRef: string,
+    locationId: string,
+    lineType: ProjectLocationItem["lineType"],
+    catalogItemId: string,
+    qty: number,
+  ) {
+    if (!authSession || !catalogItemId) {
+      return;
+    }
+    const project = projectSites.find((entry) => entry.ref === projectRef);
+    const location = project?.locations?.find((entry) => entry.id === locationId);
+    if (!location) {
+      return;
+    }
+    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : "miscLines";
+    const nextLineSort = location[listKey].length;
+    const created = await addProjectLocationItem(locationId, lineType, catalogItemId, qty, nextLineSort, authSession.accessToken);
+    if (!created) {
+      return;
+    }
+    setProjectSites((current) =>
+      current.map((entryProject) =>
+        entryProject.ref === projectRef
+          ? {
+              ...entryProject,
+              locations: (entryProject.locations ?? []).map((entryLocation) =>
+                entryLocation.id === locationId ? { ...entryLocation, [listKey]: [...entryLocation[listKey], created] } : entryLocation,
+              ),
+            }
+          : entryProject,
+      ),
+    );
+  }
+
+  async function handleUpdateProjectLocationItemQty(projectRef: string, locationId: string, itemId: string, qty: number) {
+    if (!authSession) {
+      return;
+    }
+    setProjectSites((current) =>
+      current.map((entryProject) =>
+        entryProject.ref === projectRef
+          ? {
+              ...entryProject,
+              locations: (entryProject.locations ?? []).map((entryLocation) =>
+                entryLocation.id === locationId
+                  ? {
+                      ...entryLocation,
+                      signLines: entryLocation.signLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
+                      sensorLines: entryLocation.sensorLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
+                      miscLines: entryLocation.miscLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
+                    }
+                  : entryLocation,
+              ),
+            }
+          : entryProject,
+      ),
+    );
+    await updateProjectLocationItemQty(itemId, qty, authSession.accessToken);
+  }
+
+  async function handleDeleteProjectLocationItem(projectRef: string, locationId: string, itemId: string) {
+    if (!authSession) {
+      return;
+    }
+    setProjectSites((current) =>
+      current.map((entryProject) =>
+        entryProject.ref === projectRef
+          ? {
+              ...entryProject,
+              locations: (entryProject.locations ?? []).map((entryLocation) =>
+                entryLocation.id === locationId
+                  ? {
+                      ...entryLocation,
+                      signLines: entryLocation.signLines.filter((line) => line.id !== itemId),
+                      sensorLines: entryLocation.sensorLines.filter((line) => line.id !== itemId),
+                      miscLines: entryLocation.miscLines.filter((line) => line.id !== itemId),
+                    }
+                  : entryLocation,
+              ),
+            }
+          : entryProject,
+      ),
+    );
+    await deleteProjectLocationItem(itemId, authSession.accessToken);
+  }
+
+  async function handleUploadProjectLocationImage(
+    projectRef: string,
+    locationId: string,
+    imageType: "photo" | "drawing",
+    file: File,
+    description?: string,
+    coords?: { lat: number; lng: number } | null,
+  ): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const image = await addProjectLocationImage(locationId, imageType, file, authSession.accessToken, description, authSession.email, coords ?? null);
+    if (image) {
+      setProjectSites((current) =>
+        current.map((entry) =>
+          entry.ref === projectRef
+            ? { ...entry, locations: (entry.locations ?? []).map((location) => (location.id === locationId ? { ...location, images: [...location.images, image] } : location)) }
+            : entry,
+        ),
+      );
+      return true;
+    }
+    return false;
+  }
+
+  async function handleUpdateProjectLocationImageDescription(projectRef: string, locationId: string, imageId: string, description: string) {
+    if (!authSession) {
+      return;
+    }
+    setProjectSites((current) =>
+      current.map((entry) =>
+        entry.ref === projectRef
+          ? {
+              ...entry,
+              locations: (entry.locations ?? []).map((location) =>
+                location.id === locationId
+                  ? { ...location, images: location.images.map((image) => (image.id === imageId ? { ...image, description } : image)) }
+                  : location,
+              ),
+            }
+          : entry,
+      ),
+    );
+    await updateProjectLocationImageDescription(imageId, description, authSession.accessToken);
+  }
+
+  async function handleDeleteProjectLocationImage(projectRef: string, locationId: string, imageId: string, storagePath: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const ok = await deleteProjectLocationImage(imageId, storagePath, authSession.accessToken);
+    if (ok) {
+      setProjectSites((current) =>
+        current.map((entry) =>
+          entry.ref === projectRef
+            ? {
+                ...entry,
+                locations: (entry.locations ?? []).map((location) =>
+                  location.id === locationId ? { ...location, images: location.images.filter((image) => image.id !== imageId) } : location,
+                ),
+              }
+            : entry,
+        ),
+      );
+    }
+    return ok;
+  }
+
+  async function handleGetProjectLocationImageUrl(image: ProjectLocationImage): Promise<string | null> {
+    if (!authSession) {
+      return null;
+    }
+    return getProjectLocationImageDownloadUrl(image.storagePath, authSession.accessToken);
+  }
+
+  // E's request: closing a Sales Quote should offer to spin up a Project
+  // that starts with everything the quote has -- contact info, BOM, and the
+  // full per-garage/lot breakdown including photos/drawings -- in the same
+  // format, so media can be tracked from presale through closeout. Prompted
+  // from Site Builder when a quote's status is set to Closed - Won.
+  async function handleCreateProjectFromClosedWonQuote(quote: SalesQuote): Promise<ProjectSite | null> {
+    if (!authSession) {
+      return null;
+    }
+    const created = await createProjectFromClosedWonQuote(quote, authSession.accessToken);
+    if (created) {
+      setProjectSites((current) => {
+        const existingIndex = current.findIndex((entry) => entry.name === created.name);
+        if (existingIndex >= 0) {
+          const next = current.slice();
+          next[existingIndex] = created;
+          return next;
+        }
+        return [...current, created];
+      });
+    }
+    return created;
+  }
+
   async function handleDownloadSalesQuoteImage(image: SalesQuoteLocationImage) {
     if (!authSession) {
       return;
     }
     const url = await getQuoteImageDownloadUrl(image.storagePath, authSession.accessToken);
+    if (url) {
+      await triggerBrowserDownload(url, image.fileName || "photo");
+    }
+  }
+
+  async function handleDownloadProjectLocationImage(image: ProjectLocationImage) {
+    if (!authSession) {
+      return;
+    }
+    const url = await getProjectLocationImageDownloadUrl(image.storagePath, authSession.accessToken);
     if (url) {
       await triggerBrowserDownload(url, image.fileName || "photo");
     }
@@ -4676,7 +4934,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItemQty={handleUpdateProjectLocationItemQty} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -4704,6 +4962,7 @@ function App() {
             onDeleteSalesQuoteLocationItem={handleDeleteSalesQuoteLocationItem}
             onPullLocationHardwareIntoQuoteBom={handlePullLocationHardwareIntoQuoteBom}
             onUpdateSalesQuoteStatus={handleUpdateSalesQuoteStatus}
+            onCreateProjectFromClosedWonQuote={handleCreateProjectFromClosedWonQuote}
             onAddSalesQuoteBomLines={handleAddSalesQuoteBomLines}
             onDeleteSalesQuoteBomLine={handleDeleteSalesQuoteBomLine}
             onUpdateSalesQuoteBomLineCatalogLink={handleUpdateSalesQuoteBomLineCatalogLink}
@@ -7042,6 +7301,17 @@ function Projects({
   onSubmitHandover,
   salesQuotes,
   onPullBomFromClosedQuote,
+  catalogItems,
+  onAddProjectLocation,
+  onUpdateProjectLocation,
+  onAddProjectLocationItem,
+  onUpdateProjectLocationItemQty,
+  onDeleteProjectLocationItem,
+  onUploadProjectLocationImage,
+  onDownloadProjectLocationImage,
+  onDeleteProjectLocationImage,
+  onGetProjectLocationImageUrl,
+  onUpdateProjectLocationImageDescription,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -7075,12 +7345,32 @@ function Projects({
   onSubmitHandover: (handoverId: string) => void;
   salesQuotes: SalesQuote[];
   onPullBomFromClosedQuote: (projectRef: string, quoteId: string) => number;
+  catalogItems: CatalogItem[];
+  onAddProjectLocation: (projectRef: string, locationType: "garage" | "lot") => void;
+  onUpdateProjectLocation: (projectRef: string, locationId: string, updates: Parameters<typeof updateProjectLocation>[1]) => void;
+  onAddProjectLocationItem: (projectRef: string, locationId: string, lineType: ProjectLocationItem["lineType"], catalogItemId: string, qty: number) => void;
+  onUpdateProjectLocationItemQty: (projectRef: string, locationId: string, itemId: string, qty: number) => void;
+  onDeleteProjectLocationItem: (projectRef: string, locationId: string, itemId: string) => void;
+  onUploadProjectLocationImage: (
+    projectRef: string,
+    locationId: string,
+    imageType: "photo" | "drawing",
+    file: File,
+    description?: string,
+    coords?: { lat: number; lng: number } | null,
+  ) => Promise<boolean>;
+  onDownloadProjectLocationImage: (image: ProjectLocationImage) => void;
+  onDeleteProjectLocationImage: (projectRef: string, locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
+  onGetProjectLocationImageUrl: (image: ProjectLocationImage) => Promise<string | null>;
+  onUpdateProjectLocationImageDescription: (projectRef: string, locationId: string, imageId: string, description: string) => void;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
   const [selectedProjectName, setSelectedProjectName] = useState(initialProject?.name ?? projects[0].name);
   const [projectMode, setProjectMode] = useState<"list" | "detail">(initialProject ? "detail" : "list");
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
+  const [galleryProjectName, setGalleryProjectName] = useState<string | null>(null);
+  const galleryProject = galleryProjectName ? projectSites.find((project) => project.name === galleryProjectName) ?? null : null;
   const [isExtractingQuote, setIsExtractingQuote] = useState(false);
   const [scheduleTemplateChoice, setScheduleTemplateChoice] = useState("");
   const [submittalClientName, setSubmittalClientName] = useState("");
@@ -7600,12 +7890,6 @@ function Projects({
           onOpenFull={onOpenTasksView}
         />
 
-        <section className="panel wide">
-          <div className="action-header">
-            <PanelHeader title="Projects" label="Project list, completion, and PM handoff status" />
-          </div>
-        </section>
-
         <section className="metric-grid">
           <Metric icon={<ClipboardList size={20} />} label="Projects" value={String(projectSites.length)} />
           <Metric icon={<DollarSign size={20} />} label="Allocated Value" value={money(totalProjectValue)} />
@@ -7630,7 +7914,7 @@ function Projects({
                 const completion = projectCompletion(project);
                 const openLines = project.bom.filter((line) => line.status === "Need Quote" || line.status === "Not started").length;
                 return (
-                  <tr key={project.name}>
+                  <tr key={project.name} className="clickable-row" onClick={() => openProject(project.name)}>
                     <td><strong>{project.ref}</strong></td>
                     <td><strong>{project.name}</strong><small>{project.type} - {project.package}</small></td>
                     <td>{project.client}</td>
@@ -7641,13 +7925,34 @@ function Projects({
                     <td>{openLines}</td>
                     <td>{project.due}</td>
                     <td>{money(project.allocated)}</td>
-                    <td><button className="table-action" type="button" onClick={() => openProject(project.name)}>Open</button></td>
+                    <td>
+                      <button
+                        className="table-action"
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setGalleryProjectName(project.name);
+                        }}
+                      >
+                        Images
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </section>
+
+        {galleryProject && (
+          <SiteGalleryModal
+            siteName={galleryProject.name}
+            locations={galleryProject.locations ?? []}
+            onGetUrl={onGetProjectLocationImageUrl}
+            onDelete={(locationId, image) => onDeleteProjectLocationImage(galleryProject.ref, locationId, image.id, image.storagePath)}
+            onClose={() => setGalleryProjectName(null)}
+          />
+        )}
       </div>
     );
   }
@@ -7663,6 +7968,21 @@ function Projects({
           <button className="secondary-action mini-action" type="button" onClick={backToProjectList}>Back to Projects</button>
         </div>
       </div>
+
+      <ProjectLocationsSection
+        project={selectedProject}
+        catalogItems={catalogItems}
+        onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
+        onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
+        onAddLocationItem={(locationId, lineType, catalogItemId, qty) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty)}
+        onUpdateLocationItemQty={(locationId, itemId, qty) => onUpdateProjectLocationItemQty(selectedProject.ref, locationId, itemId, qty)}
+        onDeleteLocationItem={(locationId, itemId) => onDeleteProjectLocationItem(selectedProject.ref, locationId, itemId)}
+        onUploadImage={(locationId, imageType, file, description, coords) => onUploadProjectLocationImage(selectedProject.ref, locationId, imageType, file, description, coords)}
+        onDownloadImage={onDownloadProjectLocationImage}
+        onDeleteImage={(locationId, imageId, storagePath) => onDeleteProjectLocationImage(selectedProject.ref, locationId, imageId, storagePath)}
+        onGetImageUrl={onGetProjectLocationImageUrl}
+        onUpdateImageDescription={(locationId, imageId, description) => onUpdateProjectLocationImageDescription(selectedProject.ref, locationId, imageId, description)}
+      />
 
       <div className="project-top-row">
         <section className="panel compact-card">
@@ -9817,6 +10137,7 @@ function SalesHome({
   onDeleteSalesQuoteLocationItem,
   onPullLocationHardwareIntoQuoteBom,
   onUpdateSalesQuoteStatus,
+  onCreateProjectFromClosedWonQuote,
   onAddSalesQuoteBomLines,
   onDeleteSalesQuoteBomLine,
   onUpdateSalesQuoteBomLineCatalogLink,
@@ -9889,6 +10210,7 @@ function SalesHome({
   onDeleteSalesQuoteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onPullLocationHardwareIntoQuoteBom: (quoteId: string) => void;
   onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => void;
+  onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectSite | null>;
   onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateSalesQuoteBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
@@ -9909,7 +10231,14 @@ function SalesHome({
   presalesRules: PresalesHardwareRule[];
   presalesStatus: string;
   onGenerateBaselineBomForQuote: (quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
-  onUploadSalesQuoteImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
+  onUploadSalesQuoteImage: (
+    quoteId: string,
+    locationId: string,
+    imageType: "photo" | "drawing",
+    file: File,
+    description?: string,
+    coords?: { lat: number; lng: number } | null,
+  ) => Promise<boolean>;
   onUpdateSalesQuoteImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadSalesQuoteImage: (image: SalesQuoteLocationImage) => void;
   onDeleteSalesQuoteImage: (quoteId: string, locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
@@ -9978,6 +10307,7 @@ function SalesHome({
         onDeleteLocationItem={onDeleteSalesQuoteLocationItem}
         onPullLocationHardware={onPullLocationHardwareIntoQuoteBom}
         onUpdateStatus={onUpdateSalesQuoteStatus}
+        onCreateProjectFromClosedWonQuote={onCreateProjectFromClosedWonQuote}
         onAddBomLines={onAddSalesQuoteBomLines}
         onDeleteBomLine={onDeleteSalesQuoteBomLine}
         onUpdateBomLineCatalogLink={onUpdateSalesQuoteBomLineCatalogLink}
@@ -10958,18 +11288,65 @@ function sanitizePhotoNameSegment(value: string): string {
   return value.replace(/[\\/:*?"<>|]+/g, "-").trim();
 }
 
+// Structural "Like" shapes -- SalesQuoteLocationImage/Location and
+// ProjectLocationImage/Location are separate types (different tables), but
+// identical in shape for everything these shared UI components need, so one
+// component works against either side without duplicating ~600 lines of
+// JSX. TS structural typing means both real types satisfy these as-is.
+type LocationImageLike = {
+  id: string;
+  imageType: "photo" | "drawing";
+  storagePath: string;
+  fileName: string;
+  description: string;
+  uploadedAt: string;
+  uploadedByEmail: string;
+  lat: number | null;
+  lng: number | null;
+};
+
+type LocationLike = {
+  id: string;
+  name: string;
+  locationType: "garage" | "lot";
+  images: LocationImageLike[];
+};
+
+// Best-effort GPS: the whole point of this photo capture flow is parking
+// garages/structures, where indoor GPS is often weak or unavailable -- so
+// this always resolves (never rejects the caller), just with null coords if
+// location isn't available within the timeout.
+function getBestEffortLocation(): Promise<{ lat: number; lng: number } | null> {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+    );
+  });
+}
+
 function CameraCaptureModal({
   quoteId,
   locationId,
   locationName,
+  ownerType = "quote",
   onClose,
   onSavePhoto,
 }: {
   quoteId: string;
   locationId: string;
   locationName: string;
+  // Which offline-queue owner bucket this belongs to -- see
+  // persistence.ts's PendingSitePhoto.ownerType. Defaults to "quote" so the
+  // existing Sales Site Builder call site doesn't need updating.
+  ownerType?: "quote" | "project";
   onClose: () => void;
-  onSavePhoto: (file: File, description: string) => Promise<boolean>;
+  onSavePhoto: (file: File, description: string, coords: { lat: number; lng: number } | null) => Promise<boolean>;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -10979,6 +11356,19 @@ function CameraCaptureModal({
   const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const coordsRef = useRef<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    if (phase !== "camera" || coordsRef.current) {
+      return;
+    }
+    // Best-effort, once per session in this modal -- indoors in a parking
+    // structure this frequently comes back null, which is fine; it's a
+    // when-available add-on, not something the save flow depends on.
+    getBestEffortLocation().then((coords) => {
+      coordsRef.current = coords;
+    });
+  }, [phase]);
 
   useEffect(() => {
     if (phase !== "camera") {
@@ -11092,7 +11482,7 @@ function CameraCaptureModal({
       const file = new File([photo.blob], fileName, { type: fileType });
       let ok = false;
       try {
-        ok = await onSavePhoto(file, photo.name.trim());
+        ok = await onSavePhoto(file, photo.name.trim(), coordsRef.current);
       } catch (error) {
         console.error("Photo save failed", error);
         ok = false;
@@ -11103,7 +11493,17 @@ function CameraCaptureModal({
         // either way, queue it in IndexedDB instead of losing it.
         // persistence.ts logs the actual status/error to the console so a
         // real failure isn't mistaken for "no connection."
-        await queuePendingSitePhoto({ quoteId, locationId, fileName, fileType, description: photo.name.trim(), blob: photo.blob });
+        await queuePendingSitePhoto({
+          quoteId,
+          locationId,
+          fileName,
+          fileType,
+          description: photo.name.trim(),
+          blob: photo.blob,
+          ownerType,
+          lat: coordsRef.current?.lat ?? null,
+          lng: coordsRef.current?.lng ?? null,
+        });
         queuedOffline += 1;
       }
     }
@@ -11251,6 +11651,26 @@ function isPreviewableImage(fileName: string): boolean {
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fileName);
 }
 
+// E's request: images should be traceable from presale through closeout --
+// who took/uploaded it, when, and (best-effort) where. Only ever populated
+// going forward (see migration 064), so this is blank for anything older.
+function formatImageProvenance(image: LocationImageLike): string {
+  const parts: string[] = [];
+  if (image.uploadedAt) {
+    const date = new Date(image.uploadedAt);
+    if (!Number.isNaN(date.getTime())) {
+      parts.push(date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }));
+    }
+  }
+  if (image.uploadedByEmail) {
+    parts.push(`by ${image.uploadedByEmail}`);
+  }
+  if (image.lat != null && image.lng != null) {
+    parts.push(`${image.lat.toFixed(5)}, ${image.lng.toFixed(5)}`);
+  }
+  return parts.join(" -- ");
+}
+
 function FilePreviewModal({
   fileName,
   url,
@@ -11288,18 +11708,18 @@ function LocationFilesModal({
   onClose,
 }: {
   locationName: string;
-  files: SalesQuoteLocationImage[];
+  files: LocationImageLike[];
   onUpload: (file: File) => void;
-  onDownload: (image: SalesQuoteLocationImage) => void;
-  onDelete: (image: SalesQuoteLocationImage) => Promise<boolean>;
-  onGetUrl: (image: SalesQuoteLocationImage) => Promise<string | null>;
+  onDownload: (image: LocationImageLike) => void;
+  onDelete: (image: LocationImageLike) => Promise<boolean>;
+  onGetUrl: (image: LocationImageLike) => Promise<string | null>;
   onClose: () => void;
 }) {
   const [deletingId, setDeletingId] = useState("");
-  const [previewFile, setPreviewFile] = useState<SalesQuoteLocationImage | null>(null);
+  const [previewFile, setPreviewFile] = useState<LocationImageLike | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  async function handleDelete(image: SalesQuoteLocationImage) {
+  async function handleDelete(image: LocationImageLike) {
     if (!window.confirm(`Delete "${image.fileName}"? This can't be undone.`)) {
       return;
     }
@@ -11308,7 +11728,7 @@ function LocationFilesModal({
     setDeletingId("");
   }
 
-  async function handlePreview(image: SalesQuoteLocationImage) {
+  async function handlePreview(image: LocationImageLike) {
     setPreviewFile(image);
     setPreviewUrl(null);
     const url = await onGetUrl(image);
@@ -11345,6 +11765,7 @@ function LocationFilesModal({
               <div>
                 <strong>{file.fileName}</strong>
                 {file.description && <span>{file.description}</span>}
+                <small className="muted">{formatImageProvenance(file)}</small>
               </div>
               <div className="quote-header-pill-row">
                 {(isPreviewablePdf(file.fileName) || isPreviewableImage(file.fileName)) && (
@@ -11383,9 +11804,9 @@ function SiteGalleryModal({
   onClose,
 }: {
   siteName: string;
-  locations: SalesQuoteLocation[];
-  onGetUrl: (image: SalesQuoteLocationImage) => Promise<string | null>;
-  onDelete: (locationId: string, image: SalesQuoteLocationImage) => Promise<boolean>;
+  locations: LocationLike[];
+  onGetUrl: (image: LocationImageLike) => Promise<string | null>;
+  onDelete: (locationId: string, image: LocationImageLike) => Promise<boolean>;
   onClose: () => void;
 }) {
   const [urlsByImageId, setUrlsByImageId] = useState<Record<string, string>>({});
@@ -11523,6 +11944,7 @@ function SiteGalleryModal({
                       <div className="site-gallery-item-fallback">No preview</div>
                     )}
                     {photo.description && <span className="site-gallery-caption">{photo.description}</span>}
+                    <span className="site-gallery-caption muted">{formatImageProvenance(photo)}</span>
                   </label>
                 ))}
               </div>
@@ -11552,7 +11974,7 @@ function LocationItemLineSection({
 }: {
   title: string;
   hint: string;
-  items: SalesQuoteLocationItem[];
+  items: Array<{ id: string; catalogItemId: string | null; qty: number }>;
   catalogItems: CatalogItem[];
   options: CatalogItem[];
   draft: { catalogItemId: string; qty: number };
@@ -11607,6 +12029,291 @@ function LocationItemLineSection({
         </button>
       </div>
     </div>
+  );
+}
+
+// E's request: Sales info -- the per-garage/lot breakdown, photos, and
+// drawings -- has to carry over into Projects in the same format, and keep
+// growing through implementation and closeout (not just a frozen copy of
+// what Sales had). This is the Project-side twin of Site Builder's location
+// table + detail drawer, built against project_locations instead of
+// sales_quote_locations, reusing the same LocationFilesModal /
+// SiteGalleryModal / CameraCaptureModal / LocationItemLineSection so it
+// looks and behaves identically.
+function ProjectLocationsSection({
+  project,
+  catalogItems,
+  onAddLocation,
+  onUpdateLocation,
+  onAddLocationItem,
+  onUpdateLocationItemQty,
+  onDeleteLocationItem,
+  onUploadImage,
+  onDownloadImage,
+  onDeleteImage,
+  onGetImageUrl,
+  onUpdateImageDescription,
+}: {
+  project: ProjectSite;
+  catalogItems: CatalogItem[];
+  onAddLocation: (locationType: "garage" | "lot") => void;
+  onUpdateLocation: (locationId: string, updates: Parameters<typeof updateProjectLocation>[1]) => void;
+  onAddLocationItem: (locationId: string, lineType: ProjectLocationItem["lineType"], catalogItemId: string, qty: number) => void;
+  onUpdateLocationItemQty: (locationId: string, itemId: string, qty: number) => void;
+  onDeleteLocationItem: (locationId: string, itemId: string) => void;
+  onUploadImage: (
+    locationId: string,
+    imageType: "photo" | "drawing",
+    file: File,
+    description?: string,
+    coords?: { lat: number; lng: number } | null,
+  ) => Promise<boolean>;
+  onDownloadImage: (image: ProjectLocationImage) => void;
+  onDeleteImage: (locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
+  onGetImageUrl: (image: ProjectLocationImage) => Promise<string | null>;
+  onUpdateImageDescription: (locationId: string, imageId: string, description: string) => void;
+}) {
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
+  const [cameraLocationId, setCameraLocationId] = useState<string | null>(null);
+  const [filesLocationId, setFilesLocationId] = useState<string | null>(null);
+  const [showGallery, setShowGallery] = useState(false);
+  const [signItemDraft, setSignItemDraft] = useState({ catalogItemId: "", qty: 1 });
+  const [sensorItemDraft, setSensorItemDraft] = useState({ catalogItemId: "", qty: 1 });
+  const [miscItemDraft, setMiscItemDraft] = useState({ catalogItemId: "", qty: 1 });
+
+  const locations = project.locations ?? [];
+  const selectedLocation = locations.find((location) => location.id === selectedLocationId) ?? null;
+  const activeCatalogItems = catalogItems.filter((item) => !item.isRetired);
+  const cameraCatalogItems = activeCatalogItems.filter((item) => item.category === "Cameras");
+  const signCatalogItems = activeCatalogItems.filter((item) => item.category === "Signage");
+  const sensorCatalogItems = activeCatalogItems.filter(
+    (item) => item.category === "Space Sensors" || (item.tags ?? []).some((tag) => tag.toLowerCase().includes("sensor")),
+  );
+
+  return (
+    <section className="panel compact-card">
+      <div className="panel-title-row">
+        <div>
+          <h2>Locations</h2>
+          <p>Same per-garage/lot breakdown as Sales -- photos and drawings carry through implementation to closeout.</p>
+        </div>
+        <div className="quote-header-pill-row">
+          <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => onAddLocation("garage")}>+ Garage</button>
+          <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => onAddLocation("lot")}>+ Lot</button>
+          <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => setShowGallery(true)}>Site Gallery</button>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr><th>Type</th><th>Name</th><th></th><th>Photos</th><th>Files</th></tr>
+        </thead>
+        <tbody>
+          {locations.map((location) => {
+            const photoCount = location.images.filter((image) => image.imageType === "photo").length;
+            const drawingCount = location.images.filter((image) => image.imageType === "drawing").length;
+            return (
+              <tr key={location.id}>
+                <td><span className={`status ${location.locationType === "garage" ? "ok" : ""}`}>{location.locationType === "garage" ? "Garage" : "Lot"}</span></td>
+                <td>
+                  <input
+                    className="quote-location-row-name"
+                    value={location.name}
+                    onChange={(event) => onUpdateLocation(location.id, { name: event.target.value })}
+                    placeholder={location.locationType === "garage" ? "Garage name" : "Lot name"}
+                  />
+                </td>
+                <td><button className="table-action" type="button" onClick={() => setSelectedLocationId(location.id)}>Details</button></td>
+                <td>
+                  <button className="icon-count-button" type="button" title="Take Photos" onClick={() => setCameraLocationId(location.id)}>
+                    <Camera size={16} /><span>{photoCount}</span>
+                  </button>
+                </td>
+                <td>
+                  <button className="icon-count-button" type="button" title="View files" onClick={() => setFilesLocationId(location.id)}>
+                    <FileText size={16} /><span>{drawingCount}</span>
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+          {locations.length === 0 && (
+            <tr><td colSpan={5} className="empty-compact-state">No garages or lots yet -- use + Garage / + Lot, or convert a Closed - Won Sales Quote to pull them in.</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      {selectedLocation && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="project-location-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="project-location-title">{selectedLocation.name || (selectedLocation.locationType === "garage" ? "Garage" : "Lot")}</h2>
+                <p>Site details for this garage/lot.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setSelectedLocationId(null)} aria-label="Close location details">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="checkbox-inline span-2">
+                <input type="checkbox" checked={selectedLocation.fli} onChange={(event) => onUpdateLocation(selectedLocation.id, { fli: event.target.checked })} /> FLI
+              </label>
+              <label className="span-2">Camera model
+                <select
+                  disabled={!selectedLocation.fli}
+                  value={selectedLocation.fliCameraItemId ?? ""}
+                  onChange={(event) => onUpdateLocation(selectedLocation.id, { fliCameraItemId: event.target.value || null })}
+                >
+                  <option value="">Select camera model...</option>
+                  {cameraCatalogItems.map((item) => (
+                    <option key={item.id} value={item.id}>{item.productName}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="checkbox-inline span-2">
+                <input type="checkbox" checked={selectedLocation.lpr} onChange={(event) => onUpdateLocation(selectedLocation.id, { lpr: event.target.checked })} /> LPR
+              </label>
+              <label className="span-2">Camera model
+                <select
+                  disabled={!selectedLocation.lpr}
+                  value={selectedLocation.lprCameraItemId ?? ""}
+                  onChange={(event) => onUpdateLocation(selectedLocation.id, { lprCameraItemId: event.target.value || null })}
+                >
+                  <option value="">Select camera model...</option>
+                  {cameraCatalogItems.map((item) => (
+                    <option key={item.id} value={item.id}>{item.productName}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="checkbox-inline span-2">
+                <input type="checkbox" checked={selectedLocation.peopleCounting} onChange={(event) => onUpdateLocation(selectedLocation.id, { peopleCounting: event.target.checked })} /> People counting
+              </label>
+              <label className="span-2">Camera model
+                <select
+                  disabled={!selectedLocation.peopleCounting}
+                  value={selectedLocation.peopleCountingCameraItemId ?? ""}
+                  onChange={(event) => onUpdateLocation(selectedLocation.id, { peopleCountingCameraItemId: event.target.value || null })}
+                >
+                  <option value="">Select camera model...</option>
+                  {cameraCatalogItems.map((item) => (
+                    <option key={item.id} value={item.id}>{item.productName}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Entries<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.entriesCount} onChange={(event) => onUpdateLocation(selectedLocation.id, { entriesCount: Number(event.target.value) || 0 })} /></label>
+              <label>Exits<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.exitsCount} onChange={(event) => onUpdateLocation(selectedLocation.id, { exitsCount: Number(event.target.value) || 0 })} /></label>
+              <label>Levels<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.levelsCount} onChange={(event) => onUpdateLocation(selectedLocation.id, { levelsCount: Number(event.target.value) || 0 })} /></label>
+            </div>
+
+            <LocationItemLineSection
+              title="Signs"
+              hint="Signage for this facility, pulled straight from the Product Catalog."
+              items={selectedLocation.signLines}
+              catalogItems={catalogItems}
+              options={signCatalogItems}
+              draft={signItemDraft}
+              onDraftChange={setSignItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedLocation.id, "sign", signItemDraft.catalogItemId, signItemDraft.qty);
+                setSignItemDraft({ catalogItemId: "", qty: 1 });
+              }}
+              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedLocation.id, itemId, qty)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedLocation.id, itemId)}
+            />
+
+            <LocationItemLineSection
+              title="Space Sensor"
+              hint="Sensors for this facility -- catalog items tagged sensor or filed under the Space Sensors category."
+              items={selectedLocation.sensorLines}
+              catalogItems={catalogItems}
+              options={sensorCatalogItems}
+              draft={sensorItemDraft}
+              onDraftChange={setSensorItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedLocation.id, "sensor", sensorItemDraft.catalogItemId, sensorItemDraft.qty);
+                setSensorItemDraft({ catalogItemId: "", qty: 1 });
+              }}
+              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedLocation.id, itemId, qty)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedLocation.id, itemId)}
+            />
+
+            <LocationItemLineSection
+              title="Misc."
+              hint="Anything else for this facility -- the whole Product Catalog is available here."
+              items={selectedLocation.miscLines}
+              catalogItems={catalogItems}
+              options={activeCatalogItems}
+              draft={miscItemDraft}
+              onDraftChange={setMiscItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedLocation.id, "misc", miscItemDraft.catalogItemId, miscItemDraft.qty);
+                setMiscItemDraft({ catalogItemId: "", qty: 1 });
+              }}
+              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedLocation.id, itemId, qty)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedLocation.id, itemId)}
+            />
+
+            {selectedLocation.images.length > 0 && (
+              <div className="line-list">
+                {selectedLocation.images.map((image) => (
+                  <div className="line-item quote-image-line-item" key={image.id}>
+                    <div>
+                      <strong>{image.fileName || (image.imageType === "photo" ? "Photo" : "Drawing")}</strong>
+                      <span>{image.imageType === "photo" ? "Photo" : "Drawing"}</span>
+                      {image.imageType === "photo" && (
+                        <input
+                          className="quote-image-description-input"
+                          value={image.description}
+                          placeholder="Description (optional)"
+                          onChange={(event) => onUpdateImageDescription(selectedLocation.id, image.id, event.target.value)}
+                        />
+                      )}
+                      <small className="muted">{formatImageProvenance(image)}</small>
+                    </div>
+                    <button className="secondary-action mini-action" type="button" onClick={() => onDownloadImage(image)}>Download</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setSelectedLocationId(null)}>Close</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {cameraLocationId && (
+        <CameraCaptureModal
+          quoteId={project.ref}
+          locationId={cameraLocationId}
+          locationName={locations.find((location) => location.id === cameraLocationId)?.name || "this location"}
+          ownerType="project"
+          onClose={() => setCameraLocationId(null)}
+          onSavePhoto={(file, description, coords) => onUploadImage(cameraLocationId, "photo", file, description, coords)}
+        />
+      )}
+
+      {filesLocationId && (
+        <LocationFilesModal
+          locationName={locations.find((location) => location.id === filesLocationId)?.name || "this location"}
+          files={locations.find((location) => location.id === filesLocationId)?.images.filter((image) => image.imageType === "drawing") ?? []}
+          onUpload={(file) => onUploadImage(filesLocationId, "drawing", file)}
+          onDownload={onDownloadImage}
+          onDelete={(image) => onDeleteImage(filesLocationId, image.id, image.storagePath)}
+          onGetUrl={onGetImageUrl}
+          onClose={() => setFilesLocationId(null)}
+        />
+      )}
+
+      {showGallery && (
+        <SiteGalleryModal
+          siteName={project.name}
+          locations={locations}
+          onGetUrl={onGetImageUrl}
+          onDelete={(locationId, image) => onDeleteImage(locationId, image.id, image.storagePath)}
+          onClose={() => setShowGallery(false)}
+        />
+      )}
+    </section>
   );
 }
 
@@ -11745,6 +12452,7 @@ function SalesQuoteBuilder({
   onDeleteLocationItem,
   onPullLocationHardware,
   onUpdateStatus,
+  onCreateProjectFromClosedWonQuote,
   onAddBomLines,
   onDeleteBomLine,
   onUpdateBomLineCatalogLink,
@@ -11800,6 +12508,7 @@ function SalesQuoteBuilder({
   onDeleteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onPullLocationHardware: (quoteId: string) => void;
   onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => void;
+  onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectSite | null>;
   onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
@@ -11821,7 +12530,14 @@ function SalesQuoteBuilder({
   presalesStatus: string;
   onGenerateBaselineBom: (quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
   catalogItems: CatalogItem[];
-  onUploadImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
+  onUploadImage: (
+    quoteId: string,
+    locationId: string,
+    imageType: "photo" | "drawing",
+    file: File,
+    description?: string,
+    coords?: { lat: number; lng: number } | null,
+  ) => Promise<boolean>;
   onUpdateImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadImage: (image: SalesQuoteLocationImage) => void;
   onDeleteImage: (quoteId: string, locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
@@ -11840,6 +12556,8 @@ function SalesQuoteBuilder({
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
   const [newQuoteDraft, setNewQuoteDraft] = useState(EMPTY_NEW_QUOTE_DRAFT);
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [projectCreateStatus, setProjectCreateStatus] = useState("");
   const [isCollapsed, setIsCollapsed] = usePersistedCollapse("site_builder");
   const [presalesTier, setPresalesTier] = useState("");
   const [presalesNodeCount, setPresalesNodeCount] = useState(1);
@@ -11945,6 +12663,30 @@ function SalesQuoteBuilder({
     setSelectedLocationId(null);
   }
 
+  // E's request: closing a deal should offer to spin up a Project that
+  // starts with everything the quote already has -- contact info, BOM, and
+  // the full per-garage/lot breakdown including photos/drawings -- in the
+  // same format, so media can be tracked from presale through closeout.
+  async function handleStatusChange(quote: SalesQuote, nextStatus: SalesQuote["status"]) {
+    onUpdateStatus(quote.id, nextStatus);
+    if (nextStatus !== "closed_won") {
+      return;
+    }
+    const wantsProject = window.confirm(`Create a new Project from "${quote.siteName}"? This copies the contact info, BOM, and every garage/lot -- including photos and drawings -- into a new Project you can find on the Projects page.`);
+    if (!wantsProject) {
+      return;
+    }
+    setIsCreatingProject(true);
+    setProjectCreateStatus("Creating project...");
+    const created = await onCreateProjectFromClosedWonQuote(quote);
+    setIsCreatingProject(false);
+    setProjectCreateStatus(
+      created
+        ? `Created Project "${created.name}" (${created.ref || "no ref yet"}) -- find it on the Projects page.`
+        : "Could not create the project. Check the browser console for details, or try again.",
+    );
+  }
+
   function submitNewQuote() {
     if (!newQuoteDraft.clientName.trim() || !newQuoteDraft.siteName.trim()) {
       return;
@@ -12028,15 +12770,20 @@ function SalesQuoteBuilder({
               </p>
               <label className="quote-status-field">
                 Deal status
-                <select value={selectedQuote.status} onChange={(event) => onUpdateStatus(selectedQuote.id, event.target.value as SalesQuote["status"])}>
+                <select
+                  value={selectedQuote.status}
+                  disabled={isCreatingProject}
+                  onChange={(event) => handleStatusChange(selectedQuote, event.target.value as SalesQuote["status"])}
+                >
                   <option value="open">Open</option>
                   <option value="closed_won">Closed - Won</option>
                   <option value="closed_lost">Closed - Lost</option>
                 </select>
               </label>
-              {selectedQuote.status === "closed_won" && (
+              {selectedQuote.status === "closed_won" && !projectCreateStatus && (
                 <small className="muted">This quote's BOM can now be pulled into a Project from the Projects page.</small>
               )}
+              {projectCreateStatus && <small className="muted">{projectCreateStatus}</small>}
             </div>
             <div className="quote-detail-actions">
               <div className="quote-header-pill-row">
@@ -12461,6 +13208,7 @@ function SalesQuoteBuilder({
                           onChange={(event) => onUpdateImageDescription(selectedQuote.id, selectedLocation.id, image.id, event.target.value)}
                         />
                       )}
+                      <small className="muted">{formatImageProvenance(image)}</small>
                     </div>
                     <button className="secondary-action mini-action" type="button" onClick={() => onDownloadImage(image)}>Download</button>
                   </div>
@@ -12480,7 +13228,7 @@ function SalesQuoteBuilder({
           locationId={cameraLocationId}
           locationName={selectedQuote.locations.find((location) => location.id === cameraLocationId)?.name || "this location"}
           onClose={() => setCameraLocationId(null)}
-          onSavePhoto={(file, description) => onUploadImage(selectedQuote.id, cameraLocationId, "photo", file, description)}
+          onSavePhoto={(file, description, coords) => onUploadImage(selectedQuote.id, cameraLocationId, "photo", file, description, coords)}
         />
       )}
 
