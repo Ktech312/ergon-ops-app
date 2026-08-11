@@ -11026,15 +11026,16 @@ function CameraCaptureModal({
       let ok = false;
       try {
         ok = await onSavePhoto(file, photo.name.trim());
-      } catch {
+      } catch (error) {
+        console.error("Photo save failed", error);
         ok = false;
       }
       if (!ok) {
-        // Most likely offline (this modal is used inside parking garages,
-        // where signal is often gone). Queue it in IndexedDB instead of
-        // reporting a flat failure -- App.flushPendingSitePhotos uploads it
-        // automatically the moment the connection comes back, so the shot
-        // isn't lost even if the rep closes the tab right now.
+        // Could be offline (common in a parking garage), but a failed save
+        // can just as easily mean a real upload problem while online --
+        // either way, queue it in IndexedDB instead of losing it.
+        // persistence.ts logs the actual status/error to the console so a
+        // real failure isn't mistaken for "no connection."
         await queuePendingSitePhoto({ quoteId, locationId, fileName, fileType, description: photo.name.trim(), blob: photo.blob });
         queuedOffline += 1;
       }
@@ -11042,7 +11043,10 @@ function CameraCaptureModal({
     setIsSaving(false);
     photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
     if (queuedOffline > 0) {
-      window.alert(`${queuedOffline} of ${photos.length} photo(s) saved on this device -- they'll upload automatically once you're back online.`);
+      const reason = navigator.onLine
+        ? "There was a problem uploading them even though this device is online -- check the browser console for details, or contact support if this keeps happening"
+        : "they'll upload automatically once you're back online";
+      window.alert(`${queuedOffline} of ${photos.length} photo(s) saved on this device -- ${reason}.`);
     }
     onClose();
   }

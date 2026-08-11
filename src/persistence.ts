@@ -5738,13 +5738,19 @@ export async function uploadQuoteImageFile(file: File, storagePath: string, acce
         body: file,
       },
     );
+    if (!response.ok) {
+      // A failed upload isn't always "offline" -- it can just as easily be
+      // a missing/misnamed bucket, an RLS policy rejection, or a bad
+      // request. Logging the real status/body means opening DevTools shows
+      // the actual reason instead of everyone assuming "no connection."
+      console.error("uploadQuoteImageFile failed", response.status, await response.text().catch(() => ""));
+    }
     return response.ok;
-  } catch {
-    // A rejected fetch here almost always means the device has no
-    // connection right now (common in a parking garage) rather than a real
-    // server error -- returning false instead of throwing lets the caller
-    // (addSalesQuoteLocationImage -> the offline photo queue) treat it the
-    // same way as any other failed save and queue it for retry.
+  } catch (error) {
+    // A rejected fetch can mean the device has no connection (common in a
+    // parking garage), but it can also mean a CORS failure or other client
+    // error -- log it either way so it's not a silent mystery.
+    console.error("uploadQuoteImageFile threw", error);
     return false;
   }
 }
@@ -5798,11 +5804,13 @@ export async function addSalesQuoteLocationImage(
       body: JSON.stringify({ quote_location_id: quoteLocationId, image_type: imageType, storage_path: storagePath, file_name: file.name, description: description || null }),
     });
     if (!response.ok) {
+      console.error("addSalesQuoteLocationImage insert failed", response.status, await response.text().catch(() => ""));
       return null;
     }
     const rows = (await response.json()) as SalesQuoteLocationImageRow[];
     return rows[0] ? mapSalesQuoteLocationImageRow(rows[0]) : null;
-  } catch {
+  } catch (error) {
+    console.error("addSalesQuoteLocationImage threw", error);
     // Network failure (offline) -- same as above, treat as "not uploaded"
     // rather than an uncaught rejection so the offline photo queue can
     // retry later instead of the save silently crashing.
