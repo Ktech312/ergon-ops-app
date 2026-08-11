@@ -9158,7 +9158,7 @@ function AdminPage({
                       <td>{inviteStatusLabel}</td>
                       <td>{member.isActive ? "Active" : "Inactive"}</td>
                       <td onClick={(event) => event.stopPropagation()}>
-                        {matchingInvite && matchingInvite.status === "pending" && (
+                        {isAdmin && matchingInvite && matchingInvite.status === "pending" && (
                           <>
                             <button className="secondary-action mini-action" type="button" onClick={() => onResendInvite(matchingInvite)}>Resend</button>
                             <button
@@ -9170,6 +9170,21 @@ function AdminPage({
                             </button>
                             <button className="secondary-action mini-action" type="button" onClick={() => onRevokeInvite(matchingInvite.id)}>Revoke</button>
                           </>
+                        )}
+                        {isAdmin && !matchingInvite && !isLoggedIn && (
+                          // Roster members added before this invite system existed
+                          // (or an invite that got revoked) have no invite record at
+                          // all -- give the admin a way to send one retroactively
+                          // instead of them being stuck with no path to a real login.
+                          <button
+                            className="secondary-action mini-action"
+                            type="button"
+                            disabled={!member.email.trim() || !member.primaryRole}
+                            title={!member.email.trim() ? "Add an email first" : !member.primaryRole ? "Assign a group first (click the row)" : undefined}
+                            onClick={() => onSendInvite({ email: member.email.trim(), fullName: member.fullName, primaryRole: member.primaryRole, secondaryRoles: member.secondaryRoles })}
+                          >
+                            Send Invite
+                          </button>
                         )}
                         <button className="secondary-action mini-action" type="button" onClick={() => onUpdateTeamMember(member.id, { isActive: !member.isActive })}>
                           {member.isActive ? "Deactivate" : "Reactivate"}
