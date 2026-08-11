@@ -2840,6 +2840,69 @@ td small {
   font-weight: 700;
 }
 
+/* #204 -- Site Gallery modal: every photo across every location, grouped,
+   with a checkbox overlay per photo for bulk download/delete. */
+.site-gallery-modal {
+  max-width: 760px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.site-gallery-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+
+.site-gallery-item {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+  padding: 4px;
+  position: relative;
+}
+
+.site-gallery-item.selected {
+  border-color: #a01029;
+}
+
+.site-gallery-item input[type="checkbox"] {
+  left: 8px;
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+}
+
+.site-gallery-item img {
+  aspect-ratio: 1 / 1;
+  border-radius: 6px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.site-gallery-item-fallback {
+  align-items: center;
+  aspect-ratio: 1 / 1;
+  background: #f4f2f1;
+  border-radius: 6px;
+  color: #948c7f;
+  display: flex;
+  font-size: 11px;
+  justify-content: center;
+}
+
+.site-gallery-caption {
+  color: #756d62;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .quote-photo-actions {
   align-items: flex-end;
   display: flex;

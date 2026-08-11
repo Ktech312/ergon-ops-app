@@ -179,6 +179,7 @@ import {
   updatePurchaseRequestRemote,
   updateSalesQuoteLocation,
   updateSalesQuoteLocationImageDescription,
+  deleteSalesQuoteLocationImage,
   updateTask,
   updateTaskHardwareDependencyStatus,
   updateTeamMember,
@@ -2244,6 +2245,35 @@ function App() {
       ),
     );
     await updateSalesQuoteLocationImageDescription(imageId, description, authSession.accessToken);
+  }
+
+  async function handleDeleteSalesQuoteImage(quoteId: string, locationId: string, imageId: string, storagePath: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const ok = await deleteSalesQuoteLocationImage(imageId, storagePath, authSession.accessToken);
+    if (ok) {
+      setSalesQuotes((current) =>
+        current.map((entry) =>
+          entry.id === quoteId
+            ? {
+                ...entry,
+                locations: entry.locations.map((location) =>
+                  location.id === locationId ? { ...location, images: location.images.filter((image) => image.id !== imageId) } : location,
+                ),
+              }
+            : entry,
+        ),
+      );
+    }
+    return ok;
+  }
+
+  async function handleGetSalesQuoteImageUrl(image: SalesQuoteLocationImage): Promise<string | null> {
+    if (!authSession) {
+      return null;
+    }
+    return getQuoteImageDownloadUrl(image.storagePath, authSession.accessToken);
   }
 
   async function handleDownloadSalesQuoteImage(image: SalesQuoteLocationImage) {
@@ -4665,6 +4695,8 @@ function App() {
             onUploadSalesQuoteImage={handleUploadSalesQuoteImage}
             onUpdateSalesQuoteImageDescription={handleUpdateSalesQuoteImageDescription}
             onDownloadSalesQuoteImage={handleDownloadSalesQuoteImage}
+            onDeleteSalesQuoteImage={handleDeleteSalesQuoteImage}
+            onGetSalesQuoteImageUrl={handleGetSalesQuoteImageUrl}
             siteHardwareRules={siteHardwareRules}
             projectSites={projectSites}
             tasks={tasks}
@@ -9776,6 +9808,8 @@ function SalesHome({
   onUploadSalesQuoteImage,
   onUpdateSalesQuoteImageDescription,
   onDownloadSalesQuoteImage,
+  onDeleteSalesQuoteImage,
+  onGetSalesQuoteImageUrl,
   siteHardwareRules,
   projectSites,
   tasks,
@@ -9849,6 +9883,8 @@ function SalesHome({
   onUploadSalesQuoteImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
   onUpdateSalesQuoteImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadSalesQuoteImage: (image: SalesQuoteLocationImage) => void;
+  onDeleteSalesQuoteImage: (quoteId: string, locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
+  onGetSalesQuoteImageUrl: (image: SalesQuoteLocationImage) => Promise<string | null>;
   siteHardwareRules: SiteHardwareRule[];
   projectSites: ProjectSite[];
   tasks: EOTask[];
@@ -9934,6 +9970,8 @@ function SalesHome({
         onUploadImage={onUploadSalesQuoteImage}
         onUpdateImageDescription={onUpdateSalesQuoteImageDescription}
         onDownloadImage={onDownloadSalesQuoteImage}
+        onDeleteImage={onDeleteSalesQuoteImage}
+        onGetImageUrl={onGetSalesQuoteImageUrl}
         siteHardwareRules={siteHardwareRules}
         projectSites={projectSites}
         tasks={tasks}
@@ -11167,6 +11205,246 @@ function CameraCaptureModal({
   );
 }
 
+// #202/203 -- per-location "Files" viewer. Uploading a drawing/doc already
+// existed (the small Upload icon next to Photos), but there was no way to
+// actually see or manage what had been uploaded -- this gives that a real
+// list with Download/Delete, plus the upload control itself so it's not
+// spread across two different UI spots.
+function LocationFilesModal({
+  locationName,
+  files,
+  onUpload,
+  onDownload,
+  onDelete,
+  onClose,
+}: {
+  locationName: string;
+  files: SalesQuoteLocationImage[];
+  onUpload: (file: File) => void;
+  onDownload: (image: SalesQuoteLocationImage) => void;
+  onDelete: (image: SalesQuoteLocationImage) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const [deletingId, setDeletingId] = useState("");
+
+  async function handleDelete(image: SalesQuoteLocationImage) {
+    if (!window.confirm(`Delete "${image.fileName}"? This can't be undone.`)) {
+      return;
+    }
+    setDeletingId(image.id);
+    await onDelete(image);
+    setDeletingId("");
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="location-files-title">
+        <div className="modal-header">
+          <div>
+            <h2 id="location-files-title">Files: {locationName}</h2>
+            <p>Drawings or other documents for this garage/lot.</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close files">x</button>
+        </div>
+        <label className="secondary-action mini-action hidden-file-label">
+          <Upload size={14} /> Upload file
+          <input
+            type="file"
+            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) {
+                onUpload(file);
+              }
+              event.target.value = "";
+            }}
+          />
+        </label>
+        <ul className="line-list">
+          {files.map((file) => (
+            <li className="line-item" key={file.id}>
+              <div>
+                <strong>{file.fileName}</strong>
+                {file.description && <span>{file.description}</span>}
+              </div>
+              <div className="quote-header-pill-row">
+                <button className="secondary-action mini-action" type="button" onClick={() => onDownload(file)}>Download</button>
+                <button className="secondary-action mini-action" type="button" disabled={deletingId === file.id} onClick={() => handleDelete(file)}>
+                  {deletingId === file.id ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            </li>
+          ))}
+          {files.length === 0 && <li className="empty-compact-state">No files uploaded yet.</li>}
+        </ul>
+        <div className="modal-actions">
+          <button className="secondary-action" type="button" onClick={onClose}>Close</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// #201/204 -- site-wide Photo Gallery: every photo across every garage/lot
+// for this one site, grouped by location, with a real visual thumbnail
+// (fetched as a signed URL per photo -- the bucket is private, so there's
+// no way to just point an <img> at the storage path directly) and a
+// checkbox per photo so a batch can be downloaded or deleted together.
+function SiteGalleryModal({
+  siteName,
+  locations,
+  onGetUrl,
+  onDelete,
+  onClose,
+}: {
+  siteName: string;
+  locations: SalesQuoteLocation[];
+  onGetUrl: (image: SalesQuoteLocationImage) => Promise<string | null>;
+  onDelete: (locationId: string, image: SalesQuoteLocationImage) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const [urlsByImageId, setUrlsByImageId] = useState<Record<string, string>>({});
+  const [loadingUrls, setLoadingUrls] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isWorking, setIsWorking] = useState(false);
+
+  const groups = locations
+    .map((location) => ({ location, photos: location.images.filter((image) => image.imageType === "photo") }))
+    .filter((group) => group.photos.length > 0);
+  const allPhotoIds = groups.flatMap((group) => group.photos.map((photo) => photo.id)).join(",");
+
+  useEffect(() => {
+    let cancelled = false;
+    const allPhotos = groups.flatMap((group) => group.photos);
+    setLoadingUrls(true);
+    Promise.all(
+      allPhotos.map(async (photo) => {
+        const url = await onGetUrl(photo);
+        return [photo.id, url] as const;
+      }),
+    ).then((pairs) => {
+      if (cancelled) {
+        return;
+      }
+      const next: Record<string, string> = {};
+      pairs.forEach(([id, url]) => {
+        if (url) {
+          next[id] = url;
+        }
+      });
+      setUrlsByImageId(next);
+      setLoadingUrls(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Re-fetch signed URLs whenever the underlying photo set changes (e.g.
+    // right after a delete removes one) -- allPhotoIds is a stable string
+    // key derived from that set, safe to use as the effect dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allPhotoIds]);
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(groups.flatMap((group) => group.photos.map((photo) => photo.id))));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  function downloadSelected() {
+    groups.forEach((group) => {
+      group.photos.forEach((photo) => {
+        if (selectedIds.has(photo.id)) {
+          const url = urlsByImageId[photo.id];
+          if (url) {
+            window.open(url, "_blank", "noopener,noreferrer");
+          }
+        }
+      });
+    });
+  }
+
+  async function deleteSelected() {
+    if (selectedIds.size === 0) {
+      return;
+    }
+    if (!window.confirm(`Delete ${selectedIds.size} photo(s)? This can't be undone.`)) {
+      return;
+    }
+    setIsWorking(true);
+    for (const group of groups) {
+      for (const photo of group.photos) {
+        if (selectedIds.has(photo.id)) {
+          await onDelete(group.location.id, photo);
+        }
+      }
+    }
+    setIsWorking(false);
+    clearSelection();
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel site-gallery-modal" role="dialog" aria-modal="true" aria-labelledby="site-gallery-title">
+        <div className="modal-header">
+          <div>
+            <h2 id="site-gallery-title">Photo Gallery: {siteName}</h2>
+            <p>{groups.reduce((sum, group) => sum + group.photos.length, 0)} photo(s) across {groups.length} location(s).</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close gallery">x</button>
+        </div>
+
+        <div className="quote-header-pill-row">
+          <button className="secondary-action mini-action" type="button" onClick={selectAll} disabled={groups.length === 0}>Select all</button>
+          <button className="secondary-action mini-action" type="button" onClick={clearSelection} disabled={selectedIds.size === 0}>Clear</button>
+          <button className="secondary-action mini-action" type="button" onClick={downloadSelected} disabled={selectedIds.size === 0}>
+            Download ({selectedIds.size})
+          </button>
+          <button className="secondary-action mini-action" type="button" onClick={deleteSelected} disabled={selectedIds.size === 0 || isWorking}>
+            {isWorking ? "Deleting..." : `Delete (${selectedIds.size})`}
+          </button>
+        </div>
+
+        {loadingUrls && <p className="muted">Loading photos...</p>}
+        {!loadingUrls && groups.length === 0 && <p className="empty-compact-state">No photos saved for this site yet.</p>}
+
+        {!loadingUrls &&
+          groups.map(({ location, photos }) => (
+            <div className="modal-section" key={location.id}>
+              <span className="modal-section-title">{location.name || (location.locationType === "garage" ? "Garage" : "Lot")}</span>
+              <div className="site-gallery-grid">
+                {photos.map((photo) => (
+                  <label className={`site-gallery-item ${selectedIds.has(photo.id) ? "selected" : ""}`} key={photo.id}>
+                    <input type="checkbox" checked={selectedIds.has(photo.id)} onChange={() => toggleSelected(photo.id)} />
+                    {urlsByImageId[photo.id] ? (
+                      <img src={urlsByImageId[photo.id]} alt={photo.description || photo.fileName} />
+                    ) : (
+                      <div className="site-gallery-item-fallback">No preview</div>
+                    )}
+                    {photo.description && <span className="site-gallery-caption">{photo.description}</span>}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+      </section>
+    </div>
+  );
+}
+
 // Shared "addable catalog-linked line" list used by the Sign / Space
 // Sensor / Misc sections in a location's details modal -- same
 // list-plus-add-row shape as the Quote BOM list above, just always tied to
@@ -11400,6 +11678,8 @@ function SalesQuoteBuilder({
   onUploadImage,
   onUpdateImageDescription,
   onDownloadImage,
+  onDeleteImage,
+  onGetImageUrl,
   siteHardwareRules,
   projectSites,
   tasks,
@@ -11456,6 +11736,8 @@ function SalesQuoteBuilder({
   onUploadImage: (quoteId: string, locationId: string, imageType: "photo" | "drawing", file: File, description?: string) => Promise<boolean>;
   onUpdateImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
   onDownloadImage: (image: SalesQuoteLocationImage) => void;
+  onDeleteImage: (quoteId: string, locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
+  onGetImageUrl: (image: SalesQuoteLocationImage) => Promise<string | null>;
   siteHardwareRules: SiteHardwareRule[];
   projectSites: ProjectSite[];
   tasks: EOTask[];
@@ -11464,6 +11746,8 @@ function SalesQuoteBuilder({
 }) {
   const [mode, setMode] = useState<"list" | "detail">("list");
   const [cameraLocationId, setCameraLocationId] = useState<string | null>(null);
+  const [filesLocationId, setFilesLocationId] = useState<string | null>(null);
+  const [showSiteGallery, setShowSiteGallery] = useState(false);
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
@@ -11590,14 +11874,6 @@ function SalesQuoteBuilder({
     setIsEditingSiteInfo(false);
   }
 
-  function handleImageSelect(locationId: string, imageType: "photo" | "drawing", event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file && selectedQuote) {
-      onUploadImage(selectedQuote.id, locationId, imageType, file);
-    }
-    event.target.value = "";
-  }
-
   return (
     <>
       {mode === "list" && (
@@ -11694,6 +11970,9 @@ function SalesQuoteBuilder({
                 >
                   Export PDF
                 </button>
+                <button className="secondary-action mini-action mini-action-sm" type="button" onClick={() => setShowSiteGallery(true)}>
+                  Site Gallery
+                </button>
               </div>
               <RequestTaskButton
                 section="sales_quotes"
@@ -11709,7 +11988,7 @@ function SalesQuoteBuilder({
 
           <table>
             <thead>
-              <tr><th>Type</th><th>Name</th><th></th><th>Photos</th></tr>
+              <tr><th>Type</th><th>Name</th><th></th><th>Photos</th><th>Files</th></tr>
             </thead>
             <tbody>
               {selectedQuote.locations.map((location) => {
@@ -11728,21 +12007,20 @@ function SalesQuoteBuilder({
                     </td>
                     <td><button className="table-action" type="button" onClick={() => setSelectedLocationId(location.id)}>Details</button></td>
                     <td>
-                      <div className="quote-photo-actions">
-                        <button className="icon-count-button" type="button" title="Take Photos" onClick={() => setCameraLocationId(location.id)}>
-                          <Camera size={16} /><span>{photoCount}</span>
-                        </button>
-                        <label className="icon-count-button hidden-file-label" title="Upload">
-                          <Upload size={16} /><span>{drawingCount}</span>
-                          <input type="file" accept="image/*,.pdf" onChange={(event) => handleImageSelect(location.id, "drawing", event)} />
-                        </label>
-                      </div>
+                      <button className="icon-count-button" type="button" title="Take Photos" onClick={() => setCameraLocationId(location.id)}>
+                        <Camera size={16} /><span>{photoCount}</span>
+                      </button>
+                    </td>
+                    <td>
+                      <button className="icon-count-button" type="button" title="View files" onClick={() => setFilesLocationId(location.id)}>
+                        <FileText size={16} /><span>{drawingCount}</span>
+                      </button>
                     </td>
                   </tr>
                 );
               })}
               {selectedQuote.locations.length === 0 && (
-                <tr><td colSpan={4} className="empty-compact-state">No garages or lots yet. Use + Garage / + Lot above.</td></tr>
+                <tr><td colSpan={5} className="empty-compact-state">No garages or lots yet. Use + Garage / + Lot above.</td></tr>
               )}
             </tbody>
           </table>
@@ -12115,6 +12393,27 @@ function SalesQuoteBuilder({
           locationName={selectedQuote.locations.find((location) => location.id === cameraLocationId)?.name || "this location"}
           onClose={() => setCameraLocationId(null)}
           onSavePhoto={(file, description) => onUploadImage(selectedQuote.id, cameraLocationId, "photo", file, description)}
+        />
+      )}
+
+      {filesLocationId && selectedQuote && (
+        <LocationFilesModal
+          locationName={selectedQuote.locations.find((location) => location.id === filesLocationId)?.name || "this location"}
+          files={selectedQuote.locations.find((location) => location.id === filesLocationId)?.images.filter((image) => image.imageType === "drawing") ?? []}
+          onUpload={(file) => onUploadImage(selectedQuote.id, filesLocationId, "drawing", file)}
+          onDownload={onDownloadImage}
+          onDelete={(image) => onDeleteImage(selectedQuote.id, filesLocationId, image.id, image.storagePath)}
+          onClose={() => setFilesLocationId(null)}
+        />
+      )}
+
+      {showSiteGallery && selectedQuote && (
+        <SiteGalleryModal
+          siteName={selectedQuote.siteName}
+          locations={selectedQuote.locations}
+          onGetUrl={onGetImageUrl}
+          onDelete={(locationId, image) => onDeleteImage(selectedQuote.id, locationId, image.id, image.storagePath)}
+          onClose={() => setShowSiteGallery(false)}
         />
       )}
 

@@ -5925,6 +5925,33 @@ export async function updateSalesQuoteLocationImageDescription(imageId: string, 
   return response.ok;
 }
 
+// Used by both the per-location Files viewer and the site-wide Photo
+// Gallery's bulk-delete -- removes the storage object first (best-effort;
+// a missing/already-gone object shouldn't block clearing the DB row) then
+// the sales_quote_location_images row itself.
+export async function deleteSalesQuoteLocationImage(imageId: string, storagePath: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  try {
+    if (storagePath) {
+      const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+      await fetch(`${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${SALES_QUOTE_IMAGE_BUCKET}/${storagePath}`, {
+        method: "DELETE",
+        headers: { apikey: anonKey, authorization: `Bearer ${accessToken}` },
+      }).catch(() => undefined);
+    }
+    const response = await fetch(supabaseUrl(`sales_quote_location_images?id=eq.${imageId}`), {
+      method: "DELETE",
+      headers: supabaseHeaders(accessToken),
+    });
+    return response.ok;
+  } catch (error) {
+    console.error("deleteSalesQuoteLocationImage threw", error);
+    return false;
+  }
+}
+
 // --- Migration 053: Quote Proposals ----------------------------------------
 // A client-facing, e-signable proposal built from a Sales Quote's BOM + a
 // shared, admin-editable boilerplate template. Deliberately built native
