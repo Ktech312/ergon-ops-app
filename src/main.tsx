@@ -90,6 +90,9 @@ import {
   acceptInvite,
   loadInvites,
   revokeInvite,
+  queuePendingSitePhoto,
+  listPendingSitePhotos,
+  removePendingSitePhoto,
   getCatalogDatasheetPublicUrl,
   getDocumentDownloadUrl,
   getQuoteImageDownloadUrl,
@@ -952,6 +955,7 @@ function App() {
   const [taskActivity, setTaskActivity] = useState<TaskActivityEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [teamMemberStatus, setTeamMemberStatus] = useState("");
+  const [pendingPhotoCount, setPendingPhotoCount] = useState(0);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationRules, setNotificationRules] = useState<NotificationRule[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -1101,6 +1105,25 @@ function App() {
       return;
     }
     loadProjectSites(authSession.accessToken).then(setProjectSites).catch(() => {});
+  }, [authSession]);
+
+  // Uploads Site Builder photos that got stuck in the offline queue (see
+  // flushPendingSitePhotos above) as soon as there's a real chance they'll
+  // succeed: once on login/reload, immediately when the browser fires
+  // `online`, and on a standing interval in case `online` never fires (some
+  // mobile browsers don't dispatch it reliably on a signal come-back).
+  useEffect(() => {
+    if (!authSession) {
+      return;
+    }
+    flushPendingSitePhotos();
+    const onOnline = () => flushPendingSitePhotos();
+    window.addEventListener("online", onOnline);
+    const interval = window.setInterval(flushPendingSitePhotos, 45000);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.clearInterval(interval);
+    };
   }, [authSession]);
 
   useEffect(() => {
@@ -2174,6 +2197,32 @@ function App() {
       return true;
     }
     return false;
+  }
+
+  // Uploads any Site Builder photos that were queued in IndexedDB because
+  // the device was offline when they were captured (see persistence.ts's
+  // offline photo queue + CameraCaptureModal.saveAll). Called on load, on
+  // the browser's `online` event, and on an interval so a photo taken with
+  // no signal in a parking garage uploads itself the moment the rep is back
+  // in range -- no manual retry needed.
+  async function flushPendingSitePhotos() {
+    if (!authSession) {
+      return;
+    }
+    const pending = await listPendingSitePhotos();
+    if (pending.length === 0) {
+      setPendingPhotoCount(0);
+      return;
+    }
+    for (const item of pending) {
+      const file = new File([item.blob], item.fileName, { type: item.fileType || "image/jpeg" });
+      const ok = await handleUploadSalesQuoteImage(item.quoteId, item.locationId, "photo", file, item.description).catch(() => false);
+      if (ok) {
+        await removePendingSitePhoto(item.id);
+      }
+    }
+    const remaining = await listPendingSitePhotos();
+    setPendingPhotoCount(remaining.length);
   }
 
   async function handleUpdateSalesQuoteImageDescription(quoteId: string, locationId: string, imageId: string, description: string) {
@@ -4416,6 +4465,11 @@ function App() {
             <div className={`sync-status ${syncStatus}`}>
               <span>{syncStatus === "local" ? "Setup required" : syncStatus === "auth" ? "Sign in required" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
             </div>
+            {pendingPhotoCount > 0 && (
+              <div className="sync-status error" title="Captured while offline -- uploads automatically once you're back online">
+                <span>{pendingPhotoCount} photo(s) waiting to upload</span>
+              </div>
+            )}
             <button className={`icon-button library-nav-button ${view === "library" ? "active" : ""}`} type="button" onClick={() => navigateToView("library")} aria-label="Learning Library" title="Learning Library">
               <BookOpen size={17} />
             </button>
@@ -10800,33 +10854,48 @@ type NewSiteInput = typeof EMPTY_NEW_QUOTE_DRAFT;
 // exist now, with the rules engine that turns them into a camera/sign count
 // built next -- it is not decorative, it is explicitly staged.
 // Custom in-app camera for Site Builder photo batches -- opens the phone's
-// camera directly (getUserMedia), lets the field rep snap as many photos as
-// they want for this one garage/lot before reviewing anything, then shows
-// every shot together for a quick per-photo description and a chance to
-// discard a bad one before saving the whole batch. Every photo saved here
-// is tied to the specific location it was opened from (see onSavePhoto's
-// locationId closure in SalesQuoteBuilder), so it's automatically filed
-// under that garage/lot's title -- no extra step required.
-type CapturedPhoto = { id: string; blob: Blob; previewUrl: string; description: string };
+// camera directly (getUserMedia). The rep first picks Single Photo or Batch
+// Images; Batch lets them snap as many photos as they want for this one
+// garage/lot before reviewing anything, Single auto-advances to review
+// after one shot. Review shows every shot together with a name field (the
+// second half of "<Garage/Lot name> - <name>", used as the actual saved
+// file name) and a chance to discard a bad one before saving the whole
+// batch. If a save fails because the device is offline, the photo is
+// queued in IndexedDB (see persistence.ts's offline photo queue) instead of
+// being lost -- App.flushPendingSitePhotos uploads it automatically once
+// the connection comes back.
+type CapturedPhoto = { id: string; blob: Blob; previewUrl: string; name: string };
+
+function sanitizePhotoNameSegment(value: string): string {
+  return value.replace(/[\\/:*?"<>|]+/g, "-").trim();
+}
 
 function CameraCaptureModal({
+  quoteId,
+  locationId,
   locationName,
   onClose,
   onSavePhoto,
 }: {
+  quoteId: string;
+  locationId: string;
   locationName: string;
   onClose: () => void;
   onSavePhoto: (file: File, description: string) => Promise<boolean>;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const [phase, setPhase] = useState<"camera" | "review">("camera");
+  const [phase, setPhase] = useState<"choose" | "camera" | "review">("choose");
+  const [batchMode, setBatchMode] = useState(true);
   const [cameraError, setCameraError] = useState("");
   const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
+    if (phase !== "camera") {
+      return;
+    }
     let cancelled = false;
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraError("This browser can't access the camera directly. Use the file picker below instead.");
@@ -10854,7 +10923,7 @@ function CameraCaptureModal({
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     };
-  }, []);
+  }, [phase]);
 
   function stopCamera() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -10880,7 +10949,11 @@ function CameraCaptureModal({
           return;
         }
         const previewUrl = URL.createObjectURL(blob);
-        setPhotos((current) => [...current, { id: makeId("photo"), blob, previewUrl, description: "" }]);
+        setPhotos((current) => [...current, { id: makeId("photo"), blob, previewUrl, name: "" }]);
+        if (!batchMode) {
+          stopCamera();
+          setPhase("review");
+        }
       },
       "image/jpeg",
       0.9,
@@ -10891,7 +10964,10 @@ function CameraCaptureModal({
     const file = event.target.files?.[0];
     if (file) {
       const previewUrl = URL.createObjectURL(file);
-      setPhotos((current) => [...current, { id: makeId("photo"), blob: file, previewUrl, description: "" }]);
+      setPhotos((current) => [...current, { id: makeId("photo"), blob: file, previewUrl, name: "" }]);
+      if (!batchMode) {
+        setPhase("review");
+      }
     }
     event.target.value = "";
   }
@@ -10920,20 +10996,33 @@ function CameraCaptureModal({
   async function saveAll() {
     setIsSaving(true);
     setSaveError("");
-    let failures = 0;
+    let queuedOffline = 0;
     for (const photo of photos) {
-      const file = new File([photo.blob], `${makeId("photo")}.jpg`, { type: photo.blob.type || "image/jpeg" });
-      const ok = await onSavePhoto(file, photo.description.trim());
+      const namedSegment = sanitizePhotoNameSegment(photo.name) || "photo";
+      const fileName = `${sanitizePhotoNameSegment(locationName)} - ${namedSegment}.jpg`;
+      const fileType = photo.blob.type || "image/jpeg";
+      const file = new File([photo.blob], fileName, { type: fileType });
+      let ok = false;
+      try {
+        ok = await onSavePhoto(file, photo.name.trim());
+      } catch {
+        ok = false;
+      }
       if (!ok) {
-        failures += 1;
+        // Most likely offline (this modal is used inside parking garages,
+        // where signal is often gone). Queue it in IndexedDB instead of
+        // reporting a flat failure -- App.flushPendingSitePhotos uploads it
+        // automatically the moment the connection comes back, so the shot
+        // isn't lost even if the rep closes the tab right now.
+        await queuePendingSitePhoto({ quoteId, locationId, fileName, fileType, description: photo.name.trim(), blob: photo.blob });
+        queuedOffline += 1;
       }
     }
     setIsSaving(false);
-    if (failures > 0) {
-      setSaveError(`${failures} of ${photos.length} photo(s) could not be saved. Check your connection and try again -- the rest were saved.`);
-      return;
-    }
     photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+    if (queuedOffline > 0) {
+      window.alert(`${queuedOffline} of ${photos.length} photo(s) saved on this device -- they'll upload automatically once you're back online.`);
+    }
     onClose();
   }
 
@@ -10943,10 +11032,47 @@ function CameraCaptureModal({
         <div className="modal-header">
           <div>
             <h2 id="camera-capture-title">Photos: {locationName}</h2>
-            <p>{phase === "camera" ? "Take as many photos as you need, then review before saving." : "Add a quick description to each photo, discard any you don't want, then save the batch."}</p>
+            <p>
+              {phase === "choose"
+                ? "Take one photo, or capture a batch before reviewing."
+                : phase === "camera"
+                  ? batchMode
+                    ? "Take as many photos as you need, then review before saving."
+                    : "Take your photo."
+                  : "Name each photo (it's saved as \"" + locationName + " - <name>\"), discard any you don't want, then save."}
+            </p>
           </div>
           <button className="icon-button" type="button" onClick={handleClose} aria-label="Close camera">x</button>
         </div>
+
+        {phase === "choose" && (
+          <div className="camera-mode-choice">
+            <button
+              className="secondary-action camera-mode-choice-button"
+              type="button"
+              onClick={() => {
+                setBatchMode(false);
+                setPhase("camera");
+              }}
+            >
+              <Camera size={18} />
+              <span>Single Photo</span>
+              <small className="muted">Take one shot, then name and save it.</small>
+            </button>
+            <button
+              className="primary-action camera-mode-choice-button"
+              type="button"
+              onClick={() => {
+                setBatchMode(true);
+                setPhase("camera");
+              }}
+            >
+              <Camera size={18} />
+              <span>Batch Images</span>
+              <small>Take several shots in a row, then name and save them all together.</small>
+            </button>
+          </div>
+        )}
 
         {phase === "camera" && (
           <div className="camera-capture-live">
@@ -10973,12 +11099,14 @@ function CameraCaptureModal({
                 ))}
               </div>
             )}
-            <div className="modal-actions">
-              <button className="secondary-action" type="button" onClick={handleClose}>Cancel</button>
-              <button className="primary-action" type="button" disabled={photos.length === 0} onClick={goToReview}>
-                Review {photos.length > 0 ? `(${photos.length})` : ""}
-              </button>
-            </div>
+            {batchMode && (
+              <div className="modal-actions">
+                <button className="secondary-action" type="button" onClick={handleClose}>Cancel</button>
+                <button className="primary-action" type="button" disabled={photos.length === 0} onClick={goToReview}>
+                  Review {photos.length > 0 ? `(${photos.length})` : ""}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -10988,12 +11116,15 @@ function CameraCaptureModal({
             {photos.map((photo) => (
               <div className="camera-capture-review-row" key={photo.id}>
                 <img src={photo.previewUrl} alt="Captured" className="camera-capture-review-thumb" />
-                <input
-                  className="camera-capture-review-description"
-                  value={photo.description}
-                  placeholder="Small description (optional)"
-                  onChange={(event) => setPhotos((current) => current.map((entry) => (entry.id === photo.id ? { ...entry, description: event.target.value } : entry)))}
-                />
+                <div className="camera-capture-name-row">
+                  <span className="camera-capture-name-prefix">{locationName} -</span>
+                  <input
+                    className="camera-capture-review-description"
+                    value={photo.name}
+                    placeholder="Name (e.g. Entrance, Level 2 ramp)"
+                    onChange={(event) => setPhotos((current) => current.map((entry) => (entry.id === photo.id ? { ...entry, name: event.target.value } : entry)))}
+                  />
+                </div>
                 <button className="secondary-action mini-action" type="button" onClick={() => discardPhoto(photo.id)}>Discard</button>
               </div>
             ))}
@@ -11954,6 +12085,8 @@ function SalesQuoteBuilder({
 
       {cameraLocationId && selectedQuote && (
         <CameraCaptureModal
+          quoteId={selectedQuote.id}
+          locationId={cameraLocationId}
           locationName={selectedQuote.locations.find((location) => location.id === cameraLocationId)?.name || "this location"}
           onClose={() => setCameraLocationId(null)}
           onSavePhoto={(file, description) => onUploadImage(selectedQuote.id, cameraLocationId, "photo", file, description)}

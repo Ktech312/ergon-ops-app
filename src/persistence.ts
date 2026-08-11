@@ -5723,21 +5723,30 @@ export async function uploadQuoteImageFile(file: File, storagePath: string, acce
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return false;
   }
-  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
-  const response = await fetch(
-    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${SALES_QUOTE_IMAGE_BUCKET}/${storagePath}`,
-    {
-      method: "POST",
-      headers: {
-        apikey: anonKey,
-        authorization: `Bearer ${accessToken}`,
-        "content-type": file.type || "application/octet-stream",
-        "x-upsert": "true",
+  try {
+    const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+    const response = await fetch(
+      `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${SALES_QUOTE_IMAGE_BUCKET}/${storagePath}`,
+      {
+        method: "POST",
+        headers: {
+          apikey: anonKey,
+          authorization: `Bearer ${accessToken}`,
+          "content-type": file.type || "application/octet-stream",
+          "x-upsert": "true",
+        },
+        body: file,
       },
-      body: file,
-    },
-  );
-  return response.ok;
+    );
+    return response.ok;
+  } catch {
+    // A rejected fetch here almost always means the device has no
+    // connection right now (common in a parking garage) rather than a real
+    // server error -- returning false instead of throwing lets the caller
+    // (addSalesQuoteLocationImage -> the offline photo queue) treat it the
+    // same way as any other failed save and queue it for retry.
+    return false;
+  }
 }
 
 export async function getQuoteImageDownloadUrl(storagePath: string, accessToken?: string): Promise<string | null> {
@@ -5777,21 +5786,123 @@ export async function addSalesQuoteLocationImage(
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return null;
   }
-  const storagePath = buildQuoteImageStoragePath(quoteLocationId, file.name);
-  const uploaded = await uploadQuoteImageFile(file, storagePath, accessToken);
-  if (!uploaded) {
+  try {
+    const storagePath = buildQuoteImageStoragePath(quoteLocationId, file.name);
+    const uploaded = await uploadQuoteImageFile(file, storagePath, accessToken);
+    if (!uploaded) {
+      return null;
+    }
+    const response = await fetch(supabaseUrl("sales_quote_location_images"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+      body: JSON.stringify({ quote_location_id: quoteLocationId, image_type: imageType, storage_path: storagePath, file_name: file.name, description: description || null }),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const rows = (await response.json()) as SalesQuoteLocationImageRow[];
+    return rows[0] ? mapSalesQuoteLocationImageRow(rows[0]) : null;
+  } catch {
+    // Network failure (offline) -- same as above, treat as "not uploaded"
+    // rather than an uncaught rejection so the offline photo queue can
+    // retry later instead of the save silently crashing.
     return null;
   }
-  const response = await fetch(supabaseUrl("sales_quote_location_images"), {
-    method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-    body: JSON.stringify({ quote_location_id: quoteLocationId, image_type: imageType, storage_path: storagePath, file_name: file.name, description: description || null }),
+}
+
+// --- Offline photo queue (IndexedDB) ---------------------------------------
+// Field reps take Site Builder photos inside parking garages/structures,
+// where cell signal is often weak or nonexistent. If an upload attempt
+// fails because the device has no connection, an in-memory-only retry queue
+// would vanish the moment the tab closes or the phone locks -- IndexedDB
+// survives both, so a captured photo is durable the instant it's queued.
+// main.tsx's App component flushes this queue automatically (on load, on
+// the browser's `online` event, and on an interval) using the same
+// addSalesQuoteLocationImage upload path above.
+const PENDING_PHOTO_DB_NAME = "ergon_offline_photos";
+const PENDING_PHOTO_STORE = "pending_photos";
+const PENDING_PHOTO_DB_VERSION = 1;
+
+export type PendingSitePhoto = {
+  id: string;
+  quoteId: string;
+  locationId: string;
+  fileName: string;
+  fileType: string;
+  description: string;
+  blob: Blob;
+  createdAt: string;
+};
+
+function openPendingPhotoDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB is not available in this environment."));
+      return;
+    }
+    const request = indexedDB.open(PENDING_PHOTO_DB_NAME, PENDING_PHOTO_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(PENDING_PHOTO_STORE)) {
+        db.createObjectStore(PENDING_PHOTO_STORE, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
   });
-  if (!response.ok) {
-    return null;
+}
+
+export async function queuePendingSitePhoto(entry: Omit<PendingSitePhoto, "id" | "createdAt">): Promise<void> {
+  try {
+    const db = await openPendingPhotoDb();
+    const record: PendingSitePhoto = {
+      ...entry,
+      id: `pending_photo_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      createdAt: new Date().toISOString(),
+    };
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(PENDING_PHOTO_STORE, "readwrite");
+      tx.objectStore(PENDING_PHOTO_STORE).put(record);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    // If IndexedDB itself is unavailable (very old browser, private mode
+    // restrictions, etc.) there's nowhere safe left to stash the photo --
+    // the caller already surfaces a "could not be saved" message either way.
   }
-  const rows = (await response.json()) as SalesQuoteLocationImageRow[];
-  return rows[0] ? mapSalesQuoteLocationImageRow(rows[0]) : null;
+}
+
+export async function listPendingSitePhotos(): Promise<PendingSitePhoto[]> {
+  try {
+    const db = await openPendingPhotoDb();
+    const records = await new Promise<PendingSitePhoto[]>((resolve, reject) => {
+      const tx = db.transaction(PENDING_PHOTO_STORE, "readonly");
+      const request = tx.objectStore(PENDING_PHOTO_STORE).getAll();
+      request.onsuccess = () => resolve(request.result as PendingSitePhoto[]);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return records;
+  } catch {
+    return [];
+  }
+}
+
+export async function removePendingSitePhoto(id: string): Promise<void> {
+  try {
+    const db = await openPendingPhotoDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(PENDING_PHOTO_STORE, "readwrite");
+      tx.objectStore(PENDING_PHOTO_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    // best-effort cleanup only
+  }
 }
 
 export async function updateSalesQuoteLocationImageDescription(imageId: string, description: string, accessToken?: string): Promise<boolean> {
