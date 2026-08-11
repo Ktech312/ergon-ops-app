@@ -12667,6 +12667,26 @@ function SalesQuoteBuilder({
   // starts with everything the quote already has -- contact info, BOM, and
   // the full per-garage/lot breakdown including photos/drawings -- in the
   // same format, so media can be tracked from presale through closeout.
+  // Split from the status-change trigger below so there's also a manual
+  // "Create Project" button -- if the confirm gets dismissed, or the
+  // creation attempt fails (e.g. a network hiccup, or hitting Closed - Won
+  // before a backend migration had finished rolling out), there's a visible
+  // way to retry instead of having to flip the status back to Open and Won
+  // again to re-trigger the prompt.
+  async function runCreateProjectFromQuote(quote: SalesQuote) {
+    setIsCreatingProject(true);
+    setProjectCreateStatus("Creating project...");
+    const created = await onCreateProjectFromClosedWonQuote(quote);
+    setIsCreatingProject(false);
+    if (created) {
+      setProjectCreateStatus(`Created Project "${created.name}" (${created.ref || "no ref yet"}) -- find it on the Projects page.`);
+    } else {
+      const message = "Could not create the project -- check your connection and that you're signed in, then try Create Project again. If it keeps happening, check the browser console for details.";
+      setProjectCreateStatus(message);
+      window.alert(message);
+    }
+  }
+
   async function handleStatusChange(quote: SalesQuote, nextStatus: SalesQuote["status"]) {
     onUpdateStatus(quote.id, nextStatus);
     if (nextStatus !== "closed_won") {
@@ -12676,15 +12696,7 @@ function SalesQuoteBuilder({
     if (!wantsProject) {
       return;
     }
-    setIsCreatingProject(true);
-    setProjectCreateStatus("Creating project...");
-    const created = await onCreateProjectFromClosedWonQuote(quote);
-    setIsCreatingProject(false);
-    setProjectCreateStatus(
-      created
-        ? `Created Project "${created.name}" (${created.ref || "no ref yet"}) -- find it on the Projects page.`
-        : "Could not create the project. Check the browser console for details, or try again.",
-    );
+    await runCreateProjectFromQuote(quote);
   }
 
   function submitNewQuote() {
@@ -12780,8 +12792,20 @@ function SalesQuoteBuilder({
                   <option value="closed_lost">Closed - Lost</option>
                 </select>
               </label>
-              {selectedQuote.status === "closed_won" && !projectCreateStatus && (
-                <small className="muted">This quote's BOM can now be pulled into a Project from the Projects page.</small>
+              {selectedQuote.status === "closed_won" && (
+                <div className="quote-header-pill-row">
+                  <button
+                    className="secondary-action mini-action mini-action-sm"
+                    type="button"
+                    disabled={isCreatingProject}
+                    onClick={() => runCreateProjectFromQuote(selectedQuote)}
+                  >
+                    {isCreatingProject ? "Creating..." : "Create Project"}
+                  </button>
+                  {!projectCreateStatus && (
+                    <small className="muted">Copies this quote into a Project -- safe to click again if it didn't work the first time.</small>
+                  )}
+                </div>
               )}
               {projectCreateStatus && <small className="muted">{projectCreateStatus}</small>}
             </div>
