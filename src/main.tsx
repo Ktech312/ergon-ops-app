@@ -8900,6 +8900,24 @@ const ROLE_KEY_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "marketing", label: "Marketing" },
 ];
 
+// A plain `new Date("2026-08-20").toISOString()` parses the date-only string
+// as UTC midnight -- for anyone west of UTC (all of the US), that's already
+// hours in the past in their own timezone the moment they pick "today,"
+// which made a freshly-approved user look "Access expired" almost
+// immediately. Anchoring to the END of that day in the browser's local
+// timezone instead means "expires on this date" behaves the way an admin
+// actually reading the calendar would expect.
+function expiresOnToIsoEndOfDay(dateOnly: string): string | null {
+  if (!dateOnly) {
+    return null;
+  }
+  const [year, month, day] = dateOnly.split("-").map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+  return new Date(year, month - 1, day, 23, 59, 59, 999).toISOString();
+}
+
 function PendingApprovalRow({
   user,
   onApprove,
@@ -8924,7 +8942,7 @@ function PendingApprovalRow({
       </td>
       <td><input type="date" value={expiresOn} onChange={(event) => setExpiresOn(event.target.value)} /></td>
       <td>
-        <button className="primary-action mini-action" type="button" onClick={() => onApprove(roleKey, expiresOn ? new Date(expiresOn).toISOString() : null)}>Approve</button>
+        <button className="primary-action mini-action" type="button" onClick={() => onApprove(roleKey, expiresOnToIsoEndOfDay(expiresOn))}>Approve</button>
         <button className="secondary-action mini-action" type="button" onClick={onDeny}>Deny</button>
       </td>
     </tr>
@@ -10082,6 +10100,16 @@ function AdminPage({
                     <td>
                       {approval?.approvalStatus ?? "-"}
                       {approval?.expiresAt ? ` (until ${new Date(approval.expiresAt).toLocaleDateString()})` : ""}
+                      {approval?.approvalStatus === "approved" && approval.expiresAt && (
+                        <button
+                          className="secondary-action mini-action"
+                          type="button"
+                          title="Clears the expiration date -- access won't expire again unless you set a new date."
+                          onClick={() => onReviewApproval(user.userId, "approved", null)}
+                        >
+                          Renew (clear expiration)
+                        </button>
+                      )}
                     </td>
                     <td>{new Date(user.lastSeenAt).toLocaleString()}</td>
                   </tr>
