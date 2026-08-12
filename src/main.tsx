@@ -7994,7 +7994,6 @@ function Projects({
             <PanelHeader title="Project List" label="Open a project to edit site info, SOW, and BOM" />
             <div className="action-row">
               <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
-              <RequestTaskButton section="projects" teamMembers={teamMembers} projectSites={projectSites} onCreate={onCreateTask} />
             </div>
           </div>
           <table>
