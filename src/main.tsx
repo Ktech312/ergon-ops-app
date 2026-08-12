@@ -6765,8 +6765,18 @@ function Inventory({
     );
   }
 
+  const plannedBuildCount = buildTransactions.filter((build) => build.status === "planned").length;
+  const inventoryValueTotal = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
+
   return (
     <div className="content-grid">
+      <section className="metric-grid">
+        <Metric icon={<Boxes size={20} />} label="Total SKUs" value={String(inventoryItems.length)} />
+        <Metric icon={<Bell size={20} />} label="Low Stock" value={String(lowStock.length)} />
+        <Metric icon={<DollarSign size={20} />} label="Inventory Value" value={money(inventoryValueTotal)} />
+        <Metric icon={<Truck size={20} />} label="Planned Builds" value={String(plannedBuildCount)} />
+      </section>
+
       <TaskMiniPanel
         title="Inventory Tasks"
         tasks={tasks.filter((task) => task.section === "inventory" || task.section === "warehouse")}
@@ -7977,6 +7987,13 @@ function Projects({
   if (projectMode === "list") {
     return (
       <div className="content-grid projects-layout">
+        <section className="metric-grid">
+          <Metric icon={<ClipboardList size={20} />} label="Projects" value={String(projectSites.length)} />
+          <Metric icon={<DollarSign size={20} />} label="Allocated Value" value={money(totalProjectValue)} />
+          <Metric icon={<ShoppingCart size={20} />} label="In Procurement" value={String(purchasingProjects)} />
+          <Metric icon={<FileText size={20} />} label="Draft / Planning" value={String(draftProjects)} />
+        </section>
+
         <TaskMiniPanel
           title="Projects Tasks"
           tasks={tasks.filter((task) => task.section === "projects" && !task.projectRef)}
@@ -7991,13 +8008,6 @@ function Projects({
           onDelete={onDeleteTask}
           onOpenFull={onOpenTasksView}
         />
-
-        <section className="metric-grid">
-          <Metric icon={<ClipboardList size={20} />} label="Projects" value={String(projectSites.length)} />
-          <Metric icon={<DollarSign size={20} />} label="Allocated Value" value={money(totalProjectValue)} />
-          <Metric icon={<ShoppingCart size={20} />} label="In Procurement" value={String(purchasingProjects)} />
-          <Metric icon={<FileText size={20} />} label="Draft / Planning" value={String(draftProjects)} />
-        </section>
 
         <section className="panel full">
           <div className="action-header">
@@ -8069,37 +8079,6 @@ function Projects({
           <button className="secondary-action mini-action" type="button" onClick={backToProjectList}>Back to Projects</button>
         </div>
       </div>
-
-      <TaskMiniPanel
-        title="Project Tasks"
-        tasks={tasks.filter((task) => task.projectRef === selectedProject.ref)}
-        taskActivity={taskActivity}
-        teamMembers={teamMembers}
-        projectSites={projectSites}
-        section="projects"
-        projectRef={selectedProject.ref}
-        isInternal={false}
-        onCreate={onCreateTask}
-        onUpdate={onUpdateTask}
-        onDelete={onDeleteTask}
-        onOpenFull={onOpenTasksView}
-      />
-
-      <ProjectLocationsSection
-        project={selectedProject}
-        catalogItems={catalogItems}
-        onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
-        onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
-        onDeleteLocation={(locationId) => onDeleteProjectLocation(selectedProject.ref, locationId)}
-        onAddLocationItem={(locationId, lineType, catalogItemId, qty) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty)}
-        onUpdateLocationItemQty={(locationId, itemId, qty) => onUpdateProjectLocationItemQty(selectedProject.ref, locationId, itemId, qty)}
-        onDeleteLocationItem={(locationId, itemId) => onDeleteProjectLocationItem(selectedProject.ref, locationId, itemId)}
-        onUploadImage={(locationId, imageType, file, description, coords) => onUploadProjectLocationImage(selectedProject.ref, locationId, imageType, file, description, coords)}
-        onDownloadImage={onDownloadProjectLocationImage}
-        onDeleteImage={(locationId, imageId, storagePath) => onDeleteProjectLocationImage(selectedProject.ref, locationId, imageId, storagePath)}
-        onGetImageUrl={onGetProjectLocationImageUrl}
-        onUpdateImageDescription={(locationId, imageId, description) => onUpdateProjectLocationImageDescription(selectedProject.ref, locationId, imageId, description)}
-      />
 
       <div className="project-top-row">
         <section className="panel compact-card">
@@ -8201,6 +8180,37 @@ function Projects({
           {scheduleStatus && <small className="muted">{scheduleStatus}</small>}
         </section>
       </div>
+
+      <TaskMiniPanel
+        title="Project Tasks"
+        tasks={tasks.filter((task) => task.projectRef === selectedProject.ref)}
+        taskActivity={taskActivity}
+        teamMembers={teamMembers}
+        projectSites={projectSites}
+        section="projects"
+        projectRef={selectedProject.ref}
+        isInternal={false}
+        onCreate={onCreateTask}
+        onUpdate={onUpdateTask}
+        onDelete={onDeleteTask}
+        onOpenFull={onOpenTasksView}
+      />
+
+      <ProjectLocationsSection
+        project={selectedProject}
+        catalogItems={catalogItems}
+        onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
+        onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
+        onDeleteLocation={(locationId) => onDeleteProjectLocation(selectedProject.ref, locationId)}
+        onAddLocationItem={(locationId, lineType, catalogItemId, qty) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty)}
+        onUpdateLocationItemQty={(locationId, itemId, qty) => onUpdateProjectLocationItemQty(selectedProject.ref, locationId, itemId, qty)}
+        onDeleteLocationItem={(locationId, itemId) => onDeleteProjectLocationItem(selectedProject.ref, locationId, itemId)}
+        onUploadImage={(locationId, imageType, file, description, coords) => onUploadProjectLocationImage(selectedProject.ref, locationId, imageType, file, description, coords)}
+        onDownloadImage={onDownloadProjectLocationImage}
+        onDeleteImage={(locationId, imageId, storagePath) => onDeleteProjectLocationImage(selectedProject.ref, locationId, imageId, storagePath)}
+        onGetImageUrl={onGetProjectLocationImageUrl}
+        onUpdateImageDescription={(locationId, imageId, description) => onUpdateProjectLocationImageDescription(selectedProject.ref, locationId, imageId, description)}
+      />
 
       <section className="panel full submittals-panel">
         <div className="panel-title-row">
