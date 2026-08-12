@@ -1023,6 +1023,7 @@ function App() {
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [inventorySearchFocus, setInventorySearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [reportsSearchFocus, setReportsSearchFocus] = useState<{ term: string; token: number } | null>(null);
+  const [purchasingSearchFocus, setPurchasingSearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [standardInstallTimes, setStandardInstallTimes] = useState<StandardInstallTime[]>([]);
   const [scheduleTemplates, setScheduleTemplates] = useState<ScheduleTemplate[]>([]);
   const [scheduleStatus, setScheduleStatus] = useState("");
@@ -5241,8 +5242,8 @@ function App() {
         </div>
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
-        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
-        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} />}
+        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
+        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
         {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItemQty={handleUpdateProjectLocationItemQty} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onDetailContextChange={setProjectDetailContext} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
@@ -5741,6 +5742,7 @@ function Purchasing({
   onUpdateTask,
   onDeleteTask,
   onOpenTasksView,
+  searchFocus,
 }: {
   projectSites: ProjectSite[];
   inventoryItems: Part[];
@@ -5781,6 +5783,7 @@ function Purchasing({
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
+  searchFocus?: { term: string; token: number } | null;
 }) {
   const [selectedProject, setSelectedProject] = useState("");
   const [manualRequestPartRef, setManualRequestPartRef] = useState(() => inventoryItems.find((item) => !item.retired)?.ref ?? "");
@@ -5789,6 +5792,13 @@ function Purchasing({
   const [manualRequestProject, setManualRequestProject] = useState("");
   const [manualRequestTrack, setManualRequestTrack] = useState<NonNullable<PurchaseRequest["procurementTrack"]>>("warehouse_stock");
   const [requestFilters, setRequestFilters] = useState({ text: "", status: "Open", reason: "All" });
+  useEffect(() => {
+    if (!searchFocus) {
+      return;
+    }
+    setRequestFilters({ text: searchFocus.term, status: "All", reason: "All" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchFocus?.token]);
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [requestEditDraft, setRequestEditDraft] = useState({
     quantity: 1,
@@ -6421,6 +6431,8 @@ function Inventory({
   onDeleteTask,
   onOpenTasksView,
   searchFocus,
+  purchaseRequests,
+  onOpenPurchasing,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
@@ -6449,6 +6461,8 @@ function Inventory({
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
   searchFocus?: { term: string; token: number } | null;
+  purchaseRequests: PurchaseRequest[];
+  onOpenPurchasing: (term: string) => void;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -6470,9 +6484,10 @@ function Inventory({
   const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
   const [itemDraft, setItemDraft] = useState<Part>(emptyItemDraft);
   const [previewItem, setPreviewItem] = useState<Part | null>(null);
-  const [showTransferModal, setShowTransferModal] = useState(false);
   const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [adjustModalMode, setAdjustModalMode] = useState<"count" | "transfer">("count");
+  const [adjustLockedPart, setAdjustLockedPart] = useState<Part | null>(null);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showBuildConfirm, setShowBuildConfirm] = useState(false);
   const [buildConfirmAck, setBuildConfirmAck] = useState(false);
@@ -6511,7 +6526,6 @@ function Inventory({
     qty: 1,
     notes: "",
   });
-  const transferItem = inventoryItems.find((part) => part.ref === transferDraft.partRef);
   const receiveItem = inventoryItems.find((part) => part.ref === receiveDraft.partRef);
   const adjustItem = inventoryItems.find((part) => part.ref === adjustDraft.partRef);
   const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
@@ -6753,14 +6767,8 @@ function Inventory({
     setItemDraft((current) => ({ ...current, retired: !current.retired }));
   }
 
-  function openTransferModal(part: Part) {
-    setTransferDraft({
-      partRef: part.ref,
-      projectName: projectSites[0]?.name ?? "",
-      qty: 1,
-      notes: "",
-    });
-    setShowTransferModal(true);
+  function findPendingRequest(part: Part) {
+    return purchaseRequests.find((request) => request.sku === part.ref && request.status === "Ordered");
   }
 
   function openReceiveModal(part?: Part) {
@@ -6768,11 +6776,12 @@ function Inventory({
     if (!target) {
       return;
     }
+    const pending = findPendingRequest(target);
     setReceiveDraft({
       partRef: target.ref,
-      qty: 1,
-      unitCost: target.cost,
-      poNumber: "",
+      qty: pending ? Math.max(1, pending.quantity - (pending.receivedQuantity ?? 0)) : 1,
+      unitCost: pending ? pending.estimatedUnitCost : target.cost,
+      poNumber: pending?.poNumber ?? "",
       notes: "",
     });
     setShowReceiveModal(true);
@@ -6798,6 +6807,14 @@ function Inventory({
       nextQty: target.stock,
       notes: "",
     });
+    setTransferDraft({
+      partRef: target.ref,
+      projectName: projectSites[0]?.name ?? "",
+      qty: 1,
+      notes: "",
+    });
+    setAdjustLockedPart(part ?? null);
+    setAdjustModalMode("count");
     setShowAdjustModal(true);
   }
 
@@ -6831,7 +6848,7 @@ function Inventory({
     }
 
     onTransferToProject(part.ref, transferDraft.projectName, Math.max(1, Math.round(Number(transferDraft.qty) || 1)), transferDraft.notes);
-    setShowTransferModal(false);
+    setShowAdjustModal(false);
   }
 
   function requestBuild(plannedBuildId?: string) {
@@ -7070,7 +7087,7 @@ function Inventory({
           <button className={inventoryTab === "finished" ? "active" : ""} type="button" onClick={() => setInventoryTab("finished")}>Finished Manufactured Equipment</button>
         </div>
         <div className="inventory-table-scroll">
-          <table className="inventory-table">
+          <table className="inventory-table tight-table">
             <thead>
               <tr><th>Image</th><th>SKU</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th><th></th></tr>
               <tr className="filter-row">
@@ -7103,9 +7120,11 @@ function Inventory({
               </tr>
             </thead>
             <tbody>
-              {filteredInventoryItems.map((part) => (
-                <tr key={part.ref}>
-                  <td>
+              {filteredInventoryItems.map((part) => {
+                const pendingRequest = findPendingRequest(part);
+                return (
+                <tr key={part.ref} className="clickable-row" onClick={() => openEditItemModal(part)}>
+                  <td onClick={(event) => event.stopPropagation()}>
                     <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(part)} aria-label={`Open image for ${part.name}`}>
                       {part.imageUrl ? <img src={part.imageUrl} alt="" /> : <Image size={18} />}
                     </button>
@@ -7125,16 +7144,23 @@ function Inventory({
                   <td>{part.stock}</td>
                   <td>{money(part.cost)}</td>
                   <td>{part.retired ? <span className="status retired">Retired</span> : part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
-                  <td>
+                  <td onClick={(event) => event.stopPropagation()}>
                     <div className="table-actions">
-                      <button className="table-action secondary-table-action" type="button" onClick={() => openReceiveModal(part)} disabled={part.retired}>Receive</button>
+                      <button
+                        className={`table-action secondary-table-action${pendingRequest ? " receive-pending" : ""}`}
+                        type="button"
+                        onClick={() => openReceiveModal(part)}
+                        disabled={part.retired}
+                        title={pendingRequest ? `PO ${pendingRequest.poNumber || pendingRequest.requestNumber} is on order, not yet received` : undefined}
+                      >
+                        {pendingRequest ? "Receive Pending" : "Receive"}
+                      </button>
                       <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
-                      <button className="table-action secondary-table-action" type="button" onClick={() => openEditItemModal(part)}>Edit</button>
-                      <button className="table-action" type="button" onClick={() => openTransferModal(part)} disabled={part.retired}>Transfer</button>
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -7532,31 +7558,9 @@ function Inventory({
           </section>
         </div>
       )}
-      {showTransferModal && transferItem && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-transfer-modal-title">
-            <div className="modal-header">
-              <div>
-                <h2 id="inventory-transfer-modal-title">Transfer Inventory To Project</h2>
-                <p>Move stock out of inventory and add it to the selected project BOM.</p>
-              </div>
-              <button className="icon-button" type="button" onClick={() => setShowTransferModal(false)} aria-label="Close transfer modal">x</button>
-            </div>
-            <div className="bom-modal-grid">
-              <label className="span-2">Item<select value={transferDraft.partRef} onChange={(event) => setTransferDraft((current) => ({ ...current, partRef: event.target.value }))}>{inventoryItems.map((part) => <option key={part.ref} value={part.ref}>{part.ref} - {part.name} ({part.stock} available)</option>)}</select></label>
-              <label>Project<select value={transferDraft.projectName} onChange={(event) => setTransferDraft((current) => ({ ...current, projectName: event.target.value }))}>{projectSites.map((project) => <option key={project.name} value={project.name}>{project.ref} - {project.name}</option>)}</select></label>
-              <label>Quantity<input type="number" min="1" max={transferItem.stock} value={transferDraft.qty} onChange={(event) => setTransferDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
-              <label className="span-2">Notes<textarea value={transferDraft.notes} onChange={(event) => setTransferDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Install phase, location, reason, or approval note." /></label>
-            </div>
-            <div className="source-file"><Boxes size={16} /><span>{transferItem.stock} available. Transfer will leave {Math.max(0, transferItem.stock - Math.max(1, Math.round(Number(transferDraft.qty) || 1)))} in inventory.</span></div>
-            <div className="modal-actions">
-              <button className="secondary-action" type="button" onClick={() => setShowTransferModal(false)}>Cancel</button>
-              <button className="primary-action" type="button" onClick={saveTransfer}>Transfer To Project</button>
-            </div>
-          </section>
-        </div>
-      )}
-      {showReceiveModal && receiveItem && (
+      {showReceiveModal && receiveItem && (() => {
+        const pendingRequest = findPendingRequest(receiveItem);
+        return (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-receive-modal-title">
             <div className="modal-header">
@@ -7566,6 +7570,24 @@ function Inventory({
               </div>
               <button className="icon-button" type="button" onClick={() => setShowReceiveModal(false)} aria-label="Close receive modal">x</button>
             </div>
+            {pendingRequest && (
+              <div className="source-file receive-pending-banner">
+                <Truck size={16} />
+                <span>
+                  {pendingRequest.poNumber || pendingRequest.requestNumber} is on order and not yet received.{" "}
+                  <button
+                    className="link-button"
+                    type="button"
+                    onClick={() => {
+                      setShowReceiveModal(false);
+                      onOpenPurchasing(pendingRequest.sku);
+                    }}
+                  >
+                    View in Procurement
+                  </button>
+                </span>
+              </div>
+            )}
             <div className="bom-modal-grid">
               <label className="span-2">Item<select value={receiveDraft.partRef} onChange={(event) => {
                 const next = inventoryItems.find((part) => part.ref === event.target.value);
@@ -7583,29 +7605,60 @@ function Inventory({
             </div>
           </section>
         </div>
-      )}
+        );
+      })()}
       {showAdjustModal && adjustItem && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-adjust-modal-title">
             <div className="modal-header">
               <div>
-                <h2 id="inventory-adjust-modal-title">Adjust Stock Count</h2>
-                <p>Use this for cycle counts, damaged items, corrections, or retire cleanup.</p>
+                <h2 id="inventory-adjust-modal-title">Adjust Inventory</h2>
+                <p>Update the stock count, or move stock out to a project.</p>
               </div>
               <button className="icon-button" type="button" onClick={() => setShowAdjustModal(false)} aria-label="Close adjust modal">x</button>
             </div>
-            <div className="bom-modal-grid">
-              <label className="span-2">Item<select value={adjustDraft.partRef} onChange={(event) => {
-                const next = inventoryItems.find((part) => part.ref === event.target.value);
-                setAdjustDraft((current) => ({ ...current, partRef: event.target.value, nextQty: next?.stock ?? current.nextQty }));
-              }}>{inventoryItems.filter((part) => !part.retired).map((part) => <option key={part.ref} value={part.ref}>{part.ref} - {part.name} ({part.stock} on hand)</option>)}</select></label>
-              <label>New count<input type="number" min="0" value={adjustDraft.nextQty} onChange={(event) => setAdjustDraft((current) => ({ ...current, nextQty: Number(event.target.value) }))} /></label>
-              <label className="span-2">Reason / notes<textarea value={adjustDraft.notes} onChange={(event) => setAdjustDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Cycle count, damaged, missing, found, returned, or correction reason." /></label>
+            <div className="segmented-tabs">
+              <button className={adjustModalMode === "count" ? "active" : ""} type="button" onClick={() => setAdjustModalMode("count")}>Adjust Count</button>
+              <button className={adjustModalMode === "transfer" ? "active" : ""} type="button" onClick={() => setAdjustModalMode("transfer")}>Transfer To Project</button>
             </div>
-            <div className="source-file"><ClipboardList size={16} /><span>{adjustItem.ref} will move from {adjustItem.stock} to {Math.max(0, Math.round(Number(adjustDraft.nextQty) || 0))}.</span></div>
+            <div className="bom-modal-grid">
+              <label className="span-2">
+                Item
+                {adjustLockedPart ? (
+                  <input value={`${adjustItem.ref} - ${adjustItem.name} (${adjustItem.stock} on hand)`} disabled />
+                ) : (
+                  <select value={adjustDraft.partRef} onChange={(event) => {
+                    const next = inventoryItems.find((part) => part.ref === event.target.value);
+                    setAdjustDraft((current) => ({ ...current, partRef: event.target.value, nextQty: next?.stock ?? current.nextQty }));
+                    setTransferDraft((current) => ({ ...current, partRef: event.target.value }));
+                  }}>{inventoryItems.filter((part) => !part.retired).map((part) => <option key={part.ref} value={part.ref}>{part.ref} - {part.name} ({part.stock} on hand)</option>)}</select>
+                )}
+              </label>
+              {adjustModalMode === "count" ? (
+                <>
+                  <label>New count<input type="number" min="0" value={adjustDraft.nextQty} onChange={(event) => setAdjustDraft((current) => ({ ...current, nextQty: Number(event.target.value) }))} /></label>
+                  <label className="span-2">Reason / notes<textarea value={adjustDraft.notes} onChange={(event) => setAdjustDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Cycle count, damaged, missing, found, returned, or correction reason." /></label>
+                </>
+              ) : (
+                <>
+                  <label>Project<select value={transferDraft.projectName} onChange={(event) => setTransferDraft((current) => ({ ...current, projectName: event.target.value }))}>{projectSites.map((project) => <option key={project.name} value={project.name}>{project.ref} - {project.name}</option>)}</select></label>
+                  <label>Quantity<input type="number" min="1" max={adjustItem.stock} value={transferDraft.qty} onChange={(event) => setTransferDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
+                  <label className="span-2">Notes<textarea value={transferDraft.notes} onChange={(event) => setTransferDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Install phase, location, reason, or approval note." /></label>
+                </>
+              )}
+            </div>
+            {adjustModalMode === "count" ? (
+              <div className="source-file"><ClipboardList size={16} /><span>{adjustItem.ref} will move from {adjustItem.stock} to {Math.max(0, Math.round(Number(adjustDraft.nextQty) || 0))}.</span></div>
+            ) : (
+              <div className="source-file"><Boxes size={16} /><span>{adjustItem.stock} available. Transfer will leave {Math.max(0, adjustItem.stock - Math.max(1, Math.round(Number(transferDraft.qty) || 1)))} in inventory.</span></div>
+            )}
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowAdjustModal(false)}>Cancel</button>
-              <button className="primary-action" type="button" onClick={saveAdjust}>Save Adjustment</button>
+              {adjustModalMode === "count" ? (
+                <button className="primary-action" type="button" onClick={saveAdjust}>Save Adjustment</button>
+              ) : (
+                <button className="primary-action" type="button" onClick={saveTransfer} disabled={adjustItem.stock <= 0}>Transfer To Project</button>
+              )}
             </div>
           </section>
         </div>
@@ -11351,7 +11404,7 @@ function SalesCatalog({
               <p className="muted">You have {myPendingRequests.length} price change request(s) awaiting manager approval.</p>
             )}
             <div className="catalog-table-scroll">
-            <table>
+            <table className="tight-table">
               <thead>
                 <tr>
                   <th></th>
@@ -11364,7 +11417,6 @@ function SalesCatalog({
                   <th>Sell Price</th>
                   <th>Linked Ref</th>
                   <th>Status</th>
-                  <th></th>
                 </tr>
                 <tr className="filter-row">
                   <th></th>
@@ -11388,7 +11440,6 @@ function SalesCatalog({
                       <option>Retired</option>
                     </select>
                   </th>
-                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -11398,8 +11449,12 @@ function SalesCatalog({
                   const isLiveInventoryLinked = item.costSource === "inventory_unit_cost" && Boolean(linkedInventoryPart);
                   const computedSellPrice = computeCatalogSellPrice(item, inventoryItems);
                   return (
-                    <tr key={item.id} className={item.isRetired ? "muted-row" : ""}>
-                      <td>
+                    <tr
+                      key={item.id}
+                      className={`clickable-row${item.isRetired ? " muted-row" : ""}`}
+                      onClick={() => (canManage ? openEditModal(item) : !item.isRetired && openProposalModal(item, "markup_percent"))}
+                    >
+                      <td onClick={(event) => event.stopPropagation()}>
                         <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(item)} aria-label={`Open image for ${item.productName}`}>
                           {item.imageUrl || linkedInventoryPart?.imageUrl ? <img src={item.imageUrl || linkedInventoryPart?.imageUrl} alt="" /> : <Image size={18} />}
                         </button>
@@ -11425,28 +11480,12 @@ function SalesCatalog({
                         )}
                       </td>
                       <td>{item.isRetired ? "Retired" : "Active"}</td>
-                      <td>
-                        {canManage ? (
-                          <>
-                            <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(item)}>Edit</button>
-                            <button className="secondary-action mini-action" type="button" onClick={() => onSetRetired(item.id, !item.isRetired)}>
-                              {item.isRetired ? "Reactivate" : "Retire"}
-                            </button>
-                          </>
-                        ) : (
-                          !item.isRetired && (
-                            <button className="secondary-action mini-action" type="button" onClick={() => openProposalModal(item, "markup_percent")}>
-                              Propose price change
-                            </button>
-                          )
-                        )}
-                      </td>
                     </tr>
                   );
                 })}
                 {visibleItems.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="empty-compact-state">
+                    <td colSpan={10} className="empty-compact-state">
                       No catalog items yet. Add a product to start building the sales catalog.
                     </td>
                   </tr>
@@ -11598,6 +11637,11 @@ function SalesCatalog({
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setModalOpen(false)}>Cancel</button>
+              {editingId && canManage && (
+                <button className="secondary-action danger-action" type="button" onClick={() => onSetRetired(editingId, !draft.isRetired)}>
+                  {draft.isRetired ? "Reactivate Product" : "Retire Product"}
+                </button>
+              )}
               <button className="primary-action" type="button" onClick={submitDraft} disabled={!draft.productName.trim()}>{editingId ? "Save Product" : "Add Product"}</button>
             </div>
           </section>

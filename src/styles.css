@@ -1123,9 +1123,10 @@ td {
 }
 
 th {
-  background: #fffdf9;
+  background: #f8f5ef;
   color: #756d62;
   font-size: 12px;
+  font-weight: 900;
   position: sticky;
   top: 0;
   text-transform: uppercase;
@@ -1136,6 +1137,19 @@ th {
   top: 38px;
 }
 
+/* Tighter row format for tables where per-row action buttons were removed
+   in favor of a clickable row -- less content per row means the row can
+   sit shorter without feeling cramped. */
+.tight-table th,
+.tight-table td {
+  padding: 6px 8px;
+}
+
+.tight-table .thumbnail-button {
+  height: 28px;
+  width: 28px;
+}
+
 .inventory-table th:last-child,
 .inventory-table td:last-child {
   background: #fffdf9;
@@ -1143,6 +1157,10 @@ th {
   position: sticky;
   right: 0;
   z-index: 3;
+}
+
+.inventory-table th:last-child {
+  background: #f8f5ef;
 }
 
 .inventory-table .filter-row th:last-child {
@@ -1965,6 +1983,27 @@ td small.quote-ref-tag {
   color: #a01029;
 }
 
+/* A part with an "Ordered" purchase request awaiting delivery -- Receive
+   swaps to this amber state so it reads as "already on order" instead of
+   "nothing has been done yet," then reverts to the normal red once the
+   shipment is actually received (the request's status leaves "Ordered"). */
+.receive-pending {
+  background: #fff4d9;
+  border-color: #c8931a;
+  color: #7a5c0a;
+}
+
+.source-file.receive-pending-banner {
+  background: #fff4d9;
+  border-color: #c8931a;
+  color: #7a5c0a;
+}
+
+.receive-pending-banner .link-button {
+  color: #7a5c0a;
+  font-weight: 800;
+}
+
 .request-queue {
   border: 1px solid #e8e1d5;
   border-radius: 8px;
@@ -2340,7 +2379,7 @@ td small.quote-ref-tag {
 .manufactured-inventory-head {
   background: #f8f5ef;
   color: #756d62;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
 }
