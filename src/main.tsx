@@ -936,6 +936,7 @@ function App() {
   const localState = loadLocalAppState();
   const [view, setView] = useState<View>(() => (window.location.hash ? viewFromHash() : savedView()));
   const [locationHash, setLocationHash] = useState(window.location.hash || window.localStorage.getItem("ergon:lastHash") || "#dashboard");
+  const [projectDetailContext, setProjectDetailContext] = useState<{ name: string; ref: string } | null>(null);
   // Phase 10c: Inventory Items no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [inventoryItems, setInventoryItems] = useState<Part[]>([]);
@@ -4996,14 +4997,14 @@ function App() {
 
       <main className="main">
         <div className="page-heading">
-          <h1>{pageTitle(view)}</h1>
-          <p>{pageSubtitle(view)}</p>
+          <h1>{view === "projects" && projectDetailContext ? `Project: ${projectDetailContext.name}` : pageTitle(view)}</h1>
+          <p>{view === "projects" && projectDetailContext ? `Ref ${projectDetailContext.ref}` : pageSubtitle(view)}</p>
         </div>
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItemQty={handleUpdateProjectLocationItemQty} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItemQty={handleUpdateProjectLocationItemQty} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onDetailContextChange={setProjectDetailContext} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -7403,6 +7404,7 @@ function Projects({
   onDeleteProjectLocationImage,
   onGetProjectLocationImageUrl,
   onUpdateProjectLocationImageDescription,
+  onDetailContextChange,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -7455,6 +7457,7 @@ function Projects({
   onDeleteProjectLocationImage: (projectRef: string, locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
   onGetProjectLocationImageUrl: (image: ProjectLocationImage) => Promise<string | null>;
   onUpdateProjectLocationImageDescription: (projectRef: string, locationId: string, imageId: string, description: string) => void;
+  onDetailContextChange?: (info: { name: string; ref: string } | null) => void;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
@@ -7482,6 +7485,13 @@ function Projects({
   });
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
   const selectedProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject.name || doc.project === selectedProject.ref);
+
+  useEffect(() => {
+    onDetailContextChange?.(
+      projectMode === "detail" && selectedProject ? { name: selectedProject.name, ref: selectedProject.ref } : null,
+    );
+    return () => onDetailContextChange?.(null);
+  }, [projectMode, selectedProject?.name, selectedProject?.ref, onDetailContextChange]);
 
   useEffect(() => {
     onLoadSubmittals(selectedProject.name);
@@ -8060,6 +8070,21 @@ function Projects({
         </div>
       </div>
 
+      <TaskMiniPanel
+        title="Project Tasks"
+        tasks={tasks.filter((task) => task.projectRef === selectedProject.ref)}
+        taskActivity={taskActivity}
+        teamMembers={teamMembers}
+        projectSites={projectSites}
+        section="projects"
+        projectRef={selectedProject.ref}
+        isInternal={false}
+        onCreate={onCreateTask}
+        onUpdate={onUpdateTask}
+        onDelete={onDeleteTask}
+        onOpenFull={onOpenTasksView}
+      />
+
       <ProjectLocationsSection
         project={selectedProject}
         catalogItems={catalogItems}
@@ -8176,21 +8201,6 @@ function Projects({
           {scheduleStatus && <small className="muted">{scheduleStatus}</small>}
         </section>
       </div>
-
-      <TaskMiniPanel
-        title="Project Tasks"
-        tasks={tasks.filter((task) => task.projectRef === selectedProject.ref)}
-        taskActivity={taskActivity}
-        teamMembers={teamMembers}
-        projectSites={projectSites}
-        section="projects"
-        projectRef={selectedProject.ref}
-        isInternal={false}
-        onCreate={onCreateTask}
-        onUpdate={onUpdateTask}
-        onDelete={onDeleteTask}
-        onOpenFull={onOpenTasksView}
-      />
 
       <section className="panel full submittals-panel">
         <div className="panel-title-row">
@@ -12271,7 +12281,7 @@ function ProjectLocationsSection({
   );
 
   return (
-    <section className="panel compact-card">
+    <section className="panel wide">
       <div className="panel-title-row">
         <div>
           <h2>Locations</h2>
