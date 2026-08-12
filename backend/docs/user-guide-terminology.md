@@ -13,6 +13,7 @@ Use these labels consistently across the app, reports, and future user guide.
 | TXN | Transaction | Inventory movement/history records, transfers, receives, adjustments, and build consumption. | TXN-0001 |
 | LOT | Lot | Received batches of the same SKU, when batch tracking is needed. | LOT-0001 |
 | SERIAL | Serial Number | Individual serialized equipment, servers, VPUs, cameras, or other assets that need unit-level tracking. | SERIAL-0001 |
+| Media | Photos and uploaded reference files | Garage/lot photos, drawings, PDFs, spreadsheets, CAD files, and project documents. | Photo Gallery / Files |
 
 ## Decisions Locked In
 
@@ -21,6 +22,9 @@ Use these labels consistently across the app, reports, and future user guide.
 - Use `TXN` for inventory movement history once movement tracking is expanded.
 - Keep `PRJ-2026-0001` style project numbers for now.
 - Purchase documents should use `PO`.
+- Use `Photos` for image-only galleries.
+- Use `Files` or `Project Documents` for PDF, Word, Excel/CSV, CAD, drawings, and reference documents.
+- Every uploaded photo/file must show upload date/time and uploader email.
 
 ## Practical Examples
 
@@ -29,3 +33,4 @@ Use these labels consistently across the app, reports, and future user guide.
 - Moving one motherboard from inventory into a VPU build should create a TXN record later.
 - Receiving ten motherboards from a PO can create a LOT record later if batch tracking matters.
 - A finished VPU that needs individual lifecycle tracking can also receive a SERIAL number.
+- A garage photo belongs in Photos; the matching PDF drawing belongs in Files.

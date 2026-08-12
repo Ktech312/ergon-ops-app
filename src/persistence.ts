@@ -3211,6 +3211,7 @@ export type ProjectDocument = {
   type?: "Procurement" | "Sales Quote" | "SOW" | "BOM" | "Project";
   storage?: "Browser" | "Google Drive" | "Supabase Storage";
   uploadedAt?: string;
+  uploadedByEmail?: string;
   // Path inside the private "project-documents" Storage bucket -- present
   // once the real file bytes were actually uploaded (Phase: real file
   // storage). Resolve it to a usable link with getDocumentDownloadUrl.
@@ -3226,6 +3227,7 @@ type ProjectDocumentRow = {
   document_type: string;
   storage_status: string;
   uploaded_at: string | null;
+  uploaded_by_email: string | null;
   file_url: string | null;
 };
 
@@ -3298,6 +3300,7 @@ function mapProjectDocumentRow(row: ProjectDocumentRow): ProjectDocument {
     type: pgDocumentType(row.document_type),
     storage: appDocumentStorage(row.storage_status),
     uploadedAt: row.uploaded_at ?? undefined,
+    uploadedByEmail: row.uploaded_by_email ?? undefined,
     storagePath: row.file_url ?? undefined,
   };
 }
@@ -3306,9 +3309,19 @@ export async function loadProjectDocuments(accessToken?: string): Promise<Projec
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,file_url&order=uploaded_at.desc"), {
+  const response = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,uploaded_by_email,file_url&order=uploaded_at.desc"), {
     headers: supabaseHeaders(accessToken),
   });
+  if (!response.ok && response.status === 400) {
+    const fallbackResponse = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,file_url&order=uploaded_at.desc"), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (!fallbackResponse.ok) {
+      return [];
+    }
+    const fallbackRows = (await fallbackResponse.json()) as Array<Omit<ProjectDocumentRow, "uploaded_by_email">>;
+    return fallbackRows.map((row) => mapProjectDocumentRow({ ...row, uploaded_by_email: null }));
+  }
   if (!response.ok) {
     return [];
   }
@@ -3334,6 +3347,7 @@ export async function createProjectDocuments(
     storage_provider: doc.storage === "Supabase Storage" ? "supabase_storage" : "browser",
     file_url: doc.storagePath ?? null,
     uploaded_at: doc.uploadedAt ?? new Date().toISOString(),
+    uploaded_by_email: doc.uploadedByEmail ?? null,
   }));
   const response = await fetch(supabaseUrl("project_documents"), {
     method: "POST",
@@ -3341,6 +3355,18 @@ export async function createProjectDocuments(
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
+    if (response.status === 400) {
+      const fallbackPayload = payload.map(({ uploaded_by_email: _uploadedByEmail, ...doc }) => doc);
+      const fallbackResponse = await fetch(supabaseUrl("project_documents"), {
+        method: "POST",
+        headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+        body: JSON.stringify(fallbackPayload),
+      });
+      if (fallbackResponse.ok) {
+        const fallbackRows = (await fallbackResponse.json()) as Array<Omit<ProjectDocumentRow, "uploaded_by_email">>;
+        return fallbackRows.map((row) => mapProjectDocumentRow({ ...row, uploaded_by_email: null }));
+      }
+    }
     throw new Error(`Could not save document(s): ${response.status}`);
   }
   const rows = (await response.json()) as ProjectDocumentRow[];
@@ -5018,12 +5044,21 @@ async function saveRestoredProjectDocuments(docs: ProjectDocument[], accessToken
     storage_provider: doc.storage === "Supabase Storage" ? "supabase_storage" : "browser",
     file_url: doc.storagePath ?? null,
     uploaded_at: doc.uploadedAt ?? new Date().toISOString(),
+    uploaded_by_email: doc.uploadedByEmail ?? null,
   }));
-  await fetch(supabaseUrl("project_documents?on_conflict=id"), {
+  const response = await fetch(supabaseUrl("project_documents?on_conflict=id"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok && response.status === 400) {
+    const fallbackPayload = payload.map(({ uploaded_by_email: _uploadedByEmail, ...doc }) => doc);
+    await fetch(supabaseUrl("project_documents?on_conflict=id"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(fallbackPayload),
+    });
+  }
 }
 
 // Purchase Orders (migration 032). Before this, the Purchasing page's

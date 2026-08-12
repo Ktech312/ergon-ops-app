@@ -20,6 +20,15 @@
   visible permission chips. Signed-in users can persist their role assignment.
 - Receiving and stock-adjustment modals are available from Inventory.
 - SKU scan/search entry is available for warehouse-style lookup.
+- Location Photos and Files now show exact timestamp and uploader identity in
+  list rows, galleries, and previews.
+- Project Documents now carry uploader email in app state and database payloads
+  once migration `068_project_document_upload_provenance.sql` is applied.
+- Reports has a dedicated Activity Ledger tab for inventory movement audit:
+  receive, transfer, build consume, build complete, adjust, retire/reactivate,
+  and undo.
+- Upload sections now visibly separate image-only Photos from document/CAD
+  Files or Project Documents.
 
 ## Database Foundation Added
 
@@ -41,6 +50,8 @@
 - `009_production_auth_records_and_rls.sql` adds authenticated app records and
   removes anonymous testing policies.
 - `010_user_role_assignments.sql` adds per-user production role assignments.
+- `068_project_document_upload_provenance.sql` adds uploader email tracking for
+  general project documents.
 
 ## Production Follow-Up Queue
 
@@ -51,3 +62,6 @@
 - Add barcode label printing and scanner-device testing.
 - Run real-device mobile testing for receiving, transfer, and planned-build
   flows.
+- Apply migration `068_project_document_upload_provenance.sql` in Supabase
+  Studio for the Ergon project before expecting old/new Project Document rows to
+  round-trip uploader email.

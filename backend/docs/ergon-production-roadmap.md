@@ -1838,6 +1838,19 @@ dropzones) are oversized and waste vertical/horizontal space. When doing UI
 passes, tighten these down: padding should feel intentional, not like filler.
 This applies sitewide, not just to the examples above.
 
+## Media And File Upload Rule (locked in per E, Aug 2026)
+
+- Photo Gallery / Photos sections are image-only.
+- Files and Project Documents are for PDF, Word, Excel/CSV, CAD, drawings, and
+  other reference documents.
+- Every uploaded image or file must visibly show upload date/time and uploader.
+- Location media already uses `uploaded_at` and `uploaded_by_email`.
+- Project Documents use `uploadedAt` / `uploadedByEmail` in the app and
+  `project_documents.uploaded_by_email` after migration
+  `068_project_document_upload_provenance.sql` is applied.
+- The image previewer supports wheel zoom, pinch zoom, and pan/drag; PDFs remain
+  in the browser PDF frame.
+
 ## Deferred Idea: Change Order Uploads (Aug 2026)
 
 The "Build Sales BOM and Scope" upload on a project's detail page was

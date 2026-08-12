@@ -1358,12 +1358,13 @@ function App() {
     try {
       const docs = await Promise.all(
         entries.map(async ({ doc, file }) => {
+          const stampedDoc = { ...doc, uploadedByEmail: doc.uploadedByEmail ?? authSession.email };
           if (!file) {
-            return doc;
+            return stampedDoc;
           }
           const storagePath = buildDocumentStoragePath(doc.project, doc.name);
           const uploaded = await uploadDocumentFile(file, storagePath, authSession.accessToken);
-          return uploaded ? { ...doc, storage: "Supabase Storage" as const, storagePath } : doc;
+          return uploaded ? { ...stampedDoc, storage: "Supabase Storage" as const, storagePath } : stampedDoc;
         }),
       );
       const created = await createProjectDocuments(docs, authSession.accessToken);
@@ -6124,11 +6125,14 @@ function Purchasing({
             status: "Ready to review" as const,
             type: "Procurement" as const,
             storage: "Browser" as const,
+            uploadedAt: "",
+            uploadedByEmail: "",
           }))).map((doc) => (
             <div className="document-row" key={`${doc.id}-${doc.name}`}>
               <div>
                 <strong>{doc.name}</strong>
                 <span>{doc.project}{doc.size ? ` - ${formatBytes(doc.size)}` : " - imported sample"}{doc.storage ? ` - ${doc.storage}` : ""}</span>
+                <small>{doc.id.startsWith("sample-") ? "Sample row from imported order data" : formatDocumentProvenance(doc as UploadedDoc)}</small>
               </div>
               <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])} disabled={doc.id.startsWith("sample-")}>
                 <option>Uploaded</option>
@@ -8096,8 +8100,13 @@ function Projects({
   }
 
   function handleProjectDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
+    const pickedFiles = Array.from(event.target.files ?? []);
+    const files = pickedFiles.filter(isAllowedLocationDocumentFile);
     if (!files.length) {
+      if (pickedFiles.length > 0) {
+        setActionStatus("Project Documents only accept PDF, Word, Excel/CSV, and CAD/reference files. Put pictures in the garage/lot Photos area.");
+      }
+      event.target.value = "";
       return;
     }
 
@@ -8114,7 +8123,10 @@ function Projects({
       file,
     }));
     onCreateDocuments(entries);
-    setActionStatus(`${files.length} document${files.length === 1 ? "" : "s"} attached to ${selectedProject.ref}.`);
+    setActionStatus(
+      `${files.length} document${files.length === 1 ? "" : "s"} attached to ${selectedProject.ref}.` +
+        (pickedFiles.length !== files.length ? " Image files were skipped; use garage/lot Photos for pictures." : ""),
+    );
     event.target.value = "";
   }
 
@@ -8276,8 +8288,12 @@ function Projects({
             </div>
             <label className="secondary-action mini-action project-doc-upload">
               <Upload size={15} /> Upload
-              <input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx,.csv" multiple onChange={handleProjectDocumentSelect} />
+              <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.dwg,.dxf,.rvt,.ifc,.step,.stp" multiple onChange={handleProjectDocumentSelect} />
             </label>
+          </div>
+          <div className="upload-rule-note">
+            <FileText size={15} />
+            <span>Project Documents are for PDF, Word, Excel/CSV, and CAD/reference files. Garage/lot pictures belong in Photos.</span>
           </div>
           <div className="project-doc-list">
             {selectedProjectDocuments.map((doc) => (
@@ -8285,6 +8301,7 @@ function Projects({
                 <div>
                   <strong>{doc.name}</strong>
                   <span>{doc.type ?? "Project"} - {doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.storage ?? "Browser"}</span>
+                  <small>{formatDocumentProvenance(doc)}</small>
                 </div>
                 <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
                   <option>Uploaded</option>
@@ -8728,7 +8745,7 @@ function Reports({
   projectDocuments: UploadedDoc[];
   searchFocus?: { term: string; token: number } | null;
 }) {
-  const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "projects" | "documents">("purchasing");
+  const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "activity" | "projects" | "documents">("purchasing");
   const [reportFilters, setReportFilters] = useState({ search: "", project: "All", vendor: "All", from: "", to: "" });
   useEffect(() => {
     if (!searchFocus) {
@@ -8900,6 +8917,28 @@ function Reports({
       return;
     }
 
+    if (reportTab === "activity") {
+      exportCsv(
+        `ergon-report-inventory-activity-${today}.csv`,
+        filteredInventoryMovements.map((movement) => ({
+          movement_id: movement.id,
+          date: movement.createdAt,
+          type: movement.type,
+          sku: movement.sku,
+          item: movement.itemName,
+          quantity: movement.quantity,
+          before: movement.quantityBefore,
+          after: movement.quantityAfter,
+          project: movement.projectName ?? "",
+          po: movement.poNumber ?? "",
+          build: movement.buildNumber ?? "",
+          source: movement.source,
+          notes: movement.notes,
+        })),
+      );
+      return;
+    }
+
     if (reportTab === "documents") {
       exportCsv(
         `ergon-report-documents-${today}.csv`,
@@ -8911,6 +8950,7 @@ function Reports({
           storage: doc.storage ?? "",
           size: doc.size,
           uploaded_at: doc.uploadedAt ?? "",
+          uploaded_by: doc.uploadedByEmail ?? "",
         })),
       );
       return;
@@ -8945,6 +8985,7 @@ function Reports({
           <button className={reportTab === "purchasing" ? "active" : ""} type="button" onClick={() => setReportTab("purchasing")}>Procurement</button>
           <button className={reportTab === "inventory" ? "active" : ""} type="button" onClick={() => setReportTab("inventory")}>Inventory</button>
           <button className={reportTab === "manufacturing" ? "active" : ""} type="button" onClick={() => setReportTab("manufacturing")}>Manufacturing</button>
+          <button className={reportTab === "activity" ? "active" : ""} type="button" onClick={() => setReportTab("activity")}>Activity Ledger</button>
           <button className={reportTab === "projects" ? "active" : ""} type="button" onClick={() => setReportTab("projects")}>Projects</button>
           <button className={reportTab === "documents" ? "active" : ""} type="button" onClick={() => setReportTab("documents")}>Documents</button>
         </div>
@@ -9113,6 +9154,27 @@ function Reports({
           {plannedBuildShortages.length === 0 && <div className="empty-compact-state">No planned build shortages currently found.</div>}
         </div>
       </section>}
+      {reportTab === "activity" && <section className="panel wide">
+        <PanelHeader title="Inventory Activity Ledger" label="Chronological stock movements across receiving, transfers, builds, adjustments, retirements, and undo actions" />
+        <div className="snapshot-grid">
+          <Metric icon={<ClipboardList size={20} />} label="Movements" value={String(filteredInventoryMovements.length)} />
+          <Metric icon={<Truck size={20} />} label="Receipts" value={String(filteredInventoryMovements.filter((movement) => movement.type === "receive").length)} />
+          <Metric icon={<Boxes size={20} />} label="Build Actions" value={String(filteredInventoryMovements.filter((movement) => movement.type.startsWith("build")).length)} />
+        </div>
+        <div className="report-table compact-report-table">
+          <div className="report-table-head"><span>Date</span><span>Movement</span><span>SKU / Item</span><span>Qty</span><span>Reference</span></div>
+          {filteredInventoryMovements.slice(0, 24).map((movement) => (
+            <div className="report-table-row" key={movement.id}>
+              <span>{new Date(movement.createdAt).toLocaleString()}</span>
+              <span><strong>{movement.type.replace("_", " ")}</strong><small>{movement.source}</small></span>
+              <span>{movement.sku}<small>{movement.itemName}</small></span>
+              <span>{movement.quantity}<small>{movement.quantityBefore} to {movement.quantityAfter}</small></span>
+              <span>{movement.projectName ?? movement.buildNumber ?? movement.poNumber ?? "No reference"}<small>{movement.notes}</small></span>
+            </div>
+          ))}
+          {filteredInventoryMovements.length === 0 && <div className="empty-compact-state">No inventory movements match the current filters.</div>}
+        </div>
+      </section>}
       {reportTab === "projects" && <section className="panel wide">
         <PanelHeader title="Project Allocation History" label="Every SKU movement tied to a project" />
         <div className="report-table compact-report-table">
@@ -9137,14 +9199,14 @@ function Reports({
           <Metric icon={<Upload size={20} />} label="Needs Review" value={String(projectDocuments.filter((doc) => doc.status === "Uploaded" || doc.status === "Ready to review").length)} />
         </div>
         <div className="report-table compact-report-table">
-          <div className="report-table-head"><span>Project</span><span>Document</span><span>Type</span><span>Status</span><span>Storage</span></div>
+          <div className="report-table-head"><span>Project</span><span>Document</span><span>Type</span><span>Status</span><span>Uploaded</span></div>
           {filteredProjectDocuments.slice(0, 16).map((doc) => (
             <div className="report-table-row" key={`${doc.id}-${doc.name}`}>
               <span>{doc.project}</span>
-              <span><strong>{doc.name}</strong><small>{doc.size ? formatBytes(doc.size) : "No file size saved"}</small></span>
+              <span><strong>{doc.name}</strong><small>{doc.size ? formatBytes(doc.size) : "No file size saved"} - {doc.storage ?? "Browser"}</small></span>
               <span>{doc.type ?? "Project"}</span>
               <span>{doc.status}</span>
-              <span>{doc.storage ?? "Browser"}<small>{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : ""}</small></span>
+              <span>{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : "No timestamp"}<small>{doc.uploadedByEmail || "Uploader not saved"}</small></span>
             </div>
           ))}
           {filteredProjectDocuments.length === 0 && <div className="empty-compact-state">No project documents match the current filters.</div>}
@@ -12038,7 +12100,7 @@ function formatImageProvenance(image: LocationImageLike): string {
   if (image.uploadedAt) {
     const date = new Date(image.uploadedAt);
     if (!Number.isNaN(date.getTime())) {
-      parts.push(date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }));
+      parts.push(date.toLocaleString());
     }
   }
   if (image.uploadedByEmail) {
@@ -12046,6 +12108,23 @@ function formatImageProvenance(image: LocationImageLike): string {
   }
   if (image.lat != null && image.lng != null) {
     parts.push(`${image.lat.toFixed(5)}, ${image.lng.toFixed(5)}`);
+  }
+  return parts.join(" -- ");
+}
+
+function formatDocumentProvenance(doc: UploadedDoc): string {
+  const parts: string[] = [];
+  if (doc.uploadedAt) {
+    const date = new Date(doc.uploadedAt);
+    if (!Number.isNaN(date.getTime())) {
+      parts.push(date.toLocaleString());
+    }
+  }
+  if (doc.uploadedByEmail) {
+    parts.push(`by ${doc.uploadedByEmail}`);
+  }
+  if (doc.storage) {
+    parts.push(doc.storage);
   }
   return parts.join(" -- ");
 }
@@ -12215,6 +12294,12 @@ function MediaPreviewModal({
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="Close preview">x</button>
         </div>
+        <div className="media-provenance-strip">
+          <span>{file.imageType === "photo" ? "Image" : "File"}</span>
+          <span>{file.uploadedAt ? new Date(file.uploadedAt).toLocaleString() : "No timestamp saved"}</span>
+          <span>{file.uploadedByEmail || "Uploader not saved"}</span>
+          {file.lat != null && file.lng != null && <span>{file.lat.toFixed(5)}, {file.lng.toFixed(5)}</span>}
+        </div>
         {!url && <p className="muted">Loading preview...</p>}
         {url && isPreviewablePdf(file.fileName) && <iframe src={url} className="file-preview-frame" title={file.fileName} />}
         {url && isPreviewableImage(file.fileName) && <ZoomablePreviewImage src={url} alt={file.fileName} />}
@@ -12326,6 +12411,10 @@ function LocationFilesModal({
             }}
           />
         </label>
+        <div className="upload-rule-note">
+          <FileText size={15} />
+          <span>Files stay separate from Photos. Every upload is stamped with date, time, and uploader.</span>
+        </div>
         {uploadError && <small className="error-text">{uploadError}</small>}
         <ul className="line-list location-file-list">
           {files.map((file) => (
@@ -12537,6 +12626,10 @@ function SiteGalleryModal({
           <button className="secondary-action mini-action" type="button" onClick={deleteSelected} disabled={selectedIds.size === 0 || isWorking}>
             {isWorking ? "Deleting..." : `Delete (${selectedIds.size})`}
           </button>
+        </div>
+        <div className="upload-rule-note">
+          <Image size={15} />
+          <span>Photo Gallery accepts image uploads only. PDFs, Word, Excel, and CAD files belong in Files so field photos stay clean.</span>
         </div>
 
         {loadingUrls && <p className="muted">Loading photos...</p>}

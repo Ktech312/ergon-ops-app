@@ -8,8 +8,9 @@ This file exists so the next developer can pick up backend setup without relying
 - Production app: `https://ergon-ops-app.vercel.app/`
 - Intended Supabase project id: `hnjxvsxsxoowhegcqurf`
 - Migration folder: `backend/supabase/migrations`
-- Current migration range in repo: `001_initial_ops_schema.sql` through `067_project_ref_auto_assign.sql`
+- Current migration range in repo: `001_initial_ops_schema.sql` through `068_project_document_upload_provenance.sql`
 - Recent migrations confirmed by the root handoff as applied: `066_sales_quote_ref_and_closed_at.sql` and `067_project_ref_auto_assign.sql`
+- New pending migration: `068_project_document_upload_provenance.sql` adds `project_documents.uploaded_by_email` so general project files follow the same who/when rule as garage/lot media.
 
 ## Critical warning
 
@@ -61,3 +62,13 @@ Use this only after confirming the selected Supabase project is Ergon, not VLTD.
 ## Next backend improvement
 
 Add an actual migration runner/pipeline so future schema changes are not manual. Until then, every PR or push that adds a migration must explicitly say which migration needs to be run in Supabase.
+
+## Upload Provenance Rule
+
+Every uploaded image or file must have:
+
+- Timestamp (`uploaded_at` / `uploadedAt`)
+- Uploader identity (`uploaded_by_email` / `uploadedByEmail`)
+- Clear separation between image galleries and document/file sections
+
+Photo galleries should accept image files only. PDF, Word, Excel/CSV, CAD, and other reference documents stay in Files or Project Documents.
