@@ -12,6 +12,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "formidable": "^3.5.4",
     "lucide-react": "^0.468.0",
+    "nodemailer": "^9.0.5",
     "pdf-parse": "^1.1.1",
     "pdfjs-dist": "^6.1.200",
     "react": "^19.0.0",
