@@ -3231,6 +3231,7 @@ tr:hover .row-delete-btn,
 
 .camera-capture-modal {
   max-width: 480px;
+  overscroll-behavior: contain;
 }
 
 .camera-capture-live,
@@ -3240,11 +3241,80 @@ tr:hover .row-delete-btn,
   gap: 12px;
 }
 
+.camera-viewport {
+  background: #000;
+  border-radius: 10px;
+  cursor: zoom-in;
+  max-height: 60vh;
+  overflow: hidden;
+  touch-action: none;
+  width: 100%;
+}
+
 .camera-capture-video {
   background: #000;
   border-radius: 10px;
+  display: block;
   max-height: 60vh;
+  object-fit: contain;
   width: 100%;
+}
+
+.camera-zoom-toolbar {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 7px 8px;
+}
+
+.camera-zoom-toolbar > span {
+  color: #514b43;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.camera-zoom-toolbar > div {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.camera-zoom-toolbar strong {
+  color: #1b1a18;
+  font-size: 12px;
+  min-width: 42px;
+  text-align: center;
+}
+
+.camera-lens-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.camera-lens-row button {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 6px;
+  color: #514b43;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 900;
+  min-height: 30px;
+  padding: 0 8px;
+}
+
+.camera-lens-row button.active {
+  background: #0f5a4d;
+  border-color: #0f5a4d;
+  color: #fffdf9;
 }
 
 .camera-capture-shutter {
@@ -3334,6 +3404,33 @@ tr:hover .row-delete-btn,
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .camera-capture-modal {
+    max-height: 92vh;
+    width: calc(100vw - 20px);
+  }
+
+  .camera-viewport,
+  .camera-capture-video {
+    max-height: 52vh;
+  }
+
+  .camera-zoom-toolbar {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .camera-zoom-toolbar > div {
+    justify-content: space-between;
+  }
+
+  .camera-zoom-toolbar .icon-button {
+    height: 40px;
+    width: 40px;
+  }
 }
 
 .inventory-editor-hero {

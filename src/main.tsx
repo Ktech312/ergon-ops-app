@@ -11748,6 +11748,38 @@ type LocationLike = {
   images: LocationImageLike[];
 };
 
+type CameraLensOption = {
+  deviceId: string;
+  label: string;
+  lensType: "main" | "ultra-wide" | "unknown";
+};
+
+type CameraZoomCapability = { min?: number; max?: number; step?: number };
+
+type ZoomableVideoTrack = MediaStreamTrack & {
+  getCapabilities?: () => MediaTrackCapabilities & { zoom?: CameraZoomCapability };
+  getSettings?: () => MediaTrackSettings & { zoom?: number };
+};
+
+function classifyCameraLens(label: string): CameraLensOption["lensType"] {
+  const normalized = label.toLowerCase();
+  if (/(ultra[\s-]?wide|0\.5x|0,5x|wide angle|back triple|back dual)/i.test(normalized)) {
+    return "ultra-wide";
+  }
+  if (/(back|rear|environment|main|wide)/i.test(normalized)) {
+    return "main";
+  }
+  return "unknown";
+}
+
+function chooseMainCamera(lenses: CameraLensOption[]) {
+  return lenses.find((lens) => lens.lensType === "main") ?? lenses.find((lens) => lens.lensType === "unknown") ?? lenses[0] ?? null;
+}
+
+function chooseUltraWideCamera(lenses: CameraLensOption[]) {
+  return lenses.find((lens) => lens.lensType === "ultra-wide") ?? null;
+}
+
 // Best-effort GPS: the whole point of this photo capture flow is parking
 // garages/structures, where indoor GPS is often weak or unavailable -- so
 // this always resolves (never rejects the caller), just with null coords if
@@ -11792,7 +11824,24 @@ function CameraCaptureModal({
   const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [cameraLenses, setCameraLenses] = useState<CameraLensOption[]>([]);
+  const [activeLensId, setActiveLensId] = useState("");
+  const [cameraZoom, setCameraZoom] = useState(1);
+  const [cameraZoomRange, setCameraZoomRange] = useState({ min: 1, max: 1, step: 0.1 });
+  const [cameraLensStatus, setCameraLensStatus] = useState("Camera zoom stays inside this viewer.");
   const coordsRef = useRef<{ lat: number; lng: number } | null>(null);
+  const cameraZoomRef = useRef(1);
+  const activeLensIdRef = useRef("");
+  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
+  const pointerEventsRef = useRef<Map<number, PointerEvent>>(new Map());
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
 
   useEffect(() => {
     if (phase !== "camera" || coordsRef.current) {
@@ -11806,42 +11855,169 @@ function CameraCaptureModal({
     });
   }, [phase]);
 
-  useEffect(() => {
-    if (phase !== "camera") {
-      return;
+  function stopCamera() {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }
+
+  async function loadCameraLenses() {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      return [];
     }
-    let cancelled = false;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoInputs = devices.filter((device) => device.kind === "videoinput");
+    const rearInputs = videoInputs.filter((device) => /(back|rear|environment|wide|ultra)/i.test(device.label));
+    const candidates = rearInputs.length ? rearInputs : videoInputs;
+    const lenses = candidates.map((device, index) => ({
+      deviceId: device.deviceId,
+      label: device.label || `Camera ${index + 1}`,
+      lensType: classifyCameraLens(device.label),
+    }));
+    setCameraLenses(lenses);
+    return lenses;
+  }
+
+  function applyZoomToCurrentTrack(nextZoom: number) {
+    const track = streamRef.current?.getVideoTracks()[0] as ZoomableVideoTrack | undefined;
+    const capabilities = track?.getCapabilities?.() as (MediaTrackCapabilities & { zoom?: CameraZoomCapability }) | undefined;
+    const zoomCapability = capabilities?.zoom;
+    if (!track || !zoomCapability) {
+      setCameraLensStatus(cameraLenses.length > 1 ? "This browser exposes multiple lenses, but not hardware zoom controls." : "Hardware zoom is controlled by this phone/browser.");
+      return false;
+    }
+    const min = zoomCapability.min ?? 1;
+    const max = zoomCapability.max ?? Math.max(1, nextZoom);
+    const clamped = Math.min(max, Math.max(min, nextZoom));
+    track.applyConstraints({ advanced: [{ zoom: clamped } as MediaTrackConstraintSet] }).catch(() => undefined);
+    cameraZoomRef.current = clamped;
+    setCameraZoom(clamped);
+    setCameraZoomRange({ min, max, step: zoomCapability.step ?? 0.1 });
+    return true;
+  }
+
+  async function startCamera(deviceId?: string, requestedZoom = cameraZoomRef.current) {
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraError("This browser can't access the camera directly. Use the file picker below instead.");
       return;
     }
-    navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: "environment" }, audio: false })
-      .then((stream) => {
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCameraError("Could not access the camera (permission denied or unavailable). Use the file picker below instead.");
-        }
+    stopCamera();
+    setCameraError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "environment" },
+        audio: false,
       });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      const lenses = await loadCameraLenses();
+      const track = stream.getVideoTracks()[0] as ZoomableVideoTrack | undefined;
+      const settings = track?.getSettings?.();
+      const activeDeviceId = settings?.deviceId || deviceId || "";
+      activeLensIdRef.current = activeDeviceId;
+      setActiveLensId(activeDeviceId);
+      const zoomApplied = applyZoomToCurrentTrack(requestedZoom);
+      const activeLens = lenses.find((lens) => lens.deviceId === activeDeviceId);
+      setCameraLensStatus(
+        activeLens?.lensType === "ultra-wide"
+          ? "Ultra-wide camera active. Pinch or wheel in to return to the main lens when available."
+          : lenses.some((lens) => lens.lensType === "ultra-wide")
+            ? "Main camera active. Pinch or wheel out past minimum to use ultra-wide if exposed."
+            : zoomApplied
+              ? "Pinch or mouse wheel to zoom inside the camera viewer."
+              : "This phone/browser handles camera zoom automatically.",
+      );
+    } catch {
+      setCameraError("Could not access the camera (permission denied or unavailable). Use the file picker below instead.");
+    }
+  }
+
+  useEffect(() => {
+    if (phase !== "camera") {
+      return;
+    }
+    void startCamera(activeLensIdRef.current || undefined);
     return () => {
-      cancelled = true;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+      stopCamera();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
-  function stopCamera() {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
+  async function switchLens(target: CameraLensOption, requestedZoom: number) {
+    activeLensIdRef.current = target.deviceId;
+    setActiveLensId(target.deviceId);
+    cameraZoomRef.current = requestedZoom;
+    setCameraZoom(requestedZoom);
+    await startCamera(target.deviceId, requestedZoom);
+  }
+
+  function getPointerDistanceFromMap() {
+    const [first, second] = Array.from(pointerEventsRef.current.values());
+    if (!first || !second) {
+      return 0;
+    }
+    return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+  }
+
+  async function requestCameraZoom(nextZoom: number) {
+    const mainLens = chooseMainCamera(cameraLenses);
+    const ultraWideLens = chooseUltraWideCamera(cameraLenses);
+    const activeLens = cameraLenses.find((lens) => lens.deviceId === activeLensIdRef.current) ?? null;
+    const min = cameraZoomRange.min;
+    const max = cameraZoomRange.max;
+
+    if (nextZoom < min && ultraWideLens && activeLens?.deviceId !== ultraWideLens.deviceId) {
+      await switchLens(ultraWideLens, 1);
+      return;
+    }
+
+    if (nextZoom > 1.15 && mainLens && activeLens?.lensType === "ultra-wide") {
+      await switchLens(mainLens, 1);
+      return;
+    }
+
+    const clamped = Math.min(max, Math.max(min, nextZoom));
+    cameraZoomRef.current = clamped;
+    setCameraZoom(clamped);
+    applyZoomToCurrentTrack(clamped);
+  }
+
+  function handleCameraWheel(event: React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    void requestCameraZoom(cameraZoomRef.current + (event.deltaY > 0 ? -0.16 : 0.16));
+  }
+
+  function handleCameraPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerEventsRef.current.set(event.pointerId, event.nativeEvent);
+    if (pointerEventsRef.current.size === 2) {
+      pinchRef.current = { distance: getPointerDistanceFromMap(), zoom: cameraZoomRef.current };
+    }
+  }
+
+  function handleCameraPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!pointerEventsRef.current.has(event.pointerId)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    pointerEventsRef.current.set(event.pointerId, event.nativeEvent);
+    if (pointerEventsRef.current.size === 2 && pinchRef.current) {
+      const startDistance = pinchRef.current.distance || getPointerDistanceFromMap();
+      const nextDistance = getPointerDistanceFromMap();
+      if (startDistance > 0 && nextDistance > 0) {
+        void requestCameraZoom(pinchRef.current.zoom * (nextDistance / startDistance));
+      }
+    }
+  }
+
+  function handleCameraPointerEnd(event: React.PointerEvent<HTMLDivElement>) {
+    pointerEventsRef.current.delete(event.pointerId);
+    if (pointerEventsRef.current.size < 2) {
+      pinchRef.current = null;
+    }
   }
 
   function capturePhoto() {
@@ -12019,7 +12195,42 @@ function CameraCaptureModal({
               </div>
             ) : (
               <>
-                <video ref={videoRef} className="camera-capture-video" autoPlay playsInline muted />
+                <div
+                  className="camera-viewport"
+                  onWheel={handleCameraWheel}
+                  onPointerDown={handleCameraPointerDown}
+                  onPointerMove={handleCameraPointerMove}
+                  onPointerUp={handleCameraPointerEnd}
+                  onPointerCancel={handleCameraPointerEnd}
+                >
+                  <video ref={videoRef} className="camera-capture-video" autoPlay playsInline muted />
+                </div>
+                <div className="camera-zoom-toolbar">
+                  <span>{cameraLensStatus}</span>
+                  <div>
+                    <button className="icon-button" type="button" onClick={() => void requestCameraZoom(cameraZoomRef.current - 0.5)} aria-label="Zoom out">
+                      <ZoomOut size={16} />
+                    </button>
+                    <strong>{Math.round(cameraZoom * 100)}%</strong>
+                    <button className="icon-button" type="button" onClick={() => void requestCameraZoom(cameraZoomRef.current + 0.5)} aria-label="Zoom in">
+                      <ZoomIn size={16} />
+                    </button>
+                  </div>
+                </div>
+                {cameraLenses.length > 1 && (
+                  <div className="camera-lens-row" aria-label="Camera lens selector">
+                    {cameraLenses.map((lens) => (
+                      <button
+                        className={lens.deviceId === activeLensId ? "active" : ""}
+                        type="button"
+                        key={lens.deviceId}
+                        onClick={() => void switchLens(lens, 1)}
+                      >
+                        {lens.lensType === "ultra-wide" ? "0.5x" : lens.lensType === "main" ? "1x" : "Cam"} {lens.label.replace(/\s*\([^)]*\)/g, "").slice(0, 24)}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <button className="primary-action camera-capture-shutter" type="button" onClick={capturePhoto}>
                   <Camera size={20} /> Capture
                 </button>
