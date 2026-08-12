@@ -83,6 +83,14 @@ Deployment expectation:
 - Verify Vercel production after push.
 - Report the production result, not local-only status.
 
+Setup handoff:
+
+- Read `HANDOFF.md` first in any new session.
+- Supabase-specific setup notes live in
+  `backend/docs/supabase-production-handoff.md`.
+- Do not run Ergon migrations in the VLTD Supabase project. VLTD is a separate
+  app and must stay separate from this chat/project.
+
 ## Naming And Terms
 
 Use these terms consistently:
@@ -1797,8 +1805,10 @@ In order:
 
 Before calling this production-ready for team use:
 
-- [x] Supabase migrations `001` through `012` applied (Ergon project
+- [x] Supabase migrations `001` through `067` reported applied (Ergon project
       `hnjxvsxsxoowhegcqurf`).
+- [ ] Before any future database work, verify Supabase Studio is showing the
+      Ergon project, not VLTD.
 - [x] Vercel env vars configured:
   - `VITE_SUPABASE_URL`
   - `VITE_SUPABASE_ANON_KEY`

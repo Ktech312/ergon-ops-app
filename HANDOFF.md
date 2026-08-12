@@ -1,8 +1,17 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-08-11 (commit `d88f373`)
+Last updated: 2026-08-12
 
 Purpose: carry context between chat sessions. Read this first in any new session before making changes.
+
+## Current setup truth
+- Do not use, import from, migrate against, or reference VLTD. VLTD is a separate project. If Supabase Studio or Vercel shows VLTD selected, switch away before touching anything for Ergon.
+- The live user-facing target is Vercel production: `https://ergon-ops-app.vercel.app/`.
+- The intended Ergon Supabase project id is `hnjxvsxsxoowhegcqurf`.
+- Repo migrations currently exist from `001_initial_ops_schema.sql` through `067_project_ref_auto_assign.sql`.
+- GitHub/Vercel deploys app code. It does not automatically apply Supabase SQL migrations. Supabase setup remains separate unless a migration pipeline is added.
+- Current handoff says migrations `066` and `067` were run successfully, but any future developer should verify the actual Ergon Supabase project before claiming database setup is complete.
+- Dedicated setup handoff: `backend/docs/supabase-production-handoff.md`.
 
 ## Standing rules (always in force)
 - Build things completely and correctly. Flag genuinely ambiguous requests instead of guessing.
