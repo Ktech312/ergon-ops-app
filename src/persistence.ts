@@ -5347,11 +5347,18 @@ export type SalesQuoteBomLine = {
 
 export type SalesQuote = {
   id: string;
+  // Migration 066: stable "SQ-2026-0001" reference, assigned once at
+  // creation (server-side, via a trigger) -- same convention as Projects'
+  // PRJ-#### refs.
+  quoteRef: string;
   clientName: string;
   siteName: string;
   city: string;
   createdByEmail: string;
   createdAt: string;
+  // Migration 066: set when status moves to closed_won/closed_lost, cleared
+  // if reopened to "open". Empty string means never closed (or reopened).
+  closedAt: string;
   // Deal status -- only "closed_won" quotes are offered as a BOM source
   // when a PM builds a Project (see main.tsx's "Pull BOM from Closed
   // Sales"). Defaults to "open" for every quote until someone marks it.
@@ -5439,11 +5446,13 @@ type SalesQuoteBomLineRow = {
 
 type SalesQuoteRow = {
   id: string;
+  quote_ref: string | null;
   client_name: string;
   site_name: string;
   city: string | null;
   created_by_email: string | null;
   created_at: string;
+  closed_at: string | null;
   status: string | null;
   sales_quote_locations: SalesQuoteLocationRow[];
   sales_quote_bom_lines: SalesQuoteBomLineRow[];
@@ -5525,11 +5534,13 @@ function mapSalesQuoteBomLineRow(row: SalesQuoteBomLineRow): SalesQuoteBomLine {
 function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
   return {
     id: row.id,
+    quoteRef: row.quote_ref ?? "",
     clientName: row.client_name,
     siteName: row.site_name,
     city: row.city ?? "",
     createdByEmail: row.created_by_email ?? "",
     createdAt: row.created_at,
+    closedAt: row.closed_at ?? "",
     status: (row.status as SalesQuote["status"]) ?? "open",
     locations: (row.sales_quote_locations ?? [])
       .map(mapSalesQuoteLocationRow)
@@ -5551,7 +5562,7 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
 }
 
 const SALES_QUOTE_SELECT =
-  "id,client_name,site_name,city,created_by_email,created_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
+  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5621,11 +5632,12 @@ export async function createSalesQuote(
   if (!quoteResponse.ok) {
     throw new Error(`Could not save the quote: ${quoteResponse.status}`);
   }
-  const quoteRows = (await quoteResponse.json()) as Array<{ id: string }>;
+  const quoteRows = (await quoteResponse.json()) as Array<{ id: string; quote_ref: string | null }>;
   const quoteId = quoteRows[0]?.id;
   if (!quoteId) {
     return null;
   }
+  const quoteRef = quoteRows[0]?.quote_ref ?? "";
 
   const garageCount = Math.max(0, Math.floor(input.garageCount) || 0);
   const lotCount = Math.max(0, Math.floor(input.lotCount) || 0);
@@ -5651,11 +5663,13 @@ export async function createSalesQuote(
 
   return {
     id: quoteId,
+    quoteRef,
     clientName: input.clientName,
     siteName: input.siteName,
     city: input.city,
     createdByEmail: input.createdByEmail,
     createdAt: new Date().toISOString(),
+    closedAt: "",
     status: "open",
     locations: locationRows.map((row) => mapSalesQuoteLocationRow({ ...row, sales_quote_location_images: [], sales_quote_location_items: [] })),
     bomLines: [],
@@ -5674,14 +5688,14 @@ export async function createSalesQuote(
   };
 }
 
-export async function updateSalesQuoteStatus(id: string, status: SalesQuote["status"], accessToken?: string): Promise<void> {
+export async function updateSalesQuoteStatus(id: string, status: SalesQuote["status"], closedAt: string | null, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, closed_at: closedAt }),
   });
 }
 

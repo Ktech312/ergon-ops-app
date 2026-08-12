@@ -1150,6 +1150,15 @@ td small {
   margin-top: 3px;
 }
 
+td small.quote-ref-tag {
+  color: #a01029;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  margin-top: 0;
+  text-transform: uppercase;
+}
+
 .part-cell-layout {
   align-items: start;
   display: grid;

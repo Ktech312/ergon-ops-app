@@ -2147,8 +2147,12 @@ function App() {
     if (!authSession) {
       return;
     }
-    setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, status } : entry)));
-    await updateSalesQuoteStatus(quoteId, status, authSession.accessToken);
+    // Any move into a closed state (re)stamps closedAt to now; reopening to
+    // "open" clears it. This is what the Sales metric row's "Closed This
+    // Year" and "Est. Profit (YTD)" filter on.
+    const closedAt = status === "open" ? null : new Date().toISOString();
+    setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, status, closedAt: closedAt ?? "" } : entry)));
+    await updateSalesQuoteStatus(quoteId, status, closedAt, authSession.accessToken);
   }
 
   async function handleDeleteSalesQuote(quoteId: string) {
@@ -10359,8 +10363,39 @@ function SalesHome({
   // this is purely "what's still open, across Sales, for a quick reference."
   const combinedSalesTasks = tasks.filter((task) => task.section === "sales_catalog" || task.section === "sales_quotes");
 
+  const currentYear = new Date().getFullYear();
+  const openQuoteCount = salesQuotes.filter((quote) => quote.status === "open").length;
+  const closedThisYearQuotes = salesQuotes.filter(
+    (quote) => quote.status !== "open" && quote.closedAt && new Date(quote.closedAt).getFullYear() === currentYear,
+  );
+  const catalogItemById = new Map(catalogItems.map((item) => [item.id, item]));
+  // Estimated profit only counts BOM lines linked to a real Product Catalog
+  // item (unit cost x markup are known there) -- free-text lines like
+  // "Project Management Hours" have no cost data to estimate from, so they
+  // contribute $0 rather than being guessed at.
+  const estimatedProfitYtd = salesQuotes
+    .filter((quote) => quote.status === "closed_won" && quote.closedAt && new Date(quote.closedAt).getFullYear() === currentYear)
+    .reduce((quoteSum, quote) => {
+      const quoteProfit = quote.bomLines.reduce((lineSum, line) => {
+        const catalogItem = line.catalogItemId ? catalogItemById.get(line.catalogItemId) : undefined;
+        if (!catalogItem) {
+          return lineSum;
+        }
+        const profitPerUnit = catalogItem.unitCost * (catalogItem.markupPercent / 100);
+        return lineSum + profitPerUnit * line.qty;
+      }, 0);
+      return quoteSum + quoteProfit;
+    }, 0);
+
   return (
     <div className="content-grid">
+      <section className="metric-grid">
+        <Metric icon={<ClipboardList size={20} />} label="Quotes" value={String(salesQuotes.length)} />
+        <Metric icon={<FolderOpen size={20} />} label="Open" value={String(openQuoteCount)} />
+        <Metric icon={<ListChecks size={20} />} label="Closed This Year" value={String(closedThisYearQuotes.length)} />
+        <Metric icon={<DollarSign size={20} />} label="Est. Profit (YTD)" value={money(estimatedProfitYtd)} />
+      </section>
+
       <TaskMiniPanel
         title="Sales Tasks"
         tasks={combinedSalesTasks}
@@ -12890,7 +12925,7 @@ function SalesQuoteBuilder({
                     const taskPillLabel = quoteTasks.length === 0 ? "No tasks" : openCount > 0 ? `${openCount} open` : "All done";
                     return (
                       <tr key={quote.id} className="table-row-clickable" onClick={() => openQuote(quote.id)}>
-                        <td><strong>{quote.siteName}</strong><small>{quote.clientName}</small></td>
+                        <td>{quote.quoteRef && <small className="quote-ref-tag">{quote.quoteRef}</small>}<strong>{quote.siteName}</strong><small>{quote.clientName}</small></td>
                         <td>{quote.city || "-"}</td>
                         <td>{quote.createdByEmail ? assigneeLabel(quote.createdByEmail, teamMembers) : "-"}</td>
                         <td>{quote.locations.length}</td>
@@ -12929,6 +12964,7 @@ function SalesQuoteBuilder({
           <div className="panel-title-row">
             <div>
               <button className="secondary-action mini-action" type="button" onClick={backToList}>&larr; Back to quotes</button>
+              {selectedQuote.quoteRef && <div className="locked-ref-inline"><span>Ref</span><strong>{selectedQuote.quoteRef}</strong></div>}
               <h2>{selectedQuote.siteName}</h2>
               <p>
                 {selectedQuote.clientName} - {selectedQuote.city || "No city set"} - Started by {selectedQuote.createdByEmail || "Unknown"}
