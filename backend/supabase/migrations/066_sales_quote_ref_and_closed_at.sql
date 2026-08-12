@@ -16,6 +16,20 @@ create table if not exists sales_quote_ref_counters (
   next_seq integer not null default 1
 );
 
+-- Same "authenticated, fully open" policy shape every other internal table
+-- in this schema uses (e.g. project_locations) -- there's nothing
+-- user-specific in here, it's just an internal counter, but it still needs
+-- RLS enabled with a policy rather than left off entirely, since the
+-- trigger below runs as the calling user (not a privileged role) and would
+-- otherwise get blocked from incrementing it.
+alter table sales_quote_ref_counters enable row level security;
+
+create policy "authenticated read sales_quote_ref_counters"
+  on sales_quote_ref_counters for select to authenticated using (true);
+
+create policy "authenticated write sales_quote_ref_counters"
+  on sales_quote_ref_counters for all to authenticated using (true) with check (true);
+
 alter table sales_quotes add column if not exists quote_ref text;
 alter table sales_quotes add column if not exists closed_at timestamptz;
 
