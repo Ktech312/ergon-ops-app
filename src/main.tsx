@@ -59,6 +59,8 @@ import {
   deleteProjectLocationItem,
   addProjectLocationImage,
   updateProjectLocationImageDescription,
+  updateProjectLocationImageMeta,
+  moveProjectLocationImage,
   deleteProjectLocationImage,
   getProjectLocationImageDownloadUrl,
   createProjectFromClosedWonQuote,
@@ -193,6 +195,8 @@ import {
   updatePurchaseRequestRemote,
   updateSalesQuoteLocation,
   updateSalesQuoteLocationImageDescription,
+  updateSalesQuoteLocationImageMeta,
+  moveSalesQuoteLocationImage,
   deleteSalesQuoteLocationImage,
   updateTask,
   updateTaskHardwareDependencyStatus,
@@ -2274,6 +2278,14 @@ function App() {
     if (!authSession) {
       return false;
     }
+    if (imageType === "photo" && !isAllowedPhotoFile(file)) {
+      window.alert("Photos only accept image files. Use Files for PDF, Word, Excel, CAD, and other documents.");
+      return false;
+    }
+    if (imageType === "drawing" && !isAllowedLocationDocumentFile(file)) {
+      window.alert("Files only accept documents and CAD/reference files. Use Photos for uploaded pictures.");
+      return false;
+    }
     const image = await addSalesQuoteLocationImage(locationId, imageType, file, authSession.accessToken, description, authSession.email, coords ?? null);
     if (image) {
       setSalesQuotes((current) =>
@@ -2337,6 +2349,67 @@ function App() {
       ),
     );
     await updateSalesQuoteLocationImageDescription(imageId, description, authSession.accessToken);
+  }
+
+  async function handleUpdateSalesQuoteImageMeta(
+    quoteId: string,
+    locationId: string,
+    imageId: string,
+    updates: Partial<{ fileName: string; description: string }>,
+  ): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    setSalesQuotes((current) =>
+      current.map((entry) =>
+        entry.id === quoteId
+          ? {
+              ...entry,
+              locations: entry.locations.map((location) =>
+                location.id === locationId
+                  ? {
+                      ...location,
+                      images: location.images.map((image) =>
+                        image.id === imageId
+                          ? { ...image, fileName: updates.fileName ?? image.fileName, description: updates.description ?? image.description }
+                          : image,
+                      ),
+                    }
+                  : location,
+              ),
+            }
+          : entry,
+      ),
+    );
+    return updateSalesQuoteLocationImageMeta(imageId, updates, authSession.accessToken);
+  }
+
+  async function handleMoveSalesQuoteImage(quoteId: string, fromLocationId: string, imageId: string, targetLocationId: string): Promise<boolean> {
+    if (!authSession || fromLocationId === targetLocationId) {
+      return false;
+    }
+    const quote = salesQuotes.find((entry) => entry.id === quoteId);
+    const movingImage = quote?.locations.find((location) => location.id === fromLocationId)?.images.find((image) => image.id === imageId);
+    if (!movingImage) {
+      return false;
+    }
+    setSalesQuotes((current) =>
+      current.map((entry) =>
+        entry.id === quoteId
+          ? {
+              ...entry,
+              locations: entry.locations.map((location) =>
+                location.id === fromLocationId
+                  ? { ...location, images: location.images.filter((image) => image.id !== imageId) }
+                  : location.id === targetLocationId
+                    ? { ...location, images: [...location.images, movingImage] }
+                    : location,
+              ),
+            }
+          : entry,
+      ),
+    );
+    return moveSalesQuoteLocationImage(imageId, targetLocationId, authSession.accessToken);
   }
 
   async function handleDeleteSalesQuoteImage(quoteId: string, locationId: string, imageId: string, storagePath: string): Promise<boolean> {
@@ -2515,6 +2588,14 @@ function App() {
     if (!authSession) {
       return false;
     }
+    if (imageType === "photo" && !isAllowedPhotoFile(file)) {
+      window.alert("Photos only accept image files. Use Files for PDF, Word, Excel, CAD, and other documents.");
+      return false;
+    }
+    if (imageType === "drawing" && !isAllowedLocationDocumentFile(file)) {
+      window.alert("Files only accept documents and CAD/reference files. Use Photos for uploaded pictures.");
+      return false;
+    }
     const image = await addProjectLocationImage(locationId, imageType, file, authSession.accessToken, description, authSession.email, coords ?? null);
     if (image) {
       setProjectSites((current) =>
@@ -2548,6 +2629,67 @@ function App() {
       ),
     );
     await updateProjectLocationImageDescription(imageId, description, authSession.accessToken);
+  }
+
+  async function handleUpdateProjectLocationImageMeta(
+    projectRef: string,
+    locationId: string,
+    imageId: string,
+    updates: Partial<{ fileName: string; description: string }>,
+  ): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    setProjectSites((current) =>
+      current.map((entry) =>
+        entry.ref === projectRef
+          ? {
+              ...entry,
+              locations: (entry.locations ?? []).map((location) =>
+                location.id === locationId
+                  ? {
+                      ...location,
+                      images: location.images.map((image) =>
+                        image.id === imageId
+                          ? { ...image, fileName: updates.fileName ?? image.fileName, description: updates.description ?? image.description }
+                          : image,
+                      ),
+                    }
+                  : location,
+              ),
+            }
+          : entry,
+      ),
+    );
+    return updateProjectLocationImageMeta(imageId, updates, authSession.accessToken);
+  }
+
+  async function handleMoveProjectLocationImage(projectRef: string, fromLocationId: string, imageId: string, targetLocationId: string): Promise<boolean> {
+    if (!authSession || fromLocationId === targetLocationId) {
+      return false;
+    }
+    const project = projectSites.find((entry) => entry.ref === projectRef);
+    const movingImage = project?.locations?.find((location) => location.id === fromLocationId)?.images.find((image) => image.id === imageId);
+    if (!movingImage) {
+      return false;
+    }
+    setProjectSites((current) =>
+      current.map((entry) =>
+        entry.ref === projectRef
+          ? {
+              ...entry,
+              locations: (entry.locations ?? []).map((location) =>
+                location.id === fromLocationId
+                  ? { ...location, images: location.images.filter((image) => image.id !== imageId) }
+                  : location.id === targetLocationId
+                    ? { ...location, images: [...location.images, movingImage] }
+                    : location,
+              ),
+            }
+          : entry,
+      ),
+    );
+    return moveProjectLocationImage(imageId, targetLocationId, authSession.accessToken);
   }
 
   async function handleDeleteProjectLocationImage(projectRef: string, locationId: string, imageId: string, storagePath: string): Promise<boolean> {
@@ -5004,7 +5146,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItemQty={handleUpdateProjectLocationItemQty} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onDetailContextChange={setProjectDetailContext} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItemQty={handleUpdateProjectLocationItemQty} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onDetailContextChange={setProjectDetailContext} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -5054,6 +5196,8 @@ function App() {
             onGenerateBaselineBomForQuote={handleGenerateBaselineBomForQuote}
             onUploadSalesQuoteImage={handleUploadSalesQuoteImage}
             onUpdateSalesQuoteImageDescription={handleUpdateSalesQuoteImageDescription}
+            onUpdateSalesQuoteImageMeta={handleUpdateSalesQuoteImageMeta}
+            onMoveSalesQuoteImage={handleMoveSalesQuoteImage}
             onDownloadSalesQuoteImage={handleDownloadSalesQuoteImage}
             onDeleteSalesQuoteImage={handleDeleteSalesQuoteImage}
             onGetSalesQuoteImageUrl={handleGetSalesQuoteImageUrl}
@@ -7414,6 +7558,8 @@ function Projects({
   onDeleteProjectLocationImage,
   onGetProjectLocationImageUrl,
   onUpdateProjectLocationImageDescription,
+  onUpdateProjectLocationImageMeta,
+  onMoveProjectLocationImage,
   onDetailContextChange,
 }: {
   projectSites: ProjectSite[];
@@ -7467,6 +7613,8 @@ function Projects({
   onDeleteProjectLocationImage: (projectRef: string, locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
   onGetProjectLocationImageUrl: (image: ProjectLocationImage) => Promise<string | null>;
   onUpdateProjectLocationImageDescription: (projectRef: string, locationId: string, imageId: string, description: string) => void;
+  onUpdateProjectLocationImageMeta: (projectRef: string, locationId: string, imageId: string, updates: { fileName: string; description: string }) => Promise<boolean>;
+  onMoveProjectLocationImage: (projectRef: string, fromLocationId: string, imageId: string, targetLocationId: string) => Promise<boolean>;
   onDetailContextChange?: (info: { name: string; ref: string } | null) => void;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
@@ -8060,6 +8208,8 @@ function Projects({
             siteName={galleryProject.name}
             locations={galleryProject.locations ?? []}
             onGetUrl={onGetProjectLocationImageUrl}
+            onUpdate={(locationId, image, updates) => onUpdateProjectLocationImageMeta(galleryProject.ref, locationId, image.id, updates)}
+            onMove={(locationId, image, targetLocationId) => onMoveProjectLocationImage(galleryProject.ref, locationId, image.id, targetLocationId)}
             onDelete={(locationId, image) => onDeleteProjectLocationImage(galleryProject.ref, locationId, image.id, image.storagePath)}
             onClose={() => setGalleryProjectName(null)}
           />
@@ -8210,6 +8360,8 @@ function Projects({
         onDeleteImage={(locationId, imageId, storagePath) => onDeleteProjectLocationImage(selectedProject.ref, locationId, imageId, storagePath)}
         onGetImageUrl={onGetProjectLocationImageUrl}
         onUpdateImageDescription={(locationId, imageId, description) => onUpdateProjectLocationImageDescription(selectedProject.ref, locationId, imageId, description)}
+        onUpdateImageMeta={(locationId, imageId, updates) => onUpdateProjectLocationImageMeta(selectedProject.ref, locationId, imageId, updates)}
+        onMoveImage={(locationId, imageId, targetLocationId) => onMoveProjectLocationImage(selectedProject.ref, locationId, imageId, targetLocationId)}
       />
 
       <section className="panel full submittals-panel">
@@ -10299,6 +10451,8 @@ function SalesHome({
   onGenerateBaselineBomForQuote,
   onUploadSalesQuoteImage,
   onUpdateSalesQuoteImageDescription,
+  onUpdateSalesQuoteImageMeta,
+  onMoveSalesQuoteImage,
   onDownloadSalesQuoteImage,
   onDeleteSalesQuoteImage,
   onGetSalesQuoteImageUrl,
@@ -10384,6 +10538,8 @@ function SalesHome({
     coords?: { lat: number; lng: number } | null,
   ) => Promise<boolean>;
   onUpdateSalesQuoteImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
+  onUpdateSalesQuoteImageMeta: (quoteId: string, locationId: string, imageId: string, updates: { fileName: string; description: string }) => Promise<boolean>;
+  onMoveSalesQuoteImage: (quoteId: string, fromLocationId: string, imageId: string, targetLocationId: string) => Promise<boolean>;
   onDownloadSalesQuoteImage: (image: SalesQuoteLocationImage) => void;
   onDeleteSalesQuoteImage: (quoteId: string, locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
   onGetSalesQuoteImageUrl: (image: SalesQuoteLocationImage) => Promise<string | null>;
@@ -10529,6 +10685,8 @@ function SalesHome({
         onDownloadImage={onDownloadSalesQuoteImage}
         onDeleteImage={onDeleteSalesQuoteImage}
         onGetImageUrl={onGetSalesQuoteImageUrl}
+        onUpdateImageMeta={onUpdateSalesQuoteImageMeta}
+        onMoveImage={onMoveSalesQuoteImage}
         siteHardwareRules={siteHardwareRules}
         projectSites={projectSites}
         tasks={tasks}
@@ -11486,6 +11644,21 @@ function sanitizePhotoNameSegment(value: string): string {
   return value.replace(/[\\/:*?"<>|]+/g, "-").trim();
 }
 
+const DOCUMENT_UPLOAD_EXTENSIONS = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".dwg", ".dxf", ".rvt", ".ifc", ".step", ".stp"];
+
+function extensionOfFileName(fileName: string): string {
+  const match = fileName.toLowerCase().match(/\.[^.]+$/);
+  return match ? match[0] : "";
+}
+
+function isAllowedPhotoFile(file: File): boolean {
+  return file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|svg)$/i.test(file.name);
+}
+
+function isAllowedLocationDocumentFile(file: File): boolean {
+  return !isAllowedPhotoFile(file) && DOCUMENT_UPLOAD_EXTENSIONS.includes(extensionOfFileName(file.name));
+}
+
 // Structural "Like" shapes -- SalesQuoteLocationImage/Location and
 // ProjectLocationImage/Location are separate types (different tables), but
 // identical in shape for everything these shared UI components need, so one
@@ -11639,6 +11812,11 @@ function CameraCaptureModal({
   function handleFilePicked(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (file) {
+      if (!isAllowedPhotoFile(file)) {
+        window.alert("Photos only accept image files. Use Files for PDF, Word, Excel, CAD, and other documents.");
+        event.target.value = "";
+        return;
+      }
       const previewUrl = URL.createObjectURL(file);
       setPhotos((current) => [...current, { id: makeId("photo"), blob: file, previewUrl, name: "" }]);
       if (!batchMode) {
@@ -11869,28 +12047,92 @@ function formatImageProvenance(image: LocationImageLike): string {
   return parts.join(" -- ");
 }
 
-function FilePreviewModal({
-  fileName,
+function MediaPreviewModal({
+  file,
   url,
+  locations,
+  currentLocationId,
+  onSave,
+  onMove,
   onClose,
 }: {
-  fileName: string;
+  file: LocationImageLike;
   url: string | null;
+  locations: LocationLike[];
+  currentLocationId: string;
+  onSave: (updates: { fileName: string; description: string }) => Promise<boolean> | boolean;
+  onMove: (targetLocationId: string) => Promise<boolean> | boolean;
   onClose: () => void;
 }) {
+  const [fileNameDraft, setFileNameDraft] = useState(file.fileName);
+  const [descriptionDraft, setDescriptionDraft] = useState(file.description);
+  const [targetLocationId, setTargetLocationId] = useState(currentLocationId);
+  const [status, setStatus] = useState("");
+  const isPhoto = file.imageType === "photo";
+
+  async function handleSave() {
+    setStatus("Saving...");
+    const ok = await onSave({ fileName: fileNameDraft, description: descriptionDraft });
+    setStatus(ok ? "Saved." : "Could not save changes.");
+  }
+
+  async function handleMove() {
+    if (targetLocationId === currentLocationId) {
+      return;
+    }
+    const target = locations.find((location) => location.id === targetLocationId);
+    if (!window.confirm(`Move "${file.fileName}" to ${target?.name || "the selected location"}?`)) {
+      return;
+    }
+    setStatus("Moving...");
+    const ok = await onMove(targetLocationId);
+    setStatus(ok ? "Moved." : "Could not move file.");
+    if (ok) {
+      onClose();
+    }
+  }
+
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="file-preview-title">
         <div className="modal-header">
-          <h2 id="file-preview-title">{fileName}</h2>
+          <div>
+            <h2 id="file-preview-title">{file.fileName}</h2>
+            <p>{isPhoto ? "Photo preview" : "File preview"}</p>
+          </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="Close preview">x</button>
         </div>
         {!url && <p className="muted">Loading preview...</p>}
-        {url && isPreviewablePdf(fileName) && <iframe src={url} className="file-preview-frame" title={fileName} />}
-        {url && isPreviewableImage(fileName) && <img src={url} alt={fileName} className="file-preview-image" />}
-        {url && !isPreviewablePdf(fileName) && !isPreviewableImage(fileName) && (
+        {url && isPreviewablePdf(file.fileName) && <iframe src={url} className="file-preview-frame" title={file.fileName} />}
+        {url && isPreviewableImage(file.fileName) && <img src={url} alt={file.fileName} className="file-preview-image" />}
+        {url && !isPreviewablePdf(file.fileName) && !isPreviewableImage(file.fileName) && (
           <p className="empty-compact-state">Preview isn't available for this file type -- use Download instead.</p>
         )}
+        <div className="media-preview-editor">
+          <label>
+            File name
+            <input value={fileNameDraft} onChange={(event) => setFileNameDraft(event.target.value)} />
+          </label>
+          <label>
+            Notes
+            <textarea rows={3} value={descriptionDraft} onChange={(event) => setDescriptionDraft(event.target.value)} placeholder="Add notes for this image/file..." />
+          </label>
+          <label>
+            Move to garage/lot
+            <select value={targetLocationId} onChange={(event) => setTargetLocationId(event.target.value)}>
+              {locations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.name || (location.locationType === "garage" ? "Garage" : "Lot")}
+                </option>
+              ))}
+            </select>
+          </label>
+          {status && <small className="muted">{status}</small>}
+          <div className="modal-actions">
+            <button className="secondary-action" type="button" onClick={handleSave}>Save details</button>
+            <button className="primary-action" type="button" disabled={targetLocationId === currentLocationId} onClick={handleMove}>Move</button>
+          </div>
+        </div>
       </section>
     </div>
   );
@@ -11898,24 +12140,33 @@ function FilePreviewModal({
 
 function LocationFilesModal({
   locationName,
+  locationId,
+  locations,
   files,
   onUpload,
   onDownload,
   onDelete,
   onGetUrl,
+  onUpdate,
+  onMove,
   onClose,
 }: {
   locationName: string;
+  locationId: string;
+  locations: LocationLike[];
   files: LocationImageLike[];
   onUpload: (file: File) => void;
   onDownload: (image: LocationImageLike) => void;
   onDelete: (image: LocationImageLike) => Promise<boolean>;
   onGetUrl: (image: LocationImageLike) => Promise<string | null>;
+  onUpdate: (image: LocationImageLike, updates: { fileName: string; description: string }) => Promise<boolean> | boolean;
+  onMove: (image: LocationImageLike, targetLocationId: string) => Promise<boolean> | boolean;
   onClose: () => void;
 }) {
   const [deletingId, setDeletingId] = useState("");
   const [previewFile, setPreviewFile] = useState<LocationImageLike | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState("");
 
   async function handleDelete(image: LocationImageLike) {
     if (!window.confirm(`Delete "${image.fileName}"? This can't be undone.`)) {
@@ -11947,16 +12198,22 @@ function LocationFilesModal({
           <Upload size={14} /> Upload file
           <input
             type="file"
-            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.dwg,.dxf,.rvt,.ifc,.step,.stp"
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) {
-                onUpload(file);
+                if (isAllowedLocationDocumentFile(file)) {
+                  setUploadError("");
+                  onUpload(file);
+                } else {
+                  setUploadError("Files accepts PDF, Word, Excel/CSV, and CAD/reference files only. Put pictures in Photos.");
+                }
               }
               event.target.value = "";
             }}
           />
         </label>
+        {uploadError && <small className="error-text">{uploadError}</small>}
         <ul className="line-list">
           {files.map((file) => (
             <li className="line-item" key={file.id}>
@@ -11983,7 +12240,15 @@ function LocationFilesModal({
         </div>
       </section>
       {previewFile && (
-        <FilePreviewModal fileName={previewFile.fileName} url={previewUrl} onClose={() => setPreviewFile(null)} />
+        <MediaPreviewModal
+          file={previewFile}
+          url={previewUrl}
+          locations={locations}
+          currentLocationId={locationId}
+          onSave={(updates) => onUpdate(previewFile, updates)}
+          onMove={(targetLocationId) => onMove(previewFile, targetLocationId)}
+          onClose={() => setPreviewFile(null)}
+        />
       )}
     </div>
   );
@@ -11998,12 +12263,16 @@ function SiteGalleryModal({
   siteName,
   locations,
   onGetUrl,
+  onUpdate,
+  onMove,
   onDelete,
   onClose,
 }: {
   siteName: string;
   locations: LocationLike[];
   onGetUrl: (image: LocationImageLike) => Promise<string | null>;
+  onUpdate: (locationId: string, image: LocationImageLike, updates: { fileName: string; description: string }) => Promise<boolean> | boolean;
+  onMove: (fromLocationId: string, image: LocationImageLike, targetLocationId: string) => Promise<boolean> | boolean;
   onDelete: (locationId: string, image: LocationImageLike) => Promise<boolean>;
   onClose: () => void;
 }) {
@@ -12011,6 +12280,7 @@ function SiteGalleryModal({
   const [loadingUrls, setLoadingUrls] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isWorking, setIsWorking] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{ locationId: string; image: LocationImageLike } | null>(null);
 
   const groups = locations
     .map((location) => ({ location, photos: location.images.filter((image) => image.imageType === "photo") }))
@@ -12134,20 +12404,38 @@ function SiteGalleryModal({
               <span className="modal-section-title">{location.name || (location.locationType === "garage" ? "Garage" : "Lot")}</span>
               <div className="site-gallery-grid">
                 {photos.map((photo) => (
-                  <label className={`site-gallery-item ${selectedIds.has(photo.id) ? "selected" : ""}`} key={photo.id}>
-                    <input type="checkbox" checked={selectedIds.has(photo.id)} onChange={() => toggleSelected(photo.id)} />
+                  <div className={`site-gallery-item ${selectedIds.has(photo.id) ? "selected" : ""}`} key={photo.id}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(photo.id)}
+                      onChange={() => toggleSelected(photo.id)}
+                      onClick={(event) => event.stopPropagation()}
+                    />
                     {urlsByImageId[photo.id] ? (
-                      <img src={urlsByImageId[photo.id]} alt={photo.description || photo.fileName} />
+                      <button className="site-gallery-preview-button" type="button" onClick={() => setPreviewFile({ locationId: location.id, image: photo })}>
+                        <img src={urlsByImageId[photo.id]} alt={photo.description || photo.fileName} />
+                      </button>
                     ) : (
                       <div className="site-gallery-item-fallback">No preview</div>
                     )}
                     {photo.description && <span className="site-gallery-caption">{photo.description}</span>}
                     <span className="site-gallery-caption muted">{formatImageProvenance(photo)}</span>
-                  </label>
+                  </div>
                 ))}
               </div>
             </div>
           ))}
+        {previewFile && (
+          <MediaPreviewModal
+            file={previewFile.image}
+            url={urlsByImageId[previewFile.image.id] ?? null}
+            locations={locations}
+            currentLocationId={previewFile.locationId}
+            onSave={(updates) => onUpdate(previewFile.locationId, previewFile.image, updates)}
+            onMove={(targetLocationId) => onMove(previewFile.locationId, previewFile.image, targetLocationId)}
+            onClose={() => setPreviewFile(null)}
+          />
+        )}
       </section>
     </div>
   );
@@ -12252,6 +12540,8 @@ function ProjectLocationsSection({
   onDeleteImage,
   onGetImageUrl,
   onUpdateImageDescription,
+  onUpdateImageMeta,
+  onMoveImage,
 }: {
   project: ProjectSite;
   catalogItems: CatalogItem[];
@@ -12272,6 +12562,8 @@ function ProjectLocationsSection({
   onDeleteImage: (locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
   onGetImageUrl: (image: ProjectLocationImage) => Promise<string | null>;
   onUpdateImageDescription: (locationId: string, imageId: string, description: string) => void;
+  onUpdateImageMeta: (locationId: string, imageId: string, updates: { fileName: string; description: string }) => Promise<boolean>;
+  onMoveImage: (fromLocationId: string, imageId: string, targetLocationId: string) => Promise<boolean>;
 }) {
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [cameraLocationId, setCameraLocationId] = useState<string | null>(null);
@@ -12526,11 +12818,15 @@ function ProjectLocationsSection({
       {filesLocationId && (
         <LocationFilesModal
           locationName={locations.find((location) => location.id === filesLocationId)?.name || "this location"}
+          locationId={filesLocationId}
+          locations={locations}
           files={locations.find((location) => location.id === filesLocationId)?.images.filter((image) => image.imageType === "drawing") ?? []}
           onUpload={(file) => onUploadImage(filesLocationId, "drawing", file)}
           onDownload={onDownloadImage}
           onDelete={(image) => onDeleteImage(filesLocationId, image.id, image.storagePath)}
           onGetUrl={onGetImageUrl}
+          onUpdate={(image, updates) => onUpdateImageMeta(filesLocationId, image.id, updates)}
+          onMove={(image, targetLocationId) => onMoveImage(filesLocationId, image.id, targetLocationId)}
           onClose={() => setFilesLocationId(null)}
         />
       )}
@@ -12540,6 +12836,8 @@ function ProjectLocationsSection({
           siteName={project.name}
           locations={locations}
           onGetUrl={onGetImageUrl}
+          onUpdate={(locationId, image, updates) => onUpdateImageMeta(locationId, image.id, updates)}
+          onMove={(locationId, image, targetLocationId) => onMoveImage(locationId, image.id, targetLocationId)}
           onDelete={(locationId, image) => onDeleteImage(locationId, image.id, image.storagePath)}
           onClose={() => setShowGallery(false)}
         />
@@ -12709,6 +13007,8 @@ function SalesQuoteBuilder({
   onDownloadImage,
   onDeleteImage,
   onGetImageUrl,
+  onUpdateImageMeta,
+  onMoveImage,
   siteHardwareRules,
   projectSites,
   tasks,
@@ -12774,6 +13074,8 @@ function SalesQuoteBuilder({
     coords?: { lat: number; lng: number } | null,
   ) => Promise<boolean>;
   onUpdateImageDescription: (quoteId: string, locationId: string, imageId: string, description: string) => void;
+  onUpdateImageMeta: (quoteId: string, locationId: string, imageId: string, updates: { fileName: string; description: string }) => Promise<boolean>;
+  onMoveImage: (quoteId: string, fromLocationId: string, imageId: string, targetLocationId: string) => Promise<boolean>;
   onDownloadImage: (image: SalesQuoteLocationImage) => void;
   onDeleteImage: (quoteId: string, locationId: string, imageId: string, storagePath: string) => Promise<boolean>;
   onGetImageUrl: (image: SalesQuoteLocationImage) => Promise<string | null>;
@@ -13541,11 +13843,15 @@ function SalesQuoteBuilder({
       {filesLocationId && selectedQuote && (
         <LocationFilesModal
           locationName={selectedQuote.locations.find((location) => location.id === filesLocationId)?.name || "this location"}
+          locationId={filesLocationId}
+          locations={selectedQuote.locations}
           files={selectedQuote.locations.find((location) => location.id === filesLocationId)?.images.filter((image) => image.imageType === "drawing") ?? []}
           onUpload={(file) => onUploadImage(selectedQuote.id, filesLocationId, "drawing", file)}
           onDownload={onDownloadImage}
           onDelete={(image) => onDeleteImage(selectedQuote.id, filesLocationId, image.id, image.storagePath)}
           onGetUrl={onGetImageUrl}
+          onUpdate={(image, updates) => onUpdateImageMeta(selectedQuote.id, filesLocationId, image.id, updates)}
+          onMove={(image, targetLocationId) => onMoveImage(selectedQuote.id, filesLocationId, image.id, targetLocationId)}
           onClose={() => setFilesLocationId(null)}
         />
       )}
@@ -13555,6 +13861,8 @@ function SalesQuoteBuilder({
           siteName={selectedQuote.siteName}
           locations={selectedQuote.locations}
           onGetUrl={onGetImageUrl}
+          onUpdate={(locationId, image, updates) => onUpdateImageMeta(selectedQuote.id, locationId, image.id, updates)}
+          onMove={(locationId, image, targetLocationId) => onMoveImage(selectedQuote.id, locationId, image.id, targetLocationId)}
           onDelete={(locationId, image) => onDeleteImage(selectedQuote.id, locationId, image.id, image.storagePath)}
           onClose={() => setShowSiteGallery(false)}
         />
@@ -15257,4 +15565,3 @@ createRoot(document.getElementById("root")!).render(
     )}
   </StrictMode>
 );
-

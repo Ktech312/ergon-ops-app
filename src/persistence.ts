@@ -6200,6 +6200,40 @@ export async function updateSalesQuoteLocationImageDescription(imageId: string, 
   return response.ok;
 }
 
+export async function updateSalesQuoteLocationImageMeta(
+  imageId: string,
+  updates: Partial<{ fileName: string; description: string }>,
+  accessToken?: string,
+): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const payload: Record<string, string | null> = {};
+  if (updates.fileName !== undefined) payload.file_name = updates.fileName.trim() || null;
+  if (updates.description !== undefined) payload.description = updates.description.trim() || null;
+  if (Object.keys(payload).length === 0) {
+    return true;
+  }
+  const response = await fetch(supabaseUrl(`sales_quote_location_images?id=eq.${imageId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+  return response.ok;
+}
+
+export async function moveSalesQuoteLocationImage(imageId: string, targetLocationId: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !targetLocationId) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`sales_quote_location_images?id=eq.${imageId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ quote_location_id: targetLocationId }),
+  });
+  return response.ok;
+}
+
 // Used by both the per-location Files viewer and the site-wide Photo
 // Gallery's bulk-delete -- removes the storage object first (best-effort;
 // a missing/already-gone object shouldn't block clearing the DB row) then
@@ -6411,6 +6445,40 @@ export async function updateProjectLocationImageDescription(imageId: string, des
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ description: description || null }),
+  });
+  return response.ok;
+}
+
+export async function updateProjectLocationImageMeta(
+  imageId: string,
+  updates: Partial<{ fileName: string; description: string }>,
+  accessToken?: string,
+): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const payload: Record<string, string | null> = {};
+  if (updates.fileName !== undefined) payload.file_name = updates.fileName.trim() || null;
+  if (updates.description !== undefined) payload.description = updates.description.trim() || null;
+  if (Object.keys(payload).length === 0) {
+    return true;
+  }
+  const response = await fetch(supabaseUrl(`project_location_images?id=eq.${imageId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+  return response.ok;
+}
+
+export async function moveProjectLocationImage(imageId: string, targetLocationId: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !targetLocationId) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`project_location_images?id=eq.${imageId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ project_location_id: targetLocationId }),
   });
   return response.ok;
 }
