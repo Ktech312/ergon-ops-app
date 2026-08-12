@@ -166,6 +166,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   refreshAuthSession,
+  requestPasswordReset,
   resolveInventoryItemIdBySku,
   resolveProjectId,
   respondToPublicSubmittal,
@@ -194,6 +195,7 @@ import {
   updateHandoverResponses,
   updateNotificationRule,
   updateProjectDocumentStatusRemote,
+  updatePasswordWithRecovery,
   updatePurchaseOrderStatus,
   updatePurchaseRequestRemote,
   updateSalesQuoteLocation,
@@ -980,6 +982,9 @@ function App() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authStatus, setAuthStatus] = useState("Sign in to use production cloud persistence.");
+  const [passwordResetSession, setPasswordResetSession] = useState<AuthSession | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => (isRemotePersistenceConfigured() ? "loading" : "local"));
   const [isAdmin, setIsAdmin] = useState(false);
   const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
@@ -1052,6 +1057,13 @@ function App() {
     consumeOAuthRedirectSession()
       .then(async (session) => {
         if (session && !cancelled) {
+          if (session.authFlow === "recovery") {
+            setPasswordResetSession(session);
+            setAuthSession(null);
+            setAuthStatus("Enter a new password to finish the reset.");
+            setSyncStatus("auth");
+            return;
+          }
           // If this Google sign-in was reached from the invite landing page
           // (see InviteLandingPage's "Continue with Google" button, which
           // stashes the token before the redirect), finish accepting the
@@ -4860,6 +4872,50 @@ function App() {
     }
   }
 
+  async function handleRequestPasswordReset(emailOverride?: string) {
+    const email = (emailOverride ?? authEmail).trim();
+    if (!email) {
+      setAuthStatus("Enter an email first, then request a password reset.");
+      return;
+    }
+    try {
+      await requestPasswordReset(email);
+      setAuthStatus(`Password reset link sent to ${email}. Check email on that device.`);
+    } catch (error) {
+      setAuthStatus(error instanceof Error ? error.message : "Could not send password reset.");
+      setSyncStatus("error");
+    }
+  }
+
+  async function handleFinishPasswordReset() {
+    if (!passwordResetSession) {
+      setAuthStatus("This password reset link is no longer active. Request a new one.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setAuthStatus("New password must be at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setAuthStatus("New passwords do not match.");
+      return;
+    }
+    try {
+      await updatePasswordWithRecovery(passwordResetSession.accessToken, newPassword);
+      setPasswordResetSession(null);
+      setNewPassword("");
+      setConfirmNewPassword("");
+      await signOut(passwordResetSession);
+      setAuthSession(null);
+      setAuthEmail(passwordResetSession.email);
+      setAuthStatus("Password updated. Sign in with the new password.");
+      setSyncStatus("auth");
+    } catch (error) {
+      setAuthStatus(error instanceof Error ? error.message : "Could not update password.");
+      setSyncStatus("error");
+    }
+  }
+
   async function handleSignUp() {
     try {
       const session = await signUpWithPassword(authEmail.trim(), authPassword);
@@ -4886,6 +4942,36 @@ function App() {
 
   const requiresSignIn = isRemotePersistenceConfigured() && !authSession;
 
+  if (passwordResetSession) {
+    return (
+      <div className="auth-gate">
+        <div className="auth-gate-card">
+          <img className="auth-gate-logo" src="/ergon-logo.png" alt="Ergon" />
+          <h2>Reset password</h2>
+          <p className="muted">Set a new password for {passwordResetSession.email}.</p>
+          <label className="auth-gate-field">New password<input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="New password" type="password" autoComplete="new-password" /></label>
+          <label className="auth-gate-field">Confirm password<input value={confirmNewPassword} onChange={(event) => setConfirmNewPassword(event.target.value)} placeholder="Confirm password" type="password" autoComplete="new-password" /></label>
+          <div className="auth-gate-actions">
+            <button className="primary-action" type="button" onClick={handleFinishPasswordReset} disabled={!newPassword || !confirmNewPassword}>Update password</button>
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={() => {
+                setPasswordResetSession(null);
+                setNewPassword("");
+                setConfirmNewPassword("");
+                setAuthStatus("Password reset canceled.");
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <small className="auth-gate-status">{authStatus}</small>
+        </div>
+      </div>
+    );
+  }
+
   if (requiresSignIn) {
     return (
       <div className="auth-gate">
@@ -4899,6 +4985,9 @@ function App() {
             <button className="primary-action" type="button" onClick={handleSignIn} disabled={!authEmail || !authPassword}>Sign in</button>
             <button className="secondary-action" type="button" onClick={handleSignUp} disabled={!authEmail || !authPassword}>Create user</button>
           </div>
+          <button className="link-button auth-reset-link" type="button" onClick={() => handleRequestPasswordReset()} disabled={!authEmail.trim()}>
+            Forgot password?
+          </button>
           <div className="auth-gate-divider">or</div>
           <button className="secondary-action auth-gate-google" type="button" onClick={handleGoogleSignIn}>Sign in with Google</button>
           <small className="auth-gate-status">{authStatus}</small>
@@ -5058,6 +5147,7 @@ function App() {
                     {authSession ? (
                       <>
                         <span>{authSession.email}</span>
+                        <button className="secondary-action mini-action" type="button" onClick={() => handleRequestPasswordReset(authSession.email)}>Reset password</button>
                         <button className="secondary-action mini-action" type="button" onClick={handleSignOut}>Sign out</button>
                       </>
                     ) : (
@@ -5066,6 +5156,7 @@ function App() {
                         <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Password" type="password" />
                         <button className="secondary-action mini-action" type="button" onClick={handleSignIn} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Sign in</button>
                         <button className="secondary-action mini-action" type="button" onClick={handleSignUp} disabled={!isRemotePersistenceConfigured() || !authEmail || !authPassword}>Create user</button>
+                        <button className="secondary-action mini-action" type="button" onClick={() => handleRequestPasswordReset()} disabled={!isRemotePersistenceConfigured() || !authEmail.trim()}>Reset password</button>
                         <button className="secondary-action mini-action" type="button" onClick={handleGoogleSignIn} disabled={!isRemotePersistenceConfigured()}>Sign in with Google</button>
                       </>
                     )}
@@ -5303,6 +5394,7 @@ function App() {
             onSendInvite={handleSendInvite}
             onResendInvite={handleResendInvite}
             onRevokeInvite={handleRevokeInvite}
+            onSendPasswordReset={(email) => handleRequestPasswordReset(email)}
             proposalTemplateSections={proposalTemplateSections}
             onUpdateProposalTemplateSection={handleUpdateProposalTemplateSection}
             onRefresh={() => {
@@ -9593,6 +9685,7 @@ function AdminPage({
   onSendInvite,
   onResendInvite,
   onRevokeInvite,
+  onSendPasswordReset,
   proposalTemplateSections,
   onUpdateProposalTemplateSection,
 }: {
@@ -9660,6 +9753,7 @@ function AdminPage({
   onSendInvite: (input: { email: string; fullName: string; primaryRole: string; secondaryRoles: string[] }) => void;
   onResendInvite: (invite: UserInvite) => void;
   onRevokeInvite: (id: string) => void;
+  onSendPasswordReset: (email: string) => void;
   proposalTemplateSections: ProposalTemplateSection[];
   onUpdateProposalTemplateSection: (id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) => void;
 }) {
@@ -10336,6 +10430,7 @@ function AdminPage({
                 <th>Role</th>
                 <th>Tab access</th>
                 <th>Admin</th>
+                <th>Password</th>
                 <th>Approval</th>
                 <th>Last seen</th>
               </tr>
@@ -10427,6 +10522,11 @@ function AdminPage({
                       )}
                     </td>
                     <td>
+                      <button className="secondary-action mini-action" type="button" onClick={() => onSendPasswordReset(user.email)}>
+                        Send reset
+                      </button>
+                    </td>
+                    <td>
                       {approval?.approvalStatus ?? "-"}
                       {approval?.expiresAt ? ` (until ${new Date(approval.expiresAt).toLocaleDateString()})` : ""}
                       {approval?.approvalStatus === "approved" && approval.expiresAt && (
@@ -10446,7 +10546,7 @@ function AdminPage({
               })}
               {knownUsers.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="empty-compact-state">
+                  <td colSpan={7} className="empty-compact-state">
                     No users have signed in yet. Users appear here automatically the first time they sign in.
                   </td>
                 </tr>

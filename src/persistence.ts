@@ -18,6 +18,7 @@ export type AuthSession = {
   expiresAt: number;
   email: string;
   userId: string;
+  authFlow?: string;
 };
 
 const LOCAL_STATE_KEY = "ergon:app-state:v1";
@@ -191,6 +192,37 @@ export function signInWithGoogleRedirect() {
   window.location.assign(authorizeUrl);
 }
 
+export async function requestPasswordReset(email: string) {
+  if (!isRemotePersistenceConfigured()) {
+    throw new Error("Supabase is not configured.");
+  }
+  const redirectTo = `${window.location.origin}${window.location.pathname}`;
+  const response = await fetch(`${supabaseAuthUrl("recover")}?redirect_to=${encodeURIComponent(redirectTo)}`, {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ email }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Password reset failed"));
+  }
+}
+
+export async function updatePasswordWithRecovery(accessToken: string, password: string) {
+  if (!isRemotePersistenceConfigured()) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseAuthUrl("user"), {
+    method: "PUT",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ password }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Password update failed"));
+  }
+}
+
 async function fetchAuthUser(accessToken: string): Promise<{ id: string; email: string } | null> {
   const response = await fetch(supabaseAuthUrl("user"), {
     headers: supabaseHeaders(accessToken),
@@ -237,6 +269,7 @@ export async function consumeOAuthRedirectSession(): Promise<AuthSession | null>
   const accessToken = params.get("access_token");
   const refreshToken = params.get("refresh_token");
   const expiresIn = params.get("expires_in");
+  const authFlow = params.get("type") || undefined;
   const errorDescription = params.get("error_description") || params.get("error") || params.get("error_code");
 
   // Always clear the token fragment so tokens do not sit in browser history.
@@ -261,9 +294,12 @@ export async function consumeOAuthRedirectSession(): Promise<AuthSession | null>
     expiresAt: Date.now() + Math.max(60, Number(expiresIn) || 3600) * 1000,
     email: user.email,
     userId: user.id,
+    authFlow,
   };
 
-  saveAuthSession(session);
+  if (authFlow !== "recovery") {
+    saveAuthSession(session);
+  }
   return session;
 }
 
