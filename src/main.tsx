@@ -66,6 +66,7 @@ import {
   createPurchaseRequestRemote,
   createSalesQuote,
   updateSalesQuoteStatus,
+  deleteSalesQuote,
   updateSalesQuoteProposalFields,
   addSalesQuoteBomLines,
   deleteSalesQuoteBomLine,
@@ -2148,6 +2149,13 @@ function App() {
     }
     setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, status } : entry)));
     await updateSalesQuoteStatus(quoteId, status, authSession.accessToken);
+  }
+
+  async function handleDeleteSalesQuote(quoteId: string) {
+    setSalesQuotes((current) => current.filter((entry) => entry.id !== quoteId));
+    if (authSession) {
+      await deleteSalesQuote(quoteId, authSession.accessToken);
+    }
   }
 
   // Shared by the manual "add line" form and the Pre-Sales Quick Estimate
@@ -5019,6 +5027,7 @@ function App() {
             onDeleteSalesQuoteLocationItem={handleDeleteSalesQuoteLocationItem}
             onPullLocationHardwareIntoQuoteBom={handlePullLocationHardwareIntoQuoteBom}
             onUpdateSalesQuoteStatus={handleUpdateSalesQuoteStatus}
+            onDeleteSalesQuote={handleDeleteSalesQuote}
             onCreateProjectFromClosedWonQuote={handleCreateProjectFromClosedWonQuote}
             onAddSalesQuoteBomLines={handleAddSalesQuoteBomLines}
             onDeleteSalesQuoteBomLine={handleDeleteSalesQuoteBomLine}
@@ -10226,6 +10235,7 @@ function SalesHome({
   onDeleteSalesQuoteLocationItem,
   onPullLocationHardwareIntoQuoteBom,
   onUpdateSalesQuoteStatus,
+  onDeleteSalesQuote,
   onCreateProjectFromClosedWonQuote,
   onAddSalesQuoteBomLines,
   onDeleteSalesQuoteBomLine,
@@ -10300,6 +10310,7 @@ function SalesHome({
   onDeleteSalesQuoteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onPullLocationHardwareIntoQuoteBom: (quoteId: string) => void;
   onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => void;
+  onDeleteSalesQuote: (quoteId: string) => void;
   onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectSite | null>;
   onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
@@ -10398,6 +10409,7 @@ function SalesHome({
         onDeleteLocationItem={onDeleteSalesQuoteLocationItem}
         onPullLocationHardware={onPullLocationHardwareIntoQuoteBom}
         onUpdateStatus={onUpdateSalesQuoteStatus}
+        onDeleteQuote={onDeleteSalesQuote}
         onCreateProjectFromClosedWonQuote={onCreateProjectFromClosedWonQuote}
         onAddBomLines={onAddSalesQuoteBomLines}
         onDeleteBomLine={onDeleteSalesQuoteBomLine}
@@ -12577,6 +12589,7 @@ function SalesQuoteBuilder({
   onDeleteLocationItem,
   onPullLocationHardware,
   onUpdateStatus,
+  onDeleteQuote,
   onCreateProjectFromClosedWonQuote,
   onAddBomLines,
   onDeleteBomLine,
@@ -12634,6 +12647,7 @@ function SalesQuoteBuilder({
   onDeleteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onPullLocationHardware: (quoteId: string) => void;
   onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => void;
+  onDeleteQuote: (quoteId: string) => void;
   onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectSite | null>;
   onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
@@ -12866,7 +12880,7 @@ function SalesQuoteBuilder({
               {status && <small className="muted">{status}</small>}
               <table>
                 <thead>
-                  <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th>Status</th><th>Tasks</th></tr>
+                  <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th>Status</th><th>Tasks</th><th></th></tr>
                 </thead>
                 <tbody>
                   {salesQuotes.map((quote) => {
@@ -12878,15 +12892,30 @@ function SalesQuoteBuilder({
                       <tr key={quote.id} className="table-row-clickable" onClick={() => openQuote(quote.id)}>
                         <td><strong>{quote.siteName}</strong><small>{quote.clientName}</small></td>
                         <td>{quote.city || "-"}</td>
-                        <td>{quote.createdByEmail || "-"}</td>
+                        <td>{quote.createdByEmail ? assigneeLabel(quote.createdByEmail, teamMembers) : "-"}</td>
                         <td>{quote.locations.length}</td>
                         <td><span className={`status ${quote.status === "closed_won" ? "ok" : quote.status === "closed_lost" ? "" : "warn"}`}>{quote.status === "closed_won" ? "Closed - Won" : quote.status === "closed_lost" ? "Closed - Lost" : "Open"}</span></td>
                         <td><span className={taskPillClass}>{taskPillLabel}</span></td>
+                        <td className="row-delete-cell">
+                          <button
+                            className="icon-button compact-remove row-delete-btn"
+                            type="button"
+                            title="Delete site"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (window.confirm(`Delete "${quote.siteName}"? This removes all of its garages/lots, photos, files, and BOM lines, and unlinks (but doesn't delete) any tasks tied to it. This can't be undone.`)) {
+                                onDeleteQuote(quote.id);
+                              }
+                            }}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
                   {salesQuotes.length === 0 && (
-                    <tr><td colSpan={6} className="empty-compact-state">No sites yet. New Site to start scoping one.</td></tr>
+                    <tr><td colSpan={7} className="empty-compact-state">No sites yet. New Site to start scoping one.</td></tr>
                   )}
                 </tbody>
               </table>

@@ -5685,6 +5685,22 @@ export async function updateSalesQuoteStatus(id: string, status: SalesQuote["sta
   });
 }
 
+// Deletes the whole Site/Quote. All of its locations, location
+// images/items, BOM lines, proposals, and intake responses cascade-delete
+// with it (on delete cascade). Any tasks linked via quote_id just lose that
+// link (on delete set null) -- their history is kept. If this quote was
+// already converted to a Project, the Project keeps existing as its own
+// record (projects.source_sales_quote_id also on delete set null).
+export async function deleteSalesQuote(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+}
+
 // Migration 053: client email + proposal summary, edited from the Quote
 // detail page's new "Create & Send Proposal" panel.
 export async function updateSalesQuoteProposalFields(
