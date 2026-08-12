@@ -472,7 +472,8 @@ button {
 }
 
 .auth-gate-status {
-  color: #756d62;
+  color: #3f3a30;
+  font-weight: 600;
   text-align: center;
 }
 
@@ -2784,6 +2785,21 @@ td small.quote-ref-tag {
 
 .just-copied {
   animation: copy-link-glow 900ms ease-out;
+}
+
+@keyframes reset-fail-glow {
+  0% {
+    background: #fde2e2;
+    box-shadow: 0 0 0 3px rgba(178, 32, 32, 0.35);
+  }
+  100% {
+    background: #fffdf9;
+    box-shadow: none;
+  }
+}
+
+.just-failed {
+  animation: reset-fail-glow 900ms ease-out;
 }
 
 /* Team Roster rows toggle an inline group-assignment editor on click. */

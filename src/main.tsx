@@ -4872,18 +4872,20 @@ function App() {
     }
   }
 
-  async function handleRequestPasswordReset(emailOverride?: string) {
+  async function handleRequestPasswordReset(emailOverride?: string): Promise<boolean> {
     const email = (emailOverride ?? authEmail).trim();
     if (!email) {
       setAuthStatus("Enter an email first, then request a password reset.");
-      return;
+      return false;
     }
     try {
       await requestPasswordReset(email);
       setAuthStatus(`Password reset link sent to ${email}. Check email on that device.`);
+      return true;
     } catch (error) {
       setAuthStatus(error instanceof Error ? error.message : "Could not send password reset.");
       setSyncStatus("error");
+      return false;
     }
   }
 
@@ -9753,14 +9755,23 @@ function AdminPage({
   onSendInvite: (input: { email: string; fullName: string; primaryRole: string; secondaryRoles: string[] }) => void;
   onResendInvite: (invite: UserInvite) => void;
   onRevokeInvite: (id: string) => void;
-  onSendPasswordReset: (email: string) => void;
+  onSendPasswordReset: (email: string) => Promise<boolean>;
   proposalTemplateSections: ProposalTemplateSection[];
   onUpdateProposalTemplateSection: (id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) => void;
 }) {
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
   const [editingRosterId, setEditingRosterId] = useState<string | null>(null);
   const [copiedInviteId, setCopiedInviteId] = useState("");
+  const [passwordResetFeedback, setPasswordResetFeedback] = useState<{ email: string; ok: boolean } | null>(null);
   const knownUserByEmail = new Map(knownUsers.map((user) => [user.email.toLowerCase(), user]));
+
+  async function triggerPasswordReset(email: string) {
+    const ok = await onSendPasswordReset(email);
+    setPasswordResetFeedback({ email, ok });
+    setTimeout(() => {
+      setPasswordResetFeedback((current) => (current?.email === email ? null : current));
+    }, 2500);
+  }
   const [timeDraft, setTimeDraft] = useState({ category: "", hoursPerUnit: 0, notes: "" });
   const [templateNameDraft, setTemplateNameDraft] = useState("");
   const [phaseDrafts, setPhaseDrafts] = useState<Record<string, { phaseName: string; durationMode: "fixed_hours" | "per_bom_unit"; fixedHours: number; bomCategoryFilter: string; defaultRole: string }>>({});
@@ -10015,8 +10026,12 @@ function AdminPage({
                           </button>
                         )}
                         {isAdmin && isLoggedIn && member.email && (
-                          <button className="secondary-action mini-action" type="button" onClick={() => onSendPasswordReset(member.email)}>
-                            Reset password
+                          <button
+                            className={`secondary-action mini-action ${passwordResetFeedback?.email === member.email ? (passwordResetFeedback.ok ? "just-copied" : "just-failed") : ""}`}
+                            type="button"
+                            onClick={() => triggerPasswordReset(member.email)}
+                          >
+                            {passwordResetFeedback?.email === member.email ? (passwordResetFeedback.ok ? "Sent!" : "Failed") : "Reset password"}
                           </button>
                         )}
                         <button className="secondary-action mini-action" type="button" onClick={() => onUpdateTeamMember(member.id, { isActive: !member.isActive })}>
@@ -10527,8 +10542,12 @@ function AdminPage({
                       )}
                     </td>
                     <td>
-                      <button className="secondary-action mini-action" type="button" onClick={() => onSendPasswordReset(user.email)}>
-                        Send reset
+                      <button
+                        className={`secondary-action mini-action ${passwordResetFeedback?.email === user.email ? (passwordResetFeedback.ok ? "just-copied" : "just-failed") : ""}`}
+                        type="button"
+                        onClick={() => triggerPasswordReset(user.email)}
+                      >
+                        {passwordResetFeedback?.email === user.email ? (passwordResetFeedback.ok ? "Sent!" : "Failed") : "Send reset"}
                       </button>
                     </td>
                     <td>
