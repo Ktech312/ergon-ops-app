@@ -51,6 +51,22 @@ function supabaseAuthUrl(path: string) {
   return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/auth/v1/${path}`;
 }
 
+async function readSupabaseError(response: Response, fallback: string) {
+  try {
+    const payload = (await response.json()) as {
+      error?: string;
+      error_code?: string;
+      error_description?: string;
+      msg?: string;
+      message?: string;
+    };
+    const detail = payload.error_description || payload.message || payload.msg || payload.error || payload.error_code;
+    return detail ? `${fallback}: ${detail}` : `${fallback}: ${response.status}`;
+  } catch {
+    return `${fallback}: ${response.status}`;
+  }
+}
+
 function asPersistedState(records: Array<{ record_key: string; data: unknown }>): PersistedAppState | null {
   if (records.length === 0) {
     return null;
@@ -119,7 +135,7 @@ export async function signInWithPassword(email: string, password: string): Promi
   });
 
   if (!response.ok) {
-    throw new Error(`Sign in failed: ${response.status}`);
+    throw new Error(await readSupabaseError(response, "Sign in failed"));
   }
 
   const session = normalizeAuthSession(await response.json());
@@ -135,7 +151,7 @@ export async function signUpWithPassword(email: string, password: string): Promi
   });
 
   if (!response.ok) {
-    throw new Error(`Sign up failed: ${response.status}`);
+    throw new Error(await readSupabaseError(response, "Sign up failed"));
   }
 
   const payload = await response.json();
@@ -157,7 +173,7 @@ export async function refreshAuthSession(session: AuthSession): Promise<AuthSess
 
   if (!response.ok) {
     saveAuthSession(null);
-    throw new Error(`Session refresh failed: ${response.status}`);
+    throw new Error(await readSupabaseError(response, "Session refresh failed"));
   }
 
   const refreshed = normalizeAuthSession(await response.json());
@@ -201,8 +217,19 @@ export async function consumeOAuthRedirectSession(): Promise<AuthSession | null>
     return null;
   }
 
+  const queryParams = new URLSearchParams(window.location.search);
+  const queryError = queryParams.get("error_description") || queryParams.get("error") || queryParams.get("error_code");
+  if (queryError) {
+    queryParams.delete("error");
+    queryParams.delete("error_code");
+    queryParams.delete("error_description");
+    const cleanQuery = queryParams.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}`);
+    throw new Error(`Google sign-in failed: ${queryError}`);
+  }
+
   const rawHash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
-  if (!rawHash || !rawHash.includes("access_token")) {
+  if (!rawHash || (!rawHash.includes("access_token") && !rawHash.includes("error"))) {
     return null;
   }
 
@@ -210,7 +237,7 @@ export async function consumeOAuthRedirectSession(): Promise<AuthSession | null>
   const accessToken = params.get("access_token");
   const refreshToken = params.get("refresh_token");
   const expiresIn = params.get("expires_in");
-  const errorDescription = params.get("error_description");
+  const errorDescription = params.get("error_description") || params.get("error") || params.get("error_code");
 
   // Always clear the token fragment so tokens do not sit in browser history.
   window.history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -636,7 +663,11 @@ export async function acceptInvite(token: string, accessToken?: string): Promise
     body: JSON.stringify({ lookup_token: token }),
   });
 
-  return response.ok;
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Invite acceptance failed"));
+  }
+
+  return true;
 }
 
 export type KnownUser = {
