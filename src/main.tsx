@@ -14,6 +14,7 @@ import {
   ChevronUp,
   ClipboardList,
   DollarSign,
+  Download,
   ExternalLink,
   FileText,
   FolderOpen,
@@ -12214,21 +12215,52 @@ function LocationFilesModal({
           />
         </label>
         {uploadError && <small className="error-text">{uploadError}</small>}
-        <ul className="line-list">
+        <ul className="line-list location-file-list">
           {files.map((file) => (
-            <li className="line-item" key={file.id}>
-              <div>
+            <li
+              className="line-item location-file-row"
+              key={file.id}
+              role="button"
+              tabIndex={0}
+              title="Open preview"
+              onClick={() => handlePreview(file)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  handlePreview(file);
+                }
+              }}
+            >
+              <div className="location-file-meta">
                 <strong>{file.fileName}</strong>
                 {file.description && <span>{file.description}</span>}
                 <small className="muted">{formatImageProvenance(file)}</small>
               </div>
-              <div className="quote-header-pill-row">
-                {(isPreviewablePdf(file.fileName) || isPreviewableImage(file.fileName)) && (
-                  <button className="secondary-action mini-action" type="button" onClick={() => handlePreview(file)}>Preview</button>
-                )}
-                <button className="secondary-action mini-action" type="button" onClick={() => onDownload(file)}>Download</button>
-                <button className="secondary-action mini-action" type="button" disabled={deletingId === file.id} onClick={() => handleDelete(file)}>
-                  {deletingId === file.id ? "Deleting..." : "Delete"}
+              <div className="location-file-actions">
+                <button
+                  className="icon-button location-file-icon"
+                  type="button"
+                  title={`Download ${file.fileName}`}
+                  aria-label={`Download ${file.fileName}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDownload(file);
+                  }}
+                >
+                  <Download size={16} />
+                </button>
+                <button
+                  className="icon-button location-file-icon"
+                  type="button"
+                  title={`Delete ${file.fileName}`}
+                  aria-label={`Delete ${file.fileName}`}
+                  disabled={deletingId === file.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleDelete(file);
+                  }}
+                >
+                  <Trash2 size={16} />
                 </button>
               </div>
             </li>

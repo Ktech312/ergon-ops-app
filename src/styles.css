@@ -2976,6 +2976,66 @@ tr:hover .row-delete-btn,
   resize: vertical;
 }
 
+.location-file-list {
+  gap: 6px;
+}
+
+.location-file-row {
+  align-items: center;
+  cursor: pointer;
+  gap: 8px;
+  min-height: 48px;
+  padding: 7px 8px;
+}
+
+.location-file-row:hover,
+.location-file-row:focus-visible {
+  background: #fffaf1;
+  border-color: #d9c6a4;
+  outline: none;
+}
+
+.location-file-meta {
+  min-width: 0;
+}
+
+.location-file-meta strong,
+.location-file-meta span,
+.location-file-meta small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.location-file-actions {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 5px;
+}
+
+.location-file-icon {
+  height: 34px;
+  min-height: 34px;
+  min-width: 34px;
+  padding: 0;
+  width: 34px;
+}
+
+@media (max-width: 640px) {
+  .location-file-row {
+    min-height: 46px;
+    padding: 7px;
+  }
+
+  .location-file-icon {
+    height: 38px;
+    min-height: 38px;
+    min-width: 38px;
+    width: 38px;
+  }
+}
+
 .site-gallery-caption {
   color: #756d62;
   font-size: 11px;
