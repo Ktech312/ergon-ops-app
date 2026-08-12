@@ -944,7 +944,10 @@ button {
   display: grid;
   gap: 14px;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* auto-fit instead of a hardcoded repeat(4, ...) -- some pages show 4
+     metrics, Sales shows 6, and this way neither leaves a lopsided partial
+     row nor needs its own bespoke column count. */
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .metric,

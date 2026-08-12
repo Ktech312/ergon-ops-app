@@ -2,6 +2,7 @@ import { Fragment, StrictMode, useEffect, useRef, useState, type Dispatch, type 
 import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx";
 import {
+  Award,
   BarChart3,
   Bell,
   BookOpen,
@@ -4996,7 +4997,7 @@ function App() {
       <main className="main">
         <div className="page-heading">
           <h1>{pageTitle(view)}</h1>
-          <p>Procurement, inventory, project transfers, and reports for field packages.</p>
+          <p>{pageSubtitle(view)}</p>
         </div>
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
@@ -5191,6 +5192,25 @@ function pageTitle(view: View) {
     library: "Learning Library",
   };
   return titles[view];
+}
+
+// Was one hardcoded, procurement-flavored line shown under every page's
+// title regardless of which page you were actually on -- E flagged that the
+// Sales page was showing "Procurement, inventory, project transfers..."
+// text with nothing to do with Sales.
+function pageSubtitle(view: View) {
+  const subtitles: Record<View, string> = {
+    dashboard: "Procurement, inventory, project transfers, and reports for field packages.",
+    purchasing: "Purchase requests, purchase orders, and receiving for field packages.",
+    inventory: "Stock levels, movements, and equipment builds across the warehouse and projects.",
+    projects: "Project list, completion tracking, BOM, and PM handoff status.",
+    sales: "Pipeline, quotes, and the product catalog for new deals.",
+    tasks: "Work items and requests across every team and project.",
+    reports: "Cross-project analytics and exportable reports.",
+    admin: "Users, roles, approvals, and system configuration.",
+    library: "Reference guides and onboarding materials.",
+  };
+  return subtitles[view];
 }
 
 function Dashboard({
@@ -10387,12 +10407,33 @@ function SalesHome({
       return quoteSum + quoteProfit;
     }, 0);
 
+  // Win Rate and Average Deal Size -- standard sales KPIs alongside pipeline
+  // counts and profit. Win Rate is all-time (won / decided), not YTD-boxed,
+  // since it's a conversion-efficiency signal that's noisy over a single
+  // year for a team this size. (ARR/MRR, CAC, and quota attainment aren't
+  // included -- this is project-based hardware sales with no recurring
+  // billing, ad spend, or per-rep quota tracked anywhere in the app, so
+  // there's no real data to compute them from rather than guess.)
+  const closedWonQuotes = salesQuotes.filter((quote) => quote.status === "closed_won");
+  const closedLostQuotes = salesQuotes.filter((quote) => quote.status === "closed_lost");
+  const decidedQuoteCount = closedWonQuotes.length + closedLostQuotes.length;
+  const winRatePercent = decidedQuoteCount > 0 ? Math.round((closedWonQuotes.length / decidedQuoteCount) * 100) : null;
+  const quoteSellValue = (quote: SalesQuote) =>
+    quote.bomLines.reduce((sum, line) => {
+      const catalogItem = line.catalogItemId ? catalogItemById.get(line.catalogItemId) : undefined;
+      return catalogItem ? sum + computeCatalogSellPrice(catalogItem, inventoryItems) * line.qty : sum;
+    }, 0);
+  const avgDealSize =
+    closedWonQuotes.length > 0 ? closedWonQuotes.reduce((sum, quote) => sum + quoteSellValue(quote), 0) / closedWonQuotes.length : 0;
+
   return (
     <div className="content-grid">
       <section className="metric-grid">
         <Metric icon={<ClipboardList size={20} />} label="Quotes" value={String(salesQuotes.length)} />
         <Metric icon={<FolderOpen size={20} />} label="Open" value={String(openQuoteCount)} />
         <Metric icon={<ListChecks size={20} />} label="Closed This Year" value={String(closedThisYearQuotes.length)} />
+        <Metric icon={<Award size={20} />} label="Win Rate" value={winRatePercent === null ? "--" : `${winRatePercent}%`} />
+        <Metric icon={<DollarSign size={20} />} label="Avg Deal Size" value={money(avgDealSize)} />
         <Metric icon={<DollarSign size={20} />} label="Est. Profit (YTD)" value={money(estimatedProfitYtd)} />
       </section>
 
