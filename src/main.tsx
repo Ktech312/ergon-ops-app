@@ -29,6 +29,8 @@ import {
   Truck,
   Upload,
   User,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import {
   isRemotePersistenceConfigured,
@@ -12048,6 +12050,116 @@ function formatImageProvenance(image: LocationImageLike): string {
   return parts.join(" -- ");
 }
 
+function clampPreviewZoom(value: number) {
+  return Math.min(5, Math.max(1, value));
+}
+
+function getPointerDistance(first: PointerEvent, second: PointerEvent) {
+  return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+}
+
+function ZoomablePreviewImage({ src, alt }: { src: string; alt: string }) {
+  const pointersRef = useRef<Map<number, PointerEvent>>(new Map());
+  const dragRef = useRef({ startX: 0, startY: 0, x: 0, y: 0 });
+  const pinchRef = useRef({ distance: 0, scale: 1 });
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    pointersRef.current.clear();
+    dragRef.current = { startX: 0, startY: 0, x: 0, y: 0 };
+    pinchRef.current = { distance: 0, scale: 1 };
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+  }, [src]);
+
+  function updateScale(nextScale: number) {
+    const clamped = clampPreviewZoom(nextScale);
+    setScale(clamped);
+    if (clamped === 1) {
+      setOffset({ x: 0, y: 0 });
+    }
+  }
+
+  function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    updateScale(scale + (event.deltaY > 0 ? -0.18 : 0.18));
+  }
+
+  function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointersRef.current.set(event.pointerId, event.nativeEvent);
+    if (pointersRef.current.size === 1) {
+      dragRef.current = { startX: event.clientX, startY: event.clientY, x: offset.x, y: offset.y };
+    }
+    if (pointersRef.current.size === 2) {
+      const [first, second] = Array.from(pointersRef.current.values());
+      pinchRef.current = { distance: getPointerDistance(first, second), scale };
+    }
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!pointersRef.current.has(event.pointerId)) {
+      return;
+    }
+    pointersRef.current.set(event.pointerId, event.nativeEvent);
+    if (pointersRef.current.size === 2) {
+      const [first, second] = Array.from(pointersRef.current.values());
+      const startDistance = pinchRef.current.distance || getPointerDistance(first, second);
+      updateScale(pinchRef.current.scale * (getPointerDistance(first, second) / startDistance));
+      return;
+    }
+    if (scale <= 1) {
+      return;
+    }
+    setOffset({
+      x: dragRef.current.x + event.clientX - dragRef.current.startX,
+      y: dragRef.current.y + event.clientY - dragRef.current.startY,
+    });
+  }
+
+  function handlePointerEnd(event: React.PointerEvent<HTMLDivElement>) {
+    pointersRef.current.delete(event.pointerId);
+    if (pointersRef.current.size === 1) {
+      const [remaining] = Array.from(pointersRef.current.values());
+      dragRef.current = { startX: remaining.clientX, startY: remaining.clientY, x: offset.x, y: offset.y };
+    }
+  }
+
+  return (
+    <div className="zoom-preview">
+      <div className="zoom-preview-toolbar" aria-label="Image zoom controls">
+        <button className="icon-button" type="button" onClick={() => updateScale(scale - 0.5)} aria-label="Zoom out">
+          <ZoomOut size={16} />
+        </button>
+        <span>{Math.round(scale * 100)}%</span>
+        <button className="icon-button" type="button" onClick={() => updateScale(scale + 0.5)} aria-label="Zoom in">
+          <ZoomIn size={16} />
+        </button>
+        <button className="secondary-action zoom-reset-button" type="button" onClick={() => updateScale(1)}>
+          Reset
+        </button>
+      </div>
+      <div
+        className="zoom-preview-frame"
+        onWheel={handleWheel}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+      >
+        <img
+          src={src}
+          alt={alt}
+          className="file-preview-image"
+          draggable={false}
+          style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${scale})` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function MediaPreviewModal({
   file,
   url,
@@ -12105,7 +12217,7 @@ function MediaPreviewModal({
         </div>
         {!url && <p className="muted">Loading preview...</p>}
         {url && isPreviewablePdf(file.fileName) && <iframe src={url} className="file-preview-frame" title={file.fileName} />}
-        {url && isPreviewableImage(file.fileName) && <img src={url} alt={file.fileName} className="file-preview-image" />}
+        {url && isPreviewableImage(file.fileName) && <ZoomablePreviewImage src={url} alt={file.fileName} />}
         {url && !isPreviewablePdf(file.fileName) && !isPreviewableImage(file.fileName) && (
           <p className="empty-compact-state">Preview isn't available for this file type -- use Download instead.</p>
         )}
