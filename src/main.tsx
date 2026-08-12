@@ -10014,6 +10014,11 @@ function AdminPage({
                             Send Invite
                           </button>
                         )}
+                        {isAdmin && isLoggedIn && member.email && (
+                          <button className="secondary-action mini-action" type="button" onClick={() => onSendPasswordReset(member.email)}>
+                            Reset password
+                          </button>
+                        )}
                         <button className="secondary-action mini-action" type="button" onClick={() => onUpdateTeamMember(member.id, { isActive: !member.isActive })}>
                           {member.isActive ? "Deactivate" : "Reactivate"}
                         </button>
