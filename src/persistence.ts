@@ -5836,6 +5836,16 @@ export async function updateSalesQuoteLocation(
   });
 }
 
+export async function deleteSalesQuoteLocation(id: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`sales_quote_locations?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+}
+
 // Migration 056: addable Sign/Space Sensor/Misc lines at a location.
 export async function addSalesQuoteLocationItem(
   quoteLocationId: string,

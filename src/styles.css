@@ -2755,6 +2755,23 @@ td small {
   background: #faf6ee;
 }
 
+/* Per-row delete button on location tables: invisible until the row is
+   hovered, so it doesn't clutter the table but is still reachable. */
+.row-delete-cell {
+  text-align: right;
+  width: 40px;
+}
+
+.row-delete-btn {
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+tr:hover .row-delete-btn,
+.row-delete-btn:focus-visible {
+  opacity: 1;
+}
+
 .stacked-mini-actions {
   display: flex;
   flex-direction: column;

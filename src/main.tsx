@@ -45,12 +45,14 @@ import {
   createNotification,
   createPresalesRule,
   addSalesQuoteLocation,
+  deleteSalesQuoteLocation,
   addSalesQuoteLocationItem,
   updateSalesQuoteLocationItemQty,
   deleteSalesQuoteLocationItem,
   addSalesQuoteLocationImage,
   addProjectLocation,
   updateProjectLocation,
+  deleteProjectLocation,
   addProjectLocationItem,
   updateProjectLocationItemQty,
   deleteProjectLocationItem,
@@ -1959,6 +1961,15 @@ function App() {
     }
   }
 
+  async function handleDeleteSalesQuoteLocation(quoteId: string, locationId: string) {
+    setSalesQuotes((current) =>
+      current.map((entry) => (entry.id === quoteId ? { ...entry, locations: entry.locations.filter((location) => location.id !== locationId) } : entry)),
+    );
+    if (authSession) {
+      await deleteSalesQuoteLocation(locationId, authSession.accessToken);
+    }
+  }
+
   // Migration 056: addable Sign/Space Sensor/Misc lines within a location's
   // details modal -- same optimistic-update-then-persist shape as the
   // handlers above.
@@ -2378,6 +2389,17 @@ function App() {
     );
     if (authSession) {
       await updateProjectLocation(locationId, updates, authSession.accessToken);
+    }
+  }
+
+  async function handleDeleteProjectLocation(projectRef: string, locationId: string) {
+    setProjectSites((current) =>
+      current.map((entry) =>
+        entry.ref === projectRef ? { ...entry, locations: (entry.locations ?? []).filter((location) => location.id !== locationId) } : entry,
+      ),
+    );
+    if (authSession) {
+      await deleteProjectLocation(locationId, authSession.accessToken);
     }
   }
 
@@ -4968,7 +4990,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItemQty={handleUpdateProjectLocationItemQty} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItemQty={handleUpdateProjectLocationItemQty} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -4991,6 +5013,7 @@ function App() {
             onCreateSalesQuote={handleCreateSalesQuote}
             onAddSalesQuoteLocation={handleAddSalesQuoteLocation}
             onUpdateSalesQuoteLocation={handleUpdateSalesQuoteLocation}
+            onDeleteSalesQuoteLocation={handleDeleteSalesQuoteLocation}
             onAddSalesQuoteLocationItem={handleAddSalesQuoteLocationItem}
             onUpdateSalesQuoteLocationItemQty={handleUpdateSalesQuoteLocationItemQty}
             onDeleteSalesQuoteLocationItem={handleDeleteSalesQuoteLocationItem}
@@ -7338,6 +7361,7 @@ function Projects({
   catalogItems,
   onAddProjectLocation,
   onUpdateProjectLocation,
+  onDeleteProjectLocation,
   onAddProjectLocationItem,
   onUpdateProjectLocationItemQty,
   onDeleteProjectLocationItem,
@@ -7382,6 +7406,7 @@ function Projects({
   catalogItems: CatalogItem[];
   onAddProjectLocation: (projectRef: string, locationType: "garage" | "lot") => void;
   onUpdateProjectLocation: (projectRef: string, locationId: string, updates: Parameters<typeof updateProjectLocation>[1]) => void;
+  onDeleteProjectLocation: (projectRef: string, locationId: string) => void;
   onAddProjectLocationItem: (projectRef: string, locationId: string, lineType: ProjectLocationItem["lineType"], catalogItemId: string, qty: number) => void;
   onUpdateProjectLocationItemQty: (projectRef: string, locationId: string, itemId: string, qty: number) => void;
   onDeleteProjectLocationItem: (projectRef: string, locationId: string, itemId: string) => void;
@@ -8008,6 +8033,7 @@ function Projects({
         catalogItems={catalogItems}
         onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
         onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
+        onDeleteLocation={(locationId) => onDeleteProjectLocation(selectedProject.ref, locationId)}
         onAddLocationItem={(locationId, lineType, catalogItemId, qty) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty)}
         onUpdateLocationItemQty={(locationId, itemId, qty) => onUpdateProjectLocationItemQty(selectedProject.ref, locationId, itemId, qty)}
         onDeleteLocationItem={(locationId, itemId) => onDeleteProjectLocationItem(selectedProject.ref, locationId, itemId)}
@@ -10194,6 +10220,7 @@ function SalesHome({
   onCreateSalesQuote,
   onAddSalesQuoteLocation,
   onUpdateSalesQuoteLocation,
+  onDeleteSalesQuoteLocation,
   onAddSalesQuoteLocationItem,
   onUpdateSalesQuoteLocationItemQty,
   onDeleteSalesQuoteLocationItem,
@@ -10267,6 +10294,7 @@ function SalesHome({
       levelsCount: number;
     }>,
   ) => void;
+  onDeleteSalesQuoteLocation: (quoteId: string, locationId: string) => void;
   onAddSalesQuoteLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number) => void;
   onUpdateSalesQuoteLocationItemQty: (quoteId: string, locationId: string, itemId: string, qty: number) => void;
   onDeleteSalesQuoteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
@@ -10364,6 +10392,7 @@ function SalesHome({
         onCreateQuote={onCreateSalesQuote}
         onAddLocation={onAddSalesQuoteLocation}
         onUpdateLocation={onUpdateSalesQuoteLocation}
+        onDeleteLocation={onDeleteSalesQuoteLocation}
         onAddLocationItem={onAddSalesQuoteLocationItem}
         onUpdateLocationItemQty={onUpdateSalesQuoteLocationItemQty}
         onDeleteLocationItem={onDeleteSalesQuoteLocationItem}
@@ -12107,6 +12136,7 @@ function ProjectLocationsSection({
   catalogItems,
   onAddLocation,
   onUpdateLocation,
+  onDeleteLocation,
   onAddLocationItem,
   onUpdateLocationItemQty,
   onDeleteLocationItem,
@@ -12120,6 +12150,7 @@ function ProjectLocationsSection({
   catalogItems: CatalogItem[];
   onAddLocation: (locationType: "garage" | "lot") => void;
   onUpdateLocation: (locationId: string, updates: Parameters<typeof updateProjectLocation>[1]) => void;
+  onDeleteLocation: (locationId: string) => void;
   onAddLocationItem: (locationId: string, lineType: ProjectLocationItem["lineType"], catalogItemId: string, qty: number) => void;
   onUpdateLocationItemQty: (locationId: string, itemId: string, qty: number) => void;
   onDeleteLocationItem: (locationId: string, itemId: string) => void;
@@ -12168,32 +12199,63 @@ function ProjectLocationsSection({
 
       <table>
         <thead>
-          <tr><th>Type</th><th>Name</th><th></th><th>Photos</th><th>Files</th></tr>
+          <tr><th>Type</th><th>Name</th><th>Photos</th><th>Files</th><th></th></tr>
         </thead>
         <tbody>
           {locations.map((location) => {
             const photoCount = location.images.filter((image) => image.imageType === "photo").length;
             const drawingCount = location.images.filter((image) => image.imageType === "drawing").length;
             return (
-              <tr key={location.id}>
+              <tr key={location.id} className="clickable-row" onClick={() => setSelectedLocationId(location.id)}>
                 <td><span className={`status ${location.locationType === "garage" ? "ok" : ""}`}>{location.locationType === "garage" ? "Garage" : "Lot"}</span></td>
                 <td>
                   <input
                     className="quote-location-row-name"
                     value={location.name}
+                    onClick={(event) => event.stopPropagation()}
                     onChange={(event) => onUpdateLocation(location.id, { name: event.target.value })}
                     placeholder={location.locationType === "garage" ? "Garage name" : "Lot name"}
                   />
                 </td>
-                <td><button className="table-action" type="button" onClick={() => setSelectedLocationId(location.id)}>Details</button></td>
                 <td>
-                  <button className="icon-count-button" type="button" title="Take Photos" onClick={() => setCameraLocationId(location.id)}>
+                  <button
+                    className="icon-count-button"
+                    type="button"
+                    title="Take Photos"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setCameraLocationId(location.id);
+                    }}
+                  >
                     <Camera size={16} /><span>{photoCount}</span>
                   </button>
                 </td>
                 <td>
-                  <button className="icon-count-button" type="button" title="View files" onClick={() => setFilesLocationId(location.id)}>
+                  <button
+                    className="icon-count-button"
+                    type="button"
+                    title="View files"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setFilesLocationId(location.id);
+                    }}
+                  >
                     <FileText size={16} /><span>{drawingCount}</span>
+                  </button>
+                </td>
+                <td className="row-delete-cell">
+                  <button
+                    className="icon-button compact-remove row-delete-btn"
+                    type="button"
+                    title={`Delete ${location.locationType === "garage" ? "garage" : "lot"}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (window.confirm(`Delete "${location.name || (location.locationType === "garage" ? "this garage" : "this lot")}"? Its photos, files, and hardware line items go with it. This can't be undone.`)) {
+                        onDeleteLocation(location.id);
+                      }
+                    }}
+                  >
+                    <Trash2 size={15} />
                   </button>
                 </td>
               </tr>
@@ -12509,6 +12571,7 @@ function SalesQuoteBuilder({
   onCreateQuote,
   onAddLocation,
   onUpdateLocation,
+  onDeleteLocation,
   onAddLocationItem,
   onUpdateLocationItemQty,
   onDeleteLocationItem,
@@ -12565,6 +12628,7 @@ function SalesQuoteBuilder({
       levelsCount: number;
     }>,
   ) => void;
+  onDeleteLocation: (quoteId: string, locationId: string) => void;
   onAddLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number) => void;
   onUpdateLocationItemQty: (quoteId: string, locationId: string, itemId: string, qty: number) => void;
   onDeleteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
@@ -12909,32 +12973,63 @@ function SalesQuoteBuilder({
 
           <table>
             <thead>
-              <tr><th>Type</th><th>Name</th><th></th><th>Photos</th><th>Files</th></tr>
+              <tr><th>Type</th><th>Name</th><th>Photos</th><th>Files</th><th></th></tr>
             </thead>
             <tbody>
               {selectedQuote.locations.map((location) => {
                 const photoCount = location.images.filter((image) => image.imageType === "photo").length;
                 const drawingCount = location.images.filter((image) => image.imageType === "drawing").length;
                 return (
-                  <tr key={location.id}>
+                  <tr key={location.id} className="clickable-row" onClick={() => setSelectedLocationId(location.id)}>
                     <td><span className={`status ${location.locationType === "garage" ? "ok" : ""}`}>{location.locationType === "garage" ? "Garage" : "Lot"}</span></td>
                     <td>
                       <input
                         className="quote-location-row-name"
                         value={location.name}
+                        onClick={(event) => event.stopPropagation()}
                         onChange={(event) => onUpdateLocation(selectedQuote.id, location.id, { name: event.target.value })}
                         placeholder={location.locationType === "garage" ? "Garage name" : "Lot name"}
                       />
                     </td>
-                    <td><button className="table-action" type="button" onClick={() => setSelectedLocationId(location.id)}>Details</button></td>
                     <td>
-                      <button className="icon-count-button" type="button" title="Take Photos" onClick={() => setCameraLocationId(location.id)}>
+                      <button
+                        className="icon-count-button"
+                        type="button"
+                        title="Take Photos"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setCameraLocationId(location.id);
+                        }}
+                      >
                         <Camera size={16} /><span>{photoCount}</span>
                       </button>
                     </td>
                     <td>
-                      <button className="icon-count-button" type="button" title="View files" onClick={() => setFilesLocationId(location.id)}>
+                      <button
+                        className="icon-count-button"
+                        type="button"
+                        title="View files"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setFilesLocationId(location.id);
+                        }}
+                      >
                         <FileText size={16} /><span>{drawingCount}</span>
+                      </button>
+                    </td>
+                    <td className="row-delete-cell">
+                      <button
+                        className="icon-button compact-remove row-delete-btn"
+                        type="button"
+                        title={`Delete ${location.locationType === "garage" ? "garage" : "lot"}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (window.confirm(`Delete "${location.name || (location.locationType === "garage" ? "this garage" : "this lot")}"? Its photos, files, and hardware line items go with it. This can't be undone.`)) {
+                            onDeleteLocation(selectedQuote.id, location.id);
+                          }
+                        }}
+                      >
+                        <Trash2 size={15} />
                       </button>
                     </td>
                   </tr>
