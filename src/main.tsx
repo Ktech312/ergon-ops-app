@@ -5087,7 +5087,7 @@ function App() {
             {allowedTabs.includes("reports") && <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />}
           </nav>
           <div className="top-nav-actions">
-            <div className={`sync-status ${syncStatus}`}>
+            <div className={`sync-status ${syncStatus}`} title={syncStatus === "error" ? authStatus : undefined}>
               <span>{syncStatus === "local" ? "Setup required" : syncStatus === "auth" ? "Sign in required" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
             </div>
             {pendingPhotoCount > 0 && (

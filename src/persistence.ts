@@ -318,18 +318,22 @@ export async function acquireTransactionLock(lockType: "inventory_item" | "proje
     return null;
   }
 
-  const response = await fetch(supabaseUrl("app_transaction_locks"), {
+  // Goes through the acquire_transaction_lock RPC (migration 069), not a
+  // plain INSERT -- a plain INSERT permanently fails on the second-ever
+  // lock attempt for a given key, because releaseTransactionLock() never
+  // deletes the row, only sets released_at, and the table's unique
+  // constraint is on the raw (workspace_key, lock_key, lock_type) tuple
+  // regardless of release state. The RPC reclaims released/expired rows
+  // and only raises when a lock is genuinely still held.
+  const response = await fetch(supabaseUrl("rpc/acquire_transaction_lock"), {
     method: "POST",
-    headers: {
-      ...supabaseHeaders(accessToken),
-      prefer: "return=representation",
-    },
+    headers: supabaseHeaders(accessToken),
     body: JSON.stringify({
-      workspace_key: WORKSPACE_KEY,
-      lock_type: lockType,
-      lock_key: lockKey,
-      owner_label: "ergon-web-app",
-      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      p_workspace_key: WORKSPACE_KEY,
+      p_lock_type: lockType,
+      p_lock_key: lockKey,
+      p_owner_label: "ergon-web-app",
+      p_ttl_seconds: 300,
     }),
   });
 
@@ -337,8 +341,8 @@ export async function acquireTransactionLock(lockType: "inventory_item" | "proje
     throw new Error(`Record is locked for another operation: ${lockKey}`);
   }
 
-  const rows = (await response.json()) as Array<{ id: string }>;
-  return rows[0]?.id ?? null;
+  const row = (await response.json()) as { id?: string } | null;
+  return row?.id ?? null;
 }
 
 export async function releaseTransactionLock(lockId: string | null, accessToken?: string) {
