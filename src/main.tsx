@@ -1,4 +1,4 @@
-import { Fragment, StrictMode, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { Component, Fragment, StrictMode, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx";
 import {
@@ -16164,20 +16164,56 @@ function InviteLandingPage({ token }: { token: string }) {
   );
 }
 
+// Without this, any uncaught render error anywhere in the tree unmounts
+// the whole app to a blank white page with zero indication anything went
+// wrong -- the person just sees nothing and has no way to tell "reload"
+// would fix it. This turns that into a visible, actionable message.
+class RootErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("Ergon crashed:", error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="auth-gate">
+          <div className="auth-gate-card">
+            <h2>Something went wrong</h2>
+            <p className="muted">The page hit an error and couldn't continue. Reloading usually fixes it.</p>
+            <button className="primary-action" type="button" onClick={() => window.location.reload()}>Reload</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const submittalToken = new URLSearchParams(window.location.search).get("submittal");
 const proposalToken = new URLSearchParams(window.location.search).get("proposal");
 const inviteToken = new URLSearchParams(window.location.search).get("invite");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    {inviteToken ? (
-      <InviteLandingPage token={inviteToken} />
-    ) : submittalToken ? (
-      <SubmittalPublicPage token={submittalToken} />
-    ) : proposalToken ? (
-      <ProposalPublicPage token={proposalToken} />
-    ) : (
-      <App />
-    )}
+    <RootErrorBoundary>
+      {inviteToken ? (
+        <InviteLandingPage token={inviteToken} />
+      ) : submittalToken ? (
+        <SubmittalPublicPage token={submittalToken} />
+      ) : proposalToken ? (
+        <ProposalPublicPage token={proposalToken} />
+      ) : (
+        <App />
+      )}
+    </RootErrorBoundary>
   </StrictMode>
 );
