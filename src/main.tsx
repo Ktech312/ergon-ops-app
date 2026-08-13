@@ -3993,7 +3993,7 @@ function App() {
     };
 
     setInventoryItems((current) => current.map((item) => (item.ref === part.ref ? { ...item, stock: item.stock - pullQty } : item)));
-    setInventoryMovements((current) => [movement, ...current]);
+    recordMovements([movement]);
     if (movement.quantityAfter <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: movement.quantityAfter });
     }
@@ -4037,6 +4037,15 @@ function App() {
     })();
   }
 
+  // Every inventory movement gets stamped with who made it here, in one
+  // place, instead of at each of the ~9 call sites that create movements
+  // -- so the ledger can show "by <email>" without relying on every
+  // future call site remembering to set it too.
+  function recordMovements(entries: InventoryMovement[]) {
+    const stamped = entries.map((entry) => ({ ...entry, createdByEmail: authSession?.email ?? "" }));
+    setInventoryMovements((current) => [...stamped, ...current]);
+  }
+
   function addInventoryItem(part: Part) {
     withProductionLock("inventory_item", part.ref, () => {
     setInventoryItems((current) => [part, ...current]);
@@ -4052,7 +4061,7 @@ function App() {
       notes: "New SKU created in inventory.",
       createdAt: new Date().toISOString(),
     };
-    setInventoryMovements((current) => [movement, ...current]);
+    recordMovements([movement]);
     });
   }
 
@@ -4094,7 +4103,7 @@ function App() {
       });
     }
     if (movements.length) {
-      setInventoryMovements((current) => [...movements, ...current]);
+      recordMovements(movements);
     }
     });
   }
@@ -4147,7 +4156,7 @@ function App() {
           : item,
       ),
     );
-    setInventoryMovements((current) => [movement, ...current]);
+    recordMovements([movement]);
     });
   }
 
@@ -4172,7 +4181,7 @@ function App() {
       createdAt: new Date().toISOString(),
     };
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: adjustedQty } : item)));
-    setInventoryMovements((current) => [movement, ...current]);
+    recordMovements([movement]);
     if (adjustedQty <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: adjustedQty });
     }
@@ -4201,7 +4210,7 @@ function App() {
       createdAt: new Date().toISOString(),
     };
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: item.stock - transferQty } : item)));
-    setInventoryMovements((current) => [movement, ...current]);
+    recordMovements([movement]);
     if (movement.quantityAfter <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: movement.quantityAfter });
     }
@@ -4387,7 +4396,7 @@ function App() {
         stage: "complete",
         createdAt: postedAt,
       };
-      setInventoryMovements((current) => [completionMovement as InventoryMovement, ...componentMovements, ...current]);
+      recordMovements([completionMovement as InventoryMovement, ...componentMovements]);
       setBuildTransactions((current) => (plannedBuild ? current.map((build) => (build.id === plannedBuild.id ? transaction : build)) : [transaction, ...current]));
     }, 0);
     });
@@ -4435,7 +4444,7 @@ function App() {
         createdAt: undoneAt,
       })),
     ];
-    setInventoryMovements((current) => [...undoMovements, ...current]);
+    recordMovements(undoMovements);
     setBuildTransactions((current) => current.map((build) => (build.id === buildId ? { ...build, status: "undone", undoneAt } : build)));
     });
   }
@@ -4694,7 +4703,7 @@ function App() {
         notes: notes || request.notes || "Direct-to-project receipt. Quantity was not added to warehouse stock.",
         createdAt: receivedAt,
       };
-      setInventoryMovements((current) => [movement, ...current]);
+      recordMovements([movement]);
       setProjectAllocations((current) => [
         {
           id: makeId("alloc"),
@@ -6759,6 +6768,7 @@ function Inventory({
         build: movement.buildNumber ?? "",
         source: movement.source,
         notes: movement.notes,
+        performedBy: movement.createdByEmail ?? "",
       })),
     );
   }
@@ -7269,7 +7279,7 @@ function Inventory({
           <div className="report-table-head"><span>Type</span><span>SKU</span><span>Qty</span><span>Before / After</span><span>Reference</span></div>
           {inventoryMovements.slice(0, 10).map((movement) => (
             <div className="report-table-row" key={movement.id}>
-              <span><strong>{movement.type.replace("_", " ")}</strong><small>{new Date(movement.createdAt).toLocaleString()}</small></span>
+              <span><strong>{movement.type.replace("_", " ")}</strong><small>{new Date(movement.createdAt).toLocaleString()}{movement.createdByEmail ? ` -- ${movement.createdByEmail}` : ""}</small></span>
               <span>{movement.sku}<small>{movement.itemName}</small></span>
               <span>{movement.quantity}</span>
               <span>{movement.quantityBefore} / {movement.quantityAfter}</span>
@@ -9312,7 +9322,7 @@ function Reports({
           <div className="report-table-head"><span>Date</span><span>Movement</span><span>SKU / Item</span><span>Qty</span><span>Reference</span></div>
           {filteredInventoryMovements.slice(0, 24).map((movement) => (
             <div className="report-table-row" key={movement.id}>
-              <span>{new Date(movement.createdAt).toLocaleString()}</span>
+              <span>{new Date(movement.createdAt).toLocaleString()}{movement.createdByEmail && <small>{movement.createdByEmail}</small>}</span>
               <span><strong>{movement.type.replace("_", " ")}</strong><small>{movement.source}</small></span>
               <span>{movement.sku}<small>{movement.itemName}</small></span>
               <span>{movement.quantity}<small>{movement.quantityBefore} to {movement.quantityAfter}</small></span>

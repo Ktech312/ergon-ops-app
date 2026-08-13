@@ -4098,6 +4098,7 @@ export type InventoryMovement = {
   source: "inventory" | "project" | "purchasing" | "equipment";
   notes: string;
   createdAt: string;
+  createdByEmail?: string;
 };
 
 export type BuildTransaction = {
@@ -4157,13 +4158,14 @@ type InventoryMovementRow = {
   reference_number: string | null;
   notes: string | null;
   created_at: string;
+  performed_by_email: string | null;
   inventory_item: { sku: string; item_name: string } | null;
   project: { project_name: string } | null;
   build_transaction: { build_number: string } | null;
 };
 
 const INVENTORY_MOVEMENT_SELECT =
-  "legacy_id,movement_type,quantity,balance_before,balance_after,reference_number,notes,created_at,inventory_item:inventory_items(sku,item_name),project:projects(project_name),build_transaction:build_transactions(build_number)";
+  "legacy_id,movement_type,quantity,balance_before,balance_after,reference_number,notes,created_at,performed_by_email,inventory_item:inventory_items(sku,item_name),project:projects(project_name),build_transaction:build_transactions(build_number)";
 
 function mapInventoryMovementRow(row: InventoryMovementRow): InventoryMovement {
   const type = appMovementType(row.movement_type);
@@ -4192,6 +4194,7 @@ function mapInventoryMovementRow(row: InventoryMovementRow): InventoryMovement {
     source,
     notes: row.notes ?? "",
     createdAt: row.created_at,
+    createdByEmail: row.performed_by_email ?? "",
   };
 }
 
@@ -4380,6 +4383,7 @@ export async function saveInventoryMovements(movements: InventoryMovement[], acc
         balance_after: movement.quantityAfter,
         notes: movement.notes,
         created_at: movement.createdAt,
+        performed_by_email: movement.createdByEmail || null,
       };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null);
