@@ -2983,8 +2983,8 @@ tr:hover .row-delete-btn,
 }
 
 .site-gallery-item input[type="checkbox"] {
-  left: 8px;
   position: absolute;
+  right: 8px;
   top: 8px;
   z-index: 1;
 }
