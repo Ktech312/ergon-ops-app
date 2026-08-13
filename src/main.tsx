@@ -51,14 +51,14 @@ import {
   addSalesQuoteLocation,
   deleteSalesQuoteLocation,
   addSalesQuoteLocationItem,
-  updateSalesQuoteLocationItemQty,
+  updateSalesQuoteLocationItem,
   deleteSalesQuoteLocationItem,
   addSalesQuoteLocationImage,
   addProjectLocation,
   updateProjectLocation,
   deleteProjectLocation,
   addProjectLocationItem,
-  updateProjectLocationItemQty,
+  updateProjectLocationItem,
   deleteProjectLocationItem,
   addProjectLocationImage,
   updateProjectLocationImageDescription,
@@ -2003,6 +2003,7 @@ function App() {
     lineType: SalesQuoteLocationItem["lineType"],
     catalogItemId: string,
     qty: number,
+    extra: { locationLabel?: string; accessoryCatalogItemId?: string | null; accessoryQty?: number } = {},
   ) {
     if (!authSession || !catalogItemId) {
       return;
@@ -2012,9 +2013,9 @@ function App() {
     if (!location) {
       return;
     }
-    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : "miscLines";
+    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : lineType === "camera" ? "cameraLines" : "miscLines";
     const nextLineSort = location[listKey].length;
-    const created = await addSalesQuoteLocationItem(locationId, lineType, catalogItemId, qty, nextLineSort, authSession.accessToken);
+    const created = await addSalesQuoteLocationItem(locationId, lineType, catalogItemId, qty, nextLineSort, extra, authSession.accessToken);
     if (!created) {
       return;
     }
@@ -2032,10 +2033,16 @@ function App() {
     );
   }
 
-  async function handleUpdateSalesQuoteLocationItemQty(quoteId: string, locationId: string, itemId: string, qty: number) {
+  async function handleUpdateSalesQuoteLocationItem(
+    quoteId: string,
+    locationId: string,
+    itemId: string,
+    updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>,
+  ) {
     if (!authSession) {
       return;
     }
+    const applyUpdates = (line: SalesQuoteLocationItem) => (line.id === itemId ? { ...line, ...updates } : line);
     setSalesQuotes((current) =>
       current.map((entryQuote) =>
         entryQuote.id === quoteId
@@ -2045,9 +2052,10 @@ function App() {
                 entryLocation.id === locationId
                   ? {
                       ...entryLocation,
-                      signLines: entryLocation.signLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
-                      sensorLines: entryLocation.sensorLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
-                      miscLines: entryLocation.miscLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
+                      signLines: entryLocation.signLines.map(applyUpdates),
+                      sensorLines: entryLocation.sensorLines.map(applyUpdates),
+                      miscLines: entryLocation.miscLines.map(applyUpdates),
+                      cameraLines: entryLocation.cameraLines.map(applyUpdates),
                     }
                   : entryLocation,
               ),
@@ -2055,7 +2063,7 @@ function App() {
           : entryQuote,
       ),
     );
-    await updateSalesQuoteLocationItemQty(itemId, qty, authSession.accessToken);
+    await updateSalesQuoteLocationItem(itemId, updates, authSession.accessToken);
   }
 
   async function handleDeleteSalesQuoteLocationItem(quoteId: string, locationId: string, itemId: string) {
@@ -2074,6 +2082,7 @@ function App() {
                       signLines: entryLocation.signLines.filter((line) => line.id !== itemId),
                       sensorLines: entryLocation.sensorLines.filter((line) => line.id !== itemId),
                       miscLines: entryLocation.miscLines.filter((line) => line.id !== itemId),
+                      cameraLines: entryLocation.cameraLines.filter((line) => line.id !== itemId),
                     }
                   : entryLocation,
               ),
@@ -2133,19 +2142,30 @@ function App() {
 
         const pushLines = (items: SalesQuoteLocationItem[], sectionLabel: string) => {
           for (const lineItem of items) {
-            if (!lineItem.catalogItemId) {
-              continue;
+            const lineLabel = `${locationLabel}${lineItem.locationLabel ? ` (${lineItem.locationLabel})` : ""} -- ${sectionLabel}`;
+            if (lineItem.catalogItemId) {
+              const catalogItem = catalogItems.find((item) => item.id === lineItem.catalogItemId);
+              lines.push({
+                item: catalogItem ? catalogItem.productName : "Item removed from catalog",
+                qty: lineItem.qty,
+                notes: lineLabel,
+                catalogItemId: lineItem.catalogItemId,
+                sourceLocationId: location.id,
+              });
             }
-            const catalogItem = catalogItems.find((item) => item.id === lineItem.catalogItemId);
-            lines.push({
-              item: catalogItem ? catalogItem.productName : "Item removed from catalog",
-              qty: lineItem.qty,
-              notes: `${locationLabel} -- ${sectionLabel}`,
-              catalogItemId: lineItem.catalogItemId,
-              sourceLocationId: location.id,
-            });
+            if (lineItem.accessoryCatalogItemId && lineItem.accessoryQty > 0) {
+              const accessoryItem = catalogItems.find((item) => item.id === lineItem.accessoryCatalogItemId);
+              lines.push({
+                item: accessoryItem ? accessoryItem.productName : "Item removed from catalog",
+                qty: lineItem.accessoryQty,
+                notes: `${lineLabel} accessory`,
+                catalogItemId: lineItem.accessoryCatalogItemId,
+                sourceLocationId: location.id,
+              });
+            }
           }
         };
+        pushLines(location.cameraLines, "Camera");
         pushLines(location.signLines, "Sign");
         pushLines(location.sensorLines, "Space Sensor");
         pushLines(location.miscLines, "Misc.");
@@ -2513,6 +2533,7 @@ function App() {
     lineType: ProjectLocationItem["lineType"],
     catalogItemId: string,
     qty: number,
+    extra: { locationLabel?: string; accessoryCatalogItemId?: string | null; accessoryQty?: number } = {},
   ) {
     if (!authSession || !catalogItemId) {
       return;
@@ -2522,9 +2543,9 @@ function App() {
     if (!location) {
       return;
     }
-    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : "miscLines";
+    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : lineType === "camera" ? "cameraLines" : "miscLines";
     const nextLineSort = location[listKey].length;
-    const created = await addProjectLocationItem(locationId, lineType, catalogItemId, qty, nextLineSort, authSession.accessToken);
+    const created = await addProjectLocationItem(locationId, lineType, catalogItemId, qty, nextLineSort, extra, authSession.accessToken);
     if (!created) {
       return;
     }
@@ -2542,10 +2563,16 @@ function App() {
     );
   }
 
-  async function handleUpdateProjectLocationItemQty(projectRef: string, locationId: string, itemId: string, qty: number) {
+  async function handleUpdateProjectLocationItem(
+    projectRef: string,
+    locationId: string,
+    itemId: string,
+    updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>,
+  ) {
     if (!authSession) {
       return;
     }
+    const applyUpdates = (line: ProjectLocationItem) => (line.id === itemId ? { ...line, ...updates } : line);
     setProjectSites((current) =>
       current.map((entryProject) =>
         entryProject.ref === projectRef
@@ -2555,9 +2582,10 @@ function App() {
                 entryLocation.id === locationId
                   ? {
                       ...entryLocation,
-                      signLines: entryLocation.signLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
-                      sensorLines: entryLocation.sensorLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
-                      miscLines: entryLocation.miscLines.map((line) => (line.id === itemId ? { ...line, qty } : line)),
+                      signLines: entryLocation.signLines.map(applyUpdates),
+                      sensorLines: entryLocation.sensorLines.map(applyUpdates),
+                      miscLines: entryLocation.miscLines.map(applyUpdates),
+                      cameraLines: entryLocation.cameraLines.map(applyUpdates),
                     }
                   : entryLocation,
               ),
@@ -2565,7 +2593,7 @@ function App() {
           : entryProject,
       ),
     );
-    await updateProjectLocationItemQty(itemId, qty, authSession.accessToken);
+    await updateProjectLocationItem(itemId, updates, authSession.accessToken);
   }
 
   async function handleDeleteProjectLocationItem(projectRef: string, locationId: string, itemId: string) {
@@ -2584,6 +2612,7 @@ function App() {
                       signLines: entryLocation.signLines.filter((line) => line.id !== itemId),
                       sensorLines: entryLocation.sensorLines.filter((line) => line.id !== itemId),
                       miscLines: entryLocation.miscLines.filter((line) => line.id !== itemId),
+                      cameraLines: entryLocation.cameraLines.filter((line) => line.id !== itemId),
                     }
                   : entryLocation,
               ),
@@ -5253,7 +5282,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItemQty={handleUpdateProjectLocationItemQty} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onDetailContextChange={setProjectDetailContext} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onDetailContextChange={setProjectDetailContext} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -5278,7 +5307,7 @@ function App() {
             onUpdateSalesQuoteLocation={handleUpdateSalesQuoteLocation}
             onDeleteSalesQuoteLocation={handleDeleteSalesQuoteLocation}
             onAddSalesQuoteLocationItem={handleAddSalesQuoteLocationItem}
-            onUpdateSalesQuoteLocationItemQty={handleUpdateSalesQuoteLocationItemQty}
+            onUpdateSalesQuoteLocationItem={handleUpdateSalesQuoteLocationItem}
             onDeleteSalesQuoteLocationItem={handleDeleteSalesQuoteLocationItem}
             onPullLocationHardwareIntoQuoteBom={handlePullLocationHardwareIntoQuoteBom}
             onUpdateSalesQuoteStatus={handleUpdateSalesQuoteStatus}
@@ -7715,7 +7744,7 @@ function Projects({
   onUpdateProjectLocation,
   onDeleteProjectLocation,
   onAddProjectLocationItem,
-  onUpdateProjectLocationItemQty,
+  onUpdateProjectLocationItem,
   onDeleteProjectLocationItem,
   onUploadProjectLocationImage,
   onDownloadProjectLocationImage,
@@ -7762,8 +7791,8 @@ function Projects({
   onAddProjectLocation: (projectRef: string, locationType: "garage" | "lot") => void;
   onUpdateProjectLocation: (projectRef: string, locationId: string, updates: Parameters<typeof updateProjectLocation>[1]) => void;
   onDeleteProjectLocation: (projectRef: string, locationId: string) => void;
-  onAddProjectLocationItem: (projectRef: string, locationId: string, lineType: ProjectLocationItem["lineType"], catalogItemId: string, qty: number) => void;
-  onUpdateProjectLocationItemQty: (projectRef: string, locationId: string, itemId: string, qty: number) => void;
+  onAddProjectLocationItem: (projectRef: string, locationId: string, lineType: ProjectLocationItem["lineType"], catalogItemId: string, qty: number, extra?: { locationLabel?: string; accessoryCatalogItemId?: string | null; accessoryQty?: number }) => void;
+  onUpdateProjectLocationItem: (projectRef: string, locationId: string, itemId: string, updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>) => void;
   onDeleteProjectLocationItem: (projectRef: string, locationId: string, itemId: string) => void;
   onUploadProjectLocationImage: (
     projectRef: string,
@@ -8529,8 +8558,8 @@ function Projects({
         onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
         onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
         onDeleteLocation={(locationId) => onDeleteProjectLocation(selectedProject.ref, locationId)}
-        onAddLocationItem={(locationId, lineType, catalogItemId, qty) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty)}
-        onUpdateLocationItemQty={(locationId, itemId, qty) => onUpdateProjectLocationItemQty(selectedProject.ref, locationId, itemId, qty)}
+        onAddLocationItem={(locationId, lineType, catalogItemId, qty, extra) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty, extra)}
+        onUpdateLocationItem={(locationId, itemId, updates) => onUpdateProjectLocationItem(selectedProject.ref, locationId, itemId, updates)}
         onDeleteLocationItem={(locationId, itemId) => onDeleteProjectLocationItem(selectedProject.ref, locationId, itemId)}
         onUploadImage={(locationId, imageType, file, description, coords) => onUploadProjectLocationImage(selectedProject.ref, locationId, imageType, file, description, coords)}
         onDownloadImage={onDownloadProjectLocationImage}
@@ -10678,7 +10707,7 @@ function SalesHome({
   onUpdateSalesQuoteLocation,
   onDeleteSalesQuoteLocation,
   onAddSalesQuoteLocationItem,
-  onUpdateSalesQuoteLocationItemQty,
+  onUpdateSalesQuoteLocationItem,
   onDeleteSalesQuoteLocationItem,
   onPullLocationHardwareIntoQuoteBom,
   onUpdateSalesQuoteStatus,
@@ -10754,8 +10783,8 @@ function SalesHome({
     }>,
   ) => void;
   onDeleteSalesQuoteLocation: (quoteId: string, locationId: string) => void;
-  onAddSalesQuoteLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number) => void;
-  onUpdateSalesQuoteLocationItemQty: (quoteId: string, locationId: string, itemId: string, qty: number) => void;
+  onAddSalesQuoteLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number, extra?: { locationLabel?: string; accessoryCatalogItemId?: string | null; accessoryQty?: number }) => void;
+  onUpdateSalesQuoteLocationItem: (quoteId: string, locationId: string, itemId: string, updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>) => void;
   onDeleteSalesQuoteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onPullLocationHardwareIntoQuoteBom: (quoteId: string) => void;
   onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => void;
@@ -10908,7 +10937,7 @@ function SalesHome({
         onUpdateLocation={onUpdateSalesQuoteLocation}
         onDeleteLocation={onDeleteSalesQuoteLocation}
         onAddLocationItem={onAddSalesQuoteLocationItem}
-        onUpdateLocationItemQty={onUpdateSalesQuoteLocationItemQty}
+        onUpdateLocationItem={onUpdateSalesQuoteLocationItem}
         onDeleteLocationItem={onDeleteSalesQuoteLocationItem}
         onPullLocationHardware={onPullLocationHardwareIntoQuoteBom}
         onUpdateStatus={onUpdateSalesQuoteStatus}
@@ -13072,27 +13101,35 @@ function SiteGalleryModal({
 // list-plus-add-row shape as the Quote BOM list above, just always tied to
 // a real catalog item (no free-text option) and scoped to one location
 // instead of the whole quote.
+// Every row here is "where in this garage/lot" (free text -- e.g.
+// "Entrance", "Level 2") + a catalog-scoped type pick + qty, plus an
+// optional accessory (scoped to catalog items tagged for this section,
+// e.g. "Camera accessory") + its own qty. Same row shape for Cameras,
+// Signs, and Space Sensors -- Misc reuses it too rather than a separate
+// simpler layout, since it's the same shared component either way.
 function LocationItemLineSection({
   title,
   hint,
   items,
   catalogItems,
   options,
+  accessoryOptions,
   draft,
   onDraftChange,
   onAdd,
-  onUpdateQty,
+  onUpdateItem,
   onDelete,
 }: {
   title: string;
   hint: string;
-  items: Array<{ id: string; catalogItemId: string | null; qty: number }>;
+  items: Array<{ id: string; catalogItemId: string | null; qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>;
   catalogItems: CatalogItem[];
   options: CatalogItem[];
-  draft: { catalogItemId: string; qty: number };
-  onDraftChange: (draft: { catalogItemId: string; qty: number }) => void;
+  accessoryOptions: CatalogItem[];
+  draft: { catalogItemId: string; qty: number; locationLabel: string; accessoryCatalogItemId: string; accessoryQty: number };
+  onDraftChange: (draft: { catalogItemId: string; qty: number; locationLabel: string; accessoryCatalogItemId: string; accessoryQty: number }) => void;
   onAdd: () => void;
-  onUpdateQty: (itemId: string, qty: number) => void;
+  onUpdateItem: (itemId: string, updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>) => void;
   onDelete: (itemId: string) => void;
 }) {
   return (
@@ -13102,18 +13139,55 @@ function LocationItemLineSection({
       <ul className="line-list">
         {items.map((line) => {
           const catalogItem = line.catalogItemId ? catalogItems.find((item) => item.id === line.catalogItemId) : undefined;
+          const accessoryItem = line.accessoryCatalogItemId ? catalogItems.find((item) => item.id === line.accessoryCatalogItemId) : undefined;
           return (
-            <li className="line-item" key={line.id}>
-              <div>
-                <strong>{catalogItem ? catalogItem.productName : "Item removed from catalog"}</strong>
-                <input
-                  className="qty-input-narrow"
-                  type="number"
-                  min={0.01}
-                  step={0.01}
-                  value={line.qty}
-                  onChange={(event) => onUpdateQty(line.id, Number(event.target.value) || 0)}
-                />
+            <li className="line-item location-line-item" key={line.id}>
+              <div className="location-line-fields">
+                <label>Location
+                  <input
+                    value={line.locationLabel}
+                    placeholder="e.g. Entrance"
+                    onChange={(event) => onUpdateItem(line.id, { locationLabel: event.target.value })}
+                  />
+                </label>
+                <div>
+                  <strong>{catalogItem ? catalogItem.productName : "Item removed from catalog"}</strong>
+                  <label className="muted">Qty
+                    <input
+                      className="qty-input-narrow"
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      value={line.qty}
+                      onChange={(event) => onUpdateItem(line.id, { qty: Number(event.target.value) || 0 })}
+                    />
+                  </label>
+                </div>
+                <label>Accessory
+                  <select
+                    value={line.accessoryCatalogItemId ?? ""}
+                    onChange={(event) => onUpdateItem(line.id, { accessoryCatalogItemId: event.target.value || null })}
+                  >
+                    <option value="">None</option>
+                    {accessoryOptions.map((item) => (
+                      <option key={item.id} value={item.id}>{item.productName}</option>
+                    ))}
+                    {accessoryItem && !accessoryOptions.some((item) => item.id === accessoryItem.id) && (
+                      <option value={accessoryItem.id}>{accessoryItem.productName}</option>
+                    )}
+                  </select>
+                </label>
+                <label className="muted">Qty
+                  <input
+                    className="qty-input-narrow"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    disabled={!line.accessoryCatalogItemId}
+                    value={line.accessoryQty}
+                    onChange={(event) => onUpdateItem(line.id, { accessoryQty: Number(event.target.value) || 0 })}
+                  />
+                </label>
               </div>
               <button className="icon-button" type="button" onClick={() => onDelete(line.id)} aria-label="Remove line">x</button>
             </li>
@@ -13122,6 +13196,11 @@ function LocationItemLineSection({
         {items.length === 0 && <li className="empty-compact-state">No lines yet.</li>}
       </ul>
       <div className="submittal-create-row">
+        <input
+          value={draft.locationLabel}
+          placeholder="Location, e.g. Entrance"
+          onChange={(event) => onDraftChange({ ...draft, locationLabel: event.target.value })}
+        />
         <select value={draft.catalogItemId} onChange={(event) => onDraftChange({ ...draft, catalogItemId: event.target.value })}>
           <option value="">Select item...</option>
           {options.map((item) => (
@@ -13136,8 +13215,23 @@ function LocationItemLineSection({
           value={draft.qty}
           onChange={(event) => onDraftChange({ ...draft, qty: Number(event.target.value) || 1 })}
         />
+        <select value={draft.accessoryCatalogItemId} onChange={(event) => onDraftChange({ ...draft, accessoryCatalogItemId: event.target.value })}>
+          <option value="">No accessory</option>
+          {accessoryOptions.map((item) => (
+            <option key={item.id} value={item.id}>{item.productName}</option>
+          ))}
+        </select>
+        <input
+          className="qty-input-narrow"
+          type="number"
+          min={0}
+          step={0.01}
+          disabled={!draft.accessoryCatalogItemId}
+          value={draft.accessoryQty}
+          onChange={(event) => onDraftChange({ ...draft, accessoryQty: Number(event.target.value) || 0 })}
+        />
         <button className="secondary-action mini-action" type="button" disabled={!draft.catalogItemId} onClick={onAdd}>
-          + Add line
+          + Add row
         </button>
       </div>
     </div>
@@ -13159,7 +13253,7 @@ function ProjectLocationsSection({
   onUpdateLocation,
   onDeleteLocation,
   onAddLocationItem,
-  onUpdateLocationItemQty,
+  onUpdateLocationItem,
   onDeleteLocationItem,
   onUploadImage,
   onDownloadImage,
@@ -13174,8 +13268,8 @@ function ProjectLocationsSection({
   onAddLocation: (locationType: "garage" | "lot") => void;
   onUpdateLocation: (locationId: string, updates: Parameters<typeof updateProjectLocation>[1]) => void;
   onDeleteLocation: (locationId: string) => void;
-  onAddLocationItem: (locationId: string, lineType: ProjectLocationItem["lineType"], catalogItemId: string, qty: number) => void;
-  onUpdateLocationItemQty: (locationId: string, itemId: string, qty: number) => void;
+  onAddLocationItem: (locationId: string, lineType: ProjectLocationItem["lineType"], catalogItemId: string, qty: number, extra?: { locationLabel?: string; accessoryCatalogItemId?: string | null; accessoryQty?: number }) => void;
+  onUpdateLocationItem: (locationId: string, itemId: string, updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>) => void;
   onDeleteLocationItem: (locationId: string, itemId: string) => void;
   onUploadImage: (
     locationId: string,
@@ -13195,9 +13289,11 @@ function ProjectLocationsSection({
   const [cameraLocationId, setCameraLocationId] = useState<string | null>(null);
   const [filesLocationId, setFilesLocationId] = useState<string | null>(null);
   const [showGallery, setShowGallery] = useState(false);
-  const [signItemDraft, setSignItemDraft] = useState({ catalogItemId: "", qty: 1 });
-  const [sensorItemDraft, setSensorItemDraft] = useState({ catalogItemId: "", qty: 1 });
-  const [miscItemDraft, setMiscItemDraft] = useState({ catalogItemId: "", qty: 1 });
+  const emptyLineDraft = { catalogItemId: "", qty: 1, locationLabel: "", accessoryCatalogItemId: "", accessoryQty: 0 };
+  const [cameraItemDraft, setCameraItemDraft] = useState(emptyLineDraft);
+  const [signItemDraft, setSignItemDraft] = useState(emptyLineDraft);
+  const [sensorItemDraft, setSensorItemDraft] = useState(emptyLineDraft);
+  const [miscItemDraft, setMiscItemDraft] = useState(emptyLineDraft);
 
   const locations = project.locations ?? [];
   const selectedLocation = locations.find((location) => location.id === selectedLocationId) ?? null;
@@ -13207,6 +13303,10 @@ function ProjectLocationsSection({
   const sensorCatalogItems = activeCatalogItems.filter(
     (item) => item.category === "Space Sensors" || (item.tags ?? []).some((tag) => tag.toLowerCase().includes("sensor")),
   );
+  const hasTag = (item: CatalogItem, tag: string) => (item.tags ?? []).some((entry) => entry.trim().toLowerCase() === tag);
+  const cameraAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "camera accessory"));
+  const signAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "sign accessory"));
+  const sensorAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "sensor accessory"));
 
   return (
     <section className="panel wide">
@@ -13303,50 +13403,15 @@ function ProjectLocationsSection({
               <button className="icon-button" type="button" onClick={() => setSelectedLocationId(null)} aria-label="Close location details">x</button>
             </div>
             <div className="bom-modal-grid">
-              <label className="checkbox-inline span-2">
+              <p className="span-2 muted">General info for reference only -- doesn't drive anything below. Actual camera hardware is picked in the Cameras section.</p>
+              <label className="checkbox-inline">
                 <input type="checkbox" checked={selectedLocation.fli} onChange={(event) => onUpdateLocation(selectedLocation.id, { fli: event.target.checked })} /> FLI
               </label>
-              <label className="span-2">Camera model
-                <select
-                  disabled={!selectedLocation.fli}
-                  value={selectedLocation.fliCameraItemId ?? ""}
-                  onChange={(event) => onUpdateLocation(selectedLocation.id, { fliCameraItemId: event.target.value || null })}
-                >
-                  <option value="">Select camera model...</option>
-                  {cameraCatalogItems.map((item) => (
-                    <option key={item.id} value={item.id}>{item.productName}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="checkbox-inline span-2">
+              <label className="checkbox-inline">
                 <input type="checkbox" checked={selectedLocation.lpr} onChange={(event) => onUpdateLocation(selectedLocation.id, { lpr: event.target.checked })} /> LPR
               </label>
-              <label className="span-2">Camera model
-                <select
-                  disabled={!selectedLocation.lpr}
-                  value={selectedLocation.lprCameraItemId ?? ""}
-                  onChange={(event) => onUpdateLocation(selectedLocation.id, { lprCameraItemId: event.target.value || null })}
-                >
-                  <option value="">Select camera model...</option>
-                  {cameraCatalogItems.map((item) => (
-                    <option key={item.id} value={item.id}>{item.productName}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="checkbox-inline span-2">
+              <label className="checkbox-inline">
                 <input type="checkbox" checked={selectedLocation.peopleCounting} onChange={(event) => onUpdateLocation(selectedLocation.id, { peopleCounting: event.target.checked })} /> People counting
-              </label>
-              <label className="span-2">Camera model
-                <select
-                  disabled={!selectedLocation.peopleCounting}
-                  value={selectedLocation.peopleCountingCameraItemId ?? ""}
-                  onChange={(event) => onUpdateLocation(selectedLocation.id, { peopleCountingCameraItemId: event.target.value || null })}
-                >
-                  <option value="">Select camera model...</option>
-                  {cameraCatalogItems.map((item) => (
-                    <option key={item.id} value={item.id}>{item.productName}</option>
-                  ))}
-                </select>
               </label>
               <label>Entries<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.entriesCount} onChange={(event) => onUpdateLocation(selectedLocation.id, { entriesCount: Number(event.target.value) || 0 })} /></label>
               <label>Exits<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.exitsCount} onChange={(event) => onUpdateLocation(selectedLocation.id, { exitsCount: Number(event.target.value) || 0 })} /></label>
@@ -13354,18 +13419,44 @@ function ProjectLocationsSection({
             </div>
 
             <LocationItemLineSection
+              title="Cameras"
+              hint="Cameras for this facility, pulled straight from the Product Catalog."
+              items={selectedLocation.cameraLines}
+              catalogItems={catalogItems}
+              options={cameraCatalogItems}
+              accessoryOptions={cameraAccessoryCatalogItems}
+              draft={cameraItemDraft}
+              onDraftChange={setCameraItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedLocation.id, "camera", cameraItemDraft.catalogItemId, cameraItemDraft.qty, {
+                  locationLabel: cameraItemDraft.locationLabel,
+                  accessoryCatalogItemId: cameraItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: cameraItemDraft.accessoryQty,
+                });
+                setCameraItemDraft(emptyLineDraft);
+              }}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedLocation.id, itemId, updates)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedLocation.id, itemId)}
+            />
+
+            <LocationItemLineSection
               title="Signs"
               hint="Signage for this facility, pulled straight from the Product Catalog."
               items={selectedLocation.signLines}
               catalogItems={catalogItems}
               options={signCatalogItems}
+              accessoryOptions={signAccessoryCatalogItems}
               draft={signItemDraft}
               onDraftChange={setSignItemDraft}
               onAdd={() => {
-                onAddLocationItem(selectedLocation.id, "sign", signItemDraft.catalogItemId, signItemDraft.qty);
-                setSignItemDraft({ catalogItemId: "", qty: 1 });
+                onAddLocationItem(selectedLocation.id, "sign", signItemDraft.catalogItemId, signItemDraft.qty, {
+                  locationLabel: signItemDraft.locationLabel,
+                  accessoryCatalogItemId: signItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: signItemDraft.accessoryQty,
+                });
+                setSignItemDraft(emptyLineDraft);
               }}
-              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedLocation.id, itemId, qty)}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedLocation.id, itemId, updates)}
               onDelete={(itemId) => onDeleteLocationItem(selectedLocation.id, itemId)}
             />
 
@@ -13375,13 +13466,18 @@ function ProjectLocationsSection({
               items={selectedLocation.sensorLines}
               catalogItems={catalogItems}
               options={sensorCatalogItems}
+              accessoryOptions={sensorAccessoryCatalogItems}
               draft={sensorItemDraft}
               onDraftChange={setSensorItemDraft}
               onAdd={() => {
-                onAddLocationItem(selectedLocation.id, "sensor", sensorItemDraft.catalogItemId, sensorItemDraft.qty);
-                setSensorItemDraft({ catalogItemId: "", qty: 1 });
+                onAddLocationItem(selectedLocation.id, "sensor", sensorItemDraft.catalogItemId, sensorItemDraft.qty, {
+                  locationLabel: sensorItemDraft.locationLabel,
+                  accessoryCatalogItemId: sensorItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: sensorItemDraft.accessoryQty,
+                });
+                setSensorItemDraft(emptyLineDraft);
               }}
-              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedLocation.id, itemId, qty)}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedLocation.id, itemId, updates)}
               onDelete={(itemId) => onDeleteLocationItem(selectedLocation.id, itemId)}
             />
 
@@ -13391,13 +13487,18 @@ function ProjectLocationsSection({
               items={selectedLocation.miscLines}
               catalogItems={catalogItems}
               options={activeCatalogItems}
+              accessoryOptions={activeCatalogItems}
               draft={miscItemDraft}
               onDraftChange={setMiscItemDraft}
               onAdd={() => {
-                onAddLocationItem(selectedLocation.id, "misc", miscItemDraft.catalogItemId, miscItemDraft.qty);
-                setMiscItemDraft({ catalogItemId: "", qty: 1 });
+                onAddLocationItem(selectedLocation.id, "misc", miscItemDraft.catalogItemId, miscItemDraft.qty, {
+                  locationLabel: miscItemDraft.locationLabel,
+                  accessoryCatalogItemId: miscItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: miscItemDraft.accessoryQty,
+                });
+                setMiscItemDraft(emptyLineDraft);
               }}
-              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedLocation.id, itemId, qty)}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedLocation.id, itemId, updates)}
               onDelete={(itemId) => onDeleteLocationItem(selectedLocation.id, itemId)}
             />
 
@@ -13604,7 +13705,7 @@ function SalesQuoteBuilder({
   onUpdateLocation,
   onDeleteLocation,
   onAddLocationItem,
-  onUpdateLocationItemQty,
+  onUpdateLocationItem,
   onDeleteLocationItem,
   onPullLocationHardware,
   onUpdateStatus,
@@ -13663,8 +13764,8 @@ function SalesQuoteBuilder({
     }>,
   ) => void;
   onDeleteLocation: (quoteId: string, locationId: string) => void;
-  onAddLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number) => void;
-  onUpdateLocationItemQty: (quoteId: string, locationId: string, itemId: string, qty: number) => void;
+  onAddLocationItem: (quoteId: string, locationId: string, lineType: SalesQuoteLocationItem["lineType"], catalogItemId: string, qty: number, extra?: { locationLabel?: string; accessoryCatalogItemId?: string | null; accessoryQty?: number }) => void;
+  onUpdateLocationItem: (quoteId: string, locationId: string, itemId: string, updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>) => void;
   onDeleteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onPullLocationHardware: (quoteId: string) => void;
   onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => void;
@@ -13729,11 +13830,13 @@ function SalesQuoteBuilder({
   const [proposalClientEmailDraft, setProposalClientEmailDraft] = useState("");
   const [proposalSummaryDraft, setProposalSummaryDraft] = useState("");
   const [copiedProposalId, setCopiedProposalId] = useState("");
-  // Migration 056: addable Sign/Space Sensor/Misc lines at the location
-  // level -- one small draft per section, reset after each add.
-  const [signItemDraft, setSignItemDraft] = useState({ catalogItemId: "", qty: 1 });
-  const [sensorItemDraft, setSensorItemDraft] = useState({ catalogItemId: "", qty: 1 });
-  const [miscItemDraft, setMiscItemDraft] = useState({ catalogItemId: "", qty: 1 });
+  // Migration 056: addable Camera/Sign/Space Sensor/Misc lines at the
+  // location level -- one small draft per section, reset after each add.
+  const emptyLineDraft = { catalogItemId: "", qty: 1, locationLabel: "", accessoryCatalogItemId: "", accessoryQty: 0 };
+  const [cameraItemDraft, setCameraItemDraft] = useState(emptyLineDraft);
+  const [signItemDraft, setSignItemDraft] = useState(emptyLineDraft);
+  const [sensorItemDraft, setSensorItemDraft] = useState(emptyLineDraft);
+  const [miscItemDraft, setMiscItemDraft] = useState(emptyLineDraft);
   // #164 -- lets a rep get back to the original "New Site" intake fields
   // (client/site name, city) and correct them after the quote already
   // exists.
@@ -13777,6 +13880,10 @@ function SalesQuoteBuilder({
   const sensorCatalogItems = activeCatalogItems.filter(
     (item) => item.category === "Space Sensors" || (item.tags ?? []).some((tag) => tag.toLowerCase().includes("sensor")),
   );
+  const hasTag = (item: CatalogItem, tag: string) => (item.tags ?? []).some((entry) => entry.trim().toLowerCase() === tag);
+  const cameraAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "camera accessory"));
+  const signAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "sign accessory"));
+  const sensorAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "sensor accessory"));
   // Small "x/y answered" hint on the compact Site Intake Questionnaire
   // trigger button (#168) -- lets a rep see progress without opening it.
   const siteIntakeResponses = selectedQuote ? quoteIntakeResponses[selectedQuote.id]?.responses ?? {} : {};
@@ -14314,50 +14421,15 @@ function SalesQuoteBuilder({
               <button className="icon-button" type="button" onClick={() => setSelectedLocationId(null)} aria-label="Close location details">x</button>
             </div>
             <div className="bom-modal-grid">
-              <label className="checkbox-inline span-2">
+              <p className="span-2 muted">General info for reference only -- doesn't drive anything below. Actual camera hardware is picked in the Cameras section.</p>
+              <label className="checkbox-inline">
                 <input type="checkbox" checked={selectedLocation.fli} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { fli: event.target.checked })} /> FLI
               </label>
-              <label className="span-2">Camera model
-                <select
-                  disabled={!selectedLocation.fli}
-                  value={selectedLocation.fliCameraItemId ?? ""}
-                  onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { fliCameraItemId: event.target.value || null })}
-                >
-                  <option value="">Select camera model...</option>
-                  {cameraCatalogItems.map((item) => (
-                    <option key={item.id} value={item.id}>{item.productName}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="checkbox-inline span-2">
+              <label className="checkbox-inline">
                 <input type="checkbox" checked={selectedLocation.lpr} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { lpr: event.target.checked })} /> LPR
               </label>
-              <label className="span-2">Camera model
-                <select
-                  disabled={!selectedLocation.lpr}
-                  value={selectedLocation.lprCameraItemId ?? ""}
-                  onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { lprCameraItemId: event.target.value || null })}
-                >
-                  <option value="">Select camera model...</option>
-                  {cameraCatalogItems.map((item) => (
-                    <option key={item.id} value={item.id}>{item.productName}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="checkbox-inline span-2">
+              <label className="checkbox-inline">
                 <input type="checkbox" checked={selectedLocation.peopleCounting} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { peopleCounting: event.target.checked })} /> People counting
-              </label>
-              <label className="span-2">Camera model
-                <select
-                  disabled={!selectedLocation.peopleCounting}
-                  value={selectedLocation.peopleCountingCameraItemId ?? ""}
-                  onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { peopleCountingCameraItemId: event.target.value || null })}
-                >
-                  <option value="">Select camera model...</option>
-                  {cameraCatalogItems.map((item) => (
-                    <option key={item.id} value={item.id}>{item.productName}</option>
-                  ))}
-                </select>
               </label>
               <label>Entries<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.entriesCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { entriesCount: Number(event.target.value) || 0 })} /></label>
               <label>Exits<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.exitsCount} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { exitsCount: Number(event.target.value) || 0 })} /></label>
@@ -14380,18 +14452,44 @@ function SalesQuoteBuilder({
             </div>
 
             <LocationItemLineSection
+              title="Cameras"
+              hint="Cameras for this facility, pulled straight from the Product Catalog."
+              items={selectedLocation.cameraLines}
+              catalogItems={catalogItems}
+              options={cameraCatalogItems}
+              accessoryOptions={cameraAccessoryCatalogItems}
+              draft={cameraItemDraft}
+              onDraftChange={setCameraItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedQuote.id, selectedLocation.id, "camera", cameraItemDraft.catalogItemId, cameraItemDraft.qty, {
+                  locationLabel: cameraItemDraft.locationLabel,
+                  accessoryCatalogItemId: cameraItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: cameraItemDraft.accessoryQty,
+                });
+                setCameraItemDraft(emptyLineDraft);
+              }}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedQuote.id, selectedLocation.id, itemId, updates)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedQuote.id, selectedLocation.id, itemId)}
+            />
+
+            <LocationItemLineSection
               title="Signs"
               hint="Signage for this facility, pulled straight from the Product Catalog."
               items={selectedLocation.signLines}
               catalogItems={catalogItems}
               options={signCatalogItems}
+              accessoryOptions={signAccessoryCatalogItems}
               draft={signItemDraft}
               onDraftChange={setSignItemDraft}
               onAdd={() => {
-                onAddLocationItem(selectedQuote.id, selectedLocation.id, "sign", signItemDraft.catalogItemId, signItemDraft.qty);
-                setSignItemDraft({ catalogItemId: "", qty: 1 });
+                onAddLocationItem(selectedQuote.id, selectedLocation.id, "sign", signItemDraft.catalogItemId, signItemDraft.qty, {
+                  locationLabel: signItemDraft.locationLabel,
+                  accessoryCatalogItemId: signItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: signItemDraft.accessoryQty,
+                });
+                setSignItemDraft(emptyLineDraft);
               }}
-              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedQuote.id, selectedLocation.id, itemId, qty)}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedQuote.id, selectedLocation.id, itemId, updates)}
               onDelete={(itemId) => onDeleteLocationItem(selectedQuote.id, selectedLocation.id, itemId)}
             />
 
@@ -14401,13 +14499,18 @@ function SalesQuoteBuilder({
               items={selectedLocation.sensorLines}
               catalogItems={catalogItems}
               options={sensorCatalogItems}
+              accessoryOptions={sensorAccessoryCatalogItems}
               draft={sensorItemDraft}
               onDraftChange={setSensorItemDraft}
               onAdd={() => {
-                onAddLocationItem(selectedQuote.id, selectedLocation.id, "sensor", sensorItemDraft.catalogItemId, sensorItemDraft.qty);
-                setSensorItemDraft({ catalogItemId: "", qty: 1 });
+                onAddLocationItem(selectedQuote.id, selectedLocation.id, "sensor", sensorItemDraft.catalogItemId, sensorItemDraft.qty, {
+                  locationLabel: sensorItemDraft.locationLabel,
+                  accessoryCatalogItemId: sensorItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: sensorItemDraft.accessoryQty,
+                });
+                setSensorItemDraft(emptyLineDraft);
               }}
-              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedQuote.id, selectedLocation.id, itemId, qty)}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedQuote.id, selectedLocation.id, itemId, updates)}
               onDelete={(itemId) => onDeleteLocationItem(selectedQuote.id, selectedLocation.id, itemId)}
             />
 
@@ -14417,13 +14520,18 @@ function SalesQuoteBuilder({
               items={selectedLocation.miscLines}
               catalogItems={catalogItems}
               options={activeCatalogItems}
+              accessoryOptions={activeCatalogItems}
               draft={miscItemDraft}
               onDraftChange={setMiscItemDraft}
               onAdd={() => {
-                onAddLocationItem(selectedQuote.id, selectedLocation.id, "misc", miscItemDraft.catalogItemId, miscItemDraft.qty);
-                setMiscItemDraft({ catalogItemId: "", qty: 1 });
+                onAddLocationItem(selectedQuote.id, selectedLocation.id, "misc", miscItemDraft.catalogItemId, miscItemDraft.qty, {
+                  locationLabel: miscItemDraft.locationLabel,
+                  accessoryCatalogItemId: miscItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: miscItemDraft.accessoryQty,
+                });
+                setMiscItemDraft(emptyLineDraft);
               }}
-              onUpdateQty={(itemId, qty) => onUpdateLocationItemQty(selectedQuote.id, selectedLocation.id, itemId, qty)}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedQuote.id, selectedLocation.id, itemId, updates)}
               onDelete={(itemId) => onDeleteLocationItem(selectedQuote.id, selectedLocation.id, itemId)}
             />
 

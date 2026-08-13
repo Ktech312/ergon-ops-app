@@ -4525,10 +4525,13 @@ export type ProjectLocationImage = {
 export type ProjectLocationItem = {
   id: string;
   projectLocationId: string;
-  lineType: "sign" | "sensor" | "misc";
+  lineType: "sign" | "sensor" | "misc" | "camera";
   catalogItemId: string | null;
   qty: number;
   lineSort: number;
+  locationLabel: string;
+  accessoryCatalogItemId: string | null;
+  accessoryQty: number;
 };
 
 export type ProjectLocation = {
@@ -4551,6 +4554,7 @@ export type ProjectLocation = {
   signLines: ProjectLocationItem[];
   sensorLines: ProjectLocationItem[];
   miscLines: ProjectLocationItem[];
+  cameraLines: ProjectLocationItem[];
 };
 
 export type ProjectSite = {
@@ -4630,6 +4634,9 @@ type ProjectLocationItemRow = {
   catalog_item_id: string | null;
   qty: number | string;
   line_sort: number;
+  location_label: string | null;
+  accessory_catalog_item_id: string | null;
+  accessory_qty: number | string;
 };
 
 type ProjectLocationRow = {
@@ -4674,6 +4681,9 @@ function mapProjectLocationItemRow(row: ProjectLocationItemRow): ProjectLocation
     catalogItemId: row.catalog_item_id ?? null,
     qty: Number(row.qty) || 0,
     lineSort: row.line_sort,
+    locationLabel: row.location_label ?? "",
+    accessoryCatalogItemId: row.accessory_catalog_item_id ?? null,
+    accessoryQty: Number(row.accessory_qty) || 0,
   };
 }
 
@@ -4699,11 +4709,12 @@ function mapProjectLocationRow(row: ProjectLocationRow): ProjectLocation {
     signLines: items.filter((item) => item.lineType === "sign"),
     sensorLines: items.filter((item) => item.lineType === "sensor"),
     miscLines: items.filter((item) => item.lineType === "misc"),
+    cameraLines: items.filter((item) => item.lineType === "camera"),
   };
 }
 
 const PROJECT_LOCATION_SELECT =
-  "id,project_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,source_quote_location_id,project_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),project_location_items(id,project_location_id,line_type,catalog_item_id,qty,line_sort)";
+  "id,project_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,source_quote_location_id,project_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),project_location_items(id,project_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)";
 
 type ProjectSiteRow = {
   id: string;
@@ -5404,10 +5415,13 @@ export type SalesQuoteLocationImage = {
 export type SalesQuoteLocationItem = {
   id: string;
   quoteLocationId: string;
-  lineType: "sign" | "sensor" | "misc";
+  lineType: "sign" | "sensor" | "misc" | "camera";
   catalogItemId: string | null;
   qty: number;
   lineSort: number;
+  locationLabel: string;
+  accessoryCatalogItemId: string | null;
+  accessoryQty: number;
 };
 
 export type SalesQuoteLocation = {
@@ -5432,6 +5446,7 @@ export type SalesQuoteLocation = {
   signLines: SalesQuoteLocationItem[];
   sensorLines: SalesQuoteLocationItem[];
   miscLines: SalesQuoteLocationItem[];
+  cameraLines: SalesQuoteLocationItem[];
 };
 
 export type SalesQuoteBomLine = {
@@ -5522,6 +5537,9 @@ type SalesQuoteLocationItemRow = {
   catalog_item_id: string | null;
   qty: number | string;
   line_sort: number;
+  location_label: string | null;
+  accessory_catalog_item_id: string | null;
+  accessory_qty: number | string;
 };
 
 type SalesQuoteLocationRow = {
@@ -5602,6 +5620,9 @@ function mapSalesQuoteLocationItemRow(row: SalesQuoteLocationItemRow): SalesQuot
     catalogItemId: row.catalog_item_id ?? null,
     qty: Number(row.qty) || 0,
     lineSort: row.line_sort,
+    locationLabel: row.location_label ?? "",
+    accessoryCatalogItemId: row.accessory_catalog_item_id ?? null,
+    accessoryQty: Number(row.accessory_qty) || 0,
   };
 }
 
@@ -5626,6 +5647,7 @@ function mapSalesQuoteLocationRow(row: SalesQuoteLocationRow): SalesQuoteLocatio
     signLines: items.filter((item) => item.lineType === "sign"),
     sensorLines: items.filter((item) => item.lineType === "sensor"),
     miscLines: items.filter((item) => item.lineType === "misc"),
+    cameraLines: items.filter((item) => item.lineType === "camera"),
   };
 }
 
@@ -5672,7 +5694,7 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
 }
 
 const SALES_QUOTE_SELECT =
-  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
+  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5993,6 +6015,7 @@ export async function addSalesQuoteLocationItem(
   catalogItemId: string,
   qty: number,
   lineSort: number,
+  extra: { locationLabel?: string; accessoryCatalogItemId?: string | null; accessoryQty?: number } = {},
   accessToken?: string,
 ): Promise<SalesQuoteLocationItem | null> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -6001,7 +6024,16 @@ export async function addSalesQuoteLocationItem(
   const response = await fetch(supabaseUrl("sales_quote_location_items"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-    body: JSON.stringify({ quote_location_id: quoteLocationId, line_type: lineType, catalog_item_id: catalogItemId, qty, line_sort: lineSort }),
+    body: JSON.stringify({
+      quote_location_id: quoteLocationId,
+      line_type: lineType,
+      catalog_item_id: catalogItemId,
+      qty,
+      line_sort: lineSort,
+      location_label: extra.locationLabel ?? "",
+      accessory_catalog_item_id: extra.accessoryCatalogItemId ?? null,
+      accessory_qty: extra.accessoryQty ?? 0,
+    }),
   });
   if (!response.ok) {
     return null;
@@ -6010,14 +6042,23 @@ export async function addSalesQuoteLocationItem(
   return rows[0] ? mapSalesQuoteLocationItemRow(rows[0]) : null;
 }
 
-export async function updateSalesQuoteLocationItemQty(id: string, qty: number, accessToken?: string): Promise<void> {
+export async function updateSalesQuoteLocationItem(
+  id: string,
+  updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>,
+  accessToken?: string,
+): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
+  const payload: Record<string, unknown> = {};
+  if (updates.qty !== undefined) payload.qty = updates.qty;
+  if (updates.locationLabel !== undefined) payload.location_label = updates.locationLabel;
+  if (updates.accessoryCatalogItemId !== undefined) payload.accessory_catalog_item_id = updates.accessoryCatalogItemId;
+  if (updates.accessoryQty !== undefined) payload.accessory_qty = updates.accessoryQty;
   await fetch(supabaseUrl(`sales_quote_location_items?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
-    body: JSON.stringify({ qty }),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -6460,6 +6501,7 @@ export async function addProjectLocationItem(
   catalogItemId: string,
   qty: number,
   lineSort: number,
+  extra: { locationLabel?: string; accessoryCatalogItemId?: string | null; accessoryQty?: number } = {},
   accessToken?: string,
 ): Promise<ProjectLocationItem | null> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -6468,7 +6510,16 @@ export async function addProjectLocationItem(
   const response = await fetch(supabaseUrl("project_location_items"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-    body: JSON.stringify({ project_location_id: projectLocationId, line_type: lineType, catalog_item_id: catalogItemId, qty, line_sort: lineSort }),
+    body: JSON.stringify({
+      project_location_id: projectLocationId,
+      line_type: lineType,
+      catalog_item_id: catalogItemId,
+      qty,
+      line_sort: lineSort,
+      location_label: extra.locationLabel ?? "",
+      accessory_catalog_item_id: extra.accessoryCatalogItemId ?? null,
+      accessory_qty: extra.accessoryQty ?? 0,
+    }),
   });
   if (!response.ok) {
     return null;
@@ -6477,14 +6528,23 @@ export async function addProjectLocationItem(
   return rows[0] ? mapProjectLocationItemRow(rows[0]) : null;
 }
 
-export async function updateProjectLocationItemQty(id: string, qty: number, accessToken?: string): Promise<void> {
+export async function updateProjectLocationItem(
+  id: string,
+  updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>,
+  accessToken?: string,
+): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
+  const payload: Record<string, unknown> = {};
+  if (updates.qty !== undefined) payload.qty = updates.qty;
+  if (updates.locationLabel !== undefined) payload.location_label = updates.locationLabel;
+  if (updates.accessoryCatalogItemId !== undefined) payload.accessory_catalog_item_id = updates.accessoryCatalogItemId;
+  if (updates.accessoryQty !== undefined) payload.accessory_qty = updates.accessoryQty;
   await fetch(supabaseUrl(`project_location_items?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
-    body: JSON.stringify({ qty }),
+    body: JSON.stringify(payload),
   });
 }
 

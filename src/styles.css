@@ -4526,6 +4526,36 @@ td.empty-compact-state {
   white-space: nowrap;
 }
 
+/* Camera/Sign/Space Sensor/Misc location lines: Location label + item +
+   qty + accessory + accessory qty, all in one row. Higher specificity
+   than ".line-item div" (display:grid/gap:3px) so it isn't overridden by
+   that more generic rule. */
+.line-item .location-line-fields {
+  align-items: end;
+  display: grid;
+  flex: 1;
+  gap: 10px;
+  grid-template-columns: minmax(110px, 0.8fr) minmax(150px, 1.3fr) minmax(150px, 1.1fr) 80px;
+}
+
+.location-line-fields label {
+  color: #756d62;
+  display: grid;
+  font-size: 10px;
+  font-weight: 900;
+  gap: 4px;
+  text-transform: uppercase;
+}
+
+.location-line-fields label.muted {
+  color: #756d62;
+}
+
+.location-line-fields input,
+.location-line-fields select {
+  font: inherit;
+}
+
 .order-totals {
   align-items: center;
   border-top: 1px solid #eee7dc;
