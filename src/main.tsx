@@ -13543,10 +13543,17 @@ function ProjectShippingSection({
           <h2>Shipping</h2>
           <p>Request a shipment of BOM items to this project -- Warehouse/Implementation packs and ships it from here.</p>
         </div>
-        <button className="primary-action" type="button" onClick={openNewShipmentModal} disabled={project.bom.length === 0}>
+        <button
+          className="primary-action"
+          type="button"
+          onClick={openNewShipmentModal}
+          disabled={project.bom.length === 0}
+          title={project.bom.length === 0 ? "Add at least one BOM material below first -- shipments are built from BOM lines." : undefined}
+        >
           <Truck size={16} /> New Shipment
         </button>
       </div>
+      {project.bom.length === 0 && <p className="muted">Add BOM material above first -- shipments are built from BOM lines.</p>}
       <div className="report-table compact-report-table">
         <div className="report-table-head"><span>Shipment</span><span>Status</span><span>Address</span><span>Items</span><span>Requested</span></div>
         {shipments.map((shipment) => (
