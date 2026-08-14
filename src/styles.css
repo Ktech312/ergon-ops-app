@@ -2532,6 +2532,99 @@ td small.quote-ref-tag {
   width: min(100%, 900px);
 }
 
+/* Wider variant for modals that wrap a whole section (BOM table,
+   Submittals list, Locations/Shipping panels) instead of a form. */
+.modal-panel-wide {
+  max-width: 1200px;
+  width: min(100%, 1200px);
+}
+
+.modal-panel-wide > .panel {
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.modal-tile-close-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+/* Project detail tile grid: each section (BOM, Shipping, Submittals,
+   etc.) collapses to a small clickable stat card here instead of always
+   rendering fully expanded -- click opens the real section in a modal.
+   Reuses the .project-card visual language (same card family as the
+   old Project Transfers cards) but as a real button, with hover lift. */
+.project-tile-grid {
+  display: grid;
+  gap: 14px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.project-tile {
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(64, 52, 38, 0.08);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 10px;
+  padding: 16px;
+  text-align: left;
+  transition: box-shadow 150ms ease, transform 150ms ease;
+}
+
+.project-tile:hover {
+  box-shadow: 0 16px 36px rgba(64, 52, 38, 0.16);
+  transform: translateY(-2px);
+}
+
+.project-tile h3 {
+  align-items: center;
+  color: #1b1a18;
+  display: flex;
+  font-size: 15px;
+  gap: 8px;
+  margin: 0;
+}
+
+.project-tile h3 svg {
+  color: #a01029;
+  flex: none;
+}
+
+.project-tile p {
+  color: #756d62;
+  font-size: 12px;
+  margin: 0;
+}
+
+.project-tile-stats {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.project-tile-stats div {
+  display: grid;
+  gap: 2px;
+}
+
+.project-tile-stats span {
+  color: #756d62;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.project-tile-stats strong {
+  font-size: 17px;
+}
+
 .modal-header {
   align-items: flex-start;
   border-bottom: 1px solid #e8e1d5;

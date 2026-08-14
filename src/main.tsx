@@ -7875,6 +7875,39 @@ function Inventory({
   );
 }
 
+// A section's "collapsed" form on the Project detail page: a small
+// clickable card with a couple of quick stats, opening the real section
+// in a modal on click instead of always rendering fully expanded -- the
+// page was scrolling forever with everything open at once.
+function ProjectTile({
+  icon,
+  title,
+  hint,
+  stats,
+  onClick,
+}: {
+  icon: ReactNode;
+  title: string;
+  hint?: string;
+  stats: Array<{ label: string; value: string | number }>;
+  onClick: () => void;
+}) {
+  return (
+    <button className="project-tile" type="button" onClick={onClick}>
+      <h3>{icon}{title}</h3>
+      {hint && <p>{hint}</p>}
+      <div className="project-tile-stats">
+        {stats.map((stat) => (
+          <div key={stat.label}>
+            <span>{stat.label}</span>
+            <strong>{stat.value}</strong>
+          </div>
+        ))}
+      </div>
+    </button>
+  );
+}
+
 function Projects({
   projectSites,
   setProjectSites,
@@ -8009,6 +8042,17 @@ function Projects({
   const [bomImportRows, setBomImportRows] = useState<Array<{ item: string; qty: number }>>([]);
   const [bomImportStatus, setBomImportStatus] = useState("");
   const [showBomModal, setShowBomModal] = useState(false);
+  // Section tiles on the project detail page: each collapses to a stat
+  // card and opens the real content in one of these on click, instead of
+  // rendering fully expanded all the time (the page scrolled forever).
+  const [showBuildSalesBomModal, setShowBuildSalesBomModal] = useState(false);
+  const [showProjectDocsModal, setShowProjectDocsModal] = useState(false);
+  const [showSowModal, setShowSowModal] = useState(false);
+  const [showBomSectionModal, setShowBomSectionModal] = useState(false);
+  const [showShippingModal, setShowShippingModal] = useState(false);
+  const [showLocationsModal, setShowLocationsModal] = useState(false);
+  const [showSubmittalsModal, setShowSubmittalsModal] = useState(false);
+  const [showHandoverModal, setShowHandoverModal] = useState(false);
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
     item: parts[0].name,
@@ -8038,6 +8082,11 @@ function Projects({
   }, [selectedProject.name]);
   const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
+  const sowHasContent = Object.values(selectedProject.sow).some((value) => value.trim() !== "");
+  const shipmentStatusCounts = (selectedProject.shipments ?? []).reduce(
+    (counts, shipment) => ({ ...counts, [shipment.status]: (counts[shipment.status] ?? 0) + 1 }),
+    {} as Record<ProjectShipment["status"], number>,
+  );
   const totalProjectValue = projectSites.reduce((sum, project) => sum + project.allocated, 0);
   const purchasingProjects = projectSites.filter((project) => project.status === "Procurement").length;
   const draftProjects = projectSites.filter((project) => project.status === "Draft" || project.status === "Planning").length;
@@ -8616,74 +8665,22 @@ function Projects({
 
       <div className="project-top-row">
         <section className="panel compact-card">
-          <PanelHeader title="Build Sales BOM and Scope" label="One-time setup: upload a sales quote PDF" />
-          <label className={`sales-dropzone compact-row ${isExtractingQuote ? "is-working" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
-            <Upload size={15} />
-            <strong>{isExtractingQuote ? "Reading sales quote..." : "Drag or choose sales quote PDF"}</strong>
-            <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} disabled={isExtractingQuote} />
-          </label>
-          {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
-
-          <div className="quote-pull-row">
-            <select value={pullQuoteId} onChange={(event) => setPullQuoteId(event.target.value)}>
-              <option value="">Or pull from a Closed - Won sales quote...</option>
-              {salesQuotes.filter((quote) => quote.status === "closed_won").map((quote) => (
-                <option key={quote.id} value={quote.id}>{quote.siteName} ({quote.clientName})</option>
-              ))}
-            </select>
-            <button
-              className="secondary-action mini-action"
-              type="button"
-              disabled={!pullQuoteId}
-              onClick={() => {
-                const count = onPullBomFromClosedQuote(selectedProject.ref, pullQuoteId);
-                setActionStatus(count > 0 ? `Pulled ${count} BOM line${count === 1 ? "" : "s"} from the sales quote.` : "That quote has no BOM lines to pull, or it could not be found.");
-                setPullQuoteId("");
-              }}
-            >
-              Pull BOM from Closed Sales
-            </button>
-            {salesQuotes.filter((quote) => quote.status === "closed_won").length === 0 && (
-              <small className="muted">No Closed - Won quotes yet -- mark one Closed - Won in Sales -&gt; Site Builder to pull from it here.</small>
-            )}
+          <PanelHeader title="Site Information" label="Client, location, and install context" />
+          <div className="site-info-list">
+            <div><Building2 size={17} /><span>Client</span><strong>{selectedProject.client}</strong></div>
+            <div><MapPin size={17} /><span>Location</span><strong>{selectedProject.address}</strong></div>
+            <div><User size={17} /><span>Owner</span><strong>{selectedProject.owner}</strong></div>
+            <div><CalendarDays size={17} /><span>Target</span><strong>{selectedProject.due}</strong></div>
           </div>
         </section>
 
         <section className="panel compact-card">
-          <div className="panel-title-row">
-            <div>
-              <h2>Project Documents</h2>
-              <p>Backups and reference files.</p>
-            </div>
-            <label className="secondary-action mini-action project-doc-upload">
-              <Upload size={15} /> Upload
-              <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.dwg,.dxf,.rvt,.ifc,.step,.stp" multiple onChange={handleProjectDocumentSelect} />
-            </label>
-          </div>
-          <div className="upload-rule-note">
-            <FileText size={15} />
-            <span>Project Documents are for PDF, Word, Excel/CSV, and CAD/reference files. Garage/lot pictures belong in Photos.</span>
-          </div>
-          <div className="project-doc-list">
-            {selectedProjectDocuments.map((doc) => (
-              <div className="document-row" key={`${doc.id}-${doc.name}`}>
-                <div>
-                  <strong>{doc.name}</strong>
-                  <span>{doc.type ?? "Project"} - {doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.storage ?? "Browser"}</span>
-                  <small>{formatDocumentProvenance(doc)}</small>
-                </div>
-                <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
-                  <option>Uploaded</option>
-                  <option>Ready to review</option>
-                  <option>Backed up</option>
-                  <option>Archived</option>
-                </select>
-                {doc.storagePath && (
-                  <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc)}>Download</button>
-                )}
-              </div>
-            ))}
-            {selectedProjectDocuments.length === 0 && <div className="empty-compact-state">No documents yet.</div>}
+          <PanelHeader title="Project Snapshot" label="PM request summary" />
+          <div className="snapshot-grid">
+            <div><span>Cameras</span><strong>{selectedProject.cameras}</strong></div>
+            <div><span>BOM Units</span><strong>{bomUnits}</strong></div>
+            <div><span>Open BOM Lines</span><strong>{openBomLines}</strong></div>
+            <div><span>Allocated</span><strong>{money(selectedProject.allocated)}</strong></div>
           </div>
         </section>
 
@@ -8720,6 +8717,172 @@ function Projects({
         </section>
       </div>
 
+      <div className="project-tile-grid">
+        <ProjectTile
+          icon={<Upload size={18} />}
+          title="Build Sales BOM"
+          hint="One-time setup: upload a sales quote PDF"
+          stats={[
+            { label: "Source", value: selectedProject.salesQuoteFile ? "Uploaded" : "Not set" },
+            { label: "BOM lines", value: selectedProject.bom.length },
+          ]}
+          onClick={() => setShowBuildSalesBomModal(true)}
+        />
+        <ProjectTile
+          icon={<FileText size={18} />}
+          title="Project Documents"
+          hint="Backups and reference files"
+          stats={[{ label: "Files", value: selectedProjectDocuments.length }]}
+          onClick={() => setShowProjectDocsModal(true)}
+        />
+        <ProjectTile
+          icon={<ListChecks size={18} />}
+          title="SOW - Scope of Work"
+          hint="Generated from sales quote, editable"
+          stats={[{ label: "Status", value: sowHasContent ? "Drafted" : "Empty" }]}
+          onClick={() => setShowSowModal(true)}
+        />
+        <ProjectTile
+          icon={<Boxes size={18} />}
+          title="BOM - Bill of Material"
+          hint="Material lines and Procurement"
+          stats={[
+            { label: "Items", value: selectedProject.bom.length },
+            { label: "Open", value: openBomLines },
+          ]}
+          onClick={() => setShowBomSectionModal(true)}
+        />
+        <ProjectTile
+          icon={<Truck size={18} />}
+          title="Shipping"
+          hint="Request and fulfill shipments"
+          stats={[
+            { label: "Requested", value: shipmentStatusCounts.Requested ?? 0 },
+            { label: "Packed", value: shipmentStatusCounts.Packed ?? 0 },
+            { label: "Shipped", value: shipmentStatusCounts.Shipped ?? 0 },
+            { label: "BOM items", value: selectedProject.bom.length },
+          ]}
+          onClick={() => setShowShippingModal(true)}
+        />
+        <ProjectTile
+          icon={<MapPin size={18} />}
+          title="Locations"
+          hint="Garage/lot breakdown"
+          stats={[{ label: "Garages/Lots", value: (selectedProject.locations ?? []).length }]}
+          onClick={() => setShowLocationsModal(true)}
+        />
+        <ProjectTile
+          icon={<FileText size={18} />}
+          title="Submittals"
+          hint="Client sign-off on scope + BOM"
+          stats={[
+            { label: "Created", value: submittals.length },
+            { label: "Latest", value: latestSubmittal ? latestSubmittal.status.replace(/_/g, " ") : "None" },
+          ]}
+          onClick={() => setShowSubmittalsModal(true)}
+        />
+        <ProjectTile
+          icon={<ListChecks size={18} />}
+          title="After-Sales Handover"
+          hint="Site requirements at handoff"
+          stats={[
+            { label: "Handovers", value: handovers.length },
+            { label: "Latest", value: handovers[0]?.status ?? "None" },
+          ]}
+          onClick={() => setShowHandoverModal(true)}
+        />
+      </div>
+
+      {showBuildSalesBomModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-wide">
+            <div className="modal-tile-close-row">
+              <button className="icon-button" type="button" onClick={() => setShowBuildSalesBomModal(false)} aria-label="Close">x</button>
+            </div>
+            <section className="panel compact-card">
+              <PanelHeader title="Build Sales BOM and Scope" label="One-time setup: upload a sales quote PDF" />
+              <label className={`sales-dropzone compact-row ${isExtractingQuote ? "is-working" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={handleSalesQuoteDrop}>
+                <Upload size={15} />
+                <strong>{isExtractingQuote ? "Reading sales quote..." : "Drag or choose sales quote PDF"}</strong>
+                <input type="file" accept=".pdf" onChange={handleSalesQuoteSelect} disabled={isExtractingQuote} />
+              </label>
+              {selectedProject.salesQuoteFile && <div className="source-file"><FileText size={16} /><span>{selectedProject.salesQuoteFile}</span></div>}
+
+              <div className="quote-pull-row">
+                <select value={pullQuoteId} onChange={(event) => setPullQuoteId(event.target.value)}>
+                  <option value="">Or pull from a Closed - Won sales quote...</option>
+                  {salesQuotes.filter((quote) => quote.status === "closed_won").map((quote) => (
+                    <option key={quote.id} value={quote.id}>{quote.siteName} ({quote.clientName})</option>
+                  ))}
+                </select>
+                <button
+                  className="secondary-action mini-action"
+                  type="button"
+                  disabled={!pullQuoteId}
+                  onClick={() => {
+                    const count = onPullBomFromClosedQuote(selectedProject.ref, pullQuoteId);
+                    setActionStatus(count > 0 ? `Pulled ${count} BOM line${count === 1 ? "" : "s"} from the sales quote.` : "That quote has no BOM lines to pull, or it could not be found.");
+                    setPullQuoteId("");
+                  }}
+                >
+                  Pull BOM from Closed Sales
+                </button>
+                {salesQuotes.filter((quote) => quote.status === "closed_won").length === 0 && (
+                  <small className="muted">No Closed - Won quotes yet -- mark one Closed - Won in Sales -&gt; Site Builder to pull from it here.</small>
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
+
+      {showProjectDocsModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-wide">
+            <div className="modal-tile-close-row">
+              <button className="icon-button" type="button" onClick={() => setShowProjectDocsModal(false)} aria-label="Close">x</button>
+            </div>
+            <section className="panel compact-card">
+              <div className="panel-title-row">
+                <div>
+                  <h2>Project Documents</h2>
+                  <p>Backups and reference files.</p>
+                </div>
+                <label className="secondary-action mini-action project-doc-upload">
+                  <Upload size={15} /> Upload
+                  <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.dwg,.dxf,.rvt,.ifc,.step,.stp" multiple onChange={handleProjectDocumentSelect} />
+                </label>
+              </div>
+              <div className="upload-rule-note">
+                <FileText size={15} />
+                <span>Project Documents are for PDF, Word, Excel/CSV, and CAD/reference files. Garage/lot pictures belong in Photos.</span>
+              </div>
+              <div className="project-doc-list">
+                {selectedProjectDocuments.map((doc) => (
+                  <div className="document-row" key={`${doc.id}-${doc.name}`}>
+                    <div>
+                      <strong>{doc.name}</strong>
+                      <span>{doc.type ?? "Project"} - {doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.storage ?? "Browser"}</span>
+                      <small>{formatDocumentProvenance(doc)}</small>
+                    </div>
+                    <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
+                      <option>Uploaded</option>
+                      <option>Ready to review</option>
+                      <option>Backed up</option>
+                      <option>Archived</option>
+                    </select>
+                    {doc.storagePath && (
+                      <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc)}>Download</button>
+                    )}
+                  </div>
+                ))}
+                {selectedProjectDocuments.length === 0 && <div className="empty-compact-state">No documents yet.</div>}
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
+
       <TaskMiniPanel
         title="Project Tasks"
         tasks={tasks.filter((task) => task.projectRef === selectedProject.ref)}
@@ -8735,151 +8898,178 @@ function Projects({
         onOpenFull={onOpenTasksView}
       />
 
-      <ProjectLocationsSection
-        project={selectedProject}
-        catalogItems={catalogItems}
-        onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
-        onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
-        onDeleteLocation={(locationId) => onDeleteProjectLocation(selectedProject.ref, locationId)}
-        onAddLocationItem={(locationId, lineType, catalogItemId, qty, extra) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty, extra)}
-        onUpdateLocationItem={(locationId, itemId, updates) => onUpdateProjectLocationItem(selectedProject.ref, locationId, itemId, updates)}
-        onDeleteLocationItem={(locationId, itemId) => onDeleteProjectLocationItem(selectedProject.ref, locationId, itemId)}
-        onUploadImage={(locationId, imageType, file, description, coords) => onUploadProjectLocationImage(selectedProject.ref, locationId, imageType, file, description, coords)}
-        onDownloadImage={onDownloadProjectLocationImage}
-        onDeleteImage={(locationId, imageId, storagePath) => onDeleteProjectLocationImage(selectedProject.ref, locationId, imageId, storagePath)}
-        onGetImageUrl={onGetProjectLocationImageUrl}
-        onUpdateImageDescription={(locationId, imageId, description) => onUpdateProjectLocationImageDescription(selectedProject.ref, locationId, imageId, description)}
-        onUpdateImageMeta={(locationId, imageId, updates) => onUpdateProjectLocationImageMeta(selectedProject.ref, locationId, imageId, updates)}
-        onMoveImage={(locationId, imageId, targetLocationId) => onMoveProjectLocationImage(selectedProject.ref, locationId, imageId, targetLocationId)}
-      />
-
-      <section className="panel full submittals-panel">
-        <div className="panel-title-row">
-          <div>
-            <h2>Submittals</h2>
-            <p>Client sign-off on scope and BOM before final purchasing.</p>
+      {showLocationsModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-wide">
+            <div className="modal-tile-close-row">
+              <button className="icon-button" type="button" onClick={() => setShowLocationsModal(false)} aria-label="Close">x</button>
+            </div>
+            <ProjectLocationsSection
+              project={selectedProject}
+              catalogItems={catalogItems}
+              onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
+              onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
+              onDeleteLocation={(locationId) => onDeleteProjectLocation(selectedProject.ref, locationId)}
+              onAddLocationItem={(locationId, lineType, catalogItemId, qty, extra) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty, extra)}
+              onUpdateLocationItem={(locationId, itemId, updates) => onUpdateProjectLocationItem(selectedProject.ref, locationId, itemId, updates)}
+              onDeleteLocationItem={(locationId, itemId) => onDeleteProjectLocationItem(selectedProject.ref, locationId, itemId)}
+              onUploadImage={(locationId, imageType, file, description, coords) => onUploadProjectLocationImage(selectedProject.ref, locationId, imageType, file, description, coords)}
+              onDownloadImage={onDownloadProjectLocationImage}
+              onDeleteImage={(locationId, imageId, storagePath) => onDeleteProjectLocationImage(selectedProject.ref, locationId, imageId, storagePath)}
+              onGetImageUrl={onGetProjectLocationImageUrl}
+              onUpdateImageDescription={(locationId, imageId, description) => onUpdateProjectLocationImageDescription(selectedProject.ref, locationId, imageId, description)}
+              onUpdateImageMeta={(locationId, imageId, updates) => onUpdateProjectLocationImageMeta(selectedProject.ref, locationId, imageId, updates)}
+              onMoveImage={(locationId, imageId, targetLocationId) => onMoveProjectLocationImage(selectedProject.ref, locationId, imageId, targetLocationId)}
+            />
           </div>
         </div>
-        <div className="submittal-create-row">
-          <input
-            placeholder="Client name"
-            value={submittalClientName}
-            onChange={(event) => setSubmittalClientName(event.target.value)}
-          />
-          <input
-            placeholder="Client email (optional)"
-            value={submittalClientEmail}
-            onChange={(event) => setSubmittalClientEmail(event.target.value)}
-          />
-          <button
-            className="primary-action mini-action"
-            type="button"
-            onClick={() => onCreateSubmittal(selectedProject, submittalClientName, submittalClientEmail)}
-          >
-            Create &amp; Send Submittal
-          </button>
-        </div>
-        {submittalStatus && <small className="muted">{submittalStatus}</small>}
-        <div className="submittal-list">
-          {submittals.length === 0 && <div className="empty-compact-state">No submittals yet for this project.</div>}
-          {submittals.map((submittal) => (
-            <div className="submittal-row" key={submittal.id}>
-              <div className="submittal-row-head">
-                <strong>Version {submittal.version}</strong>
-                <span className={`status-pill submittal-status-${submittal.status}`}>{submittal.status.replace(/_/g, " ")}</span>
+      )}
+
+      {showSubmittalsModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-wide">
+            <div className="modal-tile-close-row">
+              <button className="icon-button" type="button" onClick={() => setShowSubmittalsModal(false)} aria-label="Close">x</button>
+            </div>
+            <section className="panel full submittals-panel">
+              <div className="panel-title-row">
+                <div>
+                  <h2>Submittals</h2>
+                  <p>Client sign-off on scope and BOM before final purchasing.</p>
+                </div>
               </div>
-              <div className="submittal-meta">
-                <span>Sent {submittal.sentAt ? new Date(submittal.sentAt).toLocaleDateString() : "-"}</span>
-                {submittal.respondedAt && (
-                  <span>Responded {new Date(submittal.respondedAt).toLocaleDateString()} by {submittal.approvalName || "client"}</span>
-                )}
-              </div>
-              {submittal.responseNotes && <p className="submittal-notes">"{submittal.responseNotes}"</p>}
-              {submittal.shareToken && (
+              <div className="submittal-create-row">
+                <input
+                  placeholder="Client name"
+                  value={submittalClientName}
+                  onChange={(event) => setSubmittalClientName(event.target.value)}
+                />
+                <input
+                  placeholder="Client email (optional)"
+                  value={submittalClientEmail}
+                  onChange={(event) => setSubmittalClientEmail(event.target.value)}
+                />
                 <button
-                  className={`secondary-action mini-action ${copiedSubmittalId === submittal.id ? "just-copied" : ""}`}
+                  className="primary-action mini-action"
                   type="button"
-                  onClick={() => {
-                    const link = `${window.location.origin}${window.location.pathname}?submittal=${submittal.shareToken}`;
-                    navigator.clipboard?.writeText(link).then(() => {
-                      setCopiedSubmittalId(submittal.id);
-                      setTimeout(() => setCopiedSubmittalId(""), 2000);
-                    });
-                  }}
+                  onClick={() => onCreateSubmittal(selectedProject, submittalClientName, submittalClientEmail)}
                 >
-                  {copiedSubmittalId === submittal.id ? "Copied!" : "Copy client link"}
+                  Create &amp; Send Submittal
                 </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel full handover-panel">
-        <div className="panel-title-row">
-          <div>
-            <h2>After-Sales Handover</h2>
-            <p>Site requirements captured at sales-to-operations handoff.</p>
-          </div>
-          <button className="primary-action mini-action" type="button" onClick={() => onCreateHandover(selectedProject)}>
-            <Plus size={14} /> New Handover
-          </button>
-        </div>
-        {handoverStatus && <small className="muted">{handoverStatus}</small>}
-        {handovers.length === 0 && <div className="empty-compact-state">No handovers yet for this project.</div>}
-        {handovers.map((handover) => (
-          <div className="handover-block" key={handover.id}>
-            <div className="submittal-row-head">
-              <span className={`status-pill submittal-status-${handover.status === "submitted" ? "approved" : "draft"}`}>{handover.status}</span>
-              {handover.submittedAt && <span className="muted">Submitted {new Date(handover.submittedAt).toLocaleDateString()} by {handover.submittedByEmail}</span>}
-            </div>
-            {handoverSchema && (
-              <div className="form-grid">
-                {[...handoverSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field) => (
-                  <label key={field.id} className={field.fieldType === "textarea" ? "span-2" : undefined}>
-                    <span>{field.label}{field.isRequired ? " *" : ""}</span>
-                    {field.fieldType === "select" ? (
-                      <select
-                        value={handover.responses[field.fieldKey] ?? ""}
-                        disabled={handover.status === "submitted"}
-                        onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.value })}
+              </div>
+              {submittalStatus && <small className="muted">{submittalStatus}</small>}
+              <div className="submittal-list">
+                {submittals.length === 0 && <div className="empty-compact-state">No submittals yet for this project.</div>}
+                {submittals.map((submittal) => (
+                  <div className="submittal-row" key={submittal.id}>
+                    <div className="submittal-row-head">
+                      <strong>Version {submittal.version}</strong>
+                      <span className={`status-pill submittal-status-${submittal.status}`}>{submittal.status.replace(/_/g, " ")}</span>
+                    </div>
+                    <div className="submittal-meta">
+                      <span>Sent {submittal.sentAt ? new Date(submittal.sentAt).toLocaleDateString() : "-"}</span>
+                      {submittal.respondedAt && (
+                        <span>Responded {new Date(submittal.respondedAt).toLocaleDateString()} by {submittal.approvalName || "client"}</span>
+                      )}
+                    </div>
+                    {submittal.responseNotes && <p className="submittal-notes">"{submittal.responseNotes}"</p>}
+                    {submittal.shareToken && (
+                      <button
+                        className={`secondary-action mini-action ${copiedSubmittalId === submittal.id ? "just-copied" : ""}`}
+                        type="button"
+                        onClick={() => {
+                          const link = `${window.location.origin}${window.location.pathname}?submittal=${submittal.shareToken}`;
+                          navigator.clipboard?.writeText(link).then(() => {
+                            setCopiedSubmittalId(submittal.id);
+                            setTimeout(() => setCopiedSubmittalId(""), 2000);
+                          });
+                        }}
                       >
-                        <option value="">Select...</option>
-                        {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
-                      </select>
-                    ) : field.fieldType === "textarea" ? (
-                      <textarea
-                        value={handover.responses[field.fieldKey] ?? ""}
-                        disabled={handover.status === "submitted"}
-                        placeholder={field.placeholder}
-                        onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.value })}
-                      />
-                    ) : field.fieldType === "checkbox" ? (
-                      <input
-                        type="checkbox"
-                        checked={handover.responses[field.fieldKey] === "true"}
-                        disabled={handover.status === "submitted"}
-                        onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.checked ? "true" : "false" })}
-                      />
-                    ) : (
-                      <input
-                        type={field.fieldType === "date" ? "date" : field.fieldType === "number" ? "number" : "text"}
-                        value={handover.responses[field.fieldKey] ?? ""}
-                        disabled={handover.status === "submitted"}
-                        placeholder={field.placeholder}
-                        onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.value })}
-                      />
+                        {copiedSubmittalId === submittal.id ? "Copied!" : "Copy client link"}
+                      </button>
                     )}
-                  </label>
+                  </div>
                 ))}
               </div>
-            )}
-            {handover.status === "draft" && (
-              <button className="secondary-action mini-action" type="button" onClick={() => onSubmitHandover(handover.id)}>Submit Handover</button>
-            )}
+            </section>
           </div>
-        ))}
-      </section>
+        </div>
+      )}
+
+      {showHandoverModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-wide">
+            <div className="modal-tile-close-row">
+              <button className="icon-button" type="button" onClick={() => setShowHandoverModal(false)} aria-label="Close">x</button>
+            </div>
+            <section className="panel full handover-panel">
+              <div className="panel-title-row">
+                <div>
+                  <h2>After-Sales Handover</h2>
+                  <p>Site requirements captured at sales-to-operations handoff.</p>
+                </div>
+                <button className="primary-action mini-action" type="button" onClick={() => onCreateHandover(selectedProject)}>
+                  <Plus size={14} /> New Handover
+                </button>
+              </div>
+              {handoverStatus && <small className="muted">{handoverStatus}</small>}
+              {handovers.length === 0 && <div className="empty-compact-state">No handovers yet for this project.</div>}
+              {handovers.map((handover) => (
+                <div className="handover-block" key={handover.id}>
+                  <div className="submittal-row-head">
+                    <span className={`status-pill submittal-status-${handover.status === "submitted" ? "approved" : "draft"}`}>{handover.status}</span>
+                    {handover.submittedAt && <span className="muted">Submitted {new Date(handover.submittedAt).toLocaleDateString()} by {handover.submittedByEmail}</span>}
+                  </div>
+                  {handoverSchema && (
+                    <div className="form-grid">
+                      {[...handoverSchema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field) => (
+                        <label key={field.id} className={field.fieldType === "textarea" ? "span-2" : undefined}>
+                          <span>{field.label}{field.isRequired ? " *" : ""}</span>
+                          {field.fieldType === "select" ? (
+                            <select
+                              value={handover.responses[field.fieldKey] ?? ""}
+                              disabled={handover.status === "submitted"}
+                              onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.value })}
+                            >
+                              <option value="">Select...</option>
+                              {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+                            </select>
+                          ) : field.fieldType === "textarea" ? (
+                            <textarea
+                              value={handover.responses[field.fieldKey] ?? ""}
+                              disabled={handover.status === "submitted"}
+                              placeholder={field.placeholder}
+                              onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.value })}
+                            />
+                          ) : field.fieldType === "checkbox" ? (
+                            <input
+                              type="checkbox"
+                              checked={handover.responses[field.fieldKey] === "true"}
+                              disabled={handover.status === "submitted"}
+                              onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.checked ? "true" : "false" })}
+                            />
+                          ) : (
+                            <input
+                              type={field.fieldType === "date" ? "date" : field.fieldType === "number" ? "number" : "text"}
+                              value={handover.responses[field.fieldKey] ?? ""}
+                              disabled={handover.status === "submitted"}
+                              placeholder={field.placeholder}
+                              onChange={(event) => onSaveHandoverResponses(handover.id, { ...handover.responses, [field.fieldKey]: event.target.value })}
+                            />
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {handover.status === "draft" && (
+                    <button className="secondary-action mini-action" type="button" onClick={() => onSubmitHandover(handover.id)}>Submit Handover</button>
+                  )}
+                </div>
+              ))}
+            </section>
+          </div>
+        </div>
+      )}
 
       <section className="panel full">
         <div className="panel-title-row">
@@ -8901,99 +9091,97 @@ function Projects({
         </div>
       </section>
 
-      <section className="panel">
-        <PanelHeader title="Site Information" label="Client, location, and install context" />
-        <div className="site-info-list">
-          <div><Building2 size={17} /><span>Client</span><strong>{selectedProject.client}</strong></div>
-          <div><MapPin size={17} /><span>Location</span><strong>{selectedProject.address}</strong></div>
-          <div><User size={17} /><span>Owner</span><strong>{selectedProject.owner}</strong></div>
-          <div><CalendarDays size={17} /><span>Target</span><strong>{selectedProject.due}</strong></div>
-        </div>
-      </section>
-
-      <section className="panel">
-        <PanelHeader title="Project Snapshot" label="PM request summary" />
-        <div className="snapshot-grid">
-          <div><span>Cameras</span><strong>{selectedProject.cameras}</strong></div>
-          <div><span>BOM Units</span><strong>{bomUnits}</strong></div>
-          <div><span>Open BOM Lines</span><strong>{openBomLines}</strong></div>
-          <div><span>Allocated</span><strong>{money(selectedProject.allocated)}</strong></div>
-        </div>
-      </section>
-
-      <section className="panel full">
-        <PanelHeader title="SOW - Scope of Work" label="Generated from sales quote and editable by the team" />
-        <div className="sow-grid">
-          <label className="span-2">Summary<textarea value={selectedProject.sow.summary} onChange={(event) => updateSowField("summary", event.target.value)} /></label>
-          <label>Preparation<textarea value={selectedProject.sow.preparation} onChange={(event) => updateSowField("preparation", event.target.value)} /></label>
-          <label>Infrastructure<textarea value={selectedProject.sow.infrastructure} onChange={(event) => updateSowField("infrastructure", event.target.value)} /></label>
-          <label>Installation<textarea value={selectedProject.sow.installation} onChange={(event) => updateSowField("installation", event.target.value)} /></label>
-          <label>Commissioning<textarea value={selectedProject.sow.commissioning} onChange={(event) => updateSowField("commissioning", event.target.value)} /></label>
-          <label>Fine tuning / go-live<textarea value={selectedProject.sow.fineTuning} onChange={(event) => updateSowField("fineTuning", event.target.value)} /></label>
-          <label>Assumptions<textarea value={selectedProject.sow.assumptions} onChange={(event) => updateSowField("assumptions", event.target.value)} /></label>
-          <label className="span-2">Exclusions<textarea value={selectedProject.sow.exclusions} onChange={(event) => updateSowField("exclusions", event.target.value)} /></label>
-        </div>
-      </section>
-
-      <section className="panel full">
-        <div className="panel-title-row">
-          <div>
-            <h2>BOM - Bill of Material</h2>
-            <p>Add and edit material lines here -- they stay drafts until a submittal for this project is client-approved, then send them to Procurement below.</p>
-          </div>
-          <div className="report-filter-row">
-            <label className="secondary-action mini-action project-doc-upload">
-              <Upload size={15} /> Import Spreadsheet
-              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleBomFileSelect} />
-            </label>
-            <button className="primary-action" type="button" onClick={openAddBomModal}><Plus size={17} /> Add Material</button>
-          </div>
-        </div>
-        <div className="report-filter-row">
-          {isBomApprovedForProcurement ? (
-            <button className="primary-action mini-action" type="button" onClick={handleSendBomToPurchasing} disabled={unsentBomLines.length === 0}>
-              <Truck size={14} /> Send {unsentBomLines.length > 0 ? `${unsentBomLines.length} Line(s) ` : ""}to Procurement
-            </button>
-          ) : (
-            <span className="muted">
-              {latestSubmittal ? `Waiting on client approval (submittal is currently "${latestSubmittal.status}") before this BOM can be sent to Procurement.` : "Create and send a submittal below for client approval before this BOM can be sent to Procurement."}
-            </span>
-          )}
-        </div>
-        {bomImportStatus && <small className="muted">{bomImportStatus}</small>}
-        {bomImportRows.length > 0 && (
-          <div className="bom-import-preview">
-            <table>
-              <thead><tr><th>Item</th><th>Qty</th></tr></thead>
-              <tbody>
-                {bomImportRows.map((row, index) => <tr key={index}><td>{row.item}</td><td>{row.qty}</td></tr>)}
-              </tbody>
-            </table>
-            <div className="report-filter-row">
-              <button className="primary-action mini-action" type="button" onClick={commitBomImport}>Commit {bomImportRows.length} Line(s) to BOM</button>
-              <button className="secondary-action mini-action" type="button" onClick={() => { setBomImportRows([]); setBomImportStatus(""); }}>Discard</button>
+      {showSowModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-wide">
+            <div className="modal-tile-close-row">
+              <button className="icon-button" type="button" onClick={() => setShowSowModal(false)} aria-label="Close">x</button>
             </div>
+            <section className="panel full">
+              <PanelHeader title="SOW - Scope of Work" label="Generated from sales quote and editable by the team" />
+              <div className="sow-grid">
+                <label className="span-2">Summary<textarea value={selectedProject.sow.summary} onChange={(event) => updateSowField("summary", event.target.value)} /></label>
+                <label>Preparation<textarea value={selectedProject.sow.preparation} onChange={(event) => updateSowField("preparation", event.target.value)} /></label>
+                <label>Infrastructure<textarea value={selectedProject.sow.infrastructure} onChange={(event) => updateSowField("infrastructure", event.target.value)} /></label>
+                <label>Installation<textarea value={selectedProject.sow.installation} onChange={(event) => updateSowField("installation", event.target.value)} /></label>
+                <label>Commissioning<textarea value={selectedProject.sow.commissioning} onChange={(event) => updateSowField("commissioning", event.target.value)} /></label>
+                <label>Fine tuning / go-live<textarea value={selectedProject.sow.fineTuning} onChange={(event) => updateSowField("fineTuning", event.target.value)} /></label>
+                <label>Assumptions<textarea value={selectedProject.sow.assumptions} onChange={(event) => updateSowField("assumptions", event.target.value)} /></label>
+                <label className="span-2">Exclusions<textarea value={selectedProject.sow.exclusions} onChange={(event) => updateSowField("exclusions", event.target.value)} /></label>
+              </div>
+            </section>
           </div>
-        )}
-        <table>
-          <thead>
-            <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th><th></th></tr>
-          </thead>
-          <tbody>
-            {selectedProject.bom.map((line, index) => (
-              <tr key={`${selectedProject.name}-${line.item}-${index}`}>
-                <td><strong>{line.item}</strong></td>
-                <td>{line.qty}</td>
-                <td><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span>{!line.sentToPurchasingAt && <small className="muted"> (draft)</small>}</td>
-                <td>{line.requestSpeed}</td>
-                <td>{line.po ?? "TBD"}</td>
-                <td>{line.notes ?? "Ready for PM details"}</td>
-                <td><button className="table-action secondary-table-action" type="button" onClick={() => openEditBomModal(line, index)}>Edit</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+        </div>
+      )}
+
+      {showBomSectionModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-wide">
+            <div className="modal-tile-close-row">
+              <button className="icon-button" type="button" onClick={() => setShowBomSectionModal(false)} aria-label="Close">x</button>
+            </div>
+            <section className="panel full">
+              <div className="panel-title-row">
+                <div>
+                  <h2>BOM - Bill of Material</h2>
+                  <p>Add and edit material lines here -- they stay drafts until a submittal for this project is client-approved, then send them to Procurement below.</p>
+                </div>
+                <div className="report-filter-row">
+                  <label className="secondary-action mini-action project-doc-upload">
+                    <Upload size={15} /> Import Spreadsheet
+                    <input type="file" accept=".xlsx,.xls,.csv" onChange={handleBomFileSelect} />
+                  </label>
+                  <button className="primary-action" type="button" onClick={openAddBomModal}><Plus size={17} /> Add Material</button>
+                </div>
+              </div>
+              <div className="report-filter-row">
+                {isBomApprovedForProcurement ? (
+                  <button className="primary-action mini-action" type="button" onClick={handleSendBomToPurchasing} disabled={unsentBomLines.length === 0}>
+                    <Truck size={14} /> Send {unsentBomLines.length > 0 ? `${unsentBomLines.length} Line(s) ` : ""}to Procurement
+                  </button>
+                ) : (
+                  <span className="muted">
+                    {latestSubmittal ? `Waiting on client approval (submittal is currently "${latestSubmittal.status}") before this BOM can be sent to Procurement.` : "Create and send a submittal below for client approval before this BOM can be sent to Procurement."}
+                  </span>
+                )}
+              </div>
+              {bomImportStatus && <small className="muted">{bomImportStatus}</small>}
+              {bomImportRows.length > 0 && (
+                <div className="bom-import-preview">
+                  <table>
+                    <thead><tr><th>Item</th><th>Qty</th></tr></thead>
+                    <tbody>
+                      {bomImportRows.map((row, index) => <tr key={index}><td>{row.item}</td><td>{row.qty}</td></tr>)}
+                    </tbody>
+                  </table>
+                  <div className="report-filter-row">
+                    <button className="primary-action mini-action" type="button" onClick={commitBomImport}>Commit {bomImportRows.length} Line(s) to BOM</button>
+                    <button className="secondary-action mini-action" type="button" onClick={() => { setBomImportRows([]); setBomImportStatus(""); }}>Discard</button>
+                  </div>
+                </div>
+              )}
+              <table>
+                <thead>
+                  <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {selectedProject.bom.map((line, index) => (
+                    <tr key={`${selectedProject.name}-${line.item}-${index}`}>
+                      <td><strong>{line.item}</strong></td>
+                      <td>{line.qty}</td>
+                      <td><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span>{!line.sentToPurchasingAt && <small className="muted"> (draft)</small>}</td>
+                      <td>{line.requestSpeed}</td>
+                      <td>{line.po ?? "TBD"}</td>
+                      <td>{line.notes ?? "Ready for PM details"}</td>
+                      <td><button className="table-action secondary-table-action" type="button" onClick={() => openEditBomModal(line, index)}>Edit</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          </div>
+        </div>
+      )}
 
       {showBomModal && (
         <div className="modal-backdrop" role="presentation">
@@ -9051,36 +9239,26 @@ function Projects({
         </div>
       )}
 
-      <ProjectShippingSection
-        project={selectedProject}
-        onAddAddress={(address) => onAddProjectShippingAddress(selectedProject.ref, address)}
-        onAddShipment={(addressId, addressSnapshot, notes, lines) => onAddProjectShipment(selectedProject.ref, addressId, addressSnapshot, notes, lines)}
-        onMarkPacked={(shipmentId) => onMarkProjectShipmentPacked(selectedProject.ref, shipmentId)}
-        onMarkShipped={(shipmentId, carrier, trackingNumber) => onMarkProjectShipmentShipped(selectedProject.ref, shipmentId, carrier, trackingNumber)}
-        onUploadPhoto={(shipmentId, file, description) => onUploadProjectShipmentPhoto(selectedProject.ref, shipmentId, file, description)}
-        onDeletePhoto={(shipmentId, photoId, storagePath) => onDeleteProjectShipmentPhoto(selectedProject.ref, shipmentId, photoId, storagePath)}
-        onGetPhotoUrl={onGetProjectShipmentPhotoUrl}
-      />
-
-      <section className="panel full">
-        <PanelHeader title="Project Transfers" label="Inventory allocated by project" />
-        <div className="project-grid">
-          {projectSites.map((project) => (
-            <article className="project-card" key={project.name}>
-              <div className="project-top">
-                <h3>{project.name}</h3>
-                <span className="status">{project.status}</span>
-              </div>
-              <p>{project.package}</p>
-              <div className="project-details">
-                <span><CalendarDays size={15} /> {project.due}</span>
-                <span><Boxes size={15} /> {project.cameras} cameras</span>
-                <span><DollarSign size={15} /> {money(project.allocated)}</span>
-              </div>
-            </article>
-          ))}
+      {showShippingModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-wide">
+            <div className="modal-tile-close-row">
+              <button className="icon-button" type="button" onClick={() => setShowShippingModal(false)} aria-label="Close">x</button>
+            </div>
+            <ProjectShippingSection
+              project={selectedProject}
+              onAddAddress={(address) => onAddProjectShippingAddress(selectedProject.ref, address)}
+              onAddShipment={(addressId, addressSnapshot, notes, lines) => onAddProjectShipment(selectedProject.ref, addressId, addressSnapshot, notes, lines)}
+              onMarkPacked={(shipmentId) => onMarkProjectShipmentPacked(selectedProject.ref, shipmentId)}
+              onMarkShipped={(shipmentId, carrier, trackingNumber) => onMarkProjectShipmentShipped(selectedProject.ref, shipmentId, carrier, trackingNumber)}
+              onUploadPhoto={(shipmentId, file, description) => onUploadProjectShipmentPhoto(selectedProject.ref, shipmentId, file, description)}
+              onDeletePhoto={(shipmentId, photoId, storagePath) => onDeleteProjectShipmentPhoto(selectedProject.ref, shipmentId, photoId, storagePath)}
+              onGetPhotoUrl={onGetProjectShipmentPhotoUrl}
+            />
+          </div>
         </div>
-      </section>
+      )}
+
     </div>
   );
 }
