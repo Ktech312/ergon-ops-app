@@ -66,6 +66,12 @@ import {
   moveProjectLocationImage,
   deleteProjectLocationImage,
   getProjectLocationImageDownloadUrl,
+  addProjectShippingAddress,
+  addProjectShipment,
+  updateProjectShipment,
+  addProjectShipmentPhoto,
+  deleteProjectShipmentPhoto,
+  getShipmentPhotoDownloadUrl,
   createProjectFromClosedWonQuote,
   createProjectDocuments,
   createPurchaseOrder,
@@ -243,6 +249,9 @@ import {
   type ProjectLocation,
   type ProjectLocationImage,
   type ProjectLocationItem,
+  type ProjectShippingAddress,
+  type ProjectShipment,
+  type ProjectShipmentPhoto,
   type ProjectSubmittal,
   type PublicSubmittalView,
   type ProposalTemplateSection,
@@ -935,6 +944,10 @@ function buildNumber(index: number) {
 
 function purchaseRequestNumber(index: number) {
   return `REQ-${String(index + 1).padStart(5, "0")}`;
+}
+
+function shipmentNumber(index: number) {
+  return `SHP-${String(index + 1).padStart(4, "0")}`;
 }
 
 function isArray<T>(value: unknown, fallback: T[]) {
@@ -2765,6 +2778,162 @@ function App() {
       return null;
     }
     return getProjectLocationImageDownloadUrl(image.storagePath, authSession.accessToken);
+  }
+
+  // PM shipping requests, fulfilled by Warehouse/Implementation:
+  // Requested -> Packed (photos) -> Shipped (carrier + tracking).
+  async function handleAddProjectShippingAddress(
+    projectRef: string,
+    address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string },
+  ) {
+    if (!authSession) {
+      return;
+    }
+    const project = projectSites.find((entry) => entry.ref === projectRef);
+    if (!project?.id) {
+      return;
+    }
+    const nextLineSort = (project.shippingAddresses ?? []).length;
+    const created = await addProjectShippingAddress(project.id, address, nextLineSort, authSession.accessToken);
+    if (!created) {
+      return;
+    }
+    setProjectSites((current) =>
+      current.map((entry) => (entry.ref === projectRef ? { ...entry, shippingAddresses: [...(entry.shippingAddresses ?? []), created] } : entry)),
+    );
+  }
+
+  async function handleAddProjectShipment(
+    projectRef: string,
+    addressId: string | null,
+    addressSnapshot: string,
+    notes: string,
+    lines: Array<{ itemName: string; qty: number }>,
+  ) {
+    if (!authSession || lines.length === 0) {
+      return;
+    }
+    const project = projectSites.find((entry) => entry.ref === projectRef);
+    if (!project?.id) {
+      return;
+    }
+    const nextNumber = shipmentNumber((project.shipments ?? []).length);
+    const created = await addProjectShipment(project.id, nextNumber, addressId, addressSnapshot, authSession.email, notes, lines, authSession.accessToken);
+    if (!created) {
+      return;
+    }
+    setProjectSites((current) =>
+      current.map((entry) => (entry.ref === projectRef ? { ...entry, shipments: [created, ...(entry.shipments ?? [])] } : entry)),
+    );
+  }
+
+  async function handleMarkProjectShipmentPacked(projectRef: string, shipmentId: string) {
+    if (!authSession) {
+      return;
+    }
+    const packedAt = new Date().toISOString();
+    setProjectSites((current) =>
+      current.map((entry) =>
+        entry.ref === projectRef
+          ? {
+              ...entry,
+              shipments: (entry.shipments ?? []).map((shipment) =>
+                shipment.id === shipmentId ? { ...shipment, status: "Packed", packedByEmail: authSession.email, packedAt } : shipment,
+              ),
+            }
+          : entry,
+      ),
+    );
+    await updateProjectShipment(shipmentId, { status: "Packed", packedByEmail: authSession.email, packedAt }, authSession.accessToken);
+  }
+
+  async function handleMarkProjectShipmentShipped(projectRef: string, shipmentId: string, carrier: string, trackingNumber: string) {
+    if (!authSession) {
+      return;
+    }
+    const project = projectSites.find((entry) => entry.ref === projectRef);
+    const shipment = project?.shipments?.find((entry) => entry.id === shipmentId);
+    if (!project || !shipment) {
+      return;
+    }
+    const shippedAt = new Date().toISOString();
+    setProjectSites((current) =>
+      current.map((entry) =>
+        entry.ref === projectRef
+          ? {
+              ...entry,
+              shipments: (entry.shipments ?? []).map((entryShipment) =>
+                entryShipment.id === shipmentId
+                  ? { ...entryShipment, status: "Shipped", carrier, trackingNumber, shippedByEmail: authSession.email, shippedAt }
+                  : entryShipment,
+              ),
+            }
+          : entry,
+      ),
+    );
+    await updateProjectShipment(shipmentId, { status: "Shipped", carrier, trackingNumber, shippedByEmail: authSession.email, shippedAt }, authSession.accessToken);
+    // Shipping is a real stock movement, same as Transfer to Project -- pull
+    // each line's qty out of inventory now, not at request time, since a
+    // request can sit for a while before it actually goes out the door.
+    for (const line of shipment.lines) {
+      pullFromInventory(line.itemName, line.qty, project.name, `Shipped via ${shipment.shipmentNumber}${carrier ? ` (${carrier})` : ""}${trackingNumber ? ` -- ${trackingNumber}` : ""}`);
+    }
+  }
+
+  async function handleUploadProjectShipmentPhoto(projectRef: string, shipmentId: string, file: File, description?: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    if (!isAllowedPhotoFile(file)) {
+      window.alert("Shipment photos only accept image files.");
+      return false;
+    }
+    const created = await addProjectShipmentPhoto(shipmentId, file, authSession.accessToken, description, authSession.email);
+    if (!created) {
+      return false;
+    }
+    setProjectSites((current) =>
+      current.map((entry) =>
+        entry.ref === projectRef
+          ? {
+              ...entry,
+              shipments: (entry.shipments ?? []).map((shipment) =>
+                shipment.id === shipmentId ? { ...shipment, photos: [...shipment.photos, created] } : shipment,
+              ),
+            }
+          : entry,
+      ),
+    );
+    return true;
+  }
+
+  async function handleDeleteProjectShipmentPhoto(projectRef: string, shipmentId: string, photoId: string, storagePath: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const ok = await deleteProjectShipmentPhoto(photoId, storagePath, authSession.accessToken);
+    if (ok) {
+      setProjectSites((current) =>
+        current.map((entry) =>
+          entry.ref === projectRef
+            ? {
+                ...entry,
+                shipments: (entry.shipments ?? []).map((shipment) =>
+                  shipment.id === shipmentId ? { ...shipment, photos: shipment.photos.filter((photo) => photo.id !== photoId) } : shipment,
+                ),
+              }
+            : entry,
+        ),
+      );
+    }
+    return ok;
+  }
+
+  async function handleGetProjectShipmentPhotoUrl(storagePath: string): Promise<string | null> {
+    if (!authSession) {
+      return null;
+    }
+    return getShipmentPhotoDownloadUrl(storagePath, authSession.accessToken);
   }
 
   // E's request: closing a Sales Quote should offer to spin up a Project
@@ -5282,7 +5451,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onDetailContextChange={setProjectDetailContext} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhoto} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -7753,6 +7922,13 @@ function Projects({
   onUpdateProjectLocationImageDescription,
   onUpdateProjectLocationImageMeta,
   onMoveProjectLocationImage,
+  onAddProjectShippingAddress,
+  onAddProjectShipment,
+  onMarkProjectShipmentPacked,
+  onMarkProjectShipmentShipped,
+  onUploadProjectShipmentPhoto,
+  onDeleteProjectShipmentPhoto,
+  onGetProjectShipmentPhotoUrl,
   onDetailContextChange,
 }: {
   projectSites: ProjectSite[];
@@ -7808,6 +7984,13 @@ function Projects({
   onUpdateProjectLocationImageDescription: (projectRef: string, locationId: string, imageId: string, description: string) => void;
   onUpdateProjectLocationImageMeta: (projectRef: string, locationId: string, imageId: string, updates: { fileName: string; description: string }) => Promise<boolean>;
   onMoveProjectLocationImage: (projectRef: string, fromLocationId: string, imageId: string, targetLocationId: string) => Promise<boolean>;
+  onAddProjectShippingAddress: (projectRef: string, address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string }) => void;
+  onAddProjectShipment: (projectRef: string, addressId: string | null, addressSnapshot: string, notes: string, lines: Array<{ itemName: string; qty: number }>) => void;
+  onMarkProjectShipmentPacked: (projectRef: string, shipmentId: string) => void;
+  onMarkProjectShipmentShipped: (projectRef: string, shipmentId: string, carrier: string, trackingNumber: string) => void;
+  onUploadProjectShipmentPhoto: (projectRef: string, shipmentId: string, file: File, description?: string) => Promise<boolean>;
+  onDeleteProjectShipmentPhoto: (projectRef: string, shipmentId: string, photoId: string, storagePath: string) => Promise<boolean>;
+  onGetProjectShipmentPhotoUrl: (storagePath: string) => Promise<string | null>;
   onDetailContextChange?: (info: { name: string; ref: string } | null) => void;
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
@@ -8867,6 +9050,17 @@ function Projects({
           </section>
         </div>
       )}
+
+      <ProjectShippingSection
+        project={selectedProject}
+        onAddAddress={(address) => onAddProjectShippingAddress(selectedProject.ref, address)}
+        onAddShipment={(addressId, addressSnapshot, notes, lines) => onAddProjectShipment(selectedProject.ref, addressId, addressSnapshot, notes, lines)}
+        onMarkPacked={(shipmentId) => onMarkProjectShipmentPacked(selectedProject.ref, shipmentId)}
+        onMarkShipped={(shipmentId, carrier, trackingNumber) => onMarkProjectShipmentShipped(selectedProject.ref, shipmentId, carrier, trackingNumber)}
+        onUploadPhoto={(shipmentId, file, description) => onUploadProjectShipmentPhoto(selectedProject.ref, shipmentId, file, description)}
+        onDeletePhoto={(shipmentId, photoId, storagePath) => onDeleteProjectShipmentPhoto(selectedProject.ref, shipmentId, photoId, storagePath)}
+        onGetPhotoUrl={onGetProjectShipmentPhotoUrl}
+      />
 
       <section className="panel full">
         <PanelHeader title="Project Transfers" label="Inventory allocated by project" />
@@ -13235,6 +13429,324 @@ function LocationItemLineSection({
         </button>
       </div>
     </div>
+  );
+}
+
+// PM shipping requests, fulfilled by Warehouse/Implementation: PM picks BOM
+// lines + qty and a saved (or new) address, Warehouse packs it (photos
+// prove what went in the box/pallet) then ships it (carrier + tracking) --
+// which is when it actually deducts from inventory, same as Transfer to
+// Project, just deferred until the thing is really out the door.
+function ProjectShippingSection({
+  project,
+  onAddAddress,
+  onAddShipment,
+  onMarkPacked,
+  onMarkShipped,
+  onUploadPhoto,
+  onDeletePhoto,
+  onGetPhotoUrl,
+}: {
+  project: ProjectSite;
+  onAddAddress: (address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string }) => void;
+  onAddShipment: (addressId: string | null, addressSnapshot: string, notes: string, lines: Array<{ itemName: string; qty: number }>) => void;
+  onMarkPacked: (shipmentId: string) => void;
+  onMarkShipped: (shipmentId: string, carrier: string, trackingNumber: string) => void;
+  onUploadPhoto: (shipmentId: string, file: File, description?: string) => Promise<boolean>;
+  onDeletePhoto: (shipmentId: string, photoId: string, storagePath: string) => Promise<boolean>;
+  onGetPhotoUrl: (storagePath: string) => Promise<string | null>;
+}) {
+  const shipments = project.shipments ?? [];
+  const addresses = project.shippingAddresses ?? [];
+  const [showNewShipmentModal, setShowNewShipmentModal] = useState(false);
+  const [selectedShipmentId, setSelectedShipmentId] = useState<string | null>(null);
+  const selectedShipment = shipments.find((shipment) => shipment.id === selectedShipmentId) ?? null;
+
+  const emptyAddressDraft = { label: "", streetAddress: "", city: "", state: "", zip: "", attnName: "", phone: "" };
+  const [newAddressDraft, setNewAddressDraft] = useState(emptyAddressDraft);
+  const [isAddingNewAddress, setIsAddingNewAddress] = useState(addresses.length === 0);
+  const [selectedAddressId, setSelectedAddressId] = useState("");
+  const [shipmentLineQtys, setShipmentLineQtys] = useState<Record<string, number>>({});
+  const [shipmentNotes, setShipmentNotes] = useState("");
+  const [carrierDraft, setCarrierDraft] = useState("");
+  const [trackingDraft, setTrackingDraft] = useState("");
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+
+  useEffect(() => {
+    if (!selectedShipment) {
+      return;
+    }
+    let cancelled = false;
+    selectedShipment.photos.forEach((photo) => {
+      if (photoUrls[photo.id]) {
+        return;
+      }
+      onGetPhotoUrl(photo.storagePath).then((url) => {
+        if (!cancelled && url) {
+          setPhotoUrls((current) => ({ ...current, [photo.id]: url }));
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedShipment?.id, selectedShipment?.photos.length]);
+
+  function openNewShipmentModal() {
+    setSelectedAddressId(addresses[0]?.id ?? "");
+    setIsAddingNewAddress(addresses.length === 0);
+    setNewAddressDraft(emptyAddressDraft);
+    setShipmentLineQtys(Object.fromEntries(project.bom.map((line) => [line.item, 0])));
+    setShipmentNotes("");
+    setShowNewShipmentModal(true);
+  }
+
+  function submitNewShipment() {
+    const lines = Object.entries(shipmentLineQtys)
+      .filter(([, qty]) => qty > 0)
+      .map(([itemName, qty]) => ({ itemName, qty }));
+    if (lines.length === 0) {
+      return;
+    }
+    if (isAddingNewAddress && newAddressDraft.streetAddress.trim()) {
+      onAddAddress(newAddressDraft);
+    }
+    const address = addresses.find((entry) => entry.id === selectedAddressId);
+    const addressSnapshot = isAddingNewAddress
+      ? `${newAddressDraft.label ? `${newAddressDraft.label} -- ` : ""}${newAddressDraft.streetAddress}, ${newAddressDraft.city}, ${newAddressDraft.state} ${newAddressDraft.zip}`
+      : address
+        ? `${address.label ? `${address.label} -- ` : ""}${address.streetAddress}, ${address.city}, ${address.state} ${address.zip}`
+        : "";
+    onAddShipment(isAddingNewAddress ? null : selectedAddressId || null, addressSnapshot, shipmentNotes, lines);
+    setShowNewShipmentModal(false);
+  }
+
+  async function handlePhotoSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !selectedShipment) {
+      return;
+    }
+    setIsUploadingPhoto(true);
+    await onUploadPhoto(selectedShipment.id, file);
+    setIsUploadingPhoto(false);
+  }
+
+  const selectedLineCount = Object.values(shipmentLineQtys).filter((qty) => qty > 0).length;
+
+  return (
+    <section className="panel full">
+      <div className="panel-title-row">
+        <div>
+          <h2>Shipping</h2>
+          <p>Request a shipment of BOM items to this project -- Warehouse/Implementation packs and ships it from here.</p>
+        </div>
+        <button className="primary-action" type="button" onClick={openNewShipmentModal} disabled={project.bom.length === 0}>
+          <Truck size={16} /> New Shipment
+        </button>
+      </div>
+      <div className="report-table compact-report-table">
+        <div className="report-table-head"><span>Shipment</span><span>Status</span><span>Address</span><span>Items</span><span>Requested</span></div>
+        {shipments.map((shipment) => (
+          <div className="report-table-row clickable-row" key={shipment.id} onClick={() => setSelectedShipmentId(shipment.id)}>
+            <span><strong>{shipment.shipmentNumber}</strong>{shipment.trackingNumber && <small>{shipment.carrier} -- {shipment.trackingNumber}</small>}</span>
+            <span><span className={`status ${shipment.status === "Shipped" ? "ok" : shipment.status === "Cancelled" ? "" : "warn"}`}>{shipment.status}</span></span>
+            <span>{shipment.addressSnapshot || "No address"}</span>
+            <span>{shipment.lines.length} line(s)</span>
+            <span>{shipment.requestedByEmail}<small>{new Date(shipment.requestedAt).toLocaleDateString()}</small></span>
+          </div>
+        ))}
+        {shipments.length === 0 && <div className="empty-compact-state">No shipments requested yet.</div>}
+      </div>
+
+      {showNewShipmentModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-shipment-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="new-shipment-title">New Shipment</h2>
+                <p>Pick which BOM items ship, and where. Saved addresses carry over to the next shipment.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowNewShipmentModal(false)} aria-label="Close new shipment">x</button>
+            </div>
+
+            <div className="compact-edit-section">
+              <div className="compact-section-header">
+                <div>
+                  <h3>Ship to</h3>
+                </div>
+              </div>
+              {addresses.length > 0 && !isAddingNewAddress && (
+                <div className="bom-modal-grid">
+                  <label className="span-2">Saved address
+                    <select value={selectedAddressId} onChange={(event) => setSelectedAddressId(event.target.value)}>
+                      {addresses.map((address) => (
+                        <option key={address.id} value={address.id}>{address.label || address.streetAddress} -- {address.city}, {address.state}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+              {addresses.length > 0 && (
+                <button className="link-button" type="button" onClick={() => setIsAddingNewAddress((current) => !current)}>
+                  {isAddingNewAddress ? "Use a saved address instead" : "+ Use a new address"}
+                </button>
+              )}
+              {isAddingNewAddress && (
+                <div className="bom-modal-grid">
+                  <label>Label<input value={newAddressDraft.label} placeholder="e.g. Garage A, Client office" onChange={(event) => setNewAddressDraft((current) => ({ ...current, label: event.target.value }))} /></label>
+                  <label>Attn<input value={newAddressDraft.attnName} onChange={(event) => setNewAddressDraft((current) => ({ ...current, attnName: event.target.value }))} /></label>
+                  <label className="span-2">Street address<input value={newAddressDraft.streetAddress} onChange={(event) => setNewAddressDraft((current) => ({ ...current, streetAddress: event.target.value }))} /></label>
+                  <label>City<input value={newAddressDraft.city} onChange={(event) => setNewAddressDraft((current) => ({ ...current, city: event.target.value }))} /></label>
+                  <label>State<input value={newAddressDraft.state} onChange={(event) => setNewAddressDraft((current) => ({ ...current, state: event.target.value }))} /></label>
+                  <label>Zip<input value={newAddressDraft.zip} onChange={(event) => setNewAddressDraft((current) => ({ ...current, zip: event.target.value }))} /></label>
+                  <label>Phone<input value={newAddressDraft.phone} onChange={(event) => setNewAddressDraft((current) => ({ ...current, phone: event.target.value }))} /></label>
+                </div>
+              )}
+            </div>
+
+            <div className="compact-edit-section">
+              <div className="compact-section-header">
+                <div>
+                  <h3>Items</h3>
+                  <p>{selectedLineCount} of {project.bom.length} selected.</p>
+                </div>
+                <div className="report-filter-row">
+                  <button className="secondary-action mini-action" type="button" onClick={() => setShipmentLineQtys(Object.fromEntries(project.bom.map((line) => [line.item, line.qty])))}>Select all (full qty)</button>
+                  <button className="secondary-action mini-action" type="button" onClick={() => setShipmentLineQtys(Object.fromEntries(project.bom.map((line) => [line.item, 0])))}>Clear</button>
+                </div>
+              </div>
+              <ul className="line-list">
+                {project.bom.map((line) => (
+                  <li className="line-item" key={line.item}>
+                    <div>
+                      <strong>{line.item}</strong>
+                      <span>BOM qty: {line.qty}</span>
+                    </div>
+                    <input
+                      className="qty-input-narrow"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={shipmentLineQtys[line.item] ?? 0}
+                      onChange={(event) => setShipmentLineQtys((current) => ({ ...current, [line.item]: Number(event.target.value) || 0 }))}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="bom-modal-grid">
+              <label className="span-2">Notes<textarea value={shipmentNotes} onChange={(event) => setShipmentNotes(event.target.value)} placeholder="Shipping instructions, urgency, special handling." /></label>
+            </div>
+
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowNewShipmentModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" disabled={selectedLineCount === 0} onClick={submitNewShipment}>Request Shipment</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {selectedShipment && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="shipment-detail-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="shipment-detail-title">{selectedShipment.shipmentNumber}</h2>
+                <p>Requested by {selectedShipment.requestedByEmail} on {new Date(selectedShipment.requestedAt).toLocaleString()}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setSelectedShipmentId(null)} aria-label="Close shipment">x</button>
+            </div>
+
+            <div className="source-file"><MapPin size={16} /><span>{selectedShipment.addressSnapshot || "No address on file"}</span></div>
+            {selectedShipment.notes && <div className="source-file"><FileText size={16} /><span>{selectedShipment.notes}</span></div>}
+
+            <ul className="line-list">
+              {selectedShipment.lines.map((line) => (
+                <li className="line-item" key={line.id}>
+                  <div><strong>{line.itemName}</strong></div>
+                  <b>{line.qty}</b>
+                </li>
+              ))}
+            </ul>
+
+            <div className="compact-edit-section">
+              <div className="compact-section-header">
+                <div>
+                  <h3>Packing photos</h3>
+                  <p>Warehouse: photo of the box/pallet as proof of what was packed.</p>
+                </div>
+                <label className="secondary-action mini-action hidden-file-label">
+                  <Camera size={14} /> {isUploadingPhoto ? "Uploading..." : "Add photo"}
+                  <input type="file" accept="image/*" disabled={isUploadingPhoto} onChange={handlePhotoSelect} />
+                </label>
+              </div>
+              {selectedShipment.photos.length > 0 ? (
+                <div className="site-gallery-grid">
+                  {selectedShipment.photos.map((photo) => (
+                    <div className="site-gallery-item" key={photo.id}>
+                      {photoUrls[photo.id] ? <img src={photoUrls[photo.id]} alt={photo.fileName} /> : <div className="site-gallery-item-fallback">Loading...</div>}
+                      <button
+                        className="icon-button"
+                        type="button"
+                        onClick={() => onDeletePhoto(selectedShipment.id, photo.id, photo.storagePath)}
+                        aria-label="Remove photo"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-compact-state">No packing photos yet.</p>
+              )}
+            </div>
+
+            {selectedShipment.status === "Requested" && (
+              <div className="modal-actions">
+                <button className="primary-action" type="button" onClick={() => onMarkPacked(selectedShipment.id)}>Mark Packed</button>
+              </div>
+            )}
+
+            {selectedShipment.status === "Packed" && (
+              <div className="compact-edit-section">
+                <div className="compact-section-header">
+                  <div>
+                    <h3>Ship it</h3>
+                    <p>Packed by {selectedShipment.packedByEmail} on {selectedShipment.packedAt ? new Date(selectedShipment.packedAt).toLocaleString() : ""}</p>
+                  </div>
+                </div>
+                <div className="bom-modal-grid">
+                  <label>Carrier<input value={carrierDraft} placeholder="e.g. FedEx, UPS, Freight" onChange={(event) => setCarrierDraft(event.target.value)} /></label>
+                  <label>Tracking / label number<input value={trackingDraft} onChange={(event) => setTrackingDraft(event.target.value)} /></label>
+                </div>
+                <div className="modal-actions">
+                  <button
+                    className="primary-action"
+                    type="button"
+                    disabled={!carrierDraft.trim() || !trackingDraft.trim()}
+                    onClick={() => {
+                      onMarkShipped(selectedShipment.id, carrierDraft, trackingDraft);
+                      setCarrierDraft("");
+                      setTrackingDraft("");
+                    }}
+                  >
+                    Mark Shipped
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {selectedShipment.status === "Shipped" && (
+              <div className="source-file"><Truck size={16} /><span>Shipped by {selectedShipment.shippedByEmail} on {selectedShipment.shippedAt ? new Date(selectedShipment.shippedAt).toLocaleString() : ""} -- {selectedShipment.carrier} {selectedShipment.trackingNumber}</span></div>
+            )}
+          </section>
+        </div>
+      )}
+    </section>
   );
 }
 

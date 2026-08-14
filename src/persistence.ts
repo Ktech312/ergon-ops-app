@@ -4579,6 +4579,63 @@ export type ProjectSite = {
   sow: ScopeOfWork;
   bom: BomLine[];
   locations?: ProjectLocation[];
+  shippingAddresses?: ProjectShippingAddress[];
+  shipments?: ProjectShipment[];
+};
+
+// Migration 072: PM shipping requests, fulfilled by Warehouse/
+// Implementation -- Requested -> Packed (photos) -> Shipped (carrier +
+// tracking), or Cancelled. Lines key by item_name, same convention as the
+// rest of the BOM system (BomLine has no stable id).
+export type ProjectShippingAddress = {
+  id: string;
+  projectId: string;
+  label: string;
+  streetAddress: string;
+  city: string;
+  state: string;
+  zip: string;
+  attnName: string;
+  phone: string;
+  lineSort: number;
+};
+
+export type ProjectShipmentLine = {
+  id: string;
+  shipmentId: string;
+  itemName: string;
+  qty: number;
+  lineSort: number;
+};
+
+export type ProjectShipmentPhoto = {
+  id: string;
+  shipmentId: string;
+  storagePath: string;
+  fileName: string;
+  description: string;
+  uploadedAt: string;
+  uploadedByEmail: string;
+};
+
+export type ProjectShipment = {
+  id: string;
+  projectId: string;
+  shipmentNumber: string;
+  addressId: string | null;
+  addressSnapshot: string;
+  status: "Requested" | "Packed" | "Shipped" | "Cancelled";
+  requestedByEmail: string;
+  requestedAt: string;
+  notes: string;
+  packedByEmail: string | null;
+  packedAt: string | null;
+  carrier: string | null;
+  trackingNumber: string | null;
+  shippedByEmail: string | null;
+  shippedAt: string | null;
+  lines: ProjectShipmentLine[];
+  photos: ProjectShipmentPhoto[];
 };
 
 const EMPTY_SCOPE_OF_WORK: ScopeOfWork = {
@@ -4716,6 +4773,121 @@ function mapProjectLocationRow(row: ProjectLocationRow): ProjectLocation {
 const PROJECT_LOCATION_SELECT =
   "id,project_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,source_quote_location_id,project_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),project_location_items(id,project_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)";
 
+type ProjectShippingAddressRow = {
+  id: string;
+  project_id: string;
+  label: string | null;
+  street_address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  attn_name: string | null;
+  phone: string | null;
+  line_sort: number;
+};
+
+function mapProjectShippingAddressRow(row: ProjectShippingAddressRow): ProjectShippingAddress {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    label: row.label ?? "",
+    streetAddress: row.street_address ?? "",
+    city: row.city ?? "",
+    state: row.state ?? "",
+    zip: row.zip ?? "",
+    attnName: row.attn_name ?? "",
+    phone: row.phone ?? "",
+    lineSort: row.line_sort,
+  };
+}
+
+const PROJECT_SHIPPING_ADDRESS_SELECT = "id,project_id,label,street_address,city,state,zip,attn_name,phone,line_sort";
+
+type ProjectShipmentLineRow = {
+  id: string;
+  shipment_id: string;
+  item_name: string;
+  qty: number | string;
+  line_sort: number;
+};
+
+function mapProjectShipmentLineRow(row: ProjectShipmentLineRow): ProjectShipmentLine {
+  return {
+    id: row.id,
+    shipmentId: row.shipment_id,
+    itemName: row.item_name,
+    qty: Number(row.qty) || 0,
+    lineSort: row.line_sort,
+  };
+}
+
+type ProjectShipmentPhotoRow = {
+  id: string;
+  shipment_id: string;
+  storage_path: string;
+  file_name: string | null;
+  description: string | null;
+  uploaded_at: string;
+  uploaded_by_email: string | null;
+};
+
+function mapProjectShipmentPhotoRow(row: ProjectShipmentPhotoRow): ProjectShipmentPhoto {
+  return {
+    id: row.id,
+    shipmentId: row.shipment_id,
+    storagePath: row.storage_path,
+    fileName: row.file_name ?? "",
+    description: row.description ?? "",
+    uploadedAt: row.uploaded_at,
+    uploadedByEmail: row.uploaded_by_email ?? "",
+  };
+}
+
+type ProjectShipmentRow = {
+  id: string;
+  project_id: string;
+  shipment_number: string;
+  address_id: string | null;
+  address_snapshot: string | null;
+  status: string;
+  requested_by_email: string | null;
+  requested_at: string;
+  notes: string | null;
+  packed_by_email: string | null;
+  packed_at: string | null;
+  carrier: string | null;
+  tracking_number: string | null;
+  shipped_by_email: string | null;
+  shipped_at: string | null;
+  project_shipment_lines: ProjectShipmentLineRow[] | null;
+  project_shipment_photos: ProjectShipmentPhotoRow[] | null;
+};
+
+function mapProjectShipmentRow(row: ProjectShipmentRow): ProjectShipment {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    shipmentNumber: row.shipment_number,
+    addressId: row.address_id,
+    addressSnapshot: row.address_snapshot ?? "",
+    status: (row.status as ProjectShipment["status"]) ?? "Requested",
+    requestedByEmail: row.requested_by_email ?? "",
+    requestedAt: row.requested_at,
+    notes: row.notes ?? "",
+    packedByEmail: row.packed_by_email,
+    packedAt: row.packed_at,
+    carrier: row.carrier,
+    trackingNumber: row.tracking_number,
+    shippedByEmail: row.shipped_by_email,
+    shippedAt: row.shipped_at,
+    lines: (row.project_shipment_lines ?? []).map(mapProjectShipmentLineRow).sort((a, b) => a.lineSort - b.lineSort),
+    photos: (row.project_shipment_photos ?? []).map(mapProjectShipmentPhotoRow),
+  };
+}
+
+const PROJECT_SHIPMENT_SELECT =
+  "id,project_id,shipment_number,address_id,address_snapshot,status,requested_by_email,requested_at,notes,packed_by_email,packed_at,carrier,tracking_number,shipped_by_email,shipped_at,project_shipment_lines(id,shipment_id,item_name,qty,line_sort),project_shipment_photos(id,shipment_id,storage_path,file_name,description,uploaded_at,uploaded_by_email)";
+
 type ProjectSiteRow = {
   id: string;
   project_name: string;
@@ -4734,10 +4906,12 @@ type ProjectSiteRow = {
   project_scope_of_work: ProjectScopeRow | ProjectScopeRow[] | null;
   project_bom_lines: ProjectBomLineRow[] | null;
   project_locations: ProjectLocationRow[] | null;
+  project_shipping_addresses: ProjectShippingAddressRow[] | null;
+  project_shipments: ProjectShipmentRow[] | null;
 };
 
 const PROJECT_SITE_SELECT =
-  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT})`;
+  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -4784,6 +4958,8 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
     sow,
     bom,
     locations: (row.project_locations ?? []).map(mapProjectLocationRow).sort((a, b) => a.lineSort - b.lineSort),
+    shippingAddresses: (row.project_shipping_addresses ?? []).map(mapProjectShippingAddressRow).sort((a, b) => a.lineSort - b.lineSort),
+    shipments: (row.project_shipments ?? []).map(mapProjectShipmentRow).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt)),
   };
 }
 
@@ -6666,6 +6842,194 @@ export async function deleteProjectLocationImage(imageId: string, storagePath: s
     return response.ok;
   } catch (error) {
     console.error("deleteProjectLocationImage threw", error);
+    return false;
+  }
+}
+
+export async function addProjectShippingAddress(
+  projectId: string,
+  address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string },
+  lineSort: number,
+  accessToken?: string,
+): Promise<ProjectShippingAddress | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("project_shipping_addresses"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      project_id: projectId,
+      label: address.label,
+      street_address: address.streetAddress,
+      city: address.city,
+      state: address.state,
+      zip: address.zip,
+      attn_name: address.attnName,
+      phone: address.phone,
+      line_sort: lineSort,
+    }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as ProjectShippingAddressRow[];
+  return rows[0] ? mapProjectShippingAddressRow(rows[0]) : null;
+}
+
+export async function addProjectShipment(
+  projectId: string,
+  shipmentNumber: string,
+  addressId: string | null,
+  addressSnapshot: string,
+  requestedByEmail: string,
+  notes: string,
+  lines: Array<{ itemName: string; qty: number }>,
+  accessToken?: string,
+): Promise<ProjectShipment | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("project_shipments"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      project_id: projectId,
+      shipment_number: shipmentNumber,
+      address_id: addressId,
+      address_snapshot: addressSnapshot,
+      requested_by_email: requestedByEmail,
+      notes,
+    }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as ProjectShipmentRow[];
+  const created = rows[0];
+  if (!created) {
+    return null;
+  }
+  if (lines.length > 0) {
+    const linesResponse = await fetch(supabaseUrl("project_shipment_lines"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+      body: JSON.stringify(
+        lines.map((line, index) => ({
+          shipment_id: created.id,
+          item_name: line.itemName,
+          qty: line.qty,
+          line_sort: index,
+        })),
+      ),
+    });
+    created.project_shipment_lines = linesResponse.ok ? ((await linesResponse.json()) as ProjectShipmentLineRow[]) : [];
+  }
+  created.project_shipment_photos = [];
+  return mapProjectShipmentRow(created);
+}
+
+export async function updateProjectShipment(
+  id: string,
+  updates: Partial<{
+    status: ProjectShipment["status"];
+    packedByEmail: string;
+    packedAt: string;
+    carrier: string;
+    trackingNumber: string;
+    shippedByEmail: string;
+    shippedAt: string;
+    notes: string;
+  }>,
+  accessToken?: string,
+): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.status !== undefined) payload.status = updates.status;
+  if (updates.packedByEmail !== undefined) payload.packed_by_email = updates.packedByEmail;
+  if (updates.packedAt !== undefined) payload.packed_at = updates.packedAt;
+  if (updates.carrier !== undefined) payload.carrier = updates.carrier;
+  if (updates.trackingNumber !== undefined) payload.tracking_number = updates.trackingNumber;
+  if (updates.shippedByEmail !== undefined) payload.shipped_by_email = updates.shippedByEmail;
+  if (updates.shippedAt !== undefined) payload.shipped_at = updates.shippedAt;
+  if (updates.notes !== undefined) payload.notes = updates.notes;
+  const response = await fetch(supabaseUrl(`project_shipments?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+  return response.ok;
+}
+
+const PROJECT_SHIPMENT_PHOTO_BUCKET = "project-shipment-photos";
+
+export function buildShipmentPhotoStoragePath(shipmentId: string, fileName: string): string {
+  const stamp = Date.now().toString(36);
+  return `${shipmentId}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
+}
+
+export async function uploadShipmentPhotoFile(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
+  return uploadStorageObjectFile(PROJECT_SHIPMENT_PHOTO_BUCKET, file, storagePath, accessToken);
+}
+
+export async function getShipmentPhotoDownloadUrl(storagePath: string, accessToken?: string): Promise<string | null> {
+  return getStorageObjectSignedUrl(PROJECT_SHIPMENT_PHOTO_BUCKET, storagePath, accessToken);
+}
+
+export async function addProjectShipmentPhoto(
+  shipmentId: string,
+  file: File,
+  accessToken?: string,
+  description?: string,
+  uploaderEmail?: string,
+): Promise<ProjectShipmentPhoto | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  try {
+    const storagePath = buildShipmentPhotoStoragePath(shipmentId, file.name);
+    const uploaded = await uploadShipmentPhotoFile(file, storagePath, accessToken);
+    if (!uploaded) {
+      return null;
+    }
+    const response = await fetch(supabaseUrl("project_shipment_photos"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+      body: JSON.stringify({
+        shipment_id: shipmentId,
+        storage_path: storagePath,
+        file_name: file.name,
+        description: description || null,
+        uploaded_by_email: uploaderEmail || null,
+      }),
+    });
+    if (!response.ok) {
+      console.error("addProjectShipmentPhoto insert failed", response.status, await response.text().catch(() => ""));
+      return null;
+    }
+    const rows = (await response.json()) as ProjectShipmentPhotoRow[];
+    return rows[0] ? mapProjectShipmentPhotoRow(rows[0]) : null;
+  } catch (error) {
+    console.error("addProjectShipmentPhoto threw", error);
+    return null;
+  }
+}
+
+export async function deleteProjectShipmentPhoto(photoId: string, storagePath: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  try {
+    await deleteStorageObject(PROJECT_SHIPMENT_PHOTO_BUCKET, storagePath, accessToken);
+    const response = await fetch(supabaseUrl(`project_shipment_photos?id=eq.${photoId}`), {
+      method: "DELETE",
+      headers: supabaseHeaders(accessToken),
+    });
+    return response.ok;
+  } catch (error) {
+    console.error("deleteProjectShipmentPhoto threw", error);
     return false;
   }
 }
