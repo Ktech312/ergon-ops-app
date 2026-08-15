@@ -4122,6 +4122,7 @@ function App() {
   function navigateToView(nextView: View) {
     window.localStorage.setItem(scrollKey(), String(window.scrollY));
     window.location.hash = nextView;
+    setAccountMenuOpen(false);
   }
 
   // Global top-nav search -- parts (Inventory), purchase orders (Reports'

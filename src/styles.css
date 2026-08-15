@@ -718,6 +718,23 @@ button {
   z-index: 30;
 }
 
+/* On narrow screens the bell sits close enough to the edge that a
+   320px-wide dropdown anchored to it (position: absolute, right: 0)
+   partly renders off past the visible area -- browser zoom doesn't fix
+   it because it's a real layout overflow, not a too-small-viewport
+   problem. Fixed positioning anchored to the viewport instead of the
+   trigger button guarantees it always fits on screen. */
+@media (max-width: 760px) {
+  .notification-panel {
+    left: 12px;
+    max-height: min(70vh, 420px);
+    position: fixed;
+    right: 12px;
+    top: 64px;
+    width: auto;
+  }
+}
+
 .notification-panel-header {
   align-items: center;
   display: flex;
