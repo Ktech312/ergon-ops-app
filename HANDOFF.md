@@ -1,6 +1,6 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-08-14
+Last updated: 2026-08-15
 
 Purpose: carry context between chat sessions. Read this first in any new session before making changes.
 
@@ -8,9 +8,9 @@ Purpose: carry context between chat sessions. Read this first in any new session
 - Do not use, import from, migrate against, or reference VLTD. VLTD is a separate project. If Supabase Studio or Vercel shows VLTD selected, switch away before touching anything for Ergon.
 - The live user-facing target is Vercel production: `https://ergon-ops-app.vercel.app/`.
 - The intended Ergon Supabase project id is `hnjxvsxsxoowhegcqurf`.
-- Repo migrations currently exist from `001_initial_ops_schema.sql` through `073_saas_contracts.sql`.
+- Repo migrations currently exist from `001_initial_ops_schema.sql` through `074_location_addresses.sql`.
 - GitHub/Vercel deploys app code. It does not automatically apply Supabase SQL migrations. Supabase setup remains separate unless a migration pipeline is added.
-- **Migrations confirmed run in Supabase by E: 069, 070, 071, 072.** Migration **073 was sent to E but run status is unconfirmed as of this handoff** — verify before assuming the SaaS Calendar feature's columns/constraint exist. If the SaaS tile or SaaS Calendar page errors on load, this is almost certainly why.
+- **Migrations confirmed run in Supabase by E: 069, 070, 071, 072.** Migrations **073 and 074 run status unconfirmed as of this handoff** — verify before assuming the SaaS Calendar's columns/constraint or the per-Location Address field exist. If the SaaS tile/Calendar or a Locations Address field errors or silently no-ops, this is almost certainly why.
 - E has repeatedly had trouble pasting SQL from a downloaded file into the Supabase SQL editor (a stray `;` character appeared mid-statement, source unclear — not present in the actual repo file). When handing off a migration, paste the raw SQL directly into the chat message as a code block in addition to (or instead of) sending the file, so E can copy straight from the chat.
 - Dedicated setup handoff: `backend/docs/supabase-production-handoff.md`.
 
@@ -31,18 +31,20 @@ Status per page as of this handoff:
 - Sales — correct (metric-grid → Sales Tasks → Product Catalog → Site Builder).
 - Purchasing/Procurement — correct (metric-grid → Procurement Tasks → rest).
 - Projects (list mode) — correct (metric-grid before Projects Tasks).
-- **Projects (detail mode) — reworked 2026-08-14, layout convention above no longer literally applies here.** New shape, top to bottom:
-  1. Top row: **Site Information** card, **Project Snapshot** card, **Project Progress** card (Build Sales BOM and Project Documents used to live in this row — they're tiles now, see below).
+- **Projects (detail mode) — reworked 2026-08-14/15, layout convention above no longer literally applies here.** New shape, top to bottom:
+  1. Top row: **Project Information** card (renamed from "Site Information" 2026-08-15 — click the card or its edit icon to open the "Project Details" editable form — name/client/type/owner/address/status/due/package/notes — in a modal, same `modal-panel-wide` pattern as the tile grid below), **Project Snapshot** card, **Project Progress** card (Build Sales BOM and Project Documents used to live in this row — they're tiles now, see below).
   2. Project Tasks mini-panel.
   3. `project-tile-grid` at the **very bottom** of the page (moved there 2026-08-14 per E's request — "page scrolls forever, tighten it up"): 9 clickable stat tiles — Build Sales BOM, Project Documents, SOW, BOM, Shipping, Locations, Submittals, After-Sales Handover, SaaS. Each shows 2-4 quick stats; clicking opens the real section in a modal (`showXModal` state + `{showXModal && (<div className="modal-backdrop">...)}`, unchanged content, just wrapped). New sections needing the same treatment should follow this pattern: tile in the grid + modal wrapper elsewhere in the render (modal position in JSX doesn't matter, they're `position: fixed`).
-  4. Between the top row and the tile grid: the "Project Details" editable form (name/client/type/owner/address/status/due/package/notes) is still inline, not tiled — it was in scope for the "convert everything" instruction from E but was overlooked; if E asks why it's not a tile, that's why, not a deliberate exception.
   - **"Project Transfers"** (cards for every OTHER project, shown at the bottom of every single project's detail page) was **removed entirely** 2026-08-14 — it never belonged there; Reports' "Project Allocation History" already covers this properly.
 - Inventory — has a metric-grid (Total SKUs, Low Stock, Inventory Value, Planned Builds) before Inventory Tasks.
 - Dashboard, Reports, Admin, Library, Tasks board, **SaaS Calendar (new)** — no tasks/metrics concept applies (self-contained pages); left as-is, no deviation.
 
 Project detail page header: the App-level `<h1>`/`<p>` shows `Project: <Name>` / `Ref <ref>` when a specific project is open, instead of the generic "Projects" title+subtitle. Wired via `Projects`'s `onDetailContextChange` prop → App-level `projectDetailContext` state.
 
-## Recent work log (most recent first, this session — 2026-08-13/14)
+## Recent work log (most recent first, this session — 2026-08-13/14/15)
+- **30d9ba8** — Split "address" into three distinct concepts, per E: "the Client will have an Address, the garages and lots may have different addresses and the shipping may have different addresses." (1) **Client Address** — unchanged, project-level (`ProjectSite.address`), edited in Project Information, label clarified from "Client location / shipping address" to "Client address". (2) **Garage/Lot Address** — new, per-`ProjectLocation`/`SalesQuoteLocation` (migration 074, `address` column), editable in the location detail modal on both the Project and Sales Quote sides. (3) **Shipping Address book** — already existed (migration 072, `project_shipping_addresses`) — see below for where it lives in the UI. Also: renamed the "Site Information" top-row card to **"Project Information"** and collapsed the old standalone full-width "Project Details" edit section into a modal opened from that card (E: "Image 1 should live inside Image 2") — both the card's edit icon and the whole card are click targets (`PanelHeader` gained an `onEdit` prop for this, `.clickable-card` CSS added).
+- **Where the Shipping Address book lives (E asked, "where did that end up"):** there's no standalone address-book management page. Saved addresses are created and picked from inside the Shipping tile → **New Shipment** modal — a "Saved address" dropdown once one exists, or "+ Use a new address" to add one (which gets saved for next time). `ProjectShippingSection` in `main.tsx` (~line 13825).
+- **75f49e2** — Fixed SaaS Calendar nav tab loading Dashboard instead: `viewFromHash()` (main.tsx ~line 842) never had `"saas_calendar"` added to its hash-to-view allow-list when that tab was built, so `#saas_calendar` silently fell back to `"dashboard"` on click/refresh.
 - **8602110** — SaaS contract tracking: new "Closed" project status (auto-stamps `saasStartDate` the first time a project is set to Closed; renewal defaults to +1yr, stays editable); SaaS Type/Contract Amount/Billing Frequency captured on the Sales Quote (Edit Site modal) and copied to the Project on conversion from a Closed-Won quote; new SaaS tile on the Project detail page; new **SaaS Calendar** nav tab (renewal list sorted soonest-first with overdue/soon highlighting, MRR/Quarterly/ARR, and a straight-line 5-year outlook — explicitly labeled as a flat projection, not a growth/churn model). Migration 073.
 - **09acd85** — Two mobile bugs fixed: notification panel was `position: absolute; right:0; width:320px` anchored to the bell, which ran off-screen on narrow viewports (zoom didn't help — real overflow, not a viewport-size issue); now `position: fixed` with viewport-relative insets below 760px. Account menu ("Role view" lives inside it) never closed on tab navigation; `navigateToView` now calls `setAccountMenuOpen(false)`.
 - **9ed4f0a** — Collapsed the Project detail page into the tile+modal pattern described above; removed Project Transfers. See the layout section above for full detail.
@@ -73,7 +75,7 @@ Project detail page header: the App-level `<h1>`/`<p>` shows `Project: <Name>` /
 - `ProjectTile` component (`main.tsx`) is the reusable stat-card-that-opens-a-modal building block established this session — reuse it for any future "collapse this section into an overview tile" work rather than hand-rolling another card pattern.
 
 ## Open / pending items
-- **Migration 073 run status unconfirmed** — verify before doing further SaaS Calendar work (see top of doc).
+- **Migrations 073 and 074 run status unconfirmed** — verify before doing further SaaS Calendar or per-Location Address work (see top of doc).
 - **Mobile bug, unresolved: "fields extended past the background."** E relayed this from a user; no screenshot obtained yet despite asking twice. Two other mobile bugs from the same report (notification panel clipping, account menu not closing) were fixed and confirmed against a screenshot; this third one is still open. Get a screenshot + which specific page before touching anything — last session's guess-based investigation (box-sizing, table overflow) turned up nothing conclusive.
 - **A "Sync issue" pill was spotted in a screenshot** (top nav, during the mobile-bug investigation) — never followed up on whether it was a one-off connectivity blip or a persistent problem. Worth asking E if it's still showing.
 - **Email delivery still not really working for anyone but E** (see mailer.js entry above) — needs Gmail SMTP creds or a verified Resend domain; E has declined so far. Don't re-raise unprompted, but if E asks about invites/notifications not arriving, this is why.
