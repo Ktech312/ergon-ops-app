@@ -839,7 +839,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "admin", "library"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "saas_calendar", "admin", "library"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
