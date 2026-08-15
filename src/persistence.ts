@@ -4539,6 +4539,11 @@ export type ProjectLocation = {
   projectId: string;
   locationType: "garage" | "lot";
   name: string;
+  // Migration 074: this garage/lot's own physical address -- separate from
+  // the project-level Client Address (ProjectSite.address) and the saved
+  // Shipping Address book (ProjectSite.shippingAddresses), since a project
+  // can span multiple sites that aren't all at the same address.
+  address: string;
   lineSort: number;
   fli: boolean;
   lpr: boolean;
@@ -4713,6 +4718,7 @@ type ProjectLocationRow = {
   project_id: string;
   location_type: string;
   name: string;
+  address: string | null;
   line_sort: number;
   fli: boolean;
   lpr: boolean;
@@ -4763,6 +4769,7 @@ function mapProjectLocationRow(row: ProjectLocationRow): ProjectLocation {
     projectId: row.project_id,
     locationType: row.location_type === "lot" ? "lot" : "garage",
     name: row.name,
+    address: row.address ?? "",
     lineSort: row.line_sort,
     fli: row.fli,
     lpr: row.lpr,
@@ -4783,7 +4790,7 @@ function mapProjectLocationRow(row: ProjectLocationRow): ProjectLocation {
 }
 
 const PROJECT_LOCATION_SELECT =
-  "id,project_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,source_quote_location_id,project_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),project_location_items(id,project_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)";
+  "id,project_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,source_quote_location_id,project_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),project_location_items(id,project_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)";
 
 type ProjectShippingAddressRow = {
   id: string;
@@ -5632,6 +5639,8 @@ export type SalesQuoteLocation = {
   quoteId: string;
   locationType: "garage" | "lot";
   name: string;
+  // Migration 074: see ProjectLocation.address -- same idea, pre-conversion.
+  address: string;
   lineSort: number;
   fli: boolean;
   lpr: boolean;
@@ -5755,6 +5764,7 @@ type SalesQuoteLocationRow = {
   quote_id: string;
   location_type: string;
   name: string;
+  address: string | null;
   line_sort: number;
   fli: boolean;
   lpr: boolean;
@@ -5844,6 +5854,7 @@ function mapSalesQuoteLocationRow(row: SalesQuoteLocationRow): SalesQuoteLocatio
     quoteId: row.quote_id,
     locationType: row.location_type === "lot" ? "lot" : "garage",
     name: row.name,
+    address: row.address ?? "",
     lineSort: row.line_sort,
     fli: row.fli,
     lpr: row.lpr,
@@ -5908,7 +5919,7 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
 }
 
 const SALES_QUOTE_SELECT =
-  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,saas_type,saas_contract_amount,saas_billing_frequency,sales_quote_locations(id,quote_id,location_type,name,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
+  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,saas_type,saas_contract_amount,saas_billing_frequency,sales_quote_locations(id,quote_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -6182,6 +6193,7 @@ export async function updateSalesQuoteLocation(
   id: string,
   updates: Partial<{
     name: string;
+    address: string;
     fli: boolean;
     lpr: boolean;
     peopleCounting: boolean;
@@ -6199,6 +6211,7 @@ export async function updateSalesQuoteLocation(
   }
   const payload: Record<string, unknown> = {};
   if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.address !== undefined) payload.address = updates.address;
   if (updates.fli !== undefined) payload.fli = updates.fli;
   if (updates.lpr !== undefined) payload.lpr = updates.lpr;
   if (updates.peopleCounting !== undefined) payload.people_counting = updates.peopleCounting;
@@ -6666,6 +6679,7 @@ export async function updateProjectLocation(
   id: string,
   updates: Partial<{
     name: string;
+    address: string;
     fli: boolean;
     lpr: boolean;
     peopleCounting: boolean;
@@ -6683,6 +6697,7 @@ export async function updateProjectLocation(
   }
   const payload: Record<string, unknown> = {};
   if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.address !== undefined) payload.address = updates.address;
   if (updates.fli !== undefined) payload.fli = updates.fli;
   if (updates.lpr !== undefined) payload.lpr = updates.lpr;
   if (updates.peopleCounting !== undefined) payload.people_counting = updates.peopleCounting;

@@ -8062,6 +8062,7 @@ function Projects({
   // Section tiles on the project detail page: each collapses to a stat
   // card and opens the real content in one of these on click, instead of
   // rendering fully expanded all the time (the page scrolled forever).
+  const [showProjectInfoModal, setShowProjectInfoModal] = useState(false);
   const [showBuildSalesBomModal, setShowBuildSalesBomModal] = useState(false);
   const [showProjectDocsModal, setShowProjectDocsModal] = useState(false);
   const [showSowModal, setShowSowModal] = useState(false);
@@ -8727,11 +8728,11 @@ function Projects({
       </div>
 
       <div className="project-top-row">
-        <section className="panel compact-card">
-          <PanelHeader title="Site Information" label="Client, location, and install context" />
+        <section className="panel compact-card clickable-card" onClick={() => setShowProjectInfoModal(true)}>
+          <PanelHeader title="Project Information" label="Client, location, and install context" onEdit={() => setShowProjectInfoModal(true)} />
           <div className="site-info-list">
             <div><Building2 size={17} /><span>Client</span><strong>{selectedProject.client}</strong></div>
-            <div><MapPin size={17} /><span>Location</span><strong>{selectedProject.address}</strong></div>
+            <div><MapPin size={17} /><span>Client Address</span><strong>{selectedProject.address}</strong></div>
             <div><User size={17} /><span>Owner</span><strong>{selectedProject.owner}</strong></div>
             <div><CalendarDays size={17} /><span>Target</span><strong>{selectedProject.due}</strong></div>
           </div>
@@ -9059,25 +9060,34 @@ function Projects({
         </div>
       )}
 
-      <section className="panel full">
-        <div className="panel-title-row">
-          <div>
-            <h2>Project Details</h2>
-            <p>Editable site intake for this parking garage or lot</p>
+      {showProjectInfoModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel modal-panel-wide">
+            <div className="modal-tile-close-row">
+              <button className="icon-button" type="button" onClick={() => setShowProjectInfoModal(false)} aria-label="Close">x</button>
+            </div>
+            <section className="panel full">
+              <div className="panel-title-row">
+                <div>
+                  <h2>Project Information</h2>
+                  <p>Editable site intake for this parking garage or lot</p>
+                </div>
+              </div>
+              <div className="form-grid">
+                <label>Project name<input value={selectedProject.name} onChange={(event) => updateProjectField("name", event.target.value)} /></label>
+                <label>Client / property<input value={selectedProject.client} onChange={(event) => updateProjectField("client", event.target.value)} /></label>
+                <label>Site type<select value={selectedProject.type} onChange={(event) => updateProjectField("type", event.target.value as ProjectSite["type"])}><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
+                <label>Project owner<input value={selectedProject.owner} onChange={(event) => updateProjectField("owner", event.target.value)} /></label>
+                <label className="span-2">Client address<input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} /></label>
+                <label>Status<select value={selectedProject.status} onChange={(event) => handleProjectStatusChange(event.target.value as ProjectSite["status"])}><option>Draft</option><option>Planning</option><option>Procurement</option><option>Staging</option><option>Install Ready</option><option>Closed</option></select></label>
+                <label>Target date<input value={selectedProject.due} onChange={(event) => updateProjectField("due", event.target.value)} /></label>
+                <label className="span-2">Solution / package<input value={selectedProject.package} onChange={(event) => updateProjectField("package", event.target.value)} /></label>
+                <label className="span-2">Site notes<textarea value={selectedProject.siteNotes} onChange={(event) => updateProjectField("siteNotes", event.target.value)} /></label>
+              </div>
+            </section>
           </div>
         </div>
-        <div className="form-grid">
-          <label>Project name<input value={selectedProject.name} onChange={(event) => updateProjectField("name", event.target.value)} /></label>
-          <label>Client / property<input value={selectedProject.client} onChange={(event) => updateProjectField("client", event.target.value)} /></label>
-          <label>Site type<select value={selectedProject.type} onChange={(event) => updateProjectField("type", event.target.value as ProjectSite["type"])}><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
-          <label>Project owner<input value={selectedProject.owner} onChange={(event) => updateProjectField("owner", event.target.value)} /></label>
-          <label className="span-2">Client location / shipping address<input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} /></label>
-          <label>Status<select value={selectedProject.status} onChange={(event) => handleProjectStatusChange(event.target.value as ProjectSite["status"])}><option>Draft</option><option>Planning</option><option>Procurement</option><option>Staging</option><option>Install Ready</option><option>Closed</option></select></label>
-          <label>Target date<input value={selectedProject.due} onChange={(event) => updateProjectField("due", event.target.value)} /></label>
-          <label className="span-2">Solution / package<input value={selectedProject.package} onChange={(event) => updateProjectField("package", event.target.value)} /></label>
-          <label className="span-2">Site notes<textarea value={selectedProject.siteNotes} onChange={(event) => updateProjectField("siteNotes", event.target.value)} /></label>
-        </div>
-      </section>
+      )}
 
       <div className="project-tile-grid">
         <ProjectTile
@@ -14307,6 +14317,7 @@ function ProjectLocationsSection({
               <button className="icon-button" type="button" onClick={() => setSelectedLocationId(null)} aria-label="Close location details">x</button>
             </div>
             <div className="bom-modal-grid">
+              <label className="span-2">Address<input value={selectedLocation.address} onChange={(event) => onUpdateLocation(selectedLocation.id, { address: event.target.value })} placeholder="This garage/lot's own address, if different from the client address" /></label>
               <p className="span-2 muted">General info for reference only -- doesn't drive anything below. Actual camera hardware is picked in the Cameras section.</p>
               <label className="checkbox-inline">
                 <input type="checkbox" checked={selectedLocation.fli} onChange={(event) => onUpdateLocation(selectedLocation.id, { fli: event.target.checked })} /> FLI
@@ -14656,6 +14667,7 @@ function SalesQuoteBuilder({
     locationId: string,
     updates: Partial<{
       name: string;
+      address: string;
       fli: boolean;
       lpr: boolean;
       peopleCounting: boolean;
@@ -15348,6 +15360,7 @@ function SalesQuoteBuilder({
               <button className="icon-button" type="button" onClick={() => setSelectedLocationId(null)} aria-label="Close location details">x</button>
             </div>
             <div className="bom-modal-grid">
+              <label className="span-2">Address<input value={selectedLocation.address} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { address: event.target.value })} placeholder="This garage/lot's own address, if different from the client address" /></label>
               <p className="span-2 muted">General info for reference only -- doesn't drive anything below. Actual camera hardware is picked in the Cameras section.</p>
               <label className="checkbox-inline">
                 <input type="checkbox" checked={selectedLocation.fli} onChange={(event) => onUpdateLocation(selectedQuote.id, selectedLocation.id, { fli: event.target.checked })} /> FLI
@@ -16813,11 +16826,13 @@ function PanelHeader({
   label,
   collapsed,
   onToggleCollapse,
+  onEdit,
 }: {
   title: string;
   label: string;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  onEdit?: () => void;
 }) {
   return (
     <header className="panel-header">
@@ -16825,6 +16840,10 @@ function PanelHeader({
       {onToggleCollapse ? (
         <button className="icon-button" type="button" onClick={onToggleCollapse} aria-label={collapsed ? "Expand section" : "Collapse section"}>
           {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        </button>
+      ) : onEdit ? (
+        <button className="icon-button" type="button" onClick={onEdit} aria-label="Edit">
+          <FileText size={18} />
         </button>
       ) : (
         <FileText size={18} />

@@ -1888,6 +1888,16 @@ td small.quote-ref-tag {
   padding: 14px;
 }
 
+.clickable-card {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.clickable-card:hover {
+  box-shadow: 0 16px 36px rgba(64, 52, 38, 0.16);
+  transform: translateY(-2px);
+}
+
 .sales-dropzone.compact-row {
   display: inline-flex;
   flex-direction: row;
