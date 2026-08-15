@@ -4777,6 +4777,16 @@ td.empty-compact-state {
   min-width: 0;
 }
 
+/* SaaS Calendar renewal urgency -- soonest-first sort already does most
+   of the work, this just makes "reach out now" visually jump out. */
+.saas-urgency-overdue {
+  background: #fde2e2;
+}
+
+.saas-urgency-soon {
+  background: #fff4d9;
+}
+
 .report-table-row strong,
 .report-table-row small {
   display: block;

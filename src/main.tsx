@@ -289,7 +289,7 @@ import {
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "tasks" | "reports" | "admin" | "library";
+type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -307,7 +307,7 @@ type RoleMode = "warehouse" | "purchasing" | "pm" | "manager" | "sales" | "engin
 
 const ALL_ROLE_KEYS: RoleMode[] = ["warehouse", "purchasing", "pm", "manager", "sales", "engineering", "product_development", "implementation", "support", "marketing"];
 
-const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports"];
+const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "saas_calendar"];
 
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
@@ -317,6 +317,7 @@ const TAB_LABELS: Record<View, string> = {
   sales: "Sales",
   tasks: "Tasks",
   reports: "Reports",
+  saas_calendar: "SaaS Calendar",
   admin: "Admin",
   library: "Library",
 };
@@ -327,9 +328,9 @@ const TAB_LABELS: Record<View, string> = {
 const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
   warehouse: ["dashboard", "inventory", "projects", "tasks"],
   purchasing: ["dashboard", "purchasing", "inventory", "tasks", "reports"],
-  pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports"],
-  manager: ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports"],
-  sales: ["dashboard", "sales", "tasks", "reports"],
+  pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports", "saas_calendar"],
+  manager: ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "saas_calendar"],
+  sales: ["dashboard", "sales", "tasks", "reports", "saas_calendar"],
   engineering: ["dashboard", "projects", "inventory", "tasks", "reports"],
   product_development: ["dashboard", "projects", "tasks", "reports"],
   implementation: ["dashboard", "projects", "purchasing", "inventory", "tasks"],
@@ -2264,7 +2265,18 @@ function App() {
   // exists, instead of those being fixed at creation time forever.
   async function handleUpdateSalesQuoteInfo(
     quoteId: string,
-    updates: Partial<{ clientName: string; siteName: string; city: string; clientEmail: string; contactFullName: string; contactPhone: string; preferredCommunication: string }>,
+    updates: Partial<{
+      clientName: string;
+      siteName: string;
+      city: string;
+      clientEmail: string;
+      contactFullName: string;
+      contactPhone: string;
+      preferredCommunication: string;
+      saasType: string;
+      saasContractAmount: number | null;
+      saasBillingFrequency: SalesQuote["saasBillingFrequency"];
+    }>,
   ) {
     if (!authSession) {
       return;
@@ -5293,6 +5305,7 @@ function App() {
             {allowedTabs.includes("sales") && <NavButton icon={<DollarSign size={16} />} label="Sales" active={view === "sales"} onClick={() => navigateToView("sales")} />}
             {allowedTabs.includes("tasks") && <NavButton icon={<ListChecks size={16} />} label="Tasks" active={view === "tasks"} onClick={() => navigateToView("tasks")} />}
             {allowedTabs.includes("reports") && <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />}
+            {allowedTabs.includes("saas_calendar") && <NavButton icon={<CalendarDays size={16} />} label="SaaS Calendar" active={view === "saas_calendar"} onClick={() => navigateToView("saas_calendar")} />}
           </nav>
           <div className="top-nav-actions">
             <div className={`sync-status ${syncStatus}`} title={syncStatus === "error" ? authStatus : undefined}>
@@ -5539,6 +5552,7 @@ function App() {
           />
         )}
         {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} projectDocuments={projectDocuments} searchFocus={reportsSearchFocus} />}
+        {view === "saas_calendar" && allowedTabs.includes("saas_calendar") && <SaasCalendar projectSites={projectSites} />}
         {view === "library" && <LibraryPage onBack={() => navigateToView("dashboard")} />}
         {view === "admin" && canReviewApprovals && (
           <AdminPage
@@ -5640,6 +5654,7 @@ function pageTitle(view: View) {
     sales: "Sales",
     tasks: "Tasks",
     reports: "Reports",
+    saas_calendar: "SaaS Calendar",
     admin: "Admin",
     library: "Learning Library",
   };
@@ -5659,6 +5674,7 @@ function pageSubtitle(view: View) {
     sales: "Pipeline, quotes, and the product catalog for new deals.",
     tasks: "Work items and requests across every team and project.",
     reports: "Cross-project analytics and exportable reports.",
+    saas_calendar: "Renewal outreach tracker and recurring revenue outlook.",
     admin: "Users, roles, approvals, and system configuration.",
     library: "Reference guides and onboarding materials.",
   };
@@ -8054,6 +8070,14 @@ function Projects({
   const [showLocationsModal, setShowLocationsModal] = useState(false);
   const [showSubmittalsModal, setShowSubmittalsModal] = useState(false);
   const [showHandoverModal, setShowHandoverModal] = useState(false);
+  const [showSaasModal, setShowSaasModal] = useState(false);
+  const [saasEditDraft, setSaasEditDraft] = useState<{ saasType: string; saasContractAmount: number | null; saasBillingFrequency: ProjectSite["saasBillingFrequency"]; saasStartDate: string; saasRenewalDate: string }>({
+    saasType: "",
+    saasContractAmount: null,
+    saasBillingFrequency: "",
+    saasStartDate: "",
+    saasRenewalDate: "",
+  });
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
     item: parts[0].name,
@@ -8197,8 +8221,46 @@ function Projects({
     }
   }
 
+  // The SaaS contract's real start date is when the project actually
+  // closes, not when the quote was signed -- so it's stamped here, the
+  // first time status becomes "Closed," rather than being something a PM
+  // types in by hand. Renewal defaults to a year out but stays editable
+  // (the SaaS tile) since not every contract is a flat annual term.
+  function handleProjectStatusChange(status: ProjectSite["status"]) {
+    updateSelectedProject((project) => {
+      if (status !== "Closed" || project.saasStartDate) {
+        return { ...project, status };
+      }
+      const startDate = new Date().toISOString().slice(0, 10);
+      const renewal = new Date();
+      renewal.setFullYear(renewal.getFullYear() + 1);
+      return {
+        ...project,
+        status,
+        saasStartDate: startDate,
+        saasRenewalDate: project.saasRenewalDate || renewal.toISOString().slice(0, 10),
+      };
+    });
+  }
+
   function updateSowField<K extends keyof ScopeOfWork>(field: K, value: ScopeOfWork[K]) {
     updateSelectedProject((project) => ({ ...project, sow: { ...project.sow, [field]: value } }));
+  }
+
+  function openSaasModal() {
+    setSaasEditDraft({
+      saasType: selectedProject.saasType ?? "",
+      saasContractAmount: selectedProject.saasContractAmount ?? null,
+      saasBillingFrequency: selectedProject.saasBillingFrequency ?? "",
+      saasStartDate: selectedProject.saasStartDate ?? "",
+      saasRenewalDate: selectedProject.saasRenewalDate ?? "",
+    });
+    setShowSaasModal(true);
+  }
+
+  function saveSaasDraft() {
+    updateSelectedProject((project) => ({ ...project, ...saasEditDraft }));
+    setShowSaasModal(false);
   }
 
   function updateBomDraft<K extends keyof typeof bomDraft>(field: K, value: (typeof bomDraft)[K]) {
@@ -8611,7 +8673,7 @@ function Projects({
                     <td><strong>{project.ref}</strong></td>
                     <td><strong>{project.name}</strong><small>{project.type} - {project.package}</small></td>
                     <td>{project.client}</td>
-                    <td><span className={`status ${project.status === "Procurement" ? "warn" : project.status === "Install Ready" ? "ok" : ""}`}>{project.status}</span></td>
+                    <td><span className={`status ${project.status === "Procurement" ? "warn" : project.status === "Install Ready" || project.status === "Closed" ? "ok" : ""}`}>{project.status}</span></td>
                     <td>
                       <div className="progress-cell"><span>{completion}%</span><i><b style={{ width: `${completion}%` }} /></i></div>
                     </td>
@@ -8692,7 +8754,7 @@ function Projects({
               <span>{projectCompletion(selectedProject)}%</span>
             </div>
             <div className="progress-points">
-              <div><span>Status</span><strong className={`status ${selectedProject.status === "Procurement" ? "warn" : selectedProject.status === "Install Ready" ? "ok" : ""}`}>{selectedProject.status}</strong></div>
+              <div><span>Status</span><strong className={`status ${selectedProject.status === "Procurement" ? "warn" : selectedProject.status === "Install Ready" || selectedProject.status === "Closed" ? "ok" : ""}`}>{selectedProject.status}</strong></div>
               <div><span>Target</span><strong>{selectedProject.due}</strong></div>
               <div><span>Allocated</span><strong>{money(selectedProject.allocated)}</strong></div>
               <div><span>Open BOM</span><strong>{openBomLines}</strong></div>
@@ -8718,81 +8780,6 @@ function Projects({
         </section>
       </div>
 
-      <div className="project-tile-grid">
-        <ProjectTile
-          icon={<Upload size={18} />}
-          title="Build Sales BOM"
-          hint="One-time setup: upload a sales quote PDF"
-          stats={[
-            { label: "Source", value: selectedProject.salesQuoteFile ? "Uploaded" : "Not set" },
-            { label: "BOM lines", value: selectedProject.bom.length },
-          ]}
-          onClick={() => setShowBuildSalesBomModal(true)}
-        />
-        <ProjectTile
-          icon={<FileText size={18} />}
-          title="Project Documents"
-          hint="Backups and reference files"
-          stats={[{ label: "Files", value: selectedProjectDocuments.length }]}
-          onClick={() => setShowProjectDocsModal(true)}
-        />
-        <ProjectTile
-          icon={<ListChecks size={18} />}
-          title="SOW - Scope of Work"
-          hint="Generated from sales quote, editable"
-          stats={[{ label: "Status", value: sowHasContent ? "Drafted" : "Empty" }]}
-          onClick={() => setShowSowModal(true)}
-        />
-        <ProjectTile
-          icon={<Boxes size={18} />}
-          title="BOM - Bill of Material"
-          hint="Material lines and Procurement"
-          stats={[
-            { label: "Items", value: selectedProject.bom.length },
-            { label: "Open", value: openBomLines },
-          ]}
-          onClick={() => setShowBomSectionModal(true)}
-        />
-        <ProjectTile
-          icon={<Truck size={18} />}
-          title="Shipping"
-          hint="Request and fulfill shipments"
-          stats={[
-            { label: "Requested", value: shipmentStatusCounts.Requested ?? 0 },
-            { label: "Packed", value: shipmentStatusCounts.Packed ?? 0 },
-            { label: "Shipped", value: shipmentStatusCounts.Shipped ?? 0 },
-            { label: "BOM items", value: selectedProject.bom.length },
-          ]}
-          onClick={() => setShowShippingModal(true)}
-        />
-        <ProjectTile
-          icon={<MapPin size={18} />}
-          title="Locations"
-          hint="Garage/lot breakdown"
-          stats={[{ label: "Garages/Lots", value: (selectedProject.locations ?? []).length }]}
-          onClick={() => setShowLocationsModal(true)}
-        />
-        <ProjectTile
-          icon={<FileText size={18} />}
-          title="Submittals"
-          hint="Client sign-off on scope + BOM"
-          stats={[
-            { label: "Created", value: submittals.length },
-            { label: "Latest", value: latestSubmittal ? latestSubmittal.status.replace(/_/g, " ") : "None" },
-          ]}
-          onClick={() => setShowSubmittalsModal(true)}
-        />
-        <ProjectTile
-          icon={<ListChecks size={18} />}
-          title="After-Sales Handover"
-          hint="Site requirements at handoff"
-          stats={[
-            { label: "Handovers", value: handovers.length },
-            { label: "Latest", value: handovers[0]?.status ?? "None" },
-          ]}
-          onClick={() => setShowHandoverModal(true)}
-        />
-      </div>
 
       {showBuildSalesBomModal && (
         <div className="modal-backdrop" role="presentation">
@@ -9085,12 +9072,143 @@ function Projects({
           <label>Site type<select value={selectedProject.type} onChange={(event) => updateProjectField("type", event.target.value as ProjectSite["type"])}><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
           <label>Project owner<input value={selectedProject.owner} onChange={(event) => updateProjectField("owner", event.target.value)} /></label>
           <label className="span-2">Client location / shipping address<input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} /></label>
-          <label>Status<select value={selectedProject.status} onChange={(event) => updateProjectField("status", event.target.value as ProjectSite["status"])}><option>Draft</option><option>Planning</option><option>Procurement</option><option>Staging</option><option>Install Ready</option></select></label>
+          <label>Status<select value={selectedProject.status} onChange={(event) => handleProjectStatusChange(event.target.value as ProjectSite["status"])}><option>Draft</option><option>Planning</option><option>Procurement</option><option>Staging</option><option>Install Ready</option><option>Closed</option></select></label>
           <label>Target date<input value={selectedProject.due} onChange={(event) => updateProjectField("due", event.target.value)} /></label>
           <label className="span-2">Solution / package<input value={selectedProject.package} onChange={(event) => updateProjectField("package", event.target.value)} /></label>
           <label className="span-2">Site notes<textarea value={selectedProject.siteNotes} onChange={(event) => updateProjectField("siteNotes", event.target.value)} /></label>
         </div>
       </section>
+
+      <div className="project-tile-grid">
+        <ProjectTile
+          icon={<Upload size={18} />}
+          title="Build Sales BOM"
+          hint="One-time setup: upload a sales quote PDF"
+          stats={[
+            { label: "Source", value: selectedProject.salesQuoteFile ? "Uploaded" : "Not set" },
+            { label: "BOM lines", value: selectedProject.bom.length },
+          ]}
+          onClick={() => setShowBuildSalesBomModal(true)}
+        />
+        <ProjectTile
+          icon={<FileText size={18} />}
+          title="Project Documents"
+          hint="Backups and reference files"
+          stats={[{ label: "Files", value: selectedProjectDocuments.length }]}
+          onClick={() => setShowProjectDocsModal(true)}
+        />
+        <ProjectTile
+          icon={<ListChecks size={18} />}
+          title="SOW - Scope of Work"
+          hint="Generated from sales quote, editable"
+          stats={[{ label: "Status", value: sowHasContent ? "Drafted" : "Empty" }]}
+          onClick={() => setShowSowModal(true)}
+        />
+        <ProjectTile
+          icon={<Boxes size={18} />}
+          title="BOM - Bill of Material"
+          hint="Material lines and Procurement"
+          stats={[
+            { label: "Items", value: selectedProject.bom.length },
+            { label: "Open", value: openBomLines },
+          ]}
+          onClick={() => setShowBomSectionModal(true)}
+        />
+        <ProjectTile
+          icon={<Truck size={18} />}
+          title="Shipping"
+          hint="Request and fulfill shipments"
+          stats={[
+            { label: "Requested", value: shipmentStatusCounts.Requested ?? 0 },
+            { label: "Packed", value: shipmentStatusCounts.Packed ?? 0 },
+            { label: "Shipped", value: shipmentStatusCounts.Shipped ?? 0 },
+            { label: "BOM items", value: selectedProject.bom.length },
+          ]}
+          onClick={() => setShowShippingModal(true)}
+        />
+        <ProjectTile
+          icon={<MapPin size={18} />}
+          title="Locations"
+          hint="Garage/lot breakdown"
+          stats={[{ label: "Garages/Lots", value: (selectedProject.locations ?? []).length }]}
+          onClick={() => setShowLocationsModal(true)}
+        />
+        <ProjectTile
+          icon={<FileText size={18} />}
+          title="Submittals"
+          hint="Client sign-off on scope + BOM"
+          stats={[
+            { label: "Created", value: submittals.length },
+            { label: "Latest", value: latestSubmittal ? latestSubmittal.status.replace(/_/g, " ") : "None" },
+          ]}
+          onClick={() => setShowSubmittalsModal(true)}
+        />
+        <ProjectTile
+          icon={<ListChecks size={18} />}
+          title="After-Sales Handover"
+          hint="Site requirements at handoff"
+          stats={[
+            { label: "Handovers", value: handovers.length },
+            { label: "Latest", value: handovers[0]?.status ?? "None" },
+          ]}
+          onClick={() => setShowHandoverModal(true)}
+        />
+        <ProjectTile
+          icon={<CalendarDays size={18} />}
+          title="SaaS"
+          hint="Contract start, type, and renewal"
+          stats={[
+            { label: "Start date", value: selectedProject.saasStartDate || "Not set" },
+            { label: "SaaS type", value: selectedProject.saasType || "Not set" },
+            { label: "Renewal date", value: selectedProject.saasRenewalDate || "Not set" },
+            { label: "Contract", value: selectedProject.saasContractAmount ? money(selectedProject.saasContractAmount) : "Not set" },
+          ]}
+          onClick={openSaasModal}
+        />
+      </div>
+
+      {showSaasModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="saas-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="saas-modal-title">SaaS Contract</h2>
+                <p>Start date is stamped automatically when the project's status is set to Closed. Everything else here is editable any time.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowSaasModal(false)} aria-label="Close">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label>Start date<input type="date" value={saasEditDraft.saasStartDate} onChange={(event) => setSaasEditDraft((current) => ({ ...current, saasStartDate: event.target.value }))} /></label>
+              <label>Renewal date<input type="date" value={saasEditDraft.saasRenewalDate} onChange={(event) => setSaasEditDraft((current) => ({ ...current, saasRenewalDate: event.target.value }))} /></label>
+              <label className="span-2">SaaS type<input value={saasEditDraft.saasType} onChange={(event) => setSaasEditDraft((current) => ({ ...current, saasType: event.target.value }))} placeholder="e.g. Cloud Monitoring, Analytics" /></label>
+              <label>
+                Contract amount
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={saasEditDraft.saasContractAmount ?? ""}
+                  onChange={(event) => setSaasEditDraft((current) => ({ ...current, saasContractAmount: event.target.value === "" ? null : Number(event.target.value) }))}
+                  placeholder="0.00"
+                />
+              </label>
+              <label>
+                Billing frequency
+                <select value={saasEditDraft.saasBillingFrequency} onChange={(event) => setSaasEditDraft((current) => ({ ...current, saasBillingFrequency: event.target.value as ProjectSite["saasBillingFrequency"] }))}>
+                  <option value="">Select...</option>
+                  <option value="Monthly">Monthly</option>
+                  <option value="Quarterly">Quarterly</option>
+                  <option value="Annual">Annual</option>
+                </select>
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowSaasModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={saveSaasDraft}>Save</button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {showSowModal && (
         <div className="modal-backdrop" role="presentation">
@@ -9277,6 +9395,94 @@ function priceTrend(part: Part) {
   const percent = previous && previous.unitCost > 0 ? (change / previous.unitCost) * 100 : 0;
 
   return { latest, previous, change, percent };
+}
+
+// Migration 073: renewal outreach tracker + recurring revenue outlook.
+// "Active" for revenue purposes means a contract amount AND a start date
+// are both set (saasStartDate only ever gets stamped once a project's
+// status becomes Closed) -- a signed-but-not-yet-closed deal shouldn't
+// count toward MRR/ARR. The 5-year outlook is a simple straight-line
+// projection (today's ARR held flat for 5 years), not a growth model --
+// labeled as such rather than pretending to forecast renewals/churn.
+function SaasCalendar({ projectSites }: { projectSites: ProjectSite[] }) {
+  const activeContracts = projectSites.filter((project) => project.saasContractAmount && project.saasStartDate);
+
+  function monthlyAmount(project: ProjectSite) {
+    const amount = project.saasContractAmount ?? 0;
+    if (project.saasBillingFrequency === "Quarterly") return amount / 3;
+    if (project.saasBillingFrequency === "Annual") return amount / 12;
+    return amount;
+  }
+
+  const mrr = activeContracts.reduce((sum, project) => sum + monthlyAmount(project), 0);
+  const quarterlyRevenue = mrr * 3;
+  const arr = mrr * 12;
+  const fiveYearOutlook = arr * 5;
+
+  const upcoming = projectSites
+    .filter((project) => project.saasRenewalDate)
+    .slice()
+    .sort((a, b) => (a.saasRenewalDate ?? "").localeCompare(b.saasRenewalDate ?? ""));
+
+  const today = new Date().toISOString().slice(0, 10);
+  const in30 = new Date();
+  in30.setDate(in30.getDate() + 30);
+  const in30Str = in30.toISOString().slice(0, 10);
+  const in60 = new Date();
+  in60.setDate(in60.getDate() + 60);
+  const in60Str = in60.toISOString().slice(0, 10);
+
+  function urgency(renewalDate: string) {
+    if (renewalDate < today) return "overdue";
+    if (renewalDate <= in30Str) return "soon";
+    if (renewalDate <= in60Str) return "upcoming";
+    return "later";
+  }
+
+  return (
+    <div className="content-grid">
+      <section className="panel full">
+        <PanelHeader title="SaaS Calendar" label="Renewal outreach tracker and recurring revenue outlook" />
+      </section>
+
+      <div className="metric-grid">
+        <div className="metric"><span>Monthly Recurring Revenue</span><strong>{money(mrr)}</strong></div>
+        <div className="metric"><span>Quarterly</span><strong>{money(quarterlyRevenue)}</strong></div>
+        <div className="metric"><span>Annual (ARR)</span><strong>{money(arr)}</strong></div>
+        <div className="metric"><span>5-Year Outlook</span><strong>{money(fiveYearOutlook)}</strong></div>
+      </div>
+
+      <section className="panel full">
+        <PanelHeader title="5-Year Revenue Outlook" label="Straight-line projection assuming today's active contracts continue at their current rate -- not a growth or churn model" />
+        <div className="report-table compact-report-table">
+          <div className="report-table-head"><span>Year</span><span>Projected Revenue</span></div>
+          {Array.from({ length: 5 }, (_, index) => (
+            <div className="report-table-row" key={index}>
+              <span>Year {index + 1}</span>
+              <span>{money(arr)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel full">
+        <PanelHeader title="Renewal Calendar" label="Sorted soonest first -- reach out before these lapse" />
+        <div className="report-table compact-report-table">
+          <div className="report-table-head"><span>Project</span><span>SaaS Type</span><span>Start Date</span><span>Renewal Date</span><span>Contract</span></div>
+          {upcoming.map((project) => (
+            <div className={`report-table-row saas-urgency-${urgency(project.saasRenewalDate ?? "")}`} key={project.id ?? project.ref ?? project.name}>
+              <span><strong>{project.name}</strong><small>{project.client}</small></span>
+              <span>{project.saasType || "-"}</span>
+              <span>{project.saasStartDate || "-"}</span>
+              <span>{project.saasRenewalDate}</span>
+              <span>{project.saasContractAmount ? `${money(project.saasContractAmount)} / ${project.saasBillingFrequency || "Monthly"}` : "-"}</span>
+            </div>
+          ))}
+          {upcoming.length === 0 && <div className="empty-compact-state">No SaaS renewal dates set yet -- add them from a project's SaaS tile.</div>}
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function Reports({
@@ -14475,7 +14681,18 @@ function SalesQuoteBuilder({
   onUpdateProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
   onUpdateQuoteInfo: (
     quoteId: string,
-    updates: Partial<{ clientName: string; siteName: string; city: string; clientEmail: string; contactFullName: string; contactPhone: string; preferredCommunication: string }>,
+    updates: Partial<{
+      clientName: string;
+      siteName: string;
+      city: string;
+      clientEmail: string;
+      contactFullName: string;
+      contactPhone: string;
+      preferredCommunication: string;
+      saasType: string;
+      saasContractAmount: number | null;
+      saasBillingFrequency: SalesQuote["saasBillingFrequency"];
+    }>,
   ) => void;
   siteIntakeSchema: FormSchema | null;
   quoteIntakeResponses: Record<string, SalesQuoteIntakeResponse>;
@@ -14555,6 +14772,13 @@ function SalesQuoteBuilder({
     clientState: "",
     clientZip: "",
   });
+  // Migration 073: the actual signed SaaS contract terms -- carries over
+  // to the Project once this quote closes.
+  const [saasDraft, setSaasDraft] = useState<{ saasType: string; saasContractAmount: number | null; saasBillingFrequency: SalesQuote["saasBillingFrequency"] }>({
+    saasType: "",
+    saasContractAmount: null,
+    saasBillingFrequency: "",
+  });
   // #168 -- the Site Intake Questionnaire used to render fully expanded
   // inline (a lot of scrolling on a long site); now it's a compact trigger
   // that opens a pop-up, same pattern as the Edit Site modal above.
@@ -14619,6 +14843,11 @@ function SalesQuoteBuilder({
       clientState: selectedQuote?.clientState ?? "",
       clientZip: selectedQuote?.clientZip ?? "",
     });
+    setSaasDraft({
+      saasType: selectedQuote?.saasType ?? "",
+      saasContractAmount: selectedQuote?.saasContractAmount ?? null,
+      saasBillingFrequency: selectedQuote?.saasBillingFrequency ?? "",
+    });
   }, [selectedQuote]);
 
   function openQuote(id: string) {
@@ -14680,7 +14909,7 @@ function SalesQuoteBuilder({
     if (!selectedQuote || !siteInfoDraft.clientName.trim() || !siteInfoDraft.siteName.trim()) {
       return;
     }
-    onUpdateQuoteInfo(selectedQuote.id, siteInfoDraft);
+    onUpdateQuoteInfo(selectedQuote.id, { ...siteInfoDraft, ...saasDraft });
     setIsEditingSiteInfo(false);
   }
 
@@ -15349,6 +15578,35 @@ function SalesQuoteBuilder({
               garageCount={selectedQuote.locations.filter((location) => location.locationType === "garage").length}
               lotCount={selectedQuote.locations.filter((location) => location.locationType === "lot").length}
             />
+            <div className="modal-section">
+              <span className="modal-section-title">SaaS Contract</span>
+              <p className="muted">Feeds the SaaS Calendar's renewal tracking and revenue numbers once this deal closes and carries over to the Project.</p>
+              <div className="tight-form-rows">
+                <div className="tight-form-row">
+                  <label className="tight-field tight-field-wide"><span>SaaS type</span><input value={saasDraft.saasType} onChange={(event) => setSaasDraft((current) => ({ ...current, saasType: event.target.value }))} placeholder="e.g. Cloud Monitoring, Analytics" /></label>
+                  <label className="tight-field tight-field-medium">
+                    <span>Contract amount</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={saasDraft.saasContractAmount ?? ""}
+                      onChange={(event) => setSaasDraft((current) => ({ ...current, saasContractAmount: event.target.value === "" ? null : Number(event.target.value) }))}
+                      placeholder="0.00"
+                    />
+                  </label>
+                  <label className="tight-field tight-field-medium">
+                    <span>Billing frequency</span>
+                    <select value={saasDraft.saasBillingFrequency} onChange={(event) => setSaasDraft((current) => ({ ...current, saasBillingFrequency: event.target.value as SalesQuote["saasBillingFrequency"] }))}>
+                      <option value="">Select...</option>
+                      <option value="Monthly">Monthly</option>
+                      <option value="Quarterly">Quarterly</option>
+                      <option value="Annual">Annual</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setIsEditingSiteInfo(false)}>Cancel</button>
               <button className="primary-action" type="button" onClick={saveSiteInfo} disabled={!siteInfoDraft.clientName.trim() || !siteInfoDraft.siteName.trim()}>Save</button>
