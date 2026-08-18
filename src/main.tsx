@@ -10864,6 +10864,7 @@ function AdminPage({
               )}
             </>
           )}
+          <div className="table-scroll">
           <table>
             <thead>
               <tr>
@@ -11002,6 +11003,7 @@ function AdminPage({
               )}
             </tbody>
           </table>
+          </div>
         </section>
 
         <section className="panel wide">

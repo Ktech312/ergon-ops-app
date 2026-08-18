@@ -9,9 +9,18 @@
   box-sizing: border-box;
 }
 
+html {
+  overflow-x: hidden;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
 body {
   margin: 0;
   min-width: 320px;
+  overflow-x: hidden;
   background:
     radial-gradient(circle at 10% 10%, rgba(110, 49, 24, 0.12), transparent 32%),
     linear-gradient(180deg, #fbfaf7 0%, #f2eee7 100%);
