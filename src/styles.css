@@ -5023,7 +5023,10 @@ td.empty-compact-state {
   .request-queue-head,
   .request-row,
   .source-report-grid,
-  .roster-add-row {
+  .roster-add-row,
+  .report-filter-row,
+  .manufactured-inventory-head,
+  .manufactured-inventory-row {
     grid-template-columns: 1fr;
   }
 
