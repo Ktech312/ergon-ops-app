@@ -212,16 +212,30 @@ button {
   background: #faf8f4;
   border: 1px solid #e8e1d5;
   border-radius: 6px;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
+  font: inherit;
   gap: 3px;
   min-height: 74px;
   padding: 4px;
+  position: relative;
+  text-align: left;
 }
 
 .task-calendar-cell.is-empty {
   background: transparent;
   border-color: transparent;
+  cursor: default;
+}
+
+.task-calendar-cell.is-selected {
+  border-color: #a01029;
+  box-shadow: inset 0 0 0 1px #a01029;
+}
+
+.task-calendar-day-count {
+  display: none;
 }
 
 .task-calendar-day {
@@ -253,6 +267,80 @@ button {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
+}
+
+/* Agenda list under the grid -- desktop-hidden, since desktop cells have
+   room to show task-title chips inline already. */
+.task-calendar-agenda {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .task-calendar-cell {
+    gap: 0;
+    min-height: 40px;
+    padding: 4px 2px;
+  }
+
+  /* Not enough room for title chips at phone width -- show just the day
+     number and a count badge; tap the day to see its tasks below. */
+  .task-calendar-cell .task-calendar-chip,
+  .task-calendar-cell .muted {
+    display: none;
+  }
+
+  .task-calendar-day-count {
+    align-items: center;
+    background: #a01029;
+    border-radius: 999px;
+    color: white;
+    display: flex;
+    font-size: 9px;
+    font-weight: 800;
+    height: 15px;
+    justify-content: center;
+    position: absolute;
+    right: 3px;
+    top: 3px;
+    width: 15px;
+  }
+
+  .task-calendar-agenda {
+    background: #faf8f4;
+    border: 1px solid #e8e1d5;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 10px;
+  }
+
+  .task-calendar-agenda-label {
+    color: #756d62;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .task-calendar-agenda-row {
+    align-items: center;
+    background: #fffdf9;
+    border: 1px solid #e8e1d5;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    font: inherit;
+    gap: 8px;
+    padding: 8px;
+    text-align: left;
+  }
+
+  .task-calendar-agenda-row span:nth-child(2) {
+    flex: 1;
+    font-size: 13px;
+  }
 }
 
 .task-mini-panel {
@@ -5027,6 +5115,37 @@ td.empty-compact-state {
   .manufactured-inventory-head,
   .manufactured-inventory-row {
     grid-template-columns: 1fr;
+  }
+
+  /* .report-table-head/.request-queue-head stacking to a single column
+     (above) left their label <span>s as their own orphaned block above
+     the data rows, disconnected from the values they describe -- same
+     failure as .stack-table-mobile without data-label (E: Purchase
+     Request Queue screenshot). Hide the now-redundant head and pair each
+     row's data-label (copied from that row's own <th>/<span> text) with
+     its value directly, same technique as the <table> version. */
+  .report-table-head,
+  .request-queue-head {
+    display: none;
+  }
+
+  .report-table-row > span[data-label],
+  .request-row > span[data-label] {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+  }
+
+  .report-table-row > span[data-label]::before,
+  .request-row > span[data-label]::before {
+    color: #756d62;
+    content: attr(data-label);
+    flex: none;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
   }
 
   .panel-title-row,

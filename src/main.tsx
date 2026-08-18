@@ -6585,10 +6585,10 @@ function Purchasing({
           {filteredPurchaseRequests.slice(0, 14).map((request) => (
             <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
               <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
-              <span>{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
-              <span>{request.reason}<small>{request.projectName ? `${request.projectName} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
-              <span>{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
-              <span>
+              <span data-label="Need">{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
+              <span data-label="Source">{request.reason}<small>{request.projectName ? `${request.projectName} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
+              <span data-label="Est.">{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
+              <span data-label="Status">
                 <select value={request.status} onChange={(event) => onUpdatePurchaseRequestStatus(request.id, event.target.value as PurchaseRequest["status"])}>
                   <option>Draft</option>
                   <option>Need Quote</option>
@@ -7835,11 +7835,11 @@ function Inventory({
           <div className="report-table-head"><span>Type</span><span>SKU</span><span>Qty</span><span>Before / After</span><span>Reference</span></div>
           {inventoryMovements.slice(0, 10).map((movement) => (
             <div className="report-table-row" key={movement.id}>
-              <span><strong>{movement.type.replace("_", " ")}</strong><small>{new Date(movement.createdAt).toLocaleString()}{movement.createdByEmail ? ` -- ${movement.createdByEmail}` : ""}</small></span>
-              <span>{movement.sku}<small>{movement.itemName}</small></span>
-              <span>{movement.quantity}</span>
-              <span>{movement.quantityBefore} / {movement.quantityAfter}</span>
-              <span>{movement.projectName ?? movement.buildNumber ?? movement.poNumber ?? movement.source}<small>{movement.notes}</small></span>
+              <span data-label="Type"><strong>{movement.type.replace("_", " ")}</strong><small>{new Date(movement.createdAt).toLocaleString()}{movement.createdByEmail ? ` -- ${movement.createdByEmail}` : ""}</small></span>
+              <span data-label="SKU">{movement.sku}<small>{movement.itemName}</small></span>
+              <span data-label="Qty">{movement.quantity}</span>
+              <span data-label="Before / After">{movement.quantityBefore} / {movement.quantityAfter}</span>
+              <span data-label="Reference">{movement.projectName ?? movement.buildNumber ?? movement.poNumber ?? movement.source}<small>{movement.notes}</small></span>
             </div>
           ))}
         </div>
@@ -10000,10 +10000,10 @@ function SaasCalendar({ projectSites }: { projectSites: ProjectSite[] }) {
           {upcoming.map((project) => (
             <div className={`report-table-row saas-urgency-${urgency(project.saasRenewalDate ?? "")}`} key={project.id ?? project.ref ?? project.name}>
               <span><strong>{project.name}</strong><small>{project.client}</small></span>
-              <span>{project.saasType || "-"}</span>
-              <span>{project.saasStartDate || "-"}</span>
-              <span>{project.saasRenewalDate}</span>
-              <span>{project.saasContractAmount ? `${money(project.saasContractAmount)} / ${project.saasBillingFrequency || "Monthly"}` : "-"}</span>
+              <span data-label="SaaS Type">{project.saasType || "-"}</span>
+              <span data-label="Start Date">{project.saasStartDate || "-"}</span>
+              <span data-label="Renewal Date">{project.saasRenewalDate}</span>
+              <span data-label="Contract">{project.saasContractAmount ? `${money(project.saasContractAmount)} / ${project.saasBillingFrequency || "Monthly"}` : "-"}</span>
             </div>
           ))}
           {upcoming.length === 0 && <div className="empty-compact-state">No SaaS renewal dates set yet -- add them from a project's SaaS tile.</div>}
@@ -10348,10 +10348,10 @@ function Reports({
             {openPurchaseRequests.slice(0, 12).map((request) => (
               <div className="report-table-row" key={request.id}>
                 <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
-                <span>{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
-                <span>{request.reason}<small>{request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
-                <span className="status warn">{request.status}</span>
-                <span>{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
+                <span data-label="Qty">{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
+                <span data-label="Reason">{request.reason}<small>{request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
+                <span data-label="Status" className="status warn">{request.status}</span>
+                <span data-label="Est. Cost">{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
               </div>
             ))}
             {openPurchaseRequests.length === 0 && <div className="empty-compact-state">No open purchase requests currently queued.</div>}
@@ -10366,10 +10366,10 @@ function Reports({
             {reorderRows.map((part) => (
               <div className="report-table-row" key={part.ref}>
                 <span><strong>{part.name}</strong><small>{part.ref}</small></span>
-                <span>{part.stock}</span>
-                <span>{part.reorderPoint}</span>
-                <span className="status warn">Reorder</span>
-                <span>{part.manufacturer}<small>{part.category}</small></span>
+                <span data-label="Stock">{part.stock}</span>
+                <span data-label="Reorder">{part.reorderPoint}</span>
+                <span data-label="Status" className="status warn">Reorder</span>
+                <span data-label="Vendor">{part.manufacturer}<small>{part.category}</small></span>
               </div>
             ))}
             {reorderRows.length === 0 && <div className="empty-compact-state">No inventory items are currently at reorder point.</div>}
@@ -10382,10 +10382,10 @@ function Reports({
             {costHistoryRows.map(({ part, trend }) => (
               <div className="report-table-row" key={part.ref}>
                 <span><strong>{part.name}</strong><small>{part.ref}</small></span>
-                <span>{moneyExact(trend.latest.unitCost)}</span>
-                <span>{trend.previous ? moneyExact(trend.previous.unitCost) : "No prior"}</span>
-                <span className={trend.change > 0 ? "cost-up" : trend.change < 0 ? "cost-down" : ""}>{trend.change === 0 ? "Flat" : `${trend.change > 0 ? "+" : ""}${moneyExact(trend.change)} (${trend.percent.toFixed(1)}%)`}</span>
-                <span>{trend.latest.vendor}<small>{trend.latest.date}</small></span>
+                <span data-label="Latest">{moneyExact(trend.latest.unitCost)}</span>
+                <span data-label="Previous">{trend.previous ? moneyExact(trend.previous.unitCost) : "No prior"}</span>
+                <span data-label="Change" className={trend.change > 0 ? "cost-up" : trend.change < 0 ? "cost-down" : ""}>{trend.change === 0 ? "Flat" : `${trend.change > 0 ? "+" : ""}${moneyExact(trend.change)} (${trend.percent.toFixed(1)}%)`}</span>
+                <span data-label="Vendor">{trend.latest.vendor}<small>{trend.latest.date}</small></span>
               </div>
             ))}
           </div>
@@ -10423,10 +10423,10 @@ function Reports({
           {filteredBuildTransactions.slice(0, 12).map((build) => (
             <div className="report-table-row" key={build.id}>
               <span><strong>{build.equipmentName}</strong><small>{build.buildNumber}</small></span>
-              <span>{build.quantityBuilt}</span>
-              <span>{build.stage ?? "complete"}</span>
-              <span>{build.status}</span>
-              <span>{new Date(build.createdAt).toLocaleString()}</span>
+              <span data-label="Qty">{build.quantityBuilt}</span>
+              <span data-label="Stage">{build.stage ?? "complete"}</span>
+              <span data-label="Status">{build.status}</span>
+              <span data-label="Date">{new Date(build.createdAt).toLocaleString()}</span>
             </div>
           ))}
           {filteredBuildTransactions.length === 0 && <div className="empty-compact-state">No manufacturing transactions match the current filters.</div>}
@@ -10438,10 +10438,10 @@ function Reports({
           {plannedBuildShortages.map((row) => (
             <div className="report-table-row" key={`${row.build.id}-${row.sku}-${row.itemName}`}>
               <span><strong>{row.build.buildNumber}</strong><small>{row.build.equipmentName}</small></span>
-              <span>{row.sku}<small>{row.itemName}</small></span>
-              <span>{row.required}</span>
-              <span>{row.available}</span>
-              <span className="status warn">{row.shortage}</span>
+              <span data-label="SKU">{row.sku}<small>{row.itemName}</small></span>
+              <span data-label="Need">{row.required}</span>
+              <span data-label="Have">{row.available}</span>
+              <span data-label="Short" className="status warn">{row.shortage}</span>
             </div>
           ))}
           {plannedBuildShortages.length === 0 && <div className="empty-compact-state">No planned build shortages currently found.</div>}
@@ -10458,11 +10458,11 @@ function Reports({
           <div className="report-table-head"><span>Date</span><span>Movement</span><span>SKU / Item</span><span>Qty</span><span>Reference</span></div>
           {filteredInventoryMovements.slice(0, 24).map((movement) => (
             <div className="report-table-row" key={movement.id}>
-              <span>{new Date(movement.createdAt).toLocaleString()}{movement.createdByEmail && <small>{movement.createdByEmail}</small>}</span>
-              <span><strong>{movement.type.replace("_", " ")}</strong><small>{movement.source}</small></span>
-              <span>{movement.sku}<small>{movement.itemName}</small></span>
-              <span>{movement.quantity}<small>{movement.quantityBefore} to {movement.quantityAfter}</small></span>
-              <span>{movement.projectName ?? movement.buildNumber ?? movement.poNumber ?? "No reference"}<small>{movement.notes}</small></span>
+              <span data-label="Date">{new Date(movement.createdAt).toLocaleString()}{movement.createdByEmail && <small>{movement.createdByEmail}</small>}</span>
+              <span data-label="Movement"><strong>{movement.type.replace("_", " ")}</strong><small>{movement.source}</small></span>
+              <span data-label="SKU / Item">{movement.sku}<small>{movement.itemName}</small></span>
+              <span data-label="Qty">{movement.quantity}<small>{movement.quantityBefore} to {movement.quantityAfter}</small></span>
+              <span data-label="Reference">{movement.projectName ?? movement.buildNumber ?? movement.poNumber ?? "No reference"}<small>{movement.notes}</small></span>
             </div>
           ))}
           {filteredInventoryMovements.length === 0 && <div className="empty-compact-state">No inventory movements match the current filters.</div>}
@@ -10475,10 +10475,10 @@ function Reports({
           {filteredProjectAllocations.slice(0, 14).map((allocation) => (
             <div className="report-table-row" key={allocation.id}>
               <span><strong>{allocation.projectName}</strong><small>{allocation.projectRef ?? "No PRJ"}</small></span>
-              <span>{allocation.sku}<small>{allocation.itemName}</small></span>
-              <span>{allocation.quantity}</span>
-              <span>{allocation.action}</span>
-              <span>{allocation.notes}<small>{new Date(allocation.createdAt).toLocaleString()}</small></span>
+              <span data-label="SKU">{allocation.sku}<small>{allocation.itemName}</small></span>
+              <span data-label="Qty">{allocation.quantity}</span>
+              <span data-label="Action">{allocation.action}</span>
+              <span data-label="Notes">{allocation.notes}<small>{new Date(allocation.createdAt).toLocaleString()}</small></span>
             </div>
           ))}
           {filteredProjectAllocations.length === 0 && <div className="empty-compact-state">No project allocations match the current filters.</div>}
@@ -10495,11 +10495,11 @@ function Reports({
           <div className="report-table-head"><span>Project</span><span>Document</span><span>Type</span><span>Status</span><span>Uploaded</span></div>
           {filteredProjectDocuments.slice(0, 16).map((doc) => (
             <div className="report-table-row" key={`${doc.id}-${doc.name}`}>
-              <span>{doc.project}</span>
+              <span data-label="Project">{doc.project}</span>
               <span><strong>{doc.name}</strong><small>{doc.size ? formatBytes(doc.size) : "No file size saved"} - {doc.storage ?? "Browser"}</small></span>
-              <span>{doc.type ?? "Project"}</span>
-              <span>{doc.status}</span>
-              <span>{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : "No timestamp"}<small>{doc.uploadedByEmail || "Uploader not saved"}</small></span>
+              <span data-label="Type">{doc.type ?? "Project"}</span>
+              <span data-label="Status">{doc.status}</span>
+              <span data-label="Uploaded">{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : "No timestamp"}<small>{doc.uploadedByEmail || "Uploader not saved"}</small></span>
             </div>
           ))}
           {filteredProjectDocuments.length === 0 && <div className="empty-compact-state">No project documents match the current filters.</div>}
@@ -14541,10 +14541,10 @@ function ProjectShippingSection({
         {shipments.map((shipment) => (
           <div className="report-table-row clickable-row" key={shipment.id} onClick={() => setSelectedShipmentId(shipment.id)}>
             <span><strong>{shipment.shipmentNumber}</strong>{shipment.trackingNumber && <small>{shipment.carrier} -- {shipment.trackingNumber}</small>}</span>
-            <span><span className={`status ${shipment.status === "Shipped" ? "ok" : shipment.status === "Cancelled" ? "" : "warn"}`}>{shipment.status}</span></span>
-            <span>{shipment.addressSnapshot || "No address"}</span>
-            <span>{shipment.lines.length} line(s)</span>
-            <span>{shipment.requestedByEmail}<small>{new Date(shipment.requestedAt).toLocaleDateString()}</small></span>
+            <span data-label="Status"><span className={`status ${shipment.status === "Shipped" ? "ok" : shipment.status === "Cancelled" ? "" : "warn"}`}>{shipment.status}</span></span>
+            <span data-label="Address">{shipment.addressSnapshot || "No address"}</span>
+            <span data-label="Items">{shipment.lines.length} line(s)</span>
+            <span data-label="Requested">{shipment.requestedByEmail}<small>{new Date(shipment.requestedAt).toLocaleDateString()}</small></span>
           </div>
         ))}
         {shipments.length === 0 && <div className="empty-compact-state">No shipments requested yet.</div>}
@@ -16860,6 +16860,15 @@ function TaskCalendar({ tasks, teamMembers, onSelectTask }: { tasks: EOTask[]; t
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
+  // Mobile only (see .task-calendar-agenda in styles.css) -- a 7-column
+  // month grid has no room left for task-title chips once each cell is
+  // phone-width, so cells become tap targets showing just a count badge,
+  // and the tapped day's tasks list out below instead. Desktop keeps the
+  // full grid with inline chips, untouched.
+  const [selectedDay, setSelectedDay] = useState<number | null>(() => {
+    const now = new Date();
+    return now.getFullYear() === monthCursor.getFullYear() && now.getMonth() === monthCursor.getMonth() ? now.getDate() : null;
+  });
 
   const year = monthCursor.getFullYear();
   const month = monthCursor.getMonth();
@@ -16882,35 +16891,78 @@ function TaskCalendar({ tasks, teamMembers, onSelectTask }: { tasks: EOTask[]; t
   });
 
   const cells: Array<number | null> = [...Array(firstWeekday).fill(null), ...Array.from({ length: daysInMonth }, (_, index) => index + 1)];
+  const selectedDayTasks = selectedDay !== null ? tasksByDay.get(selectedDay) ?? [] : [];
+
+  function changeMonth(next: Date) {
+    setMonthCursor(next);
+    const now = new Date();
+    setSelectedDay(now.getFullYear() === next.getFullYear() && now.getMonth() === next.getMonth() ? now.getDate() : null);
+  }
 
   return (
     <div className="task-calendar">
       <div className="task-calendar-header">
-        <button className="secondary-action mini-action" type="button" onClick={() => setMonthCursor(new Date(year, month - 1, 1))}>&lt;</button>
+        <button className="secondary-action mini-action" type="button" onClick={() => changeMonth(new Date(year, month - 1, 1))}>&lt;</button>
         <strong>{monthLabel}</strong>
-        <button className="secondary-action mini-action" type="button" onClick={() => setMonthCursor(new Date(year, month + 1, 1))}>&gt;</button>
+        <button className="secondary-action mini-action" type="button" onClick={() => changeMonth(new Date(year, month + 1, 1))}>&gt;</button>
       </div>
       <div className="task-calendar-grid task-calendar-weekdays">
         {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => <span key={label}>{label}</span>)}
       </div>
       <div className="task-calendar-grid">
-        {cells.map((day, index) => (
-          <div key={index} className={`task-calendar-cell ${day === null ? "is-empty" : ""}`}>
-            {day !== null && (
-              <>
-                <span className="task-calendar-day">{day}</span>
-                {(tasksByDay.get(day) ?? []).slice(0, 3).map((task) => (
-                  <button key={task.id} className={`task-calendar-chip priority-${task.priority}`} type="button" onClick={() => onSelectTask(task)}>
-                    {task.title}
-                  </button>
-                ))}
-                {(tasksByDay.get(day) ?? []).length > 3 && (
-                  <span className="muted">+{(tasksByDay.get(day) ?? []).length - 3} more</span>
-                )}
-              </>
-            )}
-          </div>
+        {cells.map((day, index) => {
+          const dayTasks = day !== null ? tasksByDay.get(day) ?? [] : [];
+          return (
+            <button
+              key={index}
+              type="button"
+              className={`task-calendar-cell ${day === null ? "is-empty" : ""} ${day === selectedDay ? "is-selected" : ""}`}
+              disabled={day === null}
+              onClick={() => day !== null && setSelectedDay(day)}
+            >
+              {day !== null && (
+                <>
+                  <span className="task-calendar-day">{day}</span>
+                  {dayTasks.slice(0, 3).map((task) => (
+                    <span
+                      key={task.id}
+                      className={`task-calendar-chip priority-${task.priority}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSelectTask(task);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.stopPropagation();
+                          onSelectTask(task);
+                        }
+                      }}
+                    >
+                      {task.title}
+                    </span>
+                  ))}
+                  {dayTasks.length > 3 && <span className="muted">+{dayTasks.length - 3} more</span>}
+                  {dayTasks.length > 0 && <span className="task-calendar-day-count">{dayTasks.length}</span>}
+                </>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div className="task-calendar-agenda">
+        <span className="task-calendar-agenda-label">
+          {selectedDay === null ? "Tap a day to see its tasks" : `${monthCursor.toLocaleDateString(undefined, { month: "short" })} ${selectedDay} (${selectedDayTasks.length})`}
+        </span>
+        {selectedDayTasks.map((task) => (
+          <button key={task.id} className="task-calendar-agenda-row" type="button" onClick={() => onSelectTask(task)}>
+            <span className={priorityBadgeClass(task.priority)}>{task.priority}</span>
+            <span>{task.title}</span>
+            <small className="muted">{taskAssigneeLabel(task, teamMembers)}</small>
+          </button>
         ))}
+        {selectedDay !== null && selectedDayTasks.length === 0 && <div className="empty-compact-state">No tasks due this day.</div>}
       </div>
       {undated.length > 0 && (
         <div className="task-calendar-undated">
