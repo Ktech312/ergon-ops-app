@@ -5513,7 +5513,7 @@ td.empty-compact-state {
   bottom: 100%;
   height: 100vh;
   left: 0;
-  position: fixed;
+  position: absolute;
   right: 0;
   z-index: 1;
 }
@@ -5526,7 +5526,7 @@ td.empty-compact-state {
   bottom: 100%;
   left: 0;
   padding: 16px;
-  position: fixed;
+  position: absolute;
   right: 0;
   z-index: 2;
 }
