@@ -4984,7 +4984,6 @@ td.empty-compact-state {
 
   .backup-actions,
   .content-grid,
-  .metric-grid,
   .package-grid,
   .project-grid,
   .project-selector-grid,
@@ -6026,6 +6025,31 @@ body:has(.modal-backdrop) .install-banner {
   .stack-table-mobile td select,
   .stack-table-mobile td input {
     width: 100%;
+  }
+
+  /* Hiding <thead> loses column context entirely for cells whose content
+     isn't self-descriptive on its own -- a bare checkbox or a lone number
+     means nothing once separated from its column header (E: Notification
+     Rules' checkboxes had no indication which channel each one was for).
+     Add data-label="<same text as the <th>>" to any <td> whose value
+     needs it and this puts a small caption above it in stacked mode. Text
+     cells that are already self-evident (names, emails, statuses) don't
+     need it. */
+  .stack-table-mobile td[data-label] {
+    align-items: center;
+    display: flex !important;
+    gap: 8px;
+    justify-content: space-between;
+  }
+
+  .stack-table-mobile td[data-label]::before {
+    color: #756d62;
+    content: attr(data-label);
+    flex: none;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
   }
 }
 

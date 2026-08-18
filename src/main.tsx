@@ -9815,11 +9815,11 @@ function Projects({
                   {selectedProject.bom.map((line, index) => (
                     <tr key={`${selectedProject.name}-${line.item}-${index}`}>
                       <td><strong>{line.item}</strong></td>
-                      <td>{line.qty}</td>
-                      <td><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span>{!line.sentToPurchasingAt && <small className="muted"> (draft)</small>}</td>
-                      <td>{line.requestSpeed}</td>
-                      <td>{line.po ?? "TBD"}</td>
-                      <td>{line.notes ?? "Ready for PM details"}</td>
+                      <td data-label="Qty">{line.qty}</td>
+                      <td data-label="Status"><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span>{!line.sentToPurchasingAt && <small className="muted"> (draft)</small>}</td>
+                      <td data-label="Request Speed">{line.requestSpeed}</td>
+                      <td data-label="PO">{line.po ?? "TBD"}</td>
+                      <td data-label="Notes">{line.notes ?? "Ready for PM details"}</td>
                       <td><button className="table-action secondary-table-action" type="button" onClick={() => openEditBomModal(line, index)}>Edit</button></td>
                     </tr>
                   ))}
@@ -10657,11 +10657,11 @@ function FormBuilderPanel({
             <tbody>
               {[...schema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field, index, sorted) => (
                 <tr key={field.id}>
-                  <td>{field.sequenceOrder}</td>
-                  <td>{field.section}</td>
+                  <td data-label="#">{field.sequenceOrder}</td>
+                  <td data-label="Section">{field.section}</td>
                   <td>{field.label}{field.fieldType === "select" && field.options.length > 0 ? ` [${field.options.join(" | ")}]` : ""}</td>
-                  <td>{field.fieldType}</td>
-                  <td>
+                  <td data-label="Type">{field.fieldType}</td>
+                  <td data-label="Required">
                     <label className="checkbox-inline">
                       <input type="checkbox" checked={field.isRequired} onChange={(event) => onUpdateField(field.id, { isRequired: event.target.checked })} />
                     </label>
@@ -11311,10 +11311,10 @@ function AdminPage({
               {notificationRules.map((rule) => (
                 <tr key={rule.id}>
                   <td>{rule.eventType.replace(/_/g, " ")}</td>
-                  <td><input type="checkbox" checked={rule.channels.includes("in_app")} onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "in_app"] : rule.channels.filter((c) => c !== "in_app") })} /></td>
-                  <td><input type="checkbox" checked={rule.channels.includes("email")} title="Sends a real email via Resend when this event fires" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "email"] : rule.channels.filter((c) => c !== "email") })} /></td>
-                  <td><input type="checkbox" checked={rule.channels.includes("slack")} title="Posts to Slack/Teams once SLACK_WEBHOOK_URL is set in Vercel" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "slack"] : rule.channels.filter((c) => c !== "slack") })} /></td>
-                  <td><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateNotificationRule(rule.id, { isActive: event.target.checked })} /></td>
+                  <td data-label="In-app bell"><input type="checkbox" checked={rule.channels.includes("in_app")} onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "in_app"] : rule.channels.filter((c) => c !== "in_app") })} /></td>
+                  <td data-label="Email"><input type="checkbox" checked={rule.channels.includes("email")} title="Sends a real email via Resend when this event fires" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "email"] : rule.channels.filter((c) => c !== "email") })} /></td>
+                  <td data-label="Slack / Teams"><input type="checkbox" checked={rule.channels.includes("slack")} title="Posts to Slack/Teams once SLACK_WEBHOOK_URL is set in Vercel" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "slack"] : rule.channels.filter((c) => c !== "slack") })} /></td>
+                  <td data-label="Active"><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateNotificationRule(rule.id, { isActive: event.target.checked })} /></td>
                 </tr>
               ))}
               {notificationRules.length === 0 && (
@@ -11342,8 +11342,8 @@ function AdminPage({
               {standardInstallTimes.map((entry) => (
                 <tr key={entry.id}>
                   <td>{entry.category}</td>
-                  <td>{entry.hoursPerUnit}</td>
-                  <td>{entry.notes || "-"}</td>
+                  <td data-label="Hours / unit">{entry.hoursPerUnit}</td>
+                  <td data-label="Notes">{entry.notes || "-"}</td>
                 </tr>
               ))}
               {standardInstallTimes.length === 0 && (
@@ -11373,10 +11373,10 @@ function AdminPage({
                   <tbody>
                     {[...template.phases].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((phase) => (
                       <tr key={phase.id}>
-                        <td>{phase.sequenceOrder}</td>
+                        <td data-label="#">{phase.sequenceOrder}</td>
                         <td>{phase.phaseName}</td>
-                        <td>{phase.durationMode === "fixed_hours" ? `${phase.fixedHours ?? 0}h fixed` : `per BOM unit (${phase.bomCategoryFilter})`}</td>
-                        <td>{phase.defaultRole || "-"}</td>
+                        <td data-label="Duration">{phase.durationMode === "fixed_hours" ? `${phase.fixedHours ?? 0}h fixed` : `per BOM unit (${phase.bomCategoryFilter})`}</td>
+                        <td data-label="Role">{phase.defaultRole || "-"}</td>
                         <td><button className="secondary-action mini-action" type="button" onClick={() => onDeleteSchedulePhase(template.id, phase.id)}>Remove</button></td>
                       </tr>
                     ))}
@@ -11462,8 +11462,8 @@ function AdminPage({
                 <tr key={rule.id}>
                   <td>{rule.tier}</td>
                   <td>{rule.baseItemName}</td>
-                  <td>{rule.quantityMode === "per_node_ceil" ? `ceil(nodes / ${rule.perNodeDivisor})` : `${rule.fixedQty} fixed`}</td>
-                  <td>{rule.requiresCloudSync === null ? "Any" : rule.requiresCloudSync ? "Required" : "No"}</td>
+                  <td data-label="Quantity">{rule.quantityMode === "per_node_ceil" ? `ceil(nodes / ${rule.perNodeDivisor})` : `${rule.fixedQty} fixed`}</td>
+                  <td data-label="Cloud Sync">{rule.requiresCloudSync === null ? "Any" : rule.requiresCloudSync ? "Required" : "No"}</td>
                   <td><button className="secondary-action mini-action" type="button" onClick={() => onDeletePresalesRule(rule.id)}>Remove</button></td>
                 </tr>
               ))}
@@ -11525,7 +11525,7 @@ function AdminPage({
                 <tr key={rule.id}>
                   <td>{SITE_HARDWARE_METRIC_OPTIONS.find((option) => option.value === rule.metric)?.label ?? rule.metric}</td>
                   <td>{rule.itemName}</td>
-                  <td>
+                  <td data-label="Qty per unit">
                     <input
                       type="number"
                       min={0}
@@ -11534,8 +11534,8 @@ function AdminPage({
                       onChange={(event) => onUpdateSiteHardwareRule(rule.id, { qtyPerUnit: Number(event.target.value) || 0 })}
                     />
                   </td>
-                  <td>{rule.notes || "-"}</td>
-                  <td><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateSiteHardwareRule(rule.id, { isActive: event.target.checked })} /></td>
+                  <td data-label="Notes">{rule.notes || "-"}</td>
+                  <td data-label="Active"><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateSiteHardwareRule(rule.id, { isActive: event.target.checked })} /></td>
                   <td><button className="secondary-action mini-action" type="button" onClick={() => onDeleteSiteHardwareRule(rule.id)}>Remove</button></td>
                 </tr>
               ))}
@@ -11610,12 +11610,12 @@ function AdminPage({
                 return (
                   <tr key={request.id}>
                     <td>{item?.productName ?? "(deleted item)"}</td>
-                    <td>{request.requestedByEmail}</td>
-                    <td>{request.fieldChanged.replace(/_/g, " ")}</td>
-                    <td>{request.previousValue}</td>
-                    <td>{request.requestedValue}</td>
-                    <td>{request.reason || "-"}</td>
-                    <td>{request.status}{request.reviewedByEmail ? ` by ${request.reviewedByEmail}` : ""}</td>
+                    <td data-label="Requested by">{request.requestedByEmail}</td>
+                    <td data-label="Field">{request.fieldChanged.replace(/_/g, " ")}</td>
+                    <td data-label="From">{request.previousValue}</td>
+                    <td data-label="To">{request.requestedValue}</td>
+                    <td data-label="Reason">{request.reason || "-"}</td>
+                    <td data-label="Status">{request.status}{request.reviewedByEmail ? ` by ${request.reviewedByEmail}` : ""}</td>
                     <td>
                       {request.status === "pending" && (
                         <>
