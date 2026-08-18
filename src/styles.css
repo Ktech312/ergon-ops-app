@@ -5022,7 +5022,8 @@ td.empty-compact-state {
   .manual-request-row,
   .request-queue-head,
   .request-row,
-  .source-report-grid {
+  .source-report-grid,
+  .roster-add-row {
     grid-template-columns: 1fr;
   }
 
@@ -5969,4 +5970,58 @@ body:has(.modal-backdrop) .install-banner {
 .mobile-card .table-actions {
   display: flex;
   gap: 8px;
+}
+
+/* Generic CSS-only table stacking, for every remaining raw <table> that
+   doesn't have (and doesn't need) a bespoke mobile-card component --
+   mostly smaller admin/config tables (Notification Rules, Standard
+   Install Times, Schedule Template phases, Pre-Sales/Site Hardware
+   Rules, Catalog Price Change Requests, Team Roster, Pending Approvals,
+   User Directory, form schema builders, BOM/catalog import previews,
+   deleted-tasks panel). Add className="stack-table-mobile" to the
+   <table> tag -- no JSX restructuring needed, the header row hides and
+   each <tr> becomes its own bordered block with cells stacked top to
+   bottom. Less polished than a real card list (no custom field
+   labels/icons), but guarantees nothing is cut off or unreachable, and
+   costs one class name instead of a whole component per table. */
+@media (max-width: 760px) {
+  .stack-table-mobile thead {
+    display: none;
+  }
+
+  .stack-table-mobile,
+  .stack-table-mobile tbody,
+  .stack-table-mobile tr {
+    display: block;
+    width: 100%;
+  }
+
+  .stack-table-mobile tr {
+    background: #fffdf9;
+    border: 1px solid #e8e1d5;
+    border-radius: 10px;
+    margin-bottom: 8px;
+    padding: 8px 10px;
+  }
+
+  .stack-table-mobile tr.clickable-row {
+    cursor: pointer;
+  }
+
+  .stack-table-mobile td {
+    border: none !important;
+    box-sizing: border-box;
+    display: block;
+    padding: 4px 0 !important;
+    width: 100% !important;
+  }
+
+  .stack-table-mobile td:empty {
+    display: none;
+  }
+
+  .stack-table-mobile td select,
+  .stack-table-mobile td input {
+    width: 100%;
+  }
 }

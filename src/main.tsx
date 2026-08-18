@@ -9637,7 +9637,7 @@ function Projects({
               {bomImportStatus && <small className="muted">{bomImportStatus}</small>}
               {bomImportRows.length > 0 && (
                 <div className="bom-import-preview">
-                  <table>
+                  <table className="stack-table-mobile">
                     <thead><tr><th>Item</th><th>Qty</th></tr></thead>
                     <tbody>
                       {bomImportRows.map((row, index) => <tr key={index}><td>{row.item}</td><td>{row.qty}</td></tr>)}
@@ -9649,7 +9649,7 @@ function Projects({
                   </div>
                 </div>
               )}
-              <table>
+              <table className="stack-table-mobile">
                 <thead>
                   <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th><th></th></tr>
                 </thead>
@@ -10494,7 +10494,7 @@ function FormBuilderPanel({
         <div className="empty-compact-state">Loading form schema...</div>
       ) : (
         <>
-          <table>
+          <table className="stack-table-mobile">
             <thead><tr><th>#</th><th>Section</th><th>Label</th><th>Type</th><th>Required</th><th></th></tr></thead>
             <tbody>
               {[...schema.fields].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((field, index, sorted) => (
@@ -10913,7 +10913,7 @@ function AdminPage({
           <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh</button>
           {approvalStatusMessage && <span className="muted">{approvalStatusMessage}</span>}
         </div>
-        <table>
+        <table className="stack-table-mobile">
           <thead>
             <tr>
               <th>Email</th>
@@ -10996,7 +10996,7 @@ function AdminPage({
             </>
           )}
           <div className="table-scroll">
-          <table>
+          <table className="stack-table-mobile">
             <thead>
               <tr>
                 <th>Name</th>
@@ -11139,7 +11139,7 @@ function AdminPage({
 
         <section className="panel wide">
           <PanelHeader title="Notification Rules" label="Which channel(s) fire for each event -- programmable, no code change needed" />
-          <table>
+          <table className="stack-table-mobile">
             <thead>
               <tr>
                 <th>Event</th>
@@ -11178,7 +11178,7 @@ function AdminPage({
               <Plus size={14} /> Save
             </button>
           </div>
-          <table>
+          <table className="stack-table-mobile">
             <thead><tr><th>Category</th><th>Hours / unit</th><th>Notes</th></tr></thead>
             <tbody>
               {standardInstallTimes.map((entry) => (
@@ -11210,7 +11210,7 @@ function AdminPage({
                 <div className="panel-title-row">
                   <div><h2>{template.name}</h2><p>{template.phases.length} phase(s)</p></div>
                 </div>
-                <table>
+                <table className="stack-table-mobile">
                   <thead><tr><th>#</th><th>Phase</th><th>Duration</th><th>Role</th><th></th></tr></thead>
                   <tbody>
                     {[...template.phases].sort((a, b) => a.sequenceOrder - b.sequenceOrder).map((phase) => (
@@ -11297,7 +11297,7 @@ function AdminPage({
           {catalogCategories.length === 0 && (
             <p className="muted">No categories found yet -- add a Category to at least one product in the Sales Catalog to start building rules here.</p>
           )}
-          <table>
+          <table className="stack-table-mobile">
             <thead><tr><th>Category</th><th>Item</th><th>Quantity</th><th>Cloud Sync</th><th></th></tr></thead>
             <tbody>
               {presalesRules.map((rule) => (
@@ -11360,7 +11360,7 @@ function AdminPage({
         <section className="panel wide">
           <PanelHeader title="Site Hardware Rules" label="v1 hardware recommendation for Site Builder locations -- FLI/LPR/People Counting checkboxes and entry/exit/level counts drive quantities. Tune these as real numbers come in." />
           {siteHardwareRuleStatus && <small className="muted">{siteHardwareRuleStatus}</small>}
-          <table>
+          <table className="stack-table-mobile">
             <thead><tr><th>Metric</th><th>Item</th><th>Qty per unit</th><th>Notes</th><th>Active</th><th></th></tr></thead>
             <tbody>
               {siteHardwareRules.map((rule) => (
@@ -11433,7 +11433,7 @@ function AdminPage({
         <section className="panel wide">
           <PanelHeader title="Catalog Price Change Requests" label="Sales reps have no direct write access to the catalog -- their cost/markup/price edits land here for approval, then get applied automatically once approved." />
           {catalogPriceChangeStatus && <small className="muted">{catalogPriceChangeStatus}</small>}
-          <table>
+          <table className="stack-table-mobile">
             <thead>
               <tr>
                 <th>Product</th>
@@ -11486,7 +11486,7 @@ function AdminPage({
             <button className="secondary-action mini-action" type="button" onClick={onRefresh}>Refresh directory</button>
             {status && <span className="muted">{status}</span>}
           </div>
-          <table>
+          <table className="stack-table-mobile">
             <thead>
               <tr>
                 <th>Email</th>
@@ -12725,7 +12725,7 @@ function SalesCatalog({
             {importRows.length > 0 && (
               <>
                 <p className="muted">Category will be set to "Uncategorized" for all rows -- sort them into your real categories afterward. The source file's category text is kept as a tag so nothing's lost.</p>
-                <table>
+                <table className="stack-table-mobile">
                   <thead>
                     <tr>
                       <th>Product</th>
@@ -14665,7 +14665,7 @@ function ProjectLocationsSection({
         </div>
       </div>
 
-      <table>
+      <table className="stack-table-mobile">
         <thead>
           <tr><th>Type</th><th>Name</th><th>Photos</th><th>Files</th><th></th></tr>
         </thead>
@@ -15540,7 +15540,7 @@ function SalesQuoteBuilder({
             </div>
           </div>
 
-          <table>
+          <table className="stack-table-mobile">
             <thead>
               <tr><th>Type</th><th>Name</th><th>Photos</th><th>Files</th><th></th></tr>
             </thead>
@@ -17015,7 +17015,7 @@ function TasksBoard({
           <div className="deleted-tasks-panel">
             <span className="deleted-tasks-label">Deleted Tasks</span>
             <p className="muted">Removed from the lists above, but kept on record -- who deleted it, when, and every change it had before that. Restore brings it back.</p>
-            <table>
+            <table className="stack-table-mobile">
               <thead>
                 <tr><th>Title</th><th>Section</th><th>Deleted by</th><th>Deleted at</th><th></th></tr>
               </thead>
@@ -17473,7 +17473,7 @@ function SubmittalPublicPage({ token }: { token: string }) {
 
       <section className="submittal-public-section">
         <h2>Bill of Material</h2>
-        <table>
+        <table className="stack-table-mobile">
           <thead><tr><th>Item</th><th>Qty</th></tr></thead>
           <tbody>
             {snapshot.bom.map((line, index) => (
@@ -17602,7 +17602,7 @@ function ProposalPublicPage({ token }: { token: string }) {
 
       <section className="submittal-public-section">
         <h2>Pricing &amp; Bill of Material</h2>
-        <table className="proposal-bom-table">
+        <table className="proposal-bom-table stack-table-mobile">
           <thead><tr><th></th><th>Item</th><th>Description</th><th>Qty</th><th>Datasheet</th></tr></thead>
           <tbody>
             {snapshot.bom.map((line, index) => (
