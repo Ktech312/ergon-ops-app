@@ -994,6 +994,36 @@ button {
   padding: 18px;
 }
 
+@media (max-width: 760px) {
+  /* The 180px minmax column below leaves one stretched, mostly-empty
+     column on narrow phones (E: "all this wasted empty space") -- tighter
+     fixed 2-up grid with a much shorter card instead. Applies everywhere
+     .metric-grid is used (Dashboard, Sales, Purchasing, Inventory, ...). */
+  .metric-grid {
+    gap: 8px;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .metric {
+    gap: 2px;
+    min-height: 0;
+    padding: 10px 12px;
+  }
+
+  .metric div svg {
+    height: 16px;
+    width: 16px;
+  }
+
+  .metric span {
+    font-size: 10px;
+  }
+
+  .metric strong {
+    font-size: 17px;
+  }
+}
+
 .metric div {
   color: #a01029;
 }
@@ -5796,4 +5826,64 @@ body:has(.modal-backdrop) .install-banner {
 .catalog-mobile-card-price-row strong {
   color: #a01029;
   font-size: 14px;
+}
+
+/* Site Builder (Sales quotes list) mobile card list -- same pattern as
+   the Product Catalog cards above. */
+.site-builder-mobile-list {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .site-builder-table-scroll {
+    display: none;
+  }
+
+  .site-builder-mobile-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+.site-builder-mobile-card {
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 6px;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.site-builder-mobile-card-title-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.site-builder-mobile-card-title-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.site-builder-mobile-card-title-row strong {
+  font-size: 14px;
+}
+
+.site-builder-mobile-card-meta {
+  color: #756d62;
+  font-size: 11px;
+}
+
+.site-builder-mobile-card-pills {
+  display: flex;
+  gap: 6px;
 }

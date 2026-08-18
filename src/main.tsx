@@ -15261,6 +15261,7 @@ function SalesQuoteBuilder({
             <>
               {!isConfigured && <span className="muted">Set Supabase env vars to manage quotes.</span>}
               {status && <small className="muted">{status}</small>}
+              <div className="site-builder-table-scroll">
               <table>
                 <thead>
                   <tr><th>Name</th><th>City</th><th>Sales Person</th><th>Locations</th><th>Status</th><th>Tasks</th><th></th></tr>
@@ -15302,6 +15303,46 @@ function SalesQuoteBuilder({
                   )}
                 </tbody>
               </table>
+              </div>
+
+              <div className="site-builder-mobile-list">
+                {salesQuotes.map((quote) => {
+                  const quoteTasks = tasks.filter((task) => task.quoteId === quote.id);
+                  const openCount = quoteTasks.filter((task) => task.status !== "done").length;
+                  const taskPillClass = quoteTasks.length === 0 ? "status-pill" : openCount > 0 ? "status-pill status-blocked" : "status-pill status-done";
+                  const taskPillLabel = quoteTasks.length === 0 ? "No tasks" : openCount > 0 ? `${openCount} open` : "All done";
+                  return (
+                    <button key={quote.id} type="button" className="site-builder-mobile-card" onClick={() => openQuote(quote.id)}>
+                      <span className="site-builder-mobile-card-title-row">
+                        <span>
+                          {quote.quoteRef && <small className="quote-ref-tag">{quote.quoteRef}</small>}
+                          <strong>{quote.siteName}</strong>
+                          <small className="muted">{quote.clientName}</small>
+                        </span>
+                        <button
+                          className="icon-button compact-remove"
+                          type="button"
+                          title="Delete site"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (window.confirm(`Delete "${quote.siteName}"? This removes all of its garages/lots, photos, files, and BOM lines, and unlinks (but doesn't delete) any tasks tied to it. This can't be undone.`)) {
+                              onDeleteQuote(quote.id);
+                            }
+                          }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </span>
+                      <span className="site-builder-mobile-card-meta">{quote.city || "No city"} &middot; {quote.createdByEmail ? assigneeLabel(quote.createdByEmail, teamMembers) : "Unassigned"} &middot; {quote.locations.length} location(s)</span>
+                      <span className="site-builder-mobile-card-pills">
+                        <span className={`status ${quote.status === "closed_won" ? "ok" : quote.status === "closed_lost" ? "" : "warn"}`}>{quote.status === "closed_won" ? "Closed - Won" : quote.status === "closed_lost" ? "Closed - Lost" : "Open"}</span>
+                        <span className={taskPillClass}>{taskPillLabel}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+                {salesQuotes.length === 0 && <div className="empty-compact-state">No sites yet. New Site to start scoping one.</div>}
+              </div>
             </>
           )}
         </section>
