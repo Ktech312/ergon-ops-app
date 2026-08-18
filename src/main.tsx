@@ -6785,6 +6785,7 @@ function Purchasing({
             <button className="primary-action" type="button" onClick={submitPurchaseOrder} disabled={!poDraft.number.trim() || !poDraft.vendor.trim()}>Save Purchase Order</button>
           </div>
         )}
+        <div className="po-table-scroll">
         <table>
           <thead>
             <tr><th>Order</th><th>Vendor</th><th>Project Ref</th><th>Status</th><th>Lines</th><th>Total</th></tr>
@@ -6811,6 +6812,28 @@ function Purchasing({
             )}
           </tbody>
         </table>
+        </div>
+
+        <div className="mobile-card-list">
+          {purchaseOrders.map((po) => (
+            <div key={po.id} className="mobile-card">
+              <span className="mobile-card-row">
+                <span className="mobile-card-title">
+                  <strong>{po.number}</strong>
+                  <small className="muted">{po.vendor} &middot; {po.projectRef || "No project ref"}</small>
+                </span>
+                <b>{moneyExact(po.total)}</b>
+              </span>
+              <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""}</span>
+              <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
+                <option>Imported</option>
+                <option>In Processing</option>
+                <option>On Hold</option>
+              </select>
+            </div>
+          ))}
+          {purchaseOrders.length === 0 && <div className="empty-compact-state">No purchase orders yet. Add one above.</div>}
+        </div>
       </section>
 
       <section className="panel">
@@ -8970,6 +8993,7 @@ function Projects({
               <button className="primary-action" type="button" onClick={addDraftProject}><Plus size={17} /> Add New Project</button>
             </div>
           </div>
+          <div className="projects-table-scroll">
           <table>
             <thead>
               <tr><th>Ref</th><th>Project</th><th>Client</th><th>Status</th><th>Completion</th><th>Open BOM</th><th>Target</th><th>Allocated</th><th></th></tr>
@@ -9007,6 +9031,33 @@ function Projects({
               })}
             </tbody>
           </table>
+          </div>
+
+          <div className="mobile-card-list">
+            {projectSites.map((project) => {
+              const completion = projectCompletion(project);
+              const openLines = project.bom.filter((line) => line.status === "Need Quote" || line.status === "Not started").length;
+              return (
+                <div key={project.name} className="mobile-card" role="button" tabIndex={0} onClick={() => openProject(project.name)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") openProject(project.name); }}>
+                  <span className="mobile-card-row">
+                    <span className="mobile-card-title">
+                      <strong>{project.name}</strong>
+                      <small className="muted">{project.ref} &middot; {project.client}</small>
+                    </span>
+                    <span className={`status ${project.status === "Procurement" ? "warn" : project.status === "Install Ready" || project.status === "Closed" ? "ok" : ""}`}>{project.status}</span>
+                  </span>
+                  <span className="mobile-card-meta">{project.type} &middot; {openLines} open BOM &middot; Target {project.due} &middot; {money(project.allocated)} allocated</span>
+                  <span className="mobile-card-pills">
+                    <div className="progress-cell"><span>{completion}% complete</span><i><b style={{ width: `${completion}%` }} /></i></div>
+                  </span>
+                  <span onClick={(event) => event.stopPropagation()}>
+                    <button className="secondary-action mini-action" type="button" onClick={() => setGalleryProjectName(project.name)}>Images</button>
+                  </span>
+                </div>
+              );
+            })}
+            {projectSites.length === 0 && <div className="empty-compact-state">No projects yet.</div>}
+          </div>
         </section>
 
         {galleryProject && (
