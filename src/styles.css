@@ -3715,9 +3715,12 @@ tr:hover .row-delete-btn,
 
 .camera-capture-name-prefix {
   color: #756d62;
-  flex-shrink: 0;
+  flex-shrink: 1;
   font-size: 12px;
   font-weight: 800;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
