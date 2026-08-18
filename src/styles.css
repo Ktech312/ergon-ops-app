@@ -894,8 +894,8 @@ button {
 }
 
 .sync-status.synced {
-  background: #f0ecea;
-  color: #a01029;
+  background: #e7f2e5;
+  color: #2f7a3d;
 }
 
 .sync-status.error {
