@@ -5794,10 +5794,18 @@ function MobileBottomNav({
   );
 }
 
-// PWA "Add to Home Screen" -- ported from the VLTD app's PWAInstallBanner.
-// Small floating pill, sits above the mobile bottom nav. Android/Chrome
-// gets the real beforeinstallprompt flow; iOS Safari has no install API,
-// so it shows tap-through instructions instead of doing nothing.
+// PWA "Add to Home Screen" -- ported from the VLTD app's PWAInstallBanner,
+// then reworked (2026-08-18) to always render instead of waiting on the
+// browser's beforeinstallprompt event: that event is gated by Chrome's own
+// installability + engagement heuristics, which this app has no control
+// over and which don't fire reliably (or at all) in every browser -- E
+// correctly pushed back that whether the affordance *appears* shouldn't
+// depend on the browser's mood. Now the pill always shows (unless already
+// installed or dismissed); tapping it either fires the real one-tap
+// install (when Chrome has handed us a deferred prompt) or expands plain
+// manual steps for the browser's own "Install app" / "Add to Home Screen"
+// menu item, which works everywhere, including desktop Chrome, Firefox,
+// and any Android browser we don't get an event from.
 type BeforeInstallPromptEvent = Event & {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
@@ -5809,89 +5817,77 @@ const INSTALL_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 function InstallAppBanner() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isIOS, setIsIOS] = useState(false);
-  const [show, setShow] = useState(false);
-  const [iosExpanded, setIosExpanded] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (window.matchMedia("(display-mode: standalone)").matches) {
+      setIsStandalone(true);
       return;
     }
     const until = window.localStorage.getItem(INSTALL_DISMISSED_KEY);
     if (until && Date.now() < Number(until)) {
-      return;
+      setDismissed(true);
     }
-    const ua = navigator.userAgent;
-    if (/iphone|ipad|ipod/i.test(ua) && !/crios/i.test(ua)) {
-      setIsIOS(true);
-      setShow(true);
-      return;
-    }
+    setIsIOS(/iphone|ipad|ipod/i.test(navigator.userAgent) && !/crios/i.test(navigator.userAgent));
     function handler(event: Event) {
       event.preventDefault();
       setDeferredPrompt(event as BeforeInstallPromptEvent);
-      setShow(true);
     }
     window.addEventListener("beforeinstallprompt", handler);
     return () => window.removeEventListener("beforeinstallprompt", handler);
   }, []);
 
-  function dismiss() {
+  function dismiss(event: React.MouseEvent) {
+    event.stopPropagation();
     window.localStorage.setItem(INSTALL_DISMISSED_KEY, String(Date.now() + INSTALL_COOLDOWN_MS));
-    setShow(false);
-    setDeferredPrompt(null);
+    setDismissed(true);
   }
 
-  async function install() {
+  async function handleTap() {
     if (!deferredPrompt) {
+      setExpanded((current) => !current);
       return;
     }
     await deferredPrompt.prompt();
     const result = await deferredPrompt.userChoice;
     if (result.outcome === "accepted") {
       window.localStorage.removeItem(INSTALL_DISMISSED_KEY);
+      setDismissed(true);
     }
-    setShow(false);
     setDeferredPrompt(null);
   }
 
-  if (!show) {
+  if (isStandalone || dismissed) {
     return null;
   }
 
-  if (deferredPrompt) {
-    return (
-      <div className="install-banner">
+  const manualSteps = isIOS
+    ? (
+      <>1. Tap the Share icon in Safari's toolbar.<br />2. Scroll down and tap "Add to Home Screen."</>
+    )
+    : (
+      <>Open your browser's menu (the &#8942; or &#8943; icon) and choose "Install app" or "Add to Home Screen."</>
+    );
+
+  return (
+    <div className={`install-banner ${!deferredPrompt ? "install-banner-ios" : ""}`}>
+      <div className="install-banner-ios-row">
         <img src="/ergon-icon.png" alt="Ergon" className="install-banner-icon" />
-        <p>Add to Home Screen</p>
-        <button type="button" className="install-banner-install" onClick={() => void install()} aria-label="Install">
-          <Download size={13} />
+        <button type="button" className="install-banner-ios-toggle" onClick={() => void handleTap()}>
+          {deferredPrompt ? "Install app" : "Add to Home Screen"}
         </button>
+        {deferredPrompt && (
+          <button type="button" className="install-banner-install" onClick={() => void handleTap()} aria-label="Install">
+            <Download size={13} />
+          </button>
+        )}
         <button type="button" className="install-banner-dismiss" onClick={dismiss} aria-label="Dismiss">x</button>
       </div>
-    );
-  }
-
-  if (isIOS) {
-    return (
-      <div className="install-banner install-banner-ios">
-        <div className="install-banner-ios-row">
-          <img src="/ergon-icon.png" alt="Ergon" className="install-banner-icon" />
-          <button type="button" className="install-banner-ios-toggle" onClick={() => setIosExpanded((current) => !current)}>
-            Tap Share &rarr; Add to Home Screen
-          </button>
-          <button type="button" className="install-banner-dismiss" onClick={dismiss} aria-label="Dismiss">x</button>
-        </div>
-        {iosExpanded && (
-          <p className="install-banner-ios-steps">
-            1. Tap the Share icon in Safari's toolbar.<br />
-            2. Scroll down and tap "Add to Home Screen."
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  return null;
+      {expanded && !deferredPrompt && <p className="install-banner-ios-steps">{manualSteps}</p>}
+    </div>
+  );
 }
 
 function pageTitle(view: View) {
