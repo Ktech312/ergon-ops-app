@@ -5960,7 +5960,8 @@ body:has(.modal-backdrop) .install-banner {
 
 @media (max-width: 760px) {
   .po-table-scroll,
-  .projects-table-scroll {
+  .projects-table-scroll,
+  .tasks-table-scroll {
     display: none;
   }
 }

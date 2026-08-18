@@ -17063,6 +17063,8 @@ function TasksBoard({
                 <span className="muted">{groupTasks.length}</span>
               </button>
               {!isCollapsed && (
+                <>
+                <div className="tasks-table-scroll">
                 <table>
                   <thead>
                     <tr>
@@ -17115,6 +17117,39 @@ function TasksBoard({
                     )}
                   </tbody>
                 </table>
+                </div>
+
+                <div className="mobile-card-list">
+                  {groupTasks.map((task) => (
+                    <div key={task.id} className="mobile-card">
+                      <span className="mobile-card-row">
+                        <span className="mobile-card-title">
+                          <strong>{task.title}</strong>
+                          <small className="muted">{TASK_SECTION_OPTIONS.find((option) => option.value === task.section)?.label ?? task.section} &middot; {taskAssigneeLabel(task, teamMembers)}</small>
+                        </span>
+                        <span className={priorityBadgeClass(task.priority)}>{task.priority}</span>
+                      </span>
+                      <span className="mobile-card-meta">
+                        {task.category}{task.dueDate ? ` · Due ${task.dueDate}` : ""} &middot; {task.isInternal ? "Internal" : task.projectRef || "External"}
+                      </span>
+                      {task.impactAreas.length > 0 && <span className="tag-chip-row">{task.impactAreas.map((tag) => <span key={tag}>{tag}</span>)}</span>}
+                      <select
+                        value={task.status}
+                        onChange={(event) => onUpdate(task.id, { status: event.target.value as TaskStatus })}
+                      >
+                        {TASK_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                      <span className="mobile-card-pills">
+                        <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(task)}>Edit</button>
+                        <button className="secondary-action mini-action" type="button" onClick={() => onDelete(task.id)}>Delete</button>
+                      </span>
+                    </div>
+                  ))}
+                  {groupTasks.length === 0 && <div className="empty-compact-state">No tasks in this group.</div>}
+                </div>
+                </>
               )}
             </div>
           );
