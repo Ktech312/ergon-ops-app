@@ -830,6 +830,19 @@ button {
     top: 64px;
     width: auto;
   }
+
+  /* Same shape of bug as .notification-panel above (fixed-width,
+     position: absolute anchored to a header trigger button) -- same
+     fix, before it actually gets reported rather than after. */
+  .account-menu-panel {
+    left: 12px;
+    max-height: min(80vh, 520px);
+    overflow-y: auto;
+    position: fixed;
+    right: 12px;
+    top: 64px;
+    width: auto;
+  }
 }
 
 .notification-panel-header {
@@ -5498,11 +5511,26 @@ td.empty-compact-state {
 }
 
 .task-gantt-label-col {
+  background: #fffdf9;
   flex: 0 0 220px;
   overflow: hidden;
   padding: 8px 10px;
+  position: sticky;
+  left: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+  z-index: 1;
+}
+
+.task-gantt-header .task-gantt-label-col {
+  background: #faf8f4;
+}
+
+@media (max-width: 640px) {
+  .task-gantt-label-col {
+    flex-basis: 130px;
+    font-size: 12px;
+  }
 }
 
 .task-gantt-track-col {
