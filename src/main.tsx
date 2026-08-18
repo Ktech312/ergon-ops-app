@@ -7634,6 +7634,70 @@ function Inventory({
             </tbody>
           </table>
         </div>
+
+        <div className="mobile-card-list inventory-mobile-list">
+          <div className="mobile-card-filters">
+            <input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter SKU" />
+            <input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" />
+            <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
+              <option>All</option>
+              <option>Base</option>
+              <option>Communications</option>
+              <option>Power</option>
+              <option>Lighting</option>
+              <option>Display</option>
+              <option>Build</option>
+            </select>
+            <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
+              <option>All</option>
+              <option>Healthy</option>
+              <option>Reorder</option>
+              <option>Retired</option>
+            </select>
+          </div>
+          {filteredInventoryItems.map((part) => {
+            const pendingRequest = findPendingRequest(part);
+            return (
+              <div key={part.ref} className="mobile-card" role="button" tabIndex={0} onClick={() => openEditItemModal(part)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") openEditItemModal(part); }}>
+                <span className="mobile-card-row">
+                  <span
+                    className="thumbnail-button"
+                    role="img"
+                    aria-label={`Image for ${part.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setPreviewItem(part);
+                    }}
+                  >
+                    {part.imageUrl ? <img src={part.imageUrl} alt="" /> : <Image size={18} />}
+                  </span>
+                  <span className="mobile-card-title">
+                    <strong>{part.name}</strong>
+                    <small className="muted">{part.ref} &middot; {part.category} &middot; {part.manufacturer}</small>
+                  </span>
+                </span>
+                <span className="mobile-card-pills">
+                  <span className="status">Stock: {part.stock}</span>
+                  <span className="status">{money(part.cost)}</span>
+                  {part.retired ? <span className="status retired">Retired</span> : part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
+                </span>
+                <span className="table-actions" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    className={`table-action secondary-table-action${pendingRequest ? " receive-pending" : ""}`}
+                    type="button"
+                    onClick={() => openReceiveModal(part)}
+                    disabled={part.retired}
+                    title={pendingRequest ? `PO ${pendingRequest.poNumber || pendingRequest.requestNumber} is on order, not yet received` : undefined}
+                  >
+                    {pendingRequest ? "Receive Pending" : "Receive"}
+                  </button>
+                  <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
+                </span>
+              </div>
+            );
+          })}
+          {filteredInventoryItems.length === 0 && <div className="empty-compact-state">No items match the current filters.</div>}
+        </div>
       </section>
       <section className="panel wide">
         <div className="panel-title-row">

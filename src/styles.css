@@ -5065,7 +5065,7 @@ td.empty-compact-state {
   }
 
   .inventory-table-scroll {
-    max-height: 560px;
+    display: none;
   }
 
   .part-cell-layout {
@@ -5886,4 +5886,79 @@ body:has(.modal-backdrop) .install-banner {
 .site-builder-mobile-card-pills {
   display: flex;
   gap: 6px;
+}
+
+/* Generic mobile card-list building blocks (2026-08-18+) -- every table
+   converted after Product Catalog/Site Builder reuses these instead of a
+   bespoke class set per table. Pair each table with its own
+   `<table-name>-table-scroll` wrapper (hidden below 760px) and a
+   `.mobile-card-list` + table-specific list class (shown below 760px) --
+   see Product Catalog / Site Builder above for the two-block pattern, or
+   any table converted after this comment for the shared-class version. */
+.mobile-card-list {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .mobile-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+.mobile-card {
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 6px;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.mobile-card-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.mobile-card-row > span:first-child,
+.mobile-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mobile-card strong {
+  font-size: 14px;
+}
+
+.mobile-card-meta {
+  color: #756d62;
+  font-size: 11px;
+}
+
+.mobile-card-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mobile-card-filters {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr;
+  margin-bottom: 4px;
+}
+
+.mobile-card .table-actions {
+  display: flex;
+  gap: 8px;
 }
