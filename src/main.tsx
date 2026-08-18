@@ -994,6 +994,15 @@ function App() {
   const [view, setView] = useState<View>(() => (window.location.hash ? viewFromHash() : savedView()));
   const [locationHash, setLocationHash] = useState(window.location.hash || window.localStorage.getItem("ergon:lastHash") || "#dashboard");
   const [projectDetailContext, setProjectDetailContext] = useState<{ name: string; ref: string } | null>(null);
+
+  // Deliberately inert service worker (public/sw.js, no caching) -- some
+  // Chrome versions require one registered for the automatic
+  // beforeinstallprompt event InstallAppBanner listens for.
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  }, []);
   // Phase 10c: Inventory Items no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [inventoryItems, setInventoryItems] = useState<Part[]>([]);
@@ -1072,6 +1081,7 @@ function App() {
   const [inventorySearchFocus, setInventorySearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [reportsSearchFocus, setReportsSearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [purchasingSearchFocus, setPurchasingSearchFocus] = useState<{ term: string; token: number } | null>(null);
+  const [taskFocus, setTaskFocus] = useState<{ taskId: string; token: number } | null>(null);
   const [standardInstallTimes, setStandardInstallTimes] = useState<StandardInstallTime[]>([]);
   const [scheduleTemplates, setScheduleTemplates] = useState<ScheduleTemplate[]>([]);
   const [scheduleStatus, setScheduleStatus] = useState("");
@@ -3436,6 +3446,15 @@ function App() {
     await markNotificationRead(id, authSession.accessToken).catch(() => {});
   }
 
+  function handleNotificationClick(entry: NotificationItem) {
+    handleMarkNotificationRead(entry.id);
+    setNotificationsOpen(false);
+    if (entry.relatedEntityType === "task" && entry.relatedEntityId) {
+      setTaskFocus({ taskId: entry.relatedEntityId, token: Date.now() });
+      navigateToView("tasks");
+    }
+  }
+
   async function handleMarkAllNotificationsRead() {
     if (!authSession || !authSession.email) {
       return;
@@ -5366,7 +5385,7 @@ function App() {
                   </div>
                   <div className="notification-list">
                     {notifications.map((entry) => (
-                      <button key={entry.id} className={`notification-row ${entry.isRead ? "" : "is-unread"}`} type="button" onClick={() => handleMarkNotificationRead(entry.id)}>
+                      <button key={entry.id} className={`notification-row ${entry.isRead ? "" : "is-unread"}`} type="button" onClick={() => handleNotificationClick(entry)}>
                         <strong>{entry.title}</strong>
                         <span>{entry.body}</span>
                         <small>{new Date(entry.createdAt).toLocaleString()}</small>
@@ -5583,6 +5602,7 @@ function App() {
             taskHardwareDependencies={taskHardwareDependencies}
             onAddTaskDependency={handleAddTaskDependency}
             onDeleteTaskDependency={handleDeleteTaskDependency}
+            focusTask={taskFocus}
           />
         )}
         {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} projectDocuments={projectDocuments} searchFocus={reportsSearchFocus} />}
@@ -16637,6 +16657,7 @@ function TasksBoard({
   deletedTasks,
   onRestore,
   canReviewDeletedTasks,
+  focusTask,
 }: {
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
@@ -16654,6 +16675,7 @@ function TasksBoard({
   deletedTasks?: EOTask[];
   onRestore?: (id: string) => Promise<boolean>;
   canReviewDeletedTasks?: boolean;
+  focusTask?: { taskId: string; token: number } | null;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -16698,6 +16720,20 @@ function TasksBoard({
     });
     setModalOpen(true);
   }
+
+  // Clicking a task-related notification lands here with focusTask set --
+  // open that task's edit modal directly instead of leaving the user to
+  // find it themselves in the list.
+  useEffect(() => {
+    if (!focusTask) {
+      return;
+    }
+    const task = tasks.find((entry) => entry.id === focusTask.taskId);
+    if (task) {
+      openEditModal(task);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTask?.token]);
 
   async function submitDraft() {
     if (!draft.title.trim()) {
