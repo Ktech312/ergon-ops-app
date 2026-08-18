@@ -12368,6 +12368,73 @@ function SalesCatalog({
               </tbody>
             </table>
             </div>
+
+            {/* Mobile-only: the table above requires horizontal scroll to
+                reach Category/Price/Status, which E flagged as unusable on
+                a phone -- this is a stacked-card equivalent of the same
+                visibleItems list, filters included, shown instead of the
+                table under 760px (see .catalog-mobile-list / .catalog-table-scroll
+                in styles.css). */}
+            <div className="catalog-mobile-list">
+              <div className="catalog-mobile-filters">
+                <input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search product/tag" />
+                <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
+                  <option>All</option>
+                  {CATALOG_CATEGORY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+                </select>
+                <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
+                  <option>All</option>
+                  <option>Active</option>
+                  <option>Retired</option>
+                </select>
+              </div>
+              {visibleItems.map((item) => {
+                const liveUnitCost = resolveCatalogUnitCost(item, inventoryItems);
+                const linkedInventoryPart = findLinkedInventoryPart(item, inventoryItems);
+                const isLiveInventoryLinked = item.costSource === "inventory_unit_cost" && Boolean(linkedInventoryPart);
+                const computedSellPrice = computeCatalogSellPrice(item, inventoryItems);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`catalog-mobile-card${item.isRetired ? " muted-row" : ""}`}
+                    onClick={() => (canManage ? openEditModal(item) : !item.isRetired && openProposalModal(item, "markup_percent"))}
+                  >
+                    <span
+                      className="thumbnail-button"
+                      role="img"
+                      aria-label={`Image for ${item.productName}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setPreviewItem(item);
+                      }}
+                    >
+                      {item.imageUrl || linkedInventoryPart?.imageUrl ? <img src={item.imageUrl || linkedInventoryPart?.imageUrl} alt="" /> : <Image size={18} />}
+                    </span>
+                    <span className="catalog-mobile-card-body">
+                      <span className="catalog-mobile-card-title-row">
+                        <strong>{item.productName}</strong>
+                        <span className={`status ${item.isRetired ? "" : "ok"}`}>{item.isRetired ? "Retired" : "Active"}</span>
+                      </span>
+                      <span className="catalog-mobile-card-meta">{item.catalogNumber} &middot; {item.category} &middot; {item.manufacturer}</span>
+                      {(item.tags ?? []).length > 0 && <span className="tag-chip-row">{(item.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</span>}
+                      <span className="catalog-mobile-card-price-row">
+                        <strong>{money(computedSellPrice)}</strong>
+                        <small className="muted">{money(liveUnitCost)} cost{isLiveInventoryLinked && " (live)"}</small>
+                      </span>
+                      {linkedInventoryPart && (
+                        <small className="muted" title={`Cross-referenced with Inventory item ${linkedInventoryPart.ref}`}>
+                          &#x2713; Linked to Inventory
+                        </small>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+              {visibleItems.length === 0 && (
+                <div className="empty-compact-state">No catalog items yet. Add a product to start building the sales catalog.</div>
+              )}
+            </div>
           </>
         )}
       </section>

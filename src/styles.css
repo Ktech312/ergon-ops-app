@@ -3593,7 +3593,30 @@ tr:hover .row-delete-btn,
 @media (max-width: 640px) {
   .camera-capture-modal {
     max-height: 92vh;
+    padding: 10px;
     width: calc(100vw - 20px);
+  }
+
+  /* Tighten the header/caption chrome around the camera view -- the video
+     itself (.camera-viewport/.camera-capture-video max-height below) is
+     untouched, this only trims the whitespace E flagged around it. */
+  .camera-capture-modal .modal-header {
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+  }
+
+  .camera-capture-modal .modal-header h2 {
+    font-size: 15px;
+  }
+
+  .camera-capture-modal .modal-header p {
+    font-size: 11px;
+    margin: 2px 0 0;
+  }
+
+  .camera-capture-live,
+  .camera-capture-review {
+    gap: 8px;
   }
 
   .camera-viewport,
@@ -3604,7 +3627,14 @@ tr:hover .row-delete-btn,
   .camera-zoom-toolbar {
     align-items: stretch;
     display: grid;
+    gap: 4px;
     grid-template-columns: 1fr;
+    padding: 6px 8px;
+  }
+
+  .camera-zoom-toolbar > span {
+    font-size: 11px;
+    line-height: 1.25;
   }
 
   .camera-zoom-toolbar > div {
@@ -5684,4 +5714,86 @@ body:has(.modal-backdrop) .install-banner {
   flex: none;
   font-weight: 900;
   padding: 4px;
+}
+
+/* Product Catalog mobile card list -- E: the table needs horizontal
+   scroll to reach Category/Price/Status on a phone, and the search box
+   was itself only reachable that way. Below 760px, swap the table for a
+   stacked-card list with its own always-visible search/filter row on
+   top -- same data, same click-to-edit behavior, no sideways scrolling. */
+.catalog-mobile-list {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .catalog-table-scroll {
+    display: none;
+  }
+
+  .catalog-mobile-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+.catalog-mobile-filters {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr;
+  margin-bottom: 4px;
+}
+
+.catalog-mobile-card {
+  align-items: flex-start;
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 10px;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.catalog-mobile-card .thumbnail-button {
+  flex: none;
+  height: 44px;
+  width: 44px;
+}
+
+.catalog-mobile-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.catalog-mobile-card-title-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.catalog-mobile-card-title-row strong {
+  font-size: 14px;
+}
+
+.catalog-mobile-card-meta {
+  color: #756d62;
+  font-size: 11px;
+}
+
+.catalog-mobile-card-price-row {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+}
+
+.catalog-mobile-card-price-row strong {
+  color: #a01029;
+  font-size: 14px;
 }
