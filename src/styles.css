@@ -6025,3 +6025,167 @@ body:has(.modal-backdrop) .install-banner {
     width: 100%;
   }
 }
+
+/* Portfolio Budget & Schedule panel (Projects list page) -- tones reuse
+   the same green/amber/red established for the sync-status pill and
+   stack-table statuses elsewhere. */
+.portfolio-health-kpis {
+  margin: 14px 0 18px;
+}
+
+.portfolio-health-block {
+  border-top: 1px solid #e8e1d5;
+  padding-top: 14px;
+}
+
+.portfolio-health-block + .portfolio-health-block {
+  margin-top: 6px;
+}
+
+.portfolio-health-block-head {
+  align-items: baseline;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.portfolio-health-block-head h3 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.portfolio-health-legend {
+  display: flex;
+  gap: 12px;
+}
+
+.portfolio-health-legend-item {
+  align-items: center;
+  color: #756d62;
+  display: flex;
+  font-size: 11px;
+  font-weight: 700;
+  gap: 5px;
+}
+
+.portfolio-health-dot {
+  border-radius: 999px;
+  display: inline-block;
+  height: 8px;
+  width: 8px;
+}
+
+.portfolio-health-dot.tone-good,
+.portfolio-health-fill.tone-good { background: #2f7a3d; }
+.portfolio-health-dot.tone-warn,
+.portfolio-health-fill.tone-warn { background: #906313; }
+.portfolio-health-dot.tone-critical,
+.portfolio-health-fill.tone-critical { background: #a01029; }
+
+.portfolio-health-row {
+  align-items: center;
+  border-top: 1px solid #e8e1d5;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 2.1fr) 116px;
+  padding: 12px 0;
+}
+
+.portfolio-health-row:first-of-type {
+  border-top: none;
+}
+
+.portfolio-health-row-name {
+  min-width: 0;
+}
+
+.portfolio-health-row-name strong {
+  display: block;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portfolio-health-bar-wrap {
+  position: relative;
+}
+
+.portfolio-health-figures {
+  color: #756d62;
+  display: flex;
+  font-size: 11px;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.portfolio-health-figures strong {
+  color: #1b1a18;
+}
+
+.portfolio-health-track {
+  background: #ece6da;
+  border-radius: 999px;
+  height: 10px;
+  position: relative;
+}
+
+.portfolio-health-fill {
+  border-radius: 999px;
+  height: 100%;
+  position: relative;
+}
+
+.portfolio-health-target-mark {
+  background: #1b1a18;
+  border-radius: 2px;
+  height: 16px;
+  position: absolute;
+  top: -3px;
+  width: 2px;
+}
+
+.portfolio-health-status {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.portfolio-health-pill.tone-good { background: #e7f2e5; color: #2f7a3d; }
+.portfolio-health-pill.tone-warn { background: #fff1d6; color: #906313; }
+.portfolio-health-pill.tone-critical { background: #f8e6e2; color: #a01029; }
+
+.portfolio-health-tooltip {
+  background: #1b1a18;
+  border-radius: 6px;
+  color: #fdfaf3;
+  font-size: 11px;
+  font-weight: 700;
+  left: 50%;
+  opacity: 0;
+  padding: 5px 9px;
+  pointer-events: none;
+  position: absolute;
+  top: -34px;
+  transform: translateX(-50%) translateY(4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.portfolio-health-bar-wrap:hover .portfolio-health-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+@media (max-width: 760px) {
+  .portfolio-health-row {
+    grid-template-columns: 1fr;
+    row-gap: 8px;
+  }
+
+  .portfolio-health-status {
+    align-items: flex-start;
+  }
+}

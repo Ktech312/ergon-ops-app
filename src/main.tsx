@@ -2,6 +2,7 @@ import { Component, Fragment, StrictMode, useEffect, useRef, useState, type Disp
 import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx";
 import {
+  AlertTriangle,
   Award,
   BarChart3,
   Bell,
@@ -811,6 +812,14 @@ const projects: ProjectSite[] = [
 
 function money(value: number) {
   return value.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
+function projectCompletion(project: ProjectSite) {
+  if (project.bom.length === 0) {
+    return 0;
+  }
+  const done = project.bom.filter((line) => line.status === "Completed" || line.status === "Delivered to Office" || line.status === "Delivered to Client" || line.status === "From Inventory").length;
+  return Math.round((done / project.bom.length) * 100);
 }
 
 function moneyExact(value: number) {
@@ -5518,7 +5527,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhoto} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhoto} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -8257,6 +8266,160 @@ function ProjectTile({
   );
 }
 
+// Best-effort parse of ProjectSite.due -- it's a free-text display string
+// (target_date_display), not a real date column, so values like "TBD" or
+// "Q3 2026" are expected and must degrade gracefully rather than produce a
+// nonsense day count.
+function parseProjectDueDate(due: string): Date | null {
+  if (!due.trim()) {
+    return null;
+  }
+  const parsed = new Date(due);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function ProjectPortfolioHealth({ projectSites, purchaseOrders }: { projectSites: ProjectSite[]; purchaseOrders: PurchaseOrder[] }) {
+  const activeProjects = projectSites.filter((project) => project.status !== "Closed");
+
+  const budgetRows = activeProjects
+    .map((project) => {
+      const spent = purchaseOrders.filter((po) => po.projectRef === project.ref).reduce((sum, po) => sum + po.total, 0);
+      const pct = project.allocated > 0 ? Math.round((spent / project.allocated) * 100) : spent > 0 ? 999 : 0;
+      const tone: "good" | "warn" | "critical" = pct > 100 ? "critical" : pct >= 85 ? "warn" : "good";
+      return { project, spent, pct, tone };
+    })
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, 8);
+
+  const scheduleRows = activeProjects
+    .map((project) => {
+      const completion = projectCompletion(project);
+      const dueDate = parseProjectDueDate(project.due);
+      const daysLeft = dueDate ? Math.round((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null;
+      const tone: "good" | "warn" | "critical" =
+        daysLeft === null ? "good" : daysLeft < 0 && completion < 100 ? "critical" : daysLeft <= 8 && completion < 80 ? "warn" : "good";
+      return { project, completion, daysLeft, tone };
+    })
+    .sort((a, b) => (a.daysLeft ?? Infinity) - (b.daysLeft ?? Infinity))
+    .slice(0, 8);
+
+  const totalAllocated = activeProjects.reduce((sum, project) => sum + project.allocated, 0);
+  const totalSpent = budgetRows.reduce((sum, row) => sum + row.spent, 0)
+    + activeProjects
+        .filter((project) => !budgetRows.some((row) => row.project.ref === project.ref))
+        .reduce((sum, project) => sum + purchaseOrders.filter((po) => po.projectRef === project.ref).reduce((s, po) => s + po.total, 0), 0);
+  const overBudgetProjects = activeProjects.filter((project) => {
+    const spent = purchaseOrders.filter((po) => po.projectRef === project.ref).reduce((sum, po) => sum + po.total, 0);
+    return project.allocated > 0 && spent > project.allocated;
+  });
+  const behindScheduleProjects = activeProjects.filter((project) => {
+    const dueDate = parseProjectDueDate(project.due);
+    if (!dueDate) {
+      return false;
+    }
+    return dueDate.getTime() < Date.now() && projectCompletion(project) < 100;
+  });
+
+  if (activeProjects.length === 0) {
+    return null;
+  }
+
+  function budgetBarMetrics(pct: number) {
+    const scaleMax = Math.max(pct, 100) + 15;
+    return { fillWidth: Math.min(100, (pct / scaleMax) * 100), targetLeft: (100 / scaleMax) * 100 };
+  }
+
+  return (
+    <section className="panel full portfolio-health">
+      <div className="panel-title-row">
+        <div>
+          <h2>Portfolio Budget &amp; Schedule</h2>
+          <p>Which active jobs are running hot on spend or slipping on the calendar, across all of them at once.</p>
+        </div>
+      </div>
+
+      <div className="metric-grid portfolio-health-kpis">
+        <Metric icon={<DollarSign size={20} />} label="Total Allocated" value={money(totalAllocated)} />
+        <Metric icon={<DollarSign size={20} />} label="Total Spent" value={money(totalSpent)} />
+        <Metric icon={<AlertTriangle size={20} />} label="Over Budget" value={String(overBudgetProjects.length)} />
+        <Metric icon={<CalendarDays size={20} />} label="Behind Schedule" value={String(behindScheduleProjects.length)} />
+      </div>
+
+      <div className="portfolio-health-block">
+        <div className="portfolio-health-block-head">
+          <h3>Budget health</h3>
+          <div className="portfolio-health-legend">
+            <span className="portfolio-health-legend-item"><span className="portfolio-health-dot tone-good" />Under 85%</span>
+            <span className="portfolio-health-legend-item"><span className="portfolio-health-dot tone-warn" />85&ndash;100%</span>
+            <span className="portfolio-health-legend-item"><span className="portfolio-health-dot tone-critical" />Over budget</span>
+          </div>
+        </div>
+        {budgetRows.map(({ project, spent, pct, tone }) => {
+          const { fillWidth, targetLeft } = budgetBarMetrics(pct);
+          return (
+            <div className="portfolio-health-row" key={project.ref}>
+              <div className="portfolio-health-row-name">
+                <strong>{project.name}</strong>
+                <small className="muted">{project.client}</small>
+              </div>
+              <div className="portfolio-health-bar-wrap">
+                <div className="portfolio-health-figures">
+                  <span>{money(spent)} spent</span>
+                  <strong>{pct}%</strong>
+                </div>
+                <div className="portfolio-health-track">
+                  <div className={`portfolio-health-fill tone-${tone}`} style={{ width: `${fillWidth}%` }}>
+                    <div className="portfolio-health-tooltip">{money(spent)} of {money(project.allocated)} ({pct}%)</div>
+                  </div>
+                  <div className="portfolio-health-target-mark" style={{ left: `${targetLeft}%` }} />
+                </div>
+              </div>
+              <div className="portfolio-health-status">
+                <span className={`status-pill portfolio-health-pill tone-${tone}`}>{tone === "good" ? "On budget" : tone === "warn" ? "Near limit" : "Over budget"}</span>
+                <small className="muted">{money(project.allocated)} allocated</small>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="portfolio-health-block">
+        <div className="portfolio-health-block-head">
+          <h3>Schedule health</h3>
+          <div className="portfolio-health-legend">
+            <span className="portfolio-health-legend-item"><span className="portfolio-health-dot tone-good" />On track</span>
+            <span className="portfolio-health-legend-item"><span className="portfolio-health-dot tone-warn" />At risk</span>
+            <span className="portfolio-health-legend-item"><span className="portfolio-health-dot tone-critical" />Behind</span>
+          </div>
+        </div>
+        {scheduleRows.map(({ project, completion, daysLeft, tone }) => (
+          <div className="portfolio-health-row" key={project.ref}>
+            <div className="portfolio-health-row-name">
+              <strong>{project.name}</strong>
+              <small className="muted">{project.client}</small>
+            </div>
+            <div className="portfolio-health-bar-wrap">
+              <div className="portfolio-health-figures">
+                <span>Target {project.due || "Not set"}</span>
+                <strong>{completion}% complete</strong>
+              </div>
+              <div className="portfolio-health-track">
+                <div className={`portfolio-health-fill tone-${tone}`} style={{ width: `${completion}%` }}>
+                  <div className="portfolio-health-tooltip">{completion}% complete{daysLeft !== null ? ` · ${daysLeft < 0 ? `${Math.abs(daysLeft)}d overdue` : `${daysLeft}d left`}` : ""}</div>
+                </div>
+              </div>
+            </div>
+            <div className="portfolio-health-status">
+              <span className={`status-pill portfolio-health-pill tone-${tone}`}>{tone === "good" ? "On track" : tone === "warn" ? "At risk" : "Behind"}</span>
+              <small className="muted">{daysLeft === null ? "No target date" : daysLeft < 0 ? `${Math.abs(daysLeft)}d overdue` : `${daysLeft}d left`}</small>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Projects({
   projectSites,
   setProjectSites,
@@ -8312,11 +8475,13 @@ function Projects({
   onDeleteProjectShipmentPhoto,
   onGetProjectShipmentPhotoUrl,
   onDetailContextChange,
+  purchaseOrders,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
   inventoryItems: Part[];
   projectDocuments: UploadedDoc[];
+  purchaseOrders: PurchaseOrder[];
   onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
   onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
   onDownloadDocument: (doc: UploadedDoc) => void;
@@ -8502,15 +8667,6 @@ function Projects({
   function pushProjectHistory(mode: "list" | "detail", projectName?: string) {
     const slug = projectName ? projectSlug(projectName) : "";
     window.location.hash = mode === "detail" ? `projects/${slug}` : "projects";
-  }
-
-  function projectCompletion(project: ProjectSite) {
-    if (project.bom.length === 0) {
-      return 0;
-    }
-
-    const done = project.bom.filter((line) => line.status === "Completed" || line.status === "Delivered to Office" || line.status === "Delivered to Client" || line.status === "From Inventory").length;
-    return Math.round((done / project.bom.length) * 100);
   }
 
   function addDraftProject() {
@@ -8985,6 +9141,8 @@ function Projects({
           onDelete={onDeleteTask}
           onOpenFull={onOpenTasksView}
         />
+
+        <ProjectPortfolioHealth projectSites={projectSites} purchaseOrders={purchaseOrders} />
 
         <section className="panel full">
           <div className="action-header">
