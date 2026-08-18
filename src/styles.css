@@ -5404,3 +5404,264 @@ td.empty-compact-state {
   margin: 10px 0;
   padding: 12px;
 }
+
+/* Mobile bottom nav + PWA install banner -- desktop-hidden by default,
+   shown below the 760px breakpoint used elsewhere in this file. */
+
+:root {
+  --bottomnav-h: 64px;
+}
+
+.mobile-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .mobile-bottom-nav {
+    display: block;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    padding: 8px 10px calc(max(env(safe-area-inset-bottom, 0px), 8px));
+  }
+
+  .main {
+    padding-bottom: calc(var(--bottomnav-h) + max(env(safe-area-inset-bottom, 0px), 8px) + 20px);
+  }
+}
+
+.mobile-bottom-nav-bar {
+  align-items: flex-end;
+  background: rgba(27, 26, 24, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  box-shadow: 0 14px 34px rgba(27, 26, 24, 0.35);
+  display: flex;
+  gap: 2px;
+  height: var(--bottomnav-h);
+  justify-content: space-around;
+  margin: 0 auto;
+  max-width: 420px;
+  padding: 8px 4px;
+}
+
+.mobile-nav-tab {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 14px;
+  color: rgba(244, 241, 235, 0.7);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  font: inherit;
+  gap: 2px;
+  padding: 6px 2px;
+}
+
+.mobile-nav-tab span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.mobile-nav-tab.active {
+  color: #ffcc93;
+}
+
+.mobile-nav-center {
+  align-items: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  font: inherit;
+  gap: 2px;
+  margin-top: -22px;
+}
+
+.mobile-nav-center-button {
+  align-items: center;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, #5c150c 0%, #6e1916 4%, #882429 8%, #96232e 12%, #981729 16%, #af1f38 20%, #cf3f48 24%, #ca3932 28%, #e04f37 32%, #ff966e 36%, #ffcc93 40%, #ffa867 44%, #fe6c2b 48%, #f2601f 52%, #ff6e2d 56%, #e8571e 60%, #d4431a 64%, #db4a32 68%, #e5544d 72%, #c3333c 76%, #a4142d 80%, #9a192b 84%, #97242f 88%, #7f1a1f 92%, #6a1512 96%, #5c150c 100%);
+  border: 3px solid #1b1a18;
+  border-radius: 50%;
+  box-shadow: 0 8px 20px rgba(160, 16, 41, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  color: white;
+  display: flex;
+  height: 52px;
+  justify-content: center;
+  width: 52px;
+}
+
+.mobile-nav-center-label {
+  color: #f4f1eb;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.mobile-nav-more-backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  bottom: 100%;
+  height: 100vh;
+  left: 0;
+  position: fixed;
+  right: 0;
+  z-index: 1;
+}
+
+.mobile-nav-more-sheet {
+  background: rgba(27, 26, 24, 0.98);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-top-left-radius: 22px;
+  border-top-right-radius: 22px;
+  bottom: 100%;
+  left: 0;
+  padding: 16px;
+  position: fixed;
+  right: 0;
+  z-index: 2;
+}
+
+.mobile-nav-more-grab {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  height: 4px;
+  margin: 0 auto 12px;
+  width: 40px;
+}
+
+.mobile-nav-more-label {
+  color: rgba(244, 241, 235, 0.6);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+.mobile-nav-more-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.mobile-nav-more-item {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 14px;
+  color: #f4f1eb;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 6px;
+  padding: 14px 6px;
+}
+
+.mobile-nav-more-item span {
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.install-banner {
+  align-items: center;
+  background: rgba(27, 26, 24, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  bottom: 16px;
+  box-shadow: 0 14px 34px rgba(27, 26, 24, 0.4);
+  display: flex;
+  gap: 8px;
+  left: 16px;
+  max-width: 280px;
+  padding: 8px 10px;
+  position: fixed;
+  z-index: 59;
+}
+
+@media (max-width: 760px) {
+  .install-banner {
+    bottom: calc(var(--bottomnav-h) + max(env(safe-area-inset-bottom, 0px), 8px) + 12px);
+  }
+}
+
+.install-banner-ios {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.install-banner-ios-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.install-banner-icon {
+  border-radius: 8px;
+  flex: none;
+  height: 26px;
+  width: 26px;
+}
+
+.install-banner p {
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.install-banner-ios-toggle {
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  flex: 1;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0;
+  text-align: left;
+}
+
+.install-banner-ios-steps {
+  color: rgba(244, 241, 235, 0.75);
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 8px 0 0;
+  max-width: 240px;
+}
+
+.install-banner-install {
+  align-items: center;
+  background: #ffcc93;
+  border: none;
+  border-radius: 50%;
+  color: #1b1a18;
+  cursor: pointer;
+  display: flex;
+  flex: none;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
+}
+
+.install-banner-dismiss {
+  background: none;
+  border: none;
+  color: rgba(244, 241, 235, 0.5);
+  cursor: pointer;
+  flex: none;
+  font-weight: 900;
+  padding: 4px;
+}

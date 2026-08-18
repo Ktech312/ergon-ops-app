@@ -22,6 +22,7 @@ import {
   LayoutDashboard,
   ListChecks,
   MapPin,
+  MoreHorizontal,
   Plus,
   Search,
   ShoppingCart,
@@ -336,6 +337,39 @@ const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
   implementation: ["dashboard", "projects", "purchasing", "inventory", "tasks"],
   support: ["dashboard", "tasks", "reports"],
   marketing: ["dashboard", "reports", "tasks"],
+};
+
+// Mobile bottom nav's center button -- v1 is a navigation shortcut to
+// whichever tab is that role's main job (E: "Sales = New Sale, PM =
+// Projects"), not an auto-opened create form. The label is deliberately
+// separate from TAB_LABELS so it can read as an action ("New Sale") even
+// though it just navigates to the Sales tab, where the create flow lives.
+const ROLE_QUICK_ACTION: Record<RoleMode, { view: View; label: string }> = {
+  warehouse: { view: "inventory", label: "Inventory" },
+  purchasing: { view: "purchasing", label: "Procurement" },
+  pm: { view: "projects", label: "Projects" },
+  manager: { view: "dashboard", label: "Dashboard" },
+  sales: { view: "sales", label: "New Sale" },
+  engineering: { view: "projects", label: "Projects" },
+  product_development: { view: "projects", label: "Projects" },
+  implementation: { view: "projects", label: "Projects" },
+  support: { view: "tasks", label: "Tasks" },
+  marketing: { view: "reports", label: "Reports" },
+};
+
+// Icon + label for each tab the mobile bottom nav can show -- kept in sync
+// with the top nav's icon choices (main app-shell header) by hand.
+const MOBILE_NAV_TAB_ICON: Record<View, (size: number) => React.ReactNode> = {
+  dashboard: (size) => <LayoutDashboard size={size} />,
+  purchasing: (size) => <ShoppingCart size={size} />,
+  inventory: (size) => <Boxes size={size} />,
+  projects: (size) => <ClipboardList size={size} />,
+  sales: (size) => <DollarSign size={size} />,
+  tasks: (size) => <ListChecks size={size} />,
+  reports: (size) => <BarChart3 size={size} />,
+  saas_calendar: (size) => <CalendarDays size={size} />,
+  admin: (size) => <User size={size} />,
+  library: (size) => <BookOpen size={size} />,
 };
 
 const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
@@ -5632,6 +5666,9 @@ function App() {
           />
         )}
       </main>
+
+      <MobileBottomNav view={view} allowedTabs={allowedTabs} roleMode={roleMode} canReviewApprovals={canReviewApprovals} onNavigate={navigateToView} />
+      <InstallAppBanner />
     </div>
   );
 }
@@ -5643,6 +5680,198 @@ function NavButton({ icon, label, active, onClick }: { icon: React.ReactNode; la
       <span>{label}</span>
     </button>
   );
+}
+
+// Mobile-only bottom nav (ported from the VLTD app's BottomNav) -- 2 tabs,
+// a center action button, 1 more tab, then "More" for anything that
+// doesn't fit. Mirrors the top header's allowedTabs instead of a fixed
+// set, so it stays correct for every role/per-user tab override.
+function MobileBottomNav({
+  view,
+  allowedTabs,
+  roleMode,
+  canReviewApprovals,
+  onNavigate,
+}: {
+  view: View;
+  allowedTabs: View[];
+  roleMode: RoleMode;
+  canReviewApprovals: boolean;
+  onNavigate: (view: View) => void;
+}) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const orderedTabs = ALL_TABS.filter((tab) => allowedTabs.includes(tab));
+  const primaryTabs = orderedTabs.slice(0, 3);
+  const overflowTabs = orderedTabs.slice(3);
+  const hasMore = overflowTabs.length > 0 || canReviewApprovals;
+  const leftTabs = primaryTabs.slice(0, 2);
+  const rightTabs = hasMore ? primaryTabs.slice(2, 3) : primaryTabs.slice(2);
+
+  const quickAction = ROLE_QUICK_ACTION[roleMode];
+  const centerTarget = allowedTabs.includes(quickAction.view) ? quickAction : { view: "dashboard" as View, label: "Dashboard" };
+
+  function go(target: View) {
+    setMoreOpen(false);
+    onNavigate(target);
+  }
+
+  return (
+    <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
+      {moreOpen && (
+        <>
+          <div className="mobile-nav-more-backdrop" onClick={() => setMoreOpen(false)} />
+          <div className="mobile-nav-more-sheet">
+            <div className="mobile-nav-more-grab" />
+            <div className="mobile-nav-more-label">More</div>
+            <div className="mobile-nav-more-grid">
+              {overflowTabs.map((tab) => (
+                <button key={tab} type="button" className="mobile-nav-more-item" onClick={() => go(tab)}>
+                  {MOBILE_NAV_TAB_ICON[tab](22)}
+                  <span>{TAB_LABELS[tab]}</span>
+                </button>
+              ))}
+              <button type="button" className="mobile-nav-more-item" onClick={() => go("library")}>
+                {MOBILE_NAV_TAB_ICON.library(22)}
+                <span>{TAB_LABELS.library}</span>
+              </button>
+              {canReviewApprovals && (
+                <button type="button" className="mobile-nav-more-item" onClick={() => go("admin")}>
+                  {MOBILE_NAV_TAB_ICON.admin(22)}
+                  <span>{TAB_LABELS.admin}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+      <div className="mobile-bottom-nav-bar">
+        {leftTabs.map((tab) => (
+          <button key={tab} type="button" className={`mobile-nav-tab ${view === tab ? "active" : ""}`} onClick={() => go(tab)}>
+            {MOBILE_NAV_TAB_ICON[tab](21)}
+            <span>{TAB_LABELS[tab]}</span>
+          </button>
+        ))}
+        <button type="button" className="mobile-nav-center" onClick={() => go(centerTarget.view)} aria-label={centerTarget.label}>
+          <span className="mobile-nav-center-button">
+            <Plus size={22} />
+          </span>
+          <span className="mobile-nav-center-label">{centerTarget.label}</span>
+        </button>
+        {rightTabs.map((tab) => (
+          <button key={tab} type="button" className={`mobile-nav-tab ${view === tab ? "active" : ""}`} onClick={() => go(tab)}>
+            {MOBILE_NAV_TAB_ICON[tab](21)}
+            <span>{TAB_LABELS[tab]}</span>
+          </button>
+        ))}
+        {hasMore && (
+          <button type="button" className={`mobile-nav-tab ${moreOpen ? "active" : ""}`} onClick={() => setMoreOpen((current) => !current)}>
+            <MoreHorizontal size={21} />
+            <span>More</span>
+          </button>
+        )}
+      </div>
+    </nav>
+  );
+}
+
+// PWA "Add to Home Screen" -- ported from the VLTD app's PWAInstallBanner.
+// Small floating pill, sits above the mobile bottom nav. Android/Chrome
+// gets the real beforeinstallprompt flow; iOS Safari has no install API,
+// so it shows tap-through instructions instead of doing nothing.
+type BeforeInstallPromptEvent = Event & {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+
+const INSTALL_DISMISSED_KEY = "ergon:pwaInstallDismissedUntil";
+const INSTALL_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+
+function InstallAppBanner() {
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isIOS, setIsIOS] = useState(false);
+  const [show, setShow] = useState(false);
+  const [iosExpanded, setIosExpanded] = useState(false);
+
+  useEffect(() => {
+    if (window.matchMedia("(display-mode: standalone)").matches) {
+      return;
+    }
+    const until = window.localStorage.getItem(INSTALL_DISMISSED_KEY);
+    if (until && Date.now() < Number(until)) {
+      return;
+    }
+    const ua = navigator.userAgent;
+    if (/iphone|ipad|ipod/i.test(ua) && !/crios/i.test(ua)) {
+      setIsIOS(true);
+      setShow(true);
+      return;
+    }
+    function handler(event: Event) {
+      event.preventDefault();
+      setDeferredPrompt(event as BeforeInstallPromptEvent);
+      setShow(true);
+    }
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  function dismiss() {
+    window.localStorage.setItem(INSTALL_DISMISSED_KEY, String(Date.now() + INSTALL_COOLDOWN_MS));
+    setShow(false);
+    setDeferredPrompt(null);
+  }
+
+  async function install() {
+    if (!deferredPrompt) {
+      return;
+    }
+    await deferredPrompt.prompt();
+    const result = await deferredPrompt.userChoice;
+    if (result.outcome === "accepted") {
+      window.localStorage.removeItem(INSTALL_DISMISSED_KEY);
+    }
+    setShow(false);
+    setDeferredPrompt(null);
+  }
+
+  if (!show) {
+    return null;
+  }
+
+  if (deferredPrompt) {
+    return (
+      <div className="install-banner">
+        <img src="/ergon-icon.png" alt="Ergon" className="install-banner-icon" />
+        <p>Add to Home Screen</p>
+        <button type="button" className="install-banner-install" onClick={() => void install()} aria-label="Install">
+          <Download size={13} />
+        </button>
+        <button type="button" className="install-banner-dismiss" onClick={dismiss} aria-label="Dismiss">x</button>
+      </div>
+    );
+  }
+
+  if (isIOS) {
+    return (
+      <div className="install-banner install-banner-ios">
+        <div className="install-banner-ios-row">
+          <img src="/ergon-icon.png" alt="Ergon" className="install-banner-icon" />
+          <button type="button" className="install-banner-ios-toggle" onClick={() => setIosExpanded((current) => !current)}>
+            Tap Share &rarr; Add to Home Screen
+          </button>
+          <button type="button" className="install-banner-dismiss" onClick={dismiss} aria-label="Dismiss">x</button>
+        </div>
+        {iosExpanded && (
+          <p className="install-banner-ios-steps">
+            1. Tap the Share icon in Safari's toolbar.<br />
+            2. Scroll down and tap "Add to Home Screen."
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function pageTitle(view: View) {
