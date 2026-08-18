@@ -5421,6 +5421,17 @@ td.empty-compact-state {
   --bottomnav-h: 64px;
 }
 
+/* Every modal in the app opens as a fixed, full-screen .modal-backdrop
+   (z-index 20) -- the persistent bottom nav/install banner (z-index 59-60)
+   sat above that, so a modal's own bottom controls (e.g. the camera
+   capture modal's zoom/capture row) fought with the nav bar for the same
+   screen space. Hide both while any modal is open -- the modal owns the
+   whole screen at that point, nothing to navigate away to anyway. */
+body:has(.modal-backdrop) .mobile-bottom-nav,
+body:has(.modal-backdrop) .install-banner {
+  display: none;
+}
+
 .mobile-bottom-nav {
   display: none;
 }
