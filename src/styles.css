@@ -2413,7 +2413,7 @@ td small.quote-ref-tag {
   column-gap: 16px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  row-gap: 22px;
+  row-gap: 12px;
 }
 
 .form-grid label,
@@ -2423,7 +2423,7 @@ td small.quote-ref-tag {
   display: grid;
   font-size: 13px;
   font-weight: 800;
-  gap: 7px;
+  gap: 4px;
   justify-items: start;
 }
 
@@ -2437,11 +2437,11 @@ td small.quote-ref-tag {
 .sow-grid textarea {
   background: #fffdf9;
   border: 1px solid #ded7cb;
-  border-radius: 8px;
+  border-radius: 7px;
   color: #1b1a18;
   font: inherit;
-  min-height: 42px;
-  padding: 10px 12px;
+  min-height: 34px;
+  padding: 7px 10px;
   width: 100%;
 }
 
@@ -2457,36 +2457,16 @@ td small.quote-ref-tag {
 
 .form-grid textarea,
 .sow-grid textarea {
-  min-height: 84px;
+  min-height: 56px;
   resize: vertical;
 }
 
-/* Project Information edit modal -- E: "needs to be more compact, we have
-   a lot more to go on it eventually." Scoped to this one form (paired with
-   .form-grid on the same element) so Handover/Site Intake/etc, which also
-   use plain .form-grid, are untouched. */
-.form-grid.form-grid-compact {
-  row-gap: 12px;
-}
-
-.form-grid.form-grid-compact label {
-  gap: 4px;
-}
-
-.form-grid.form-grid-compact input,
-.form-grid.form-grid-compact select,
-.form-grid.form-grid-compact textarea {
-  min-height: 34px;
-  padding: 7px 10px;
-}
-
-.form-grid.form-grid-compact textarea {
-  min-height: 56px;
-}
-
+/* Scope of Work fields hold real paragraph content (not a one-line note),
+   so they keep more room to write in -- this is about writing space, not
+   the "spread out" spacing problem the tightening pass fixes elsewhere. */
 .sow-grid textarea {
   line-height: 1.45;
-  min-height: 110px;
+  min-height: 100px;
 }
 
 .span-2 {
@@ -2906,16 +2886,19 @@ td small.quote-ref-tag {
 
 .bom-modal-grid {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 /* #179-184 -- sections a longer modal form (Site/Company/Contact Info)
-   into clearly divided groups, used by SiteContactFields. */
+   into clearly divided groups, used by SiteContactFields. E: "tighten all
+   of these up... I need this to all fit on one screen" -- was 18px
+   margin/16px padding, cut down site-wide since every section divider in
+   the app was contributing to the same "spread out" problem. */
 .modal-section {
   border-top: 1px solid #e8e1d5;
-  margin-top: 18px;
-  padding-top: 16px;
+  margin-top: 8px;
+  padding-top: 8px;
 }
 
 .modal-section:first-child {
@@ -2930,32 +2913,11 @@ td small.quote-ref-tag {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.03em;
-  margin-bottom: 10px;
+  margin-bottom: 4px;
   text-transform: uppercase;
 }
 
-/* E: "tighten all of these up... I need this to all fit on one screen" --
-   a much lower-overhead section divider for fast-entry forms
-   (SiteContactFields, Sale Amount, SaaS Contract) where the full
-   .modal-section spacing (18px margin + 16px padding + border) reads as
-   wasted space between what's really just a few short lines each. */
-.modal-section-tight {
-  border-top: 1px solid #efe9dd;
-  margin-top: 8px;
-  padding-top: 8px;
-}
-
-.modal-section-tight:first-child {
-  border-top: none;
-  margin-top: 0;
-  padding-top: 0;
-}
-
-.modal-section-tight .modal-section-title {
-  margin-bottom: 4px;
-}
-
-.modal-section-tight > p.muted {
+.modal-section > p.muted {
   font-size: 12px;
   margin: 0 0 6px;
 }
@@ -3094,7 +3056,7 @@ td small.quote-ref-tag {
   display: grid;
   font-size: 13px;
   font-weight: 800;
-  gap: 7px;
+  gap: 3px;
 }
 
 .bom-modal-grid .field-group {
@@ -3102,7 +3064,7 @@ td small.quote-ref-tag {
   display: grid;
   font-size: 13px;
   font-weight: 800;
-  gap: 7px;
+  gap: 3px;
 }
 
 .datasheet-upload-row {
@@ -3117,15 +3079,15 @@ td small.quote-ref-tag {
 .bom-modal-grid textarea {
   background: #fffdf9;
   border: 1px solid #ded7cb;
-  border-radius: 8px;
+  border-radius: 7px;
   color: #1b1a18;
   font: inherit;
-  min-height: 42px;
-  padding: 10px 12px;
+  min-height: 34px;
+  padding: 6px 10px;
 }
 
 .bom-modal-grid textarea {
-  min-height: 84px;
+  min-height: 60px;
   resize: vertical;
 }
 
@@ -3173,9 +3135,9 @@ td small.quote-ref-tag {
 .compact-edit-section {
   border-top: 1px solid #e8e1d5;
   display: grid;
-  gap: 12px;
-  margin-top: 16px;
-  padding-top: 14px;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
 }
 
 .compact-section-header {
