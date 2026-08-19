@@ -2934,6 +2934,45 @@ td small.quote-ref-tag {
   text-transform: uppercase;
 }
 
+/* Address Book -- one tight bordered card per address (Client/Billing/
+   each Shipping entry), matching a physical address-book card: name,
+   address, then two phone fields per row. Deliberately snugger than
+   .modal-section (this is meant to read as "one clean card," not a form
+   section with lots of breathing room). */
+.address-card {
+  background: #faf8f4;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.address-card + .address-card {
+  margin-top: 12px;
+}
+
+.address-card-title {
+  color: #a01029;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.address-card-title-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.address-card .tight-form-row {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
 /* #190 -- SiteContactFields rebuilt as tight bordered rows (medical-intake-
    form reference) instead of a CSS Grid. A shared grid/table forces every
    field in the same column to match the widest field's width -- there is no

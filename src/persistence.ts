@@ -4611,6 +4611,19 @@ export type ProjectSite = {
   // shipment the way a delivery address does") -- not a saved list like
   // shippingAddresses.
   billingAddress?: string;
+  // Migration 078: Address Book redesign -- every address (Client, Billing,
+  // and each Shipping entry) gets the same complete card: Name(s), Address,
+  // Home/Cell/Work/Office phone. "Same as Client" in the UI is a one-time
+  // copy-in, not a persisted link -- these stay independently editable.
+  clientHomePhone?: string;
+  clientCellPhone?: string;
+  clientWorkPhone?: string;
+  clientOfficePhone?: string;
+  billingName?: string;
+  billingHomePhone?: string;
+  billingCellPhone?: string;
+  billingWorkPhone?: string;
+  billingOfficePhone?: string;
 };
 
 // Migration 072: PM shipping requests, fulfilled by Warehouse/
@@ -4625,8 +4638,14 @@ export type ProjectShippingAddress = {
   city: string;
   state: string;
   zip: string;
+  // Migration 078: Address Book redesign -- attnName is shown as "Name(s)"
+  // and phone as "Office" in the tight-card UI (same columns, just relabeled
+  // so the field set matches Client/Billing's Name(s)/Home/Cell/Work/Office).
   attnName: string;
   phone: string;
+  homePhone: string;
+  cellPhone: string;
+  workPhone: string;
   lineSort: number;
 };
 
@@ -4816,6 +4835,9 @@ type ProjectShippingAddressRow = {
   zip: string | null;
   attn_name: string | null;
   phone: string | null;
+  home_phone: string | null;
+  cell_phone: string | null;
+  work_phone: string | null;
   line_sort: number;
 };
 
@@ -4830,11 +4852,14 @@ function mapProjectShippingAddressRow(row: ProjectShippingAddressRow): ProjectSh
     zip: row.zip ?? "",
     attnName: row.attn_name ?? "",
     phone: row.phone ?? "",
+    homePhone: row.home_phone ?? "",
+    cellPhone: row.cell_phone ?? "",
+    workPhone: row.work_phone ?? "",
     lineSort: row.line_sort,
   };
 }
 
-const PROJECT_SHIPPING_ADDRESS_SELECT = "id,project_id,label,street_address,city,state,zip,attn_name,phone,line_sort";
+const PROJECT_SHIPPING_ADDRESS_SELECT = "id,project_id,label,street_address,city,state,zip,attn_name,phone,home_phone,cell_phone,work_phone,line_sort";
 
 type ProjectShipmentLineRow = {
   id: string;
@@ -4951,10 +4976,19 @@ type ProjectSiteRow = {
   subcontractor_cost: number | string | null;
   travel_expenses: number | string | null;
   billing_address: string | null;
+  client_home_phone: string | null;
+  client_cell_phone: string | null;
+  client_work_phone: string | null;
+  client_office_phone: string | null;
+  billing_name: string | null;
+  billing_home_phone: string | null;
+  billing_cell_phone: string | null;
+  billing_work_phone: string | null;
+  billing_office_phone: string | null;
 };
 
 const PROJECT_SITE_SELECT =
-  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -5013,6 +5047,15 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
     subcontractorCost: row.subcontractor_cost === null || row.subcontractor_cost === undefined ? null : Number(row.subcontractor_cost),
     travelExpenses: row.travel_expenses === null || row.travel_expenses === undefined ? null : Number(row.travel_expenses),
     billingAddress: row.billing_address ?? "",
+    clientHomePhone: row.client_home_phone ?? "",
+    clientCellPhone: row.client_cell_phone ?? "",
+    clientWorkPhone: row.client_work_phone ?? "",
+    clientOfficePhone: row.client_office_phone ?? "",
+    billingName: row.billing_name ?? "",
+    billingHomePhone: row.billing_home_phone ?? "",
+    billingCellPhone: row.billing_cell_phone ?? "",
+    billingWorkPhone: row.billing_work_phone ?? "",
+    billingOfficePhone: row.billing_office_phone ?? "",
   };
 }
 
@@ -5060,6 +5103,15 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
     subcontractor_cost: site.subcontractorCost ?? null,
     travel_expenses: site.travelExpenses ?? null,
     billing_address: site.billingAddress || null,
+    client_home_phone: site.clientHomePhone || null,
+    client_cell_phone: site.clientCellPhone || null,
+    client_work_phone: site.clientWorkPhone || null,
+    client_office_phone: site.clientOfficePhone || null,
+    billing_name: site.billingName || null,
+    billing_home_phone: site.billingHomePhone || null,
+    billing_cell_phone: site.billingCellPhone || null,
+    billing_work_phone: site.billingWorkPhone || null,
+    billing_office_phone: site.billingOfficePhone || null,
   }));
 
   const projectResponse = await fetch(supabaseUrl("projects?on_conflict=project_name"), {
@@ -6943,7 +6995,7 @@ export async function deleteProjectLocationImage(imageId: string, storagePath: s
 
 export async function addProjectShippingAddress(
   projectId: string,
-  address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string },
+  address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string; homePhone?: string; cellPhone?: string; workPhone?: string },
   lineSort: number,
   accessToken?: string,
 ): Promise<ProjectShippingAddress | null> {
@@ -6962,6 +7014,9 @@ export async function addProjectShippingAddress(
       zip: address.zip,
       attn_name: address.attnName,
       phone: address.phone,
+      home_phone: address.homePhone || null,
+      cell_phone: address.cellPhone || null,
+      work_phone: address.workPhone || null,
       line_sort: lineSort,
     }),
   });

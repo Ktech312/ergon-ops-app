@@ -2855,7 +2855,7 @@ function App() {
   // Requested -> Packed (photos) -> Shipped (carrier + tracking).
   async function handleAddProjectShippingAddress(
     projectRef: string,
-    address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string },
+    address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string; homePhone?: string; cellPhone?: string; workPhone?: string },
   ) {
     if (!authSession) {
       return;
@@ -8537,7 +8537,7 @@ function Projects({
   onUpdateProjectLocationImageDescription: (projectRef: string, locationId: string, imageId: string, description: string) => void;
   onUpdateProjectLocationImageMeta: (projectRef: string, locationId: string, imageId: string, updates: { fileName: string; description: string }) => Promise<boolean>;
   onMoveProjectLocationImage: (projectRef: string, fromLocationId: string, imageId: string, targetLocationId: string) => Promise<boolean>;
-  onAddProjectShippingAddress: (projectRef: string, address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string }) => void;
+  onAddProjectShippingAddress: (projectRef: string, address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string; homePhone?: string; cellPhone?: string; workPhone?: string }) => void;
   onAddProjectShipment: (projectRef: string, addressId: string | null, addressSnapshot: string, notes: string, lines: Array<{ itemName: string; qty: number }>) => void;
   onMarkProjectShipmentPacked: (projectRef: string, shipmentId: string) => void;
   onMarkProjectShipmentShipped: (projectRef: string, shipmentId: string, carrier: string, trackingNumber: string) => void;
@@ -8590,7 +8590,7 @@ function Projects({
     travelExpenses: null,
   });
   const [showAddressBookModal, setShowAddressBookModal] = useState(false);
-  const [newProjectShippingAddressDraft, setNewProjectShippingAddressDraft] = useState({ label: "", attnName: "", streetAddress: "", city: "", state: "", zip: "", phone: "" });
+  const [newProjectShippingAddressDraft, setNewProjectShippingAddressDraft] = useState({ label: "", attnName: "", streetAddress: "", city: "", state: "", zip: "", phone: "", homePhone: "", cellPhone: "", workPhone: "" });
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
     item: parts[0].name,
@@ -9699,57 +9699,121 @@ function Projects({
             <div className="modal-header">
               <div>
                 <h2 id="address-book-title">Address Book</h2>
-                <p>Client, Billing, and Shipping addresses for this project, all in one place.</p>
+                <p>Client, Billing, and Shipping -- one clean card each.</p>
               </div>
               <button className="icon-button" type="button" onClick={() => setShowAddressBookModal(false)} aria-label="Close">x</button>
             </div>
 
-            <div className="modal-section">
-              <span className="modal-section-title">Client Address</span>
-              <div className="bom-modal-grid">
-                <label className="span-2">
-                  Client address
-                  <input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} />
-                </label>
+            <div className="address-card">
+              <span className="address-card-title">Client</span>
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-wide"><span>Name(s)</span><input value={selectedProject.client} onChange={(event) => updateProjectField("client", event.target.value)} /></label>
+                <label className="tight-field tight-field-wide"><span>Address</span><input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} /></label>
+              </div>
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-medium"><span>Home Phone</span><input value={selectedProject.clientHomePhone ?? ""} onChange={(event) => updateProjectField("clientHomePhone", event.target.value)} /></label>
+                <label className="tight-field tight-field-medium"><span>Cellphone</span><input value={selectedProject.clientCellPhone ?? ""} onChange={(event) => updateProjectField("clientCellPhone", event.target.value)} /></label>
+                <label className="tight-field tight-field-medium"><span>Work Phone</span><input value={selectedProject.clientWorkPhone ?? ""} onChange={(event) => updateProjectField("clientWorkPhone", event.target.value)} /></label>
+                <label className="tight-field tight-field-medium"><span>Office</span><input value={selectedProject.clientOfficePhone ?? ""} onChange={(event) => updateProjectField("clientOfficePhone", event.target.value)} /></label>
               </div>
             </div>
 
-            <div className="modal-section">
-              <span className="modal-section-title">Billing Address</span>
-              <div className="bom-modal-grid">
-                <label className="span-2">
-                  Billing address
+            <div className="address-card">
+              <div className="address-card-title-row">
+                <span className="address-card-title">Billing</span>
+                <label className="checkbox-inline">
                   <input
-                    value={selectedProject.billingAddress ?? ""}
-                    placeholder="Leave blank if same as Client Address"
-                    onChange={(event) => updateProjectField("billingAddress", event.target.value)}
+                    type="checkbox"
+                    onChange={(event) => {
+                      if (!event.target.checked) {
+                        return;
+                      }
+                      updateSelectedProject((project) => ({
+                        ...project,
+                        billingName: project.client,
+                        billingAddress: project.address,
+                        billingHomePhone: project.clientHomePhone ?? "",
+                        billingCellPhone: project.clientCellPhone ?? "",
+                        billingWorkPhone: project.clientWorkPhone ?? "",
+                        billingOfficePhone: project.clientOfficePhone ?? "",
+                      }));
+                    }}
                   />
+                  Same as Client
                 </label>
+              </div>
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-wide"><span>Name(s)</span><input value={selectedProject.billingName ?? ""} onChange={(event) => updateProjectField("billingName", event.target.value)} /></label>
+                <label className="tight-field tight-field-wide"><span>Address</span><input value={selectedProject.billingAddress ?? ""} onChange={(event) => updateProjectField("billingAddress", event.target.value)} /></label>
+              </div>
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-medium"><span>Home Phone</span><input value={selectedProject.billingHomePhone ?? ""} onChange={(event) => updateProjectField("billingHomePhone", event.target.value)} /></label>
+                <label className="tight-field tight-field-medium"><span>Cellphone</span><input value={selectedProject.billingCellPhone ?? ""} onChange={(event) => updateProjectField("billingCellPhone", event.target.value)} /></label>
+                <label className="tight-field tight-field-medium"><span>Work Phone</span><input value={selectedProject.billingWorkPhone ?? ""} onChange={(event) => updateProjectField("billingWorkPhone", event.target.value)} /></label>
+                <label className="tight-field tight-field-medium"><span>Office</span><input value={selectedProject.billingOfficePhone ?? ""} onChange={(event) => updateProjectField("billingOfficePhone", event.target.value)} /></label>
               </div>
             </div>
 
-            <div className="modal-section">
-              <span className="modal-section-title">Shipping Addresses</span>
+            <div className="address-card">
+              <span className="address-card-title">Shipping</span>
               <ul className="line-list">
                 {(selectedProject.shippingAddresses ?? []).map((address) => (
                   <li className="line-item" key={address.id}>
                     <div>
-                      <strong>{address.label || address.streetAddress}</strong>
-                      <span>{address.attnName ? `Attn: ${address.attnName} -- ` : ""}{address.streetAddress}, {address.city}, {address.state} {address.zip}</span>
-                      {address.phone && <span>{address.phone}</span>}
+                      <strong>{address.label ? `${address.label} -- ` : ""}{address.attnName || "Name(s) not set"}</strong>
+                      <span>{address.streetAddress}, {address.city}, {address.state} {address.zip}</span>
+                      <span>
+                        {[
+                          address.homePhone && `Home ${address.homePhone}`,
+                          address.cellPhone && `Cell ${address.cellPhone}`,
+                          address.workPhone && `Work ${address.workPhone}`,
+                          address.phone && `Office ${address.phone}`,
+                        ].filter(Boolean).join(" -- ") || "No phone numbers set"}
+                      </span>
                     </div>
                   </li>
                 ))}
                 {(selectedProject.shippingAddresses ?? []).length === 0 && <li className="empty-compact-state">No saved shipping addresses yet.</li>}
               </ul>
-              <div className="bom-modal-grid">
-                <label>Label<input value={newProjectShippingAddressDraft.label} placeholder="e.g. Garage A, Client office" onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, label: event.target.value }))} /></label>
-                <label>Attn<input value={newProjectShippingAddressDraft.attnName} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, attnName: event.target.value }))} /></label>
-                <label className="span-2">Street address<input value={newProjectShippingAddressDraft.streetAddress} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, streetAddress: event.target.value }))} /></label>
-                <label>City<input value={newProjectShippingAddressDraft.city} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, city: event.target.value }))} /></label>
-                <label>State<input value={newProjectShippingAddressDraft.state} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, state: event.target.value }))} /></label>
-                <label>Zip<input value={newProjectShippingAddressDraft.zip} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, zip: event.target.value }))} /></label>
-                <label>Phone<input value={newProjectShippingAddressDraft.phone} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, phone: event.target.value }))} /></label>
+
+              <div className="address-card-title-row">
+                <span className="muted">New shipping address</span>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    onChange={(event) => {
+                      if (!event.target.checked) {
+                        return;
+                      }
+                      setNewProjectShippingAddressDraft((current) => ({
+                        ...current,
+                        attnName: selectedProject.client,
+                        streetAddress: selectedProject.address,
+                        homePhone: selectedProject.clientHomePhone ?? "",
+                        cellPhone: selectedProject.clientCellPhone ?? "",
+                        workPhone: selectedProject.clientWorkPhone ?? "",
+                        phone: selectedProject.clientOfficePhone ?? "",
+                      }));
+                    }}
+                  />
+                  Same as Client
+                </label>
+              </div>
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-medium"><span>Label</span><input value={newProjectShippingAddressDraft.label} placeholder="e.g. Garage A" onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, label: event.target.value }))} /></label>
+                <label className="tight-field tight-field-wide"><span>Name(s)</span><input value={newProjectShippingAddressDraft.attnName} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, attnName: event.target.value }))} /></label>
+              </div>
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-wide"><span>Street address</span><input value={newProjectShippingAddressDraft.streetAddress} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, streetAddress: event.target.value }))} /></label>
+                <label className="tight-field tight-field-medium"><span>City</span><input value={newProjectShippingAddressDraft.city} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, city: event.target.value }))} /></label>
+                <label className="tight-field tight-field-medium"><span>State</span><input value={newProjectShippingAddressDraft.state} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, state: event.target.value }))} /></label>
+                <label className="tight-field tight-field-medium"><span>Zip</span><input value={newProjectShippingAddressDraft.zip} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, zip: event.target.value }))} /></label>
+              </div>
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-medium"><span>Home Phone</span><input value={newProjectShippingAddressDraft.homePhone} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, homePhone: event.target.value }))} /></label>
+                <label className="tight-field tight-field-medium"><span>Cellphone</span><input value={newProjectShippingAddressDraft.cellPhone} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, cellPhone: event.target.value }))} /></label>
+                <label className="tight-field tight-field-medium"><span>Work Phone</span><input value={newProjectShippingAddressDraft.workPhone} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, workPhone: event.target.value }))} /></label>
+                <label className="tight-field tight-field-medium"><span>Office</span><input value={newProjectShippingAddressDraft.phone} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, phone: event.target.value }))} /></label>
               </div>
               <button
                 className="secondary-action mini-action"
@@ -9757,7 +9821,7 @@ function Projects({
                 disabled={!newProjectShippingAddressDraft.streetAddress.trim()}
                 onClick={() => {
                   onAddProjectShippingAddress(selectedProject.ref, newProjectShippingAddressDraft);
-                  setNewProjectShippingAddressDraft({ label: "", attnName: "", streetAddress: "", city: "", state: "", zip: "", phone: "" });
+                  setNewProjectShippingAddressDraft({ label: "", attnName: "", streetAddress: "", city: "", state: "", zip: "", phone: "", homePhone: "", cellPhone: "", workPhone: "" });
                 }}
               >
                 <Plus size={14} /> Add Shipping Address
@@ -14723,7 +14787,7 @@ function ProjectShippingSection({
   onGetPhotoUrl,
 }: {
   project: ProjectSite;
-  onAddAddress: (address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string }) => void;
+  onAddAddress: (address: { label: string; streetAddress: string; city: string; state: string; zip: string; attnName: string; phone: string; homePhone?: string; cellPhone?: string; workPhone?: string }) => void;
   onAddShipment: (addressId: string | null, addressSnapshot: string, notes: string, lines: Array<{ itemName: string; qty: number }>) => void;
   onMarkPacked: (shipmentId: string) => void;
   onMarkShipped: (shipmentId: string, carrier: string, trackingNumber: string) => void;
@@ -14737,7 +14801,7 @@ function ProjectShippingSection({
   const [selectedShipmentId, setSelectedShipmentId] = useState<string | null>(null);
   const selectedShipment = shipments.find((shipment) => shipment.id === selectedShipmentId) ?? null;
 
-  const emptyAddressDraft = { label: "", streetAddress: "", city: "", state: "", zip: "", attnName: "", phone: "" };
+  const emptyAddressDraft = { label: "", streetAddress: "", city: "", state: "", zip: "", attnName: "", phone: "", homePhone: "", cellPhone: "", workPhone: "" };
   const [newAddressDraft, setNewAddressDraft] = useState(emptyAddressDraft);
   const [isAddingNewAddress, setIsAddingNewAddress] = useState(addresses.length === 0);
   const [selectedAddressId, setSelectedAddressId] = useState("");
