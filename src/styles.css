@@ -3529,10 +3529,14 @@ tr:hover .row-delete-btn,
 .quote-hardware-summary-list li span {
   color: #756d62;
   font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .quote-hardware-summary-list li strong {
+  flex: none;
   font-size: 13px;
+  margin-left: 10px;
 }
 
 .quote-image-line-item {
@@ -3678,6 +3682,7 @@ tr:hover .row-delete-btn,
 
 .camera-capture-review-description {
   flex: 1;
+  min-width: 0;
 }
 
 /* #198 -- the camera opens to a Single Photo / Batch Images choice instead
@@ -3711,6 +3716,7 @@ tr:hover .row-delete-btn,
   display: flex;
   flex: 1;
   gap: 6px;
+  min-width: 0;
 }
 
 .camera-capture-name-prefix {
@@ -4384,9 +4390,14 @@ td.empty-compact-state {
 .build-confirm-list span {
   color: #514b43;
   font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .build-confirm-list b {
+  flex: none;
   white-space: nowrap;
 }
 
@@ -4522,6 +4533,7 @@ td.empty-compact-state {
 .task-modal-footer-left {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -4803,6 +4815,7 @@ td.empty-compact-state {
 .line-item div {
   display: grid;
   gap: 3px;
+  min-width: 0;
 }
 
 .line-item strong {
@@ -5129,7 +5142,8 @@ td.empty-compact-state {
   .roster-add-row,
   .report-filter-row,
   .manufactured-inventory-head,
-  .manufactured-inventory-row {
+  .manufactured-inventory-row,
+  .location-line-fields {
     grid-template-columns: 1fr;
   }
 

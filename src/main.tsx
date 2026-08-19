@@ -9798,7 +9798,7 @@ function Projects({
                   <table className="stack-table-mobile">
                     <thead><tr><th>Item</th><th>Qty</th></tr></thead>
                     <tbody>
-                      {bomImportRows.map((row, index) => <tr key={index}><td>{row.item}</td><td>{row.qty}</td></tr>)}
+                      {bomImportRows.map((row, index) => <tr key={index}><td data-label="Item">{row.item}</td><td data-label="Qty">{row.qty}</td></tr>)}
                     </tbody>
                   </table>
                   <div className="report-filter-row">
@@ -12896,11 +12896,11 @@ function SalesCatalog({
                   <tbody>
                     {importRows.map((row, index) => (
                       <tr key={index}>
-                        <td>{row.productName}</td>
-                        <td>{(row.tags ?? []).join(", ")}</td>
-                        <td>{row.manufacturer}</td>
-                        <td>{money(row.defaultSellPrice)}</td>
-                        <td>{row.linkedReference}</td>
+                        <td data-label="Product">{row.productName}</td>
+                        <td data-label="Tags (from source category)">{(row.tags ?? []).join(", ")}</td>
+                        <td data-label="Manufacturer">{row.manufacturer}</td>
+                        <td data-label="Sell Price">{money(row.defaultSellPrice)}</td>
+                        <td data-label="Linked Ref">{row.linkedReference}</td>
                       </tr>
                     ))}
                   </tbody>
