@@ -2802,6 +2802,13 @@ td small.quote-ref-tag {
   padding-bottom: 12px;
 }
 
+.modal-header-actions {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
 .modal-header h2 {
   font-size: 20px;
   margin: 0;

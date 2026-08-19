@@ -13086,7 +13086,10 @@ type NewSiteInput = typeof EMPTY_NEW_QUOTE_DRAFT;
 // queued in IndexedDB (see persistence.ts's offline photo queue) instead of
 // being lost -- App.flushPendingSitePhotos uploads it automatically once
 // the connection comes back.
-type CapturedPhoto = { id: string; blob: Blob; previewUrl: string; name: string };
+// extension is only set for device-uploaded photos (preserves the real
+// file type, e.g. ".png"/".heic") -- camera captures leave it unset and
+// saveAll() falls back to ".jpg" (canvas.toBlob always produces jpeg).
+type CapturedPhoto = { id: string; blob: Blob; previewUrl: string; name: string; extension?: string };
 
 function sanitizePhotoNameSegment(value: string): string {
   return value.replace(/[\\/:*?"<>|]+/g, "-").trim();
@@ -13097,6 +13100,11 @@ const DOCUMENT_UPLOAD_EXTENSIONS = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".
 function extensionOfFileName(fileName: string): string {
   const match = fileName.toLowerCase().match(/\.[^.]+$/);
   return match ? match[0] : "";
+}
+
+function stripFileExtension(fileName: string): string {
+  const extension = extensionOfFileName(fileName);
+  return extension ? fileName.slice(0, -extension.length) : fileName;
 }
 
 function isAllowedPhotoFile(file: File): boolean {
@@ -13433,21 +13441,58 @@ function CameraCaptureModal({
     );
   }
 
+  // Shared by the camera-error fallback picker (single file) and the
+  // header's "Upload from device" picker (one or many). Uploaded photos
+  // default their rename field to the original file name (minus
+  // extension) instead of blank, per E's request -- the file "already has
+  // a name," renaming should be an edit, not starting from scratch.
+  function addPickedFiles(files: File[]): boolean {
+    const accepted = files.filter(isAllowedPhotoFile);
+    if (accepted.length < files.length) {
+      window.alert("Photos only accept image files. Use Files for PDF, Word, Excel, CAD, and other documents.");
+    }
+    if (accepted.length === 0) {
+      return false;
+    }
+    const newPhotos: CapturedPhoto[] = accepted.map((file) => ({
+      id: makeId("photo"),
+      blob: file,
+      previewUrl: URL.createObjectURL(file),
+      name: sanitizePhotoNameSegment(stripFileExtension(file.name)),
+      extension: extensionOfFileName(file.name) || ".jpg",
+    }));
+    setPhotos((current) => [...current, ...newPhotos]);
+    return true;
+  }
+
   function handleFilePicked(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) {
-      if (!isAllowedPhotoFile(file)) {
-        window.alert("Photos only accept image files. Use Files for PDF, Word, Excel, CAD, and other documents.");
-        event.target.value = "";
-        return;
-      }
-      const previewUrl = URL.createObjectURL(file);
-      setPhotos((current) => [...current, { id: makeId("photo"), blob: file, previewUrl, name: "" }]);
-      if (!batchMode) {
-        setPhase("review");
-      }
-    }
     event.target.value = "";
+    if (!file) {
+      return;
+    }
+    const added = addPickedFiles([file]);
+    if (added && !batchMode) {
+      setPhase("review");
+    }
+  }
+
+  // The always-visible header upload button -- accepts one or many files
+  // from the device's local storage/gallery (no `capture` attribute, so it
+  // opens the real file picker, not the camera) and goes straight to the
+  // same rename/review screen captured photos use, whether it's one file
+  // or a batch.
+  function handleFilesUploaded(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0) {
+      return;
+    }
+    const added = addPickedFiles(files);
+    if (added) {
+      stopCamera();
+      setPhase("review");
+    }
   }
 
   function discardPhoto(id: string) {
@@ -13477,7 +13522,7 @@ function CameraCaptureModal({
     let queuedOffline = 0;
     for (const photo of photos) {
       const namedSegment = sanitizePhotoNameSegment(photo.name) || "photo";
-      const fileName = `${sanitizePhotoNameSegment(locationName)} - ${namedSegment}.jpg`;
+      const fileName = `${sanitizePhotoNameSegment(locationName)} - ${namedSegment}${photo.extension || ".jpg"}`;
       const fileType = photo.blob.type || "image/jpeg";
       const file = new File([photo.blob], fileName, { type: fileType });
       let ok = false;
@@ -13534,7 +13579,13 @@ function CameraCaptureModal({
                   : "Name each photo (it's saved as \"" + locationName + " - <name>\"), discard any you don't want, then save."}
             </p>
           </div>
-          <button className="icon-button" type="button" onClick={handleClose} aria-label="Close camera">x</button>
+          <div className="modal-header-actions">
+            <label className="icon-button hidden-file-label" title="Upload from device">
+              <Upload size={16} />
+              <input type="file" accept="image/*" multiple onChange={handleFilesUploaded} aria-label="Upload photos from device" />
+            </label>
+            <button className="icon-button" type="button" onClick={handleClose} aria-label="Close camera">x</button>
+          </div>
         </div>
 
         {phase === "choose" && (
