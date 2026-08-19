@@ -9800,7 +9800,7 @@ function Projects({
                   <li className="line-item" key={address.id}>
                     <div>
                       <strong>{address.label ? `${address.label} -- ` : ""}{address.attnName || "Name(s) not set"}</strong>
-                      <span>{address.streetAddress}, {address.city}, {address.state} {address.zip}</span>
+                      <span>{formatStreetCityStateZip(address)}</span>
                       <span>
                         {[
                           address.homePhone && `Home ${address.homePhone}`,
@@ -14810,6 +14810,23 @@ function LocationItemLineSection({
   );
 }
 
+// Joins only the address parts that are actually filled in, so a
+// street-only address (e.g. one copied in from "Same as Client," which has
+// no separate city/state/zip to offer) doesn't end up with dangling ", , "
+// commas from blank fields.
+function formatStreetCityStateZip(address: { streetAddress: string; city: string; state: string; zip: string }): string {
+  const cityStateZip = [address.city, [address.state, address.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  return [address.streetAddress, cityStateZip].filter(Boolean).join(", ");
+}
+
+// Builds the one-line address text a shipment keeps as a permanent record
+// (addressSnapshot -- the saved address it points to can change later, this
+// can't).
+function formatShippingAddressSnapshot(address: { label: string; streetAddress: string; city: string; state: string; zip: string }): string {
+  const full = formatStreetCityStateZip(address);
+  return address.label ? `${address.label} -- ${full}` : full;
+}
+
 // PM shipping requests, fulfilled by Warehouse/Implementation: PM picks BOM
 // lines + qty and a saved (or new) address, Warehouse packs it (photos
 // prove what went in the box/pallet) then ships it (carrier + tracking) --
@@ -14894,9 +14911,9 @@ function ProjectShippingSection({
     }
     const address = addresses.find((entry) => entry.id === selectedAddressId);
     const addressSnapshot = isAddingNewAddress
-      ? `${newAddressDraft.label ? `${newAddressDraft.label} -- ` : ""}${newAddressDraft.streetAddress}, ${newAddressDraft.city}, ${newAddressDraft.state} ${newAddressDraft.zip}`
+      ? formatShippingAddressSnapshot(newAddressDraft)
       : address
-        ? `${address.label ? `${address.label} -- ` : ""}${address.streetAddress}, ${address.city}, ${address.state} ${address.zip}`
+        ? formatShippingAddressSnapshot(address)
         : "";
     onAddShipment(isAddingNewAddress ? null : selectedAddressId || null, addressSnapshot, shipmentNotes, lines);
     setShowNewShipmentModal(false);
@@ -14977,7 +14994,7 @@ function ProjectShippingSection({
                   <label className="span-2">Saved address
                     <select value={selectedAddressId} onChange={(event) => setSelectedAddressId(event.target.value)}>
                       {addresses.map((address) => (
-                        <option key={address.id} value={address.id}>{address.label || address.streetAddress} -- {address.city}, {address.state}</option>
+                        <option key={address.id} value={address.id}>{address.label || address.streetAddress} -- {[address.city, address.state].filter(Boolean).join(", ")}</option>
                       ))}
                     </select>
                   </label>
