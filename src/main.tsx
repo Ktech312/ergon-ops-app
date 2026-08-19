@@ -7,6 +7,7 @@ import {
   BarChart3,
   Bell,
   BookOpen,
+  BookUser,
   Boxes,
   Building2,
   CalendarDays,
@@ -8588,6 +8589,8 @@ function Projects({
     subcontractorCost: null,
     travelExpenses: null,
   });
+  const [showAddressBookModal, setShowAddressBookModal] = useState(false);
+  const [newProjectShippingAddressDraft, setNewProjectShippingAddressDraft] = useState({ label: "", attnName: "", streetAddress: "", city: "", state: "", zip: "", phone: "" });
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
     item: parts[0].name,
@@ -9302,7 +9305,22 @@ function Projects({
           <PanelHeader title="Project Information" label="Client, location, and install context" onEdit={() => setShowProjectInfoModal(true)} />
           <div className="site-info-list">
             <div><Building2 size={17} /><span>Client</span><strong>{selectedProject.client}</strong></div>
-            <div><MapPin size={17} /><span>Client Address</span><strong>{selectedProject.address}</strong></div>
+            <div>
+              <MapPin size={17} />
+              <span>Client Address</span>
+              <span className="site-info-value-with-action">
+                <strong>{selectedProject.address}</strong>
+                <button
+                  className="icon-button-sm"
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); setShowAddressBookModal(true); }}
+                  aria-label="Open Address Book"
+                  title="Address Book"
+                >
+                  <BookUser size={13} />
+                </button>
+              </span>
+            </div>
             <div><User size={17} /><span>Owner</span><strong>{selectedProject.owner}</strong></div>
             <div><CalendarDays size={17} /><span>Target</span><strong>{selectedProject.due}</strong></div>
           </div>
@@ -9651,12 +9669,20 @@ function Projects({
                   <p>Editable site intake for this parking garage or lot</p>
                 </div>
               </div>
-              <div className="form-grid">
+              <div className="form-grid form-grid-compact">
                 <label>Project name<input value={selectedProject.name} onChange={(event) => updateProjectField("name", event.target.value)} /></label>
                 <label>Client / property<input value={selectedProject.client} onChange={(event) => updateProjectField("client", event.target.value)} /></label>
                 <label>Site type<select value={selectedProject.type} onChange={(event) => updateProjectField("type", event.target.value as ProjectSite["type"])}><option>Parking Garage</option><option>Surface Lot</option><option>Campus Parking</option><option>Mixed Parking</option></select></label>
                 <label>Project owner<input value={selectedProject.owner} onChange={(event) => updateProjectField("owner", event.target.value)} /></label>
-                <label className="span-2">Client address<input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} /></label>
+                <label className="span-2">
+                  <span className="field-label-with-action">
+                    Client address
+                    <button className="icon-button-sm" type="button" onClick={() => setShowAddressBookModal(true)} aria-label="Open Address Book" title="Address Book">
+                      <BookUser size={13} />
+                    </button>
+                  </span>
+                  <input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} />
+                </label>
                 <label>Status<select value={selectedProject.status} onChange={(event) => handleProjectStatusChange(event.target.value as ProjectSite["status"])}><option>Draft</option><option>Planning</option><option>Procurement</option><option>Staging</option><option>Install Ready</option><option>Closed</option></select></label>
                 <label>Target date<input value={selectedProject.due} onChange={(event) => updateProjectField("due", event.target.value)} /></label>
                 <label className="span-2">Solution / package<input value={selectedProject.package} onChange={(event) => updateProjectField("package", event.target.value)} /></label>
@@ -9664,6 +9690,75 @@ function Projects({
               </div>
             </section>
           </div>
+        </div>
+      )}
+
+      {showAddressBookModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="address-book-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="address-book-title">Address Book</h2>
+                <p>Client, Billing, and Shipping addresses for this project, all in one place.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowAddressBookModal(false)} aria-label="Close">x</button>
+            </div>
+
+            <div className="modal-section">
+              <span className="modal-section-title">Client Address</span>
+              <div className="bom-modal-grid">
+                <label className="span-2">
+                  Client address
+                  <input value={selectedProject.address} onChange={(event) => updateProjectField("address", event.target.value)} />
+                </label>
+              </div>
+            </div>
+
+            <div className="modal-section">
+              <span className="modal-section-title">Billing Address</span>
+              <p className="empty-compact-state">Not set up yet -- ask if you want it as a single address like Client, or a saved list like Shipping below.</p>
+            </div>
+
+            <div className="modal-section">
+              <span className="modal-section-title">Shipping Addresses</span>
+              <ul className="line-list">
+                {(selectedProject.shippingAddresses ?? []).map((address) => (
+                  <li className="line-item" key={address.id}>
+                    <div>
+                      <strong>{address.label || address.streetAddress}</strong>
+                      <span>{address.attnName ? `Attn: ${address.attnName} -- ` : ""}{address.streetAddress}, {address.city}, {address.state} {address.zip}</span>
+                      {address.phone && <span>{address.phone}</span>}
+                    </div>
+                  </li>
+                ))}
+                {(selectedProject.shippingAddresses ?? []).length === 0 && <li className="empty-compact-state">No saved shipping addresses yet.</li>}
+              </ul>
+              <div className="bom-modal-grid">
+                <label>Label<input value={newProjectShippingAddressDraft.label} placeholder="e.g. Garage A, Client office" onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, label: event.target.value }))} /></label>
+                <label>Attn<input value={newProjectShippingAddressDraft.attnName} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, attnName: event.target.value }))} /></label>
+                <label className="span-2">Street address<input value={newProjectShippingAddressDraft.streetAddress} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, streetAddress: event.target.value }))} /></label>
+                <label>City<input value={newProjectShippingAddressDraft.city} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, city: event.target.value }))} /></label>
+                <label>State<input value={newProjectShippingAddressDraft.state} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, state: event.target.value }))} /></label>
+                <label>Zip<input value={newProjectShippingAddressDraft.zip} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, zip: event.target.value }))} /></label>
+                <label>Phone<input value={newProjectShippingAddressDraft.phone} onChange={(event) => setNewProjectShippingAddressDraft((current) => ({ ...current, phone: event.target.value }))} /></label>
+              </div>
+              <button
+                className="secondary-action mini-action"
+                type="button"
+                disabled={!newProjectShippingAddressDraft.streetAddress.trim()}
+                onClick={() => {
+                  onAddProjectShippingAddress(selectedProject.ref, newProjectShippingAddressDraft);
+                  setNewProjectShippingAddressDraft({ label: "", attnName: "", streetAddress: "", city: "", state: "", zip: "", phone: "" });
+                }}
+              >
+                <Plus size={14} /> Add Shipping Address
+              </button>
+            </div>
+
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowAddressBookModal(false)}>Close</button>
+            </div>
+          </section>
         </div>
       )}
 

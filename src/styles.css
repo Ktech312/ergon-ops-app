@@ -2461,6 +2461,29 @@ td small.quote-ref-tag {
   resize: vertical;
 }
 
+/* Project Information edit modal -- E: "needs to be more compact, we have
+   a lot more to go on it eventually." Scoped to this one form (paired with
+   .form-grid on the same element) so Handover/Site Intake/etc, which also
+   use plain .form-grid, are untouched. */
+.form-grid.form-grid-compact {
+  row-gap: 12px;
+}
+
+.form-grid.form-grid-compact label {
+  gap: 4px;
+}
+
+.form-grid.form-grid-compact input,
+.form-grid.form-grid-compact select,
+.form-grid.form-grid-compact textarea {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.form-grid.form-grid-compact textarea {
+  min-height: 56px;
+}
+
 .sow-grid textarea {
   line-height: 1.45;
   min-height: 110px;
@@ -2843,6 +2866,42 @@ td small.quote-ref-tag {
   height: 34px;
   justify-content: center;
   width: 34px;
+}
+
+/* Small inline trigger next to a label/value (Address Book icon on Project
+   Information) -- too small for the standard 34px .icon-button. */
+.icon-button-sm {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px solid #ded7cb;
+  border-radius: 6px;
+  color: #a01029;
+  cursor: pointer;
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.icon-button-sm:hover {
+  background: #f1e9de;
+}
+
+.site-info-value-with-action {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.field-label-with-action {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  width: 100%;
 }
 
 .bom-modal-grid {
