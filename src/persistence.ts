@@ -4607,6 +4607,10 @@ export type ProjectSite = {
   estimatedLaborCost?: number | null;
   subcontractorCost?: number | null;
   travelExpenses?: number | null;
+  // Migration 077: single field, per E ("doesn't usually change per-
+  // shipment the way a delivery address does") -- not a saved list like
+  // shippingAddresses.
+  billingAddress?: string;
 };
 
 // Migration 072: PM shipping requests, fulfilled by Warehouse/
@@ -4946,10 +4950,11 @@ type ProjectSiteRow = {
   estimated_labor_cost: number | string | null;
   subcontractor_cost: number | string | null;
   travel_expenses: number | string | null;
+  billing_address: string | null;
 };
 
 const PROJECT_SITE_SELECT =
-  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -5007,6 +5012,7 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
     estimatedLaborCost: row.estimated_labor_cost === null || row.estimated_labor_cost === undefined ? null : Number(row.estimated_labor_cost),
     subcontractorCost: row.subcontractor_cost === null || row.subcontractor_cost === undefined ? null : Number(row.subcontractor_cost),
     travelExpenses: row.travel_expenses === null || row.travel_expenses === undefined ? null : Number(row.travel_expenses),
+    billingAddress: row.billing_address ?? "",
   };
 }
 
@@ -5053,6 +5059,7 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
     estimated_labor_cost: site.estimatedLaborCost ?? null,
     subcontractor_cost: site.subcontractorCost ?? null,
     travel_expenses: site.travelExpenses ?? null,
+    billing_address: site.billingAddress || null,
   }));
 
   const projectResponse = await fetch(supabaseUrl("projects?on_conflict=project_name"), {

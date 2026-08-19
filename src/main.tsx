@@ -9716,7 +9716,16 @@ function Projects({
 
             <div className="modal-section">
               <span className="modal-section-title">Billing Address</span>
-              <p className="empty-compact-state">Not set up yet -- ask if you want it as a single address like Client, or a saved list like Shipping below.</p>
+              <div className="bom-modal-grid">
+                <label className="span-2">
+                  Billing address
+                  <input
+                    value={selectedProject.billingAddress ?? ""}
+                    placeholder="Leave blank if same as Client Address"
+                    onChange={(event) => updateProjectField("billingAddress", event.target.value)}
+                  />
+                </label>
+              </div>
             </div>
 
             <div className="modal-section">
