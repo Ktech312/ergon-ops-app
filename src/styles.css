@@ -2006,8 +2006,9 @@ td small.quote-ref-tag {
 }
 
 .project-top-row {
+  align-items: start;
   display: grid;
-  gap: 18px;
+  gap: 14px;
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 1.15fr);
 }
@@ -2020,12 +2021,19 @@ td small.quote-ref-tag {
 
 @media (max-width: 760px) {
   .project-top-row {
+    gap: 10px;
     grid-template-columns: 1fr;
   }
 }
 
 .compact-card {
-  padding: 14px;
+  padding: 12px;
+}
+
+@media (max-width: 760px) {
+  .compact-card {
+    padding: 10px;
+  }
 }
 
 .clickable-card {
@@ -4729,7 +4737,7 @@ td.empty-compact-state {
 .site-info-list,
 .snapshot-grid {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .site-info-list div {
@@ -4739,8 +4747,8 @@ td.empty-compact-state {
   border-radius: 8px;
   display: grid;
   gap: 4px;
-  grid-template-columns: 22px 72px minmax(0, 1fr);
-  padding: 12px;
+  grid-template-columns: 20px 68px minmax(0, 1fr);
+  padding: 9px 10px;
 }
 
 .site-info-list svg {
@@ -4766,13 +4774,32 @@ td.empty-compact-state {
   border: 1px solid #e8e1d5;
   border-radius: 8px;
   display: grid;
-  gap: 5px;
-  min-height: 78px;
-  padding: 13px;
+  gap: 4px;
+  min-height: 64px;
+  padding: 10px;
 }
 
 .snapshot-grid strong {
-  font-size: 22px;
+  font-size: 20px;
+}
+
+@media (max-width: 760px) {
+  /* Same "wasted empty space" fix as .metric-grid -- keep the 2-up stat
+     grid on mobile instead of the shared 1fr-stacking list's default,
+     which turned 4 short stat boxes into 4 tall stacked full-width rows. */
+  .snapshot-grid {
+    gap: 6px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .snapshot-grid div {
+    min-height: 0;
+    padding: 8px;
+  }
+
+  .site-info-list div {
+    padding: 8px 9px;
+  }
 }
 
 .order-card {
@@ -5127,7 +5154,6 @@ td.empty-compact-state {
   .role-workbench,
   .role-focus-grid,
   .sku-scan-row,
-  .snapshot-grid,
   .inventory-editor-hero,
   .source-url-row,
   .price-history-row,
