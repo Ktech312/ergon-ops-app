@@ -4525,7 +4525,7 @@ export type ProjectLocationImage = {
 export type ProjectLocationItem = {
   id: string;
   projectLocationId: string;
-  lineType: "sign" | "sensor" | "misc" | "camera";
+  lineType: "sign" | "sensor" | "misc" | "camera" | "vpu";
   catalogItemId: string | null;
   qty: number;
   lineSort: number;
@@ -4560,6 +4560,7 @@ export type ProjectLocation = {
   sensorLines: ProjectLocationItem[];
   miscLines: ProjectLocationItem[];
   cameraLines: ProjectLocationItem[];
+  vpuLines: ProjectLocationItem[];
 };
 
 export type ProjectSite = {
@@ -4598,6 +4599,14 @@ export type ProjectSite = {
   saasBillingFrequency?: "Monthly" | "Quarterly" | "Annual" | "";
   saasStartDate?: string;
   saasRenewalDate?: string;
+  // Migration 076: Cost Breakdown / Cost Snapshot. saleAmount defaults from
+  // the originating Sales Quote's saleAmount on conversion, then stays
+  // independently editable here -- a PM may need to correct it post-close.
+  // The other three are PM-entered, dollar amounts (not hours x rate).
+  saleAmount?: number | null;
+  estimatedLaborCost?: number | null;
+  subcontractorCost?: number | null;
+  travelExpenses?: number | null;
 };
 
 // Migration 072: PM shipping requests, fulfilled by Warehouse/
@@ -4786,6 +4795,7 @@ function mapProjectLocationRow(row: ProjectLocationRow): ProjectLocation {
     sensorLines: items.filter((item) => item.lineType === "sensor"),
     miscLines: items.filter((item) => item.lineType === "misc"),
     cameraLines: items.filter((item) => item.lineType === "camera"),
+    vpuLines: items.filter((item) => item.lineType === "vpu"),
   };
 }
 
@@ -4932,10 +4942,14 @@ type ProjectSiteRow = {
   saas_billing_frequency: string | null;
   saas_start_date: string | null;
   saas_renewal_date: string | null;
+  sale_amount: number | string | null;
+  estimated_labor_cost: number | string | null;
+  subcontractor_cost: number | string | null;
+  travel_expenses: number | string | null;
 };
 
 const PROJECT_SITE_SELECT =
-  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -4989,6 +5003,10 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
     saasBillingFrequency: (row.saas_billing_frequency as ProjectSite["saasBillingFrequency"]) ?? "",
     saasStartDate: row.saas_start_date ?? "",
     saasRenewalDate: row.saas_renewal_date ?? "",
+    saleAmount: row.sale_amount === null || row.sale_amount === undefined ? null : Number(row.sale_amount),
+    estimatedLaborCost: row.estimated_labor_cost === null || row.estimated_labor_cost === undefined ? null : Number(row.estimated_labor_cost),
+    subcontractorCost: row.subcontractor_cost === null || row.subcontractor_cost === undefined ? null : Number(row.subcontractor_cost),
+    travelExpenses: row.travel_expenses === null || row.travel_expenses === undefined ? null : Number(row.travel_expenses),
   };
 }
 
@@ -5031,6 +5049,10 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
     saas_billing_frequency: site.saasBillingFrequency || null,
     saas_start_date: site.saasStartDate || null,
     saas_renewal_date: site.saasRenewalDate || null,
+    sale_amount: site.saleAmount ?? null,
+    estimated_labor_cost: site.estimatedLaborCost ?? null,
+    subcontractor_cost: site.subcontractorCost ?? null,
+    travel_expenses: site.travelExpenses ?? null,
   }));
 
   const projectResponse = await fetch(supabaseUrl("projects?on_conflict=project_name"), {
@@ -5625,7 +5647,7 @@ export type SalesQuoteLocationImage = {
 export type SalesQuoteLocationItem = {
   id: string;
   quoteLocationId: string;
-  lineType: "sign" | "sensor" | "misc" | "camera";
+  lineType: "sign" | "sensor" | "misc" | "camera" | "vpu";
   catalogItemId: string | null;
   qty: number;
   lineSort: number;
@@ -5659,6 +5681,7 @@ export type SalesQuoteLocation = {
   sensorLines: SalesQuoteLocationItem[];
   miscLines: SalesQuoteLocationItem[];
   cameraLines: SalesQuoteLocationItem[];
+  vpuLines: SalesQuoteLocationItem[];
 };
 
 export type SalesQuoteBomLine = {
@@ -5733,6 +5756,11 @@ export type SalesQuote = {
   saasType: string;
   saasContractAmount: number | null;
   saasBillingFrequency: "Monthly" | "Quarterly" | "Annual" | "";
+  // Migration 076: the one-time hardware/install sale price -- distinct
+  // from saasContractAmount above (a separate recurring service contract).
+  // Carries over to the Project when created from a Closed - Won quote,
+  // same one-time-copy pattern as the SaaS fields.
+  saleAmount: number | null;
 };
 
 type SalesQuoteLocationImageRow = {
@@ -5817,6 +5845,7 @@ type SalesQuoteRow = {
   saas_type: string | null;
   saas_contract_amount: number | string | null;
   saas_billing_frequency: string | null;
+  sale_amount: number | string | null;
 };
 
 function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQuoteLocationImage {
@@ -5870,6 +5899,7 @@ function mapSalesQuoteLocationRow(row: SalesQuoteLocationRow): SalesQuoteLocatio
     sensorLines: items.filter((item) => item.lineType === "sensor"),
     miscLines: items.filter((item) => item.lineType === "misc"),
     cameraLines: items.filter((item) => item.lineType === "camera"),
+    vpuLines: items.filter((item) => item.lineType === "vpu"),
   };
 }
 
@@ -5915,11 +5945,12 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
     saasType: row.saas_type ?? "",
     saasContractAmount: row.saas_contract_amount === null || row.saas_contract_amount === undefined ? null : Number(row.saas_contract_amount),
     saasBillingFrequency: (row.saas_billing_frequency as SalesQuote["saasBillingFrequency"]) ?? "",
+    saleAmount: row.sale_amount === null || row.sale_amount === undefined ? null : Number(row.sale_amount),
   };
 }
 
 const SALES_QUOTE_SELECT =
-  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,saas_type,saas_contract_amount,saas_billing_frequency,sales_quote_locations(id,quote_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
+  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,saas_type,saas_contract_amount,saas_billing_frequency,sale_amount,sales_quote_locations(id,quote_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
 
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -6045,6 +6076,7 @@ export async function createSalesQuote(
     saasType: "",
     saasContractAmount: null,
     saasBillingFrequency: "",
+    saleAmount: null,
   };
 }
 
@@ -7140,6 +7172,7 @@ export async function createProjectFromClosedWonQuote(quote: SalesQuote, accessT
       saas_type: quote.saasType || null,
       saas_contract_amount: quote.saasContractAmount,
       saas_billing_frequency: quote.saasBillingFrequency || null,
+      sale_amount: quote.saleAmount,
     };
 
     const projectResponse = await fetch(supabaseUrl("projects?on_conflict=project_name"), {
@@ -7654,6 +7687,7 @@ export async function updateSalesQuoteInfo(
     saasType: string;
     saasContractAmount: number | null;
     saasBillingFrequency: SalesQuote["saasBillingFrequency"];
+    saleAmount: number | null;
   }>,
   accessToken?: string,
 ): Promise<void> {
@@ -7678,6 +7712,7 @@ export async function updateSalesQuoteInfo(
   if (updates.saasType !== undefined) payload.saas_type = updates.saasType || null;
   if (updates.saasContractAmount !== undefined) payload.saas_contract_amount = updates.saasContractAmount;
   if (updates.saasBillingFrequency !== undefined) payload.saas_billing_frequency = updates.saasBillingFrequency || null;
+  if (updates.saleAmount !== undefined) payload.sale_amount = updates.saleAmount;
   if (Object.keys(payload).length === 0) {
     return;
   }

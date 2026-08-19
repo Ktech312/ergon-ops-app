@@ -2010,10 +2010,13 @@ td small.quote-ref-tag {
   display: grid;
   gap: 14px;
   grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 1.15fr);
+  /* 4 cards now (Cost Snapshot added next to BOM Snapshot) -- needs more
+     room per card than the old 3-card row, so the 2-up breakpoint kicks in
+     earlier (1400px, was 1100px) to avoid cramming 4 cards too narrow. */
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.85fr) minmax(0, 0.85fr) minmax(0, 1.1fr);
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1400px) {
   .project-top-row {
     grid-template-columns: 1fr 1fr;
   }

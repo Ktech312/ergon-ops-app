@@ -2080,7 +2080,7 @@ function App() {
     if (!location) {
       return;
     }
-    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : lineType === "camera" ? "cameraLines" : "miscLines";
+    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : lineType === "camera" ? "cameraLines" : lineType === "vpu" ? "vpuLines" : "miscLines";
     const nextLineSort = location[listKey].length;
     const created = await addSalesQuoteLocationItem(locationId, lineType, catalogItemId, qty, nextLineSort, extra, authSession.accessToken);
     if (!created) {
@@ -2123,6 +2123,7 @@ function App() {
                       sensorLines: entryLocation.sensorLines.map(applyUpdates),
                       miscLines: entryLocation.miscLines.map(applyUpdates),
                       cameraLines: entryLocation.cameraLines.map(applyUpdates),
+                      vpuLines: entryLocation.vpuLines.map(applyUpdates),
                     }
                   : entryLocation,
               ),
@@ -2150,6 +2151,7 @@ function App() {
                       sensorLines: entryLocation.sensorLines.filter((line) => line.id !== itemId),
                       miscLines: entryLocation.miscLines.filter((line) => line.id !== itemId),
                       cameraLines: entryLocation.cameraLines.filter((line) => line.id !== itemId),
+                      vpuLines: entryLocation.vpuLines.filter((line) => line.id !== itemId),
                     }
                   : entryLocation,
               ),
@@ -2329,6 +2331,7 @@ function App() {
       saasType: string;
       saasContractAmount: number | null;
       saasBillingFrequency: SalesQuote["saasBillingFrequency"];
+      saleAmount: number | null;
     }>,
   ) {
     if (!authSession) {
@@ -2621,7 +2624,7 @@ function App() {
     if (!location) {
       return;
     }
-    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : lineType === "camera" ? "cameraLines" : "miscLines";
+    const listKey = lineType === "sign" ? "signLines" : lineType === "sensor" ? "sensorLines" : lineType === "camera" ? "cameraLines" : lineType === "vpu" ? "vpuLines" : "miscLines";
     const nextLineSort = location[listKey].length;
     const created = await addProjectLocationItem(locationId, lineType, catalogItemId, qty, nextLineSort, extra, authSession.accessToken);
     if (!created) {
@@ -2664,6 +2667,7 @@ function App() {
                       sensorLines: entryLocation.sensorLines.map(applyUpdates),
                       miscLines: entryLocation.miscLines.map(applyUpdates),
                       cameraLines: entryLocation.cameraLines.map(applyUpdates),
+                      vpuLines: entryLocation.vpuLines.map(applyUpdates),
                     }
                   : entryLocation,
               ),
@@ -2691,6 +2695,7 @@ function App() {
                       sensorLines: entryLocation.sensorLines.filter((line) => line.id !== itemId),
                       miscLines: entryLocation.miscLines.filter((line) => line.id !== itemId),
                       cameraLines: entryLocation.cameraLines.filter((line) => line.id !== itemId),
+                      vpuLines: entryLocation.vpuLines.filter((line) => line.id !== itemId),
                     }
                   : entryLocation,
               ),
@@ -8576,6 +8581,13 @@ function Projects({
     saasStartDate: "",
     saasRenewalDate: "",
   });
+  const [showCostBreakdownModal, setShowCostBreakdownModal] = useState(false);
+  const [costBreakdownDraft, setCostBreakdownDraft] = useState<{ saleAmount: number | null; estimatedLaborCost: number | null; subcontractorCost: number | null; travelExpenses: number | null }>({
+    saleAmount: null,
+    estimatedLaborCost: null,
+    subcontractorCost: null,
+    travelExpenses: null,
+  });
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
     item: parts[0].name,
@@ -8604,19 +8616,28 @@ function Projects({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject.name]);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
-  // BOM Snapshot's hardware breakdown -- Camera/Sign/Misc all sum the real
-  // per-location item lines (Locations rework, migration 071) so this
-  // stays consistent with what's actually tracked in Locations instead of
-  // drifting from a separately-maintained number. VPU's has no dedicated
-  // line type yet, so it's a best-effort match on BOM line item names
-  // until/unless a real VPU line type gets built.
+  // BOM Snapshot's hardware breakdown sums the real per-location item
+  // lines (Locations rework, migration 071/076) so this stays consistent
+  // with what's actually tracked in Locations instead of drifting from a
+  // separately-maintained number.
   const projectLocationsForSnapshot = selectedProject.locations ?? [];
-  const sumLocationLineQty = (lineKey: "cameraLines" | "signLines" | "miscLines") =>
+  const sumLocationLineQty = (lineKey: "cameraLines" | "signLines" | "miscLines" | "vpuLines") =>
     projectLocationsForSnapshot.reduce((sum, location) => sum + (location[lineKey] ?? []).reduce((lineSum, line) => lineSum + line.qty, 0), 0);
   const snapshotCameraCount = sumLocationLineQty("cameraLines");
   const snapshotSignCount = sumLocationLineQty("signLines");
   const snapshotMiscCount = sumLocationLineQty("miscLines");
-  const snapshotVpuCount = selectedProject.bom.filter((line) => /vpu/i.test(line.item)).reduce((sum, line) => sum + line.qty, 0);
+  const snapshotVpuCount = sumLocationLineQty("vpuLines");
+  // Cost Snapshot's Estimated Profit -- Sale minus BOM/Allocated, Labor,
+  // Subcontractor, and Travel (E's formula). Null (not $0) when no sale
+  // amount is set yet, since "profit" is meaningless without a sale.
+  const projectEstimatedProfit =
+    selectedProject.saleAmount == null
+      ? null
+      : selectedProject.saleAmount -
+        (selectedProject.allocated || 0) -
+        (selectedProject.estimatedLaborCost || 0) -
+        (selectedProject.subcontractorCost || 0) -
+        (selectedProject.travelExpenses || 0);
   const sowHasContent = Object.values(selectedProject.sow).some((value) => value.trim() !== "");
   const shipmentStatusCounts = (selectedProject.shipments ?? []).reduce(
     (counts, shipment) => ({ ...counts, [shipment.status]: (counts[shipment.status] ?? 0) + 1 }),
@@ -8762,6 +8783,25 @@ function Projects({
   function saveSaasDraft() {
     updateSelectedProject((project) => ({ ...project, ...saasEditDraft }));
     setShowSaasModal(false);
+  }
+
+  // Cost Breakdown / Cost Snapshot (migration 076). Sale amount defaults
+  // from the originating Sales Quote (see createProjectFromClosedWonQuote)
+  // but a PM can override it here; Labor/Subcontractor/Travel are plain
+  // dollar amounts a PM fills in directly, no hours x rate math.
+  function openCostBreakdownModal() {
+    setCostBreakdownDraft({
+      saleAmount: selectedProject.saleAmount ?? null,
+      estimatedLaborCost: selectedProject.estimatedLaborCost ?? null,
+      subcontractorCost: selectedProject.subcontractorCost ?? null,
+      travelExpenses: selectedProject.travelExpenses ?? null,
+    });
+    setShowCostBreakdownModal(true);
+  }
+
+  function saveCostBreakdownDraft() {
+    updateSelectedProject((project) => ({ ...project, ...costBreakdownDraft }));
+    setShowCostBreakdownModal(false);
   }
 
   function updateBomDraft<K extends keyof typeof bomDraft>(field: K, value: (typeof bomDraft)[K]) {
@@ -9278,6 +9318,14 @@ function Projects({
           </div>
         </section>
 
+        <section className="panel compact-card clickable-card" onClick={openCostBreakdownModal}>
+          <PanelHeader title="Cost Snapshot" label="Sale and estimated profit" onEdit={openCostBreakdownModal} />
+          <div className="snapshot-grid cost-snapshot-grid">
+            <div><span>Project Sale</span><strong>{selectedProject.saleAmount ? money(selectedProject.saleAmount) : "Not set"}</strong></div>
+            <div><span>Est. Profit</span><strong>{projectEstimatedProfit === null ? "Not set" : money(projectEstimatedProfit)}</strong></div>
+          </div>
+        </section>
+
         <section className="panel compact-card project-progress-card">
           <PanelHeader title="Project Progress" label="Completion and key points" />
           <div className="project-progress-body">
@@ -9705,7 +9753,85 @@ function Projects({
           ]}
           onClick={openSaasModal}
         />
+        <ProjectTile
+          icon={<DollarSign size={18} />}
+          title="Cost Breakdown"
+          hint="Sale amount, labor, subcontractor, travel"
+          stats={[
+            { label: "Sale", value: selectedProject.saleAmount ? money(selectedProject.saleAmount) : "Not set" },
+            { label: "Est. profit", value: projectEstimatedProfit === null ? "Not set" : money(projectEstimatedProfit) },
+          ]}
+          onClick={openCostBreakdownModal}
+        />
       </div>
+
+      {showCostBreakdownModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="cost-breakdown-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="cost-breakdown-modal-title">Cost Breakdown</h2>
+                <p>Sale amount defaults from the Sales Quote once this deal closes, but stays editable here. Labor/Subcontractor/Travel are entered directly as dollar amounts.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowCostBreakdownModal(false)} aria-label="Close">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label>
+                Sale amount
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={costBreakdownDraft.saleAmount ?? ""}
+                  onChange={(event) => setCostBreakdownDraft((current) => ({ ...current, saleAmount: event.target.value === "" ? null : Number(event.target.value) }))}
+                  placeholder="0.00"
+                />
+              </label>
+              <label>
+                BOM / Allocated
+                <input type="number" value={selectedProject.allocated} disabled readOnly />
+              </label>
+              <label>
+                Estimated labor
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={costBreakdownDraft.estimatedLaborCost ?? ""}
+                  onChange={(event) => setCostBreakdownDraft((current) => ({ ...current, estimatedLaborCost: event.target.value === "" ? null : Number(event.target.value) }))}
+                  placeholder="0.00"
+                />
+              </label>
+              <label>
+                Subcontractor
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={costBreakdownDraft.subcontractorCost ?? ""}
+                  onChange={(event) => setCostBreakdownDraft((current) => ({ ...current, subcontractorCost: event.target.value === "" ? null : Number(event.target.value) }))}
+                  placeholder="0.00"
+                />
+              </label>
+              <label>
+                Travel expenses
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={costBreakdownDraft.travelExpenses ?? ""}
+                  onChange={(event) => setCostBreakdownDraft((current) => ({ ...current, travelExpenses: event.target.value === "" ? null : Number(event.target.value) }))}
+                  placeholder="0.00"
+                />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowCostBreakdownModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={saveCostBreakdownDraft}>Save</button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {showSaasModal && (
         <div className="modal-backdrop" role="presentation">
@@ -14858,6 +14984,7 @@ function ProjectLocationsSection({
   const [signItemDraft, setSignItemDraft] = useState(emptyLineDraft);
   const [sensorItemDraft, setSensorItemDraft] = useState(emptyLineDraft);
   const [miscItemDraft, setMiscItemDraft] = useState(emptyLineDraft);
+  const [vpuItemDraft, setVpuItemDraft] = useState(emptyLineDraft);
 
   const locations = project.locations ?? [];
   const selectedLocation = locations.find((location) => location.id === selectedLocationId) ?? null;
@@ -14867,10 +14994,12 @@ function ProjectLocationsSection({
   const sensorCatalogItems = activeCatalogItems.filter(
     (item) => item.category === "Space Sensors" || (item.tags ?? []).some((tag) => tag.toLowerCase().includes("sensor")),
   );
+  const vpuCatalogItems = activeCatalogItems.filter((item) => item.category === "VPUs");
   const hasTag = (item: CatalogItem, tag: string) => (item.tags ?? []).some((entry) => entry.trim().toLowerCase() === tag);
   const cameraAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "camera accessory"));
   const signAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "sign accessory"));
   const sensorAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "sensor accessory"));
+  const vpuAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "vpu accessory"));
 
   return (
     <section className="panel wide">
@@ -14982,6 +15111,27 @@ function ProjectLocationsSection({
               <label>Exits<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.exitsCount} onChange={(event) => onUpdateLocation(selectedLocation.id, { exitsCount: Number(event.target.value) || 0 })} /></label>
               <label>Levels<input className="qty-input-narrow" type="number" min={0} max={999} value={selectedLocation.levelsCount} onChange={(event) => onUpdateLocation(selectedLocation.id, { levelsCount: Number(event.target.value) || 0 })} /></label>
             </div>
+
+            <LocationItemLineSection
+              title="VPU's"
+              hint="VPU hardware for this facility, pulled straight from the Product Catalog."
+              items={selectedLocation.vpuLines}
+              catalogItems={catalogItems}
+              options={vpuCatalogItems}
+              accessoryOptions={vpuAccessoryCatalogItems}
+              draft={vpuItemDraft}
+              onDraftChange={setVpuItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedLocation.id, "vpu", vpuItemDraft.catalogItemId, vpuItemDraft.qty, {
+                  locationLabel: vpuItemDraft.locationLabel,
+                  accessoryCatalogItemId: vpuItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: vpuItemDraft.accessoryQty,
+                });
+                setVpuItemDraft(emptyLineDraft);
+              }}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedLocation.id, itemId, updates)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedLocation.id, itemId)}
+            />
 
             <LocationItemLineSection
               title="Cameras"
@@ -15354,6 +15504,7 @@ function SalesQuoteBuilder({
       saasType: string;
       saasContractAmount: number | null;
       saasBillingFrequency: SalesQuote["saasBillingFrequency"];
+      saleAmount: number | null;
     }>,
   ) => void;
   siteIntakeSchema: FormSchema | null;
@@ -15414,6 +15565,7 @@ function SalesQuoteBuilder({
   const [signItemDraft, setSignItemDraft] = useState(emptyLineDraft);
   const [sensorItemDraft, setSensorItemDraft] = useState(emptyLineDraft);
   const [miscItemDraft, setMiscItemDraft] = useState(emptyLineDraft);
+  const [vpuItemDraft, setVpuItemDraft] = useState(emptyLineDraft);
   // #164 -- lets a rep get back to the original "New Site" intake fields
   // (client/site name, city) and correct them after the quote already
   // exists.
@@ -15441,6 +15593,10 @@ function SalesQuoteBuilder({
     saasContractAmount: null,
     saasBillingFrequency: "",
   });
+  // Migration 076: the one-time hardware/install sale price -- separate
+  // from the SaaS contract above (a distinct recurring service). Carries
+  // to the Project on conversion, stays editable there independently.
+  const [saleAmountDraft, setSaleAmountDraft] = useState<number | null>(null);
   // #168 -- the Site Intake Questionnaire used to render fully expanded
   // inline (a lot of scrolling on a long site); now it's a compact trigger
   // that opens a pop-up, same pattern as the Edit Site modal above.
@@ -15464,10 +15620,12 @@ function SalesQuoteBuilder({
   const sensorCatalogItems = activeCatalogItems.filter(
     (item) => item.category === "Space Sensors" || (item.tags ?? []).some((tag) => tag.toLowerCase().includes("sensor")),
   );
+  const vpuCatalogItems = activeCatalogItems.filter((item) => item.category === "VPUs");
   const hasTag = (item: CatalogItem, tag: string) => (item.tags ?? []).some((entry) => entry.trim().toLowerCase() === tag);
   const cameraAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "camera accessory"));
   const signAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "sign accessory"));
   const sensorAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "sensor accessory"));
+  const vpuAccessoryCatalogItems = activeCatalogItems.filter((item) => hasTag(item, "vpu accessory"));
   // Small "x/y answered" hint on the compact Site Intake Questionnaire
   // trigger button (#168) -- lets a rep see progress without opening it.
   const siteIntakeResponses = selectedQuote ? quoteIntakeResponses[selectedQuote.id]?.responses ?? {} : {};
@@ -15510,6 +15668,7 @@ function SalesQuoteBuilder({
       saasContractAmount: selectedQuote?.saasContractAmount ?? null,
       saasBillingFrequency: selectedQuote?.saasBillingFrequency ?? "",
     });
+    setSaleAmountDraft(selectedQuote?.saleAmount ?? null);
   }, [selectedQuote]);
 
   function openQuote(id: string) {
@@ -15571,7 +15730,7 @@ function SalesQuoteBuilder({
     if (!selectedQuote || !siteInfoDraft.clientName.trim() || !siteInfoDraft.siteName.trim()) {
       return;
     }
-    onUpdateQuoteInfo(selectedQuote.id, { ...siteInfoDraft, ...saasDraft });
+    onUpdateQuoteInfo(selectedQuote.id, { ...siteInfoDraft, ...saasDraft, saleAmount: saleAmountDraft });
     setIsEditingSiteInfo(false);
   }
 
@@ -16083,6 +16242,27 @@ function SalesQuoteBuilder({
             </div>
 
             <LocationItemLineSection
+              title="VPU's"
+              hint="VPU hardware for this facility, pulled straight from the Product Catalog."
+              items={selectedLocation.vpuLines}
+              catalogItems={catalogItems}
+              options={vpuCatalogItems}
+              accessoryOptions={vpuAccessoryCatalogItems}
+              draft={vpuItemDraft}
+              onDraftChange={setVpuItemDraft}
+              onAdd={() => {
+                onAddLocationItem(selectedQuote.id, selectedLocation.id, "vpu", vpuItemDraft.catalogItemId, vpuItemDraft.qty, {
+                  locationLabel: vpuItemDraft.locationLabel,
+                  accessoryCatalogItemId: vpuItemDraft.accessoryCatalogItemId || null,
+                  accessoryQty: vpuItemDraft.accessoryQty,
+                });
+                setVpuItemDraft(emptyLineDraft);
+              }}
+              onUpdateItem={(itemId, updates) => onUpdateLocationItem(selectedQuote.id, selectedLocation.id, itemId, updates)}
+              onDelete={(itemId) => onDeleteLocationItem(selectedQuote.id, selectedLocation.id, itemId)}
+            />
+
+            <LocationItemLineSection
               title="Cameras"
               hint="Cameras for this facility, pulled straight from the Product Catalog."
               items={selectedLocation.cameraLines}
@@ -16282,6 +16462,25 @@ function SalesQuoteBuilder({
               garageCount={selectedQuote.locations.filter((location) => location.locationType === "garage").length}
               lotCount={selectedQuote.locations.filter((location) => location.locationType === "lot").length}
             />
+            <div className="modal-section">
+              <span className="modal-section-title">Sale Amount</span>
+              <p className="muted">The one-time hardware/install sale price -- separate from any recurring SaaS contract below. Feeds the Project's Cost Snapshot once this deal closes and carries over, then stays editable there.</p>
+              <div className="tight-form-rows">
+                <div className="tight-form-row">
+                  <label className="tight-field tight-field-medium">
+                    <span>Sale amount</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={saleAmountDraft ?? ""}
+                      onChange={(event) => setSaleAmountDraft(event.target.value === "" ? null : Number(event.target.value))}
+                      placeholder="0.00"
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
             <div className="modal-section">
               <span className="modal-section-title">SaaS Contract</span>
               <p className="muted">Feeds the SaaS Calendar's renewal tracking and revenue numbers once this deal closes and carries over to the Project.</p>
