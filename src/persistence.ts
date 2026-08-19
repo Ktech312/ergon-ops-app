@@ -7216,6 +7216,12 @@ export async function createProjectFromClosedWonQuote(quote: SalesQuote, accessT
     const siteType: ProjectSite["type"] =
       garageCount > 0 && lotCount > 0 ? "Mixed Parking" : lotCount > 0 ? "Surface Lot" : "Parking Garage";
     const address = [quote.siteStreetAddress, quote.city, quote.siteState, quote.siteZip].filter(Boolean).join(", ");
+    // Address Book carryover (E: "it need to transfer over directly to the
+    // Project info form") -- Company Information was captured at quote
+    // time but never actually copied to the Project before; it's a natural
+    // fit for Billing (the client's own mailing address, separate from the
+    // site's physical location).
+    const billingAddress = [quote.clientStreetAddress, quote.clientCity, quote.clientState, quote.clientZip].filter(Boolean).join(", ");
     const cameraCount = quote.locations.reduce(
       (sum, location) => sum + (location.fli ? 1 : 0) + (location.lpr ? 1 : 0) + (location.peopleCounting ? 1 : 0),
       0,
@@ -7235,6 +7241,9 @@ export async function createProjectFromClosedWonQuote(quote: SalesQuote, accessT
       saas_contract_amount: quote.saasContractAmount,
       saas_billing_frequency: quote.saasBillingFrequency || null,
       sale_amount: quote.saleAmount,
+      client_office_phone: quote.contactPhone || null,
+      billing_name: quote.clientName || null,
+      billing_address: billingAddress || null,
     };
 
     const projectResponse = await fetch(supabaseUrl("projects?on_conflict=project_name"), {

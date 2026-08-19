@@ -15499,7 +15499,7 @@ function SiteContactFields({
   const garageLotEditable = Boolean(onGarageCountChange && onLotCountChange);
   return (
     <>
-      <div className="modal-section">
+      <div className="modal-section modal-section-tight">
         <span className="modal-section-title">Site Information</span>
         <div className="tight-form-rows">
           <div className="tight-form-row">
@@ -15539,7 +15539,7 @@ function SiteContactFields({
         </div>
       </div>
 
-      <div className="modal-section">
+      <div className="modal-section modal-section-tight">
         <span className="modal-section-title">Company Information</span>
         <div className="tight-form-rows">
           <div className="tight-form-row">
@@ -15554,7 +15554,7 @@ function SiteContactFields({
         </div>
       </div>
 
-      <div className="modal-section">
+      <div className="modal-section modal-section-tight">
         <span className="modal-section-title">Contact Information</span>
         <div className="tight-form-rows">
           <div className="tight-form-row">
@@ -16630,7 +16630,7 @@ function SalesQuoteBuilder({
               garageCount={selectedQuote.locations.filter((location) => location.locationType === "garage").length}
               lotCount={selectedQuote.locations.filter((location) => location.locationType === "lot").length}
             />
-            <div className="modal-section">
+            <div className="modal-section modal-section-tight">
               <span className="modal-section-title">Sale Amount</span>
               <p className="muted">The one-time hardware/install sale price -- separate from any recurring SaaS contract below. Feeds the Project's Cost Snapshot once this deal closes and carries over, then stays editable there.</p>
               <div className="tight-form-rows">
@@ -16649,7 +16649,7 @@ function SalesQuoteBuilder({
                 </div>
               </div>
             </div>
-            <div className="modal-section">
+            <div className="modal-section modal-section-tight">
               <span className="modal-section-title">SaaS Contract</span>
               <p className="muted">Feeds the SaaS Calendar's renewal tracking and revenue numbers once this deal closes and carries over to the Project.</p>
               <div className="tight-form-rows">
