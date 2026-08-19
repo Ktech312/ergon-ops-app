@@ -8640,7 +8640,7 @@ function Projects({
   const [newProjectShippingAddressDraft, setNewProjectShippingAddressDraft] = useState({ label: "", attnName: "", streetAddress: "", city: "", state: "", zip: "", phone: "", homePhone: "", cellPhone: "", workPhone: "" });
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
-    item: parts[0].name,
+    item: "",
     qty: 1,
     action: "pull" as BomMaterialAction,
     requestSpeed: "Standard" as BomLine["requestSpeed"],
@@ -8860,7 +8860,7 @@ function Projects({
 
   function openAddBomModal() {
     setEditingBomIndex(null);
-    setBomDraft({ item: parts[0].name, qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
+    setBomDraft({ item: "", qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
     setShowBomModal(true);
   }
 
