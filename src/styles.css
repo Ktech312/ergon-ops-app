@@ -4762,6 +4762,7 @@ td.empty-compact-state {
 }
 
 .site-info-list strong {
+  font-size: 13px;
   min-width: 0;
 }
 

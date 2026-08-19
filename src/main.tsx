@@ -8603,8 +8603,20 @@ function Projects({
     setBomImportStatus("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject.name]);
-  const bomUnits = selectedProject.bom.reduce((sum, item) => sum + item.qty, 0);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
+  // BOM Snapshot's hardware breakdown -- Camera/Sign/Misc all sum the real
+  // per-location item lines (Locations rework, migration 071) so this
+  // stays consistent with what's actually tracked in Locations instead of
+  // drifting from a separately-maintained number. VPU's has no dedicated
+  // line type yet, so it's a best-effort match on BOM line item names
+  // until/unless a real VPU line type gets built.
+  const projectLocationsForSnapshot = selectedProject.locations ?? [];
+  const sumLocationLineQty = (lineKey: "cameraLines" | "signLines" | "miscLines") =>
+    projectLocationsForSnapshot.reduce((sum, location) => sum + (location[lineKey] ?? []).reduce((lineSum, line) => lineSum + line.qty, 0), 0);
+  const snapshotCameraCount = sumLocationLineQty("cameraLines");
+  const snapshotSignCount = sumLocationLineQty("signLines");
+  const snapshotMiscCount = sumLocationLineQty("miscLines");
+  const snapshotVpuCount = selectedProject.bom.filter((line) => /vpu/i.test(line.item)).reduce((sum, line) => sum + line.qty, 0);
   const sowHasContent = Object.values(selectedProject.sow).some((value) => value.trim() !== "");
   const shipmentStatusCounts = (selectedProject.shipments ?? []).reduce(
     (counts, shipment) => ({ ...counts, [shipment.status]: (counts[shipment.status] ?? 0) + 1 }),
@@ -9257,12 +9269,12 @@ function Projects({
         </section>
 
         <section className="panel compact-card">
-          <PanelHeader title="Project Snapshot" label="PM request summary" />
+          <PanelHeader title="BOM Snapshot" label="BOM lines" />
           <div className="snapshot-grid">
-            <div><span>Cameras</span><strong>{selectedProject.cameras}</strong></div>
-            <div><span>BOM Units</span><strong>{bomUnits}</strong></div>
-            <div><span>Open BOM Lines</span><strong>{openBomLines}</strong></div>
-            <div><span>Allocated</span><strong>{money(selectedProject.allocated)}</strong></div>
+            <div><span>VPU's</span><strong>{snapshotVpuCount}</strong></div>
+            <div><span>Cameras</span><strong>{snapshotCameraCount}</strong></div>
+            <div><span>Signs</span><strong>{snapshotSignCount}</strong></div>
+            <div><span>Misc Items</span><strong>{snapshotMiscCount}</strong></div>
           </div>
         </section>
 
