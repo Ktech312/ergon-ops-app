@@ -8324,6 +8324,7 @@ function parseProjectDueDate(due: string): Date | null {
 }
 
 function ProjectPortfolioHealth({ projectSites, purchaseOrders }: { projectSites: ProjectSite[]; purchaseOrders: PurchaseOrder[] }) {
+  const [isCollapsed, setIsCollapsed] = usePersistedCollapse("portfolio_health");
   const activeProjects = projectSites.filter((project) => project.status !== "Closed");
 
   const budgetRows = activeProjects
@@ -8381,8 +8382,13 @@ function ProjectPortfolioHealth({ projectSites, purchaseOrders }: { projectSites
           <h2>Portfolio Budget &amp; Schedule</h2>
           <p>Which active jobs are running hot on spend or slipping on the calendar, across all of them at once.</p>
         </div>
+        <button className="icon-button" type="button" onClick={() => setIsCollapsed((current) => !current)} aria-label={isCollapsed ? "Expand section" : "Collapse section"}>
+          {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        </button>
       </div>
 
+      {!isCollapsed && (
+        <>
       <div className="metric-grid portfolio-health-kpis">
         <Metric icon={<DollarSign size={20} />} label="Total Allocated" value={money(totalAllocated)} />
         <Metric icon={<DollarSign size={20} />} label="Total Spent" value={money(totalSpent)} />
@@ -8461,6 +8467,8 @@ function ProjectPortfolioHealth({ projectSites, purchaseOrders }: { projectSites
           </div>
         ))}
       </div>
+        </>
+      )}
     </section>
   );
 }
