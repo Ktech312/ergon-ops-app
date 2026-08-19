@@ -2438,9 +2438,11 @@ function App() {
       const file = new File([item.blob], item.fileName, { type: item.fileType || "image/jpeg" });
       const coords = item.lat != null && item.lng != null ? { lat: item.lat, lng: item.lng } : null;
       const ok =
-        item.ownerType === "project"
-          ? await handleUploadProjectLocationImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false)
-          : await handleUploadSalesQuoteImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false);
+        item.ownerType === "shipment"
+          ? await handleUploadProjectShipmentPhoto(item.quoteId, item.locationId, file, item.description).catch(() => false)
+          : item.ownerType === "project"
+            ? await handleUploadProjectLocationImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false)
+            : await handleUploadSalesQuoteImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false);
       if (ok) {
         await removePendingSitePhoto(item.id);
       }
@@ -2959,7 +2961,21 @@ function App() {
       window.alert("Shipment photos only accept image files.");
       return false;
     }
-    const created = await addProjectShipmentPhoto(shipmentId, file, authSession.accessToken, description, authSession.email);
+    // Deliberately does NOT queue-on-failure itself, same as
+    // handleUploadProjectLocationImage above -- this function is also
+    // reused directly by flushPendingSitePhotos to retry already-queued
+    // photos, and self-queueing here would re-add a duplicate entry every
+    // time a retry still fails offline instead of just leaving the
+    // original queued item alone for the next attempt. Queueing happens
+    // one level up, in handleUploadProjectShipmentPhotoWithOfflineFallback
+    // below (the one actually wired to the UI) -- same split CameraCapture-
+    // Modal.saveAll uses for Site Builder/Locations photos.
+    let created: ProjectShipmentPhoto | null = null;
+    try {
+      created = await addProjectShipmentPhoto(shipmentId, file, authSession.accessToken, description, authSession.email);
+    } catch (error) {
+      console.error("Shipment photo upload failed", error);
+    }
     if (!created) {
       return false;
     }
@@ -2976,6 +2992,29 @@ function App() {
       ),
     );
     return true;
+  }
+
+  // The version actually wired to the "Add photo" UI -- tries the real
+  // upload via handleUploadProjectShipmentPhoto above, and on failure
+  // (offline or a real error) queues it in the same IndexedDB store Site
+  // Builder/Locations photos already use, instead of just losing it.
+  async function handleUploadProjectShipmentPhotoWithOfflineFallback(projectRef: string, shipmentId: string, file: File, description?: string): Promise<boolean> {
+    const ok = await handleUploadProjectShipmentPhoto(projectRef, shipmentId, file, description);
+    if (ok || !authSession) {
+      return ok;
+    }
+    await queuePendingSitePhoto({
+      quoteId: projectRef,
+      locationId: shipmentId,
+      fileName: file.name,
+      fileType: file.type || "image/jpeg",
+      description: description ?? "",
+      blob: file,
+      ownerType: "shipment",
+      uploaderEmail: authSession.email,
+    });
+    setPendingPhotoCount((current) => current + 1);
+    return false;
   }
 
   async function handleDeleteProjectShipmentPhoto(projectRef: string, shipmentId: string, photoId: string, storagePath: string): Promise<boolean> {
@@ -5533,7 +5572,7 @@ function App() {
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
         {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhoto} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -14811,6 +14850,7 @@ function ProjectShippingSection({
   const [trackingDraft, setTrackingDraft] = useState("");
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [photoUploadStatus, setPhotoUploadStatus] = useState("");
 
   useEffect(() => {
     if (!selectedShipment) {
@@ -14869,8 +14909,16 @@ function ProjectShippingSection({
       return;
     }
     setIsUploadingPhoto(true);
-    await onUploadPhoto(selectedShipment.id, file);
+    setPhotoUploadStatus("");
+    const ok = await onUploadPhoto(selectedShipment.id, file);
     setIsUploadingPhoto(false);
+    if (!ok) {
+      // Not necessarily a real failure -- handleUploadProjectShipmentPhoto
+      // queues it locally on any upload error (offline or otherwise) so it
+      // isn't lost. Same "saved on this device" messaging as Site Builder's
+      // camera capture.
+      setPhotoUploadStatus("Photo saved on this device -- it'll upload automatically once you're back online.");
+    }
   }
 
   const selectedLineCount = Object.values(shipmentLineQtys).filter((qty) => qty > 0).length;
@@ -15030,6 +15078,7 @@ function ProjectShippingSection({
                   <input type="file" accept="image/*" disabled={isUploadingPhoto} onChange={handlePhotoSelect} />
                 </label>
               </div>
+              {photoUploadStatus && <small className="muted">{photoUploadStatus}</small>}
               {selectedShipment.photos.length > 0 ? (
                 <div className="site-gallery-grid">
                   {selectedShipment.photos.map((photo) => (

@@ -6570,11 +6570,15 @@ const PENDING_PHOTO_DB_VERSION = 1;
 
 export type PendingSitePhoto = {
   id: string;
-  // "quoteId" is really just "owner id" (a Sales quote id or, once
-  // ownerType is "project", a Project ref) -- kept as quoteId for backward
-  // compatibility with photos already queued in a device's IndexedDB before
-  // Projects got their own camera capture.
+  // "quoteId" is really just "owner id" (a Sales quote id, a Project ref,
+  // or -- once ownerType is "shipment" -- a Project ref too, since a
+  // shipment photo's real parent is the shipment itself) -- kept as
+  // quoteId for backward compatibility with photos already queued in a
+  // device's IndexedDB before Projects got their own camera capture.
   quoteId: string;
+  // "locationId" doubles as shipmentId when ownerType is "shipment" --
+  // same reasoning as quoteId above, avoids a schema bump for a field
+  // that's really just "the second half of the owner key."
   locationId: string;
   fileName: string;
   fileType: string;
@@ -6583,7 +6587,7 @@ export type PendingSitePhoto = {
   createdAt: string;
   // Missing/undefined on anything queued before this field existed --
   // treat as "quote" (the only owner type that existed then).
-  ownerType?: "quote" | "project";
+  ownerType?: "quote" | "project" | "shipment";
   uploaderEmail?: string;
   lat?: number | null;
   lng?: number | null;
