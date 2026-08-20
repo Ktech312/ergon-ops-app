@@ -6512,7 +6512,13 @@ function Purchasing({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentProjects.join("|")]);
-  const activeProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject || purchaseOrders.some((order) => order.projectRef === selectedProject && order.sourceFile === doc.name));
+  const [documentLinkTarget, setDocumentLinkTarget] = useState("");
+  useEffect(() => {
+    setDocumentLinkTarget("");
+  }, [selectedProject]);
+  const ordersForSelectedProject = purchaseOrders.filter((order) => order.projectRef === selectedProject);
+  const requestsForSelectedProject = purchaseRequests.filter((request) => request.projectName === selectedProject);
+  const activeProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject);
   const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
   const receivingRequest = purchaseRequests.find((request) => request.id === receivingRequestId) ?? null;
@@ -6530,6 +6536,7 @@ function Purchasing({
 
   function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
+    const [linkKind, linkId] = documentLinkTarget.split(":");
     const entries = files.map((file, index) => ({
       doc: {
         name: file.name,
@@ -6539,6 +6546,8 @@ function Purchasing({
         type: "Procurement" as const,
         storage: "Browser" as const,
         uploadedAt: new Date(Date.now() + index).toISOString(),
+        purchaseOrderId: linkKind === "po" ? linkId : undefined,
+        purchaseRequestId: linkKind === "req" ? linkId : undefined,
       },
       file,
     }));
@@ -6873,7 +6882,7 @@ function Purchasing({
               <label>Expected date<input type="date" value={requestEditDraft.expectedDate} onChange={(event) => setRequestEditDraft((current) => ({ ...current, expectedDate: event.target.value }))} /></label>
               <label className="span-2">Notes<textarea value={requestEditDraft.notes} onChange={(event) => setRequestEditDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Vendor response, substitutions, purchasing notes, delivery details." /></label>
             </div>
-            <small className="muted request-edit-provenance">Requested by {editingRequest.requestedByEmail || "Unknown"} on {new Date(editingRequest.createdAt).toLocaleDateString()}</small>
+            <small className="muted request-edit-provenance">Requested by {editingRequest.requestedByEmail || "Unknown"} on {new Date(editingRequest.createdAt).toLocaleDateString()} -- {projectDocuments.filter((doc) => doc.purchaseRequestId === editingRequest.id).length} document(s) attached</small>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setEditingRequestId(null)}>Cancel</button>
               <button className="primary-action" type="button" onClick={submitRequestEdit}>Save Request</button>
@@ -6886,7 +6895,7 @@ function Purchasing({
         <PanelHeader title="Attach Purchase Paperwork" label="Invoices, packing slips, receipts, and order confirmations tied to an actual purchase" />
         <div className="upload-rule-note">
           <FileText size={15} />
-          <span>Use this for paperwork that comes with a purchase (invoice, packing slip, receipt, order confirmation). General project files -- contracts, drawings, references -- are uploaded by the PM team from the Project page instead. Both land in the same per-project Documents list, so nothing gets lost either way.</span>
+          <span>Use this for paperwork that comes with a purchase (invoice, packing slip, receipt, order confirmation). Pick the exact Purchase Order or Purchase Request it belongs to in "Link to" below -- it attaches to that record specifically, not just the project in general. General project files -- contracts, drawings, references -- are uploaded by the PM team from the Project page instead.</span>
         </div>
         <div className="upload-layout">
           <label className="upload-drop">
@@ -6902,6 +6911,26 @@ function Purchasing({
                 {documentProjects.map((project) => (
                   <option key={project} value={project}>{project}</option>
                 ))}
+              </select>
+            </label>
+            <label>
+              Link to
+              <select value={documentLinkTarget} onChange={(event) => setDocumentLinkTarget(event.target.value)}>
+                <option value="">Not tied to a specific order</option>
+                {ordersForSelectedProject.length > 0 && (
+                  <optgroup label="Purchase Orders">
+                    {ordersForSelectedProject.map((order) => (
+                      <option key={order.id} value={`po:${order.id}`}>PO {order.number} - {order.vendor}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {requestsForSelectedProject.length > 0 && (
+                  <optgroup label="Purchase Requests">
+                    {requestsForSelectedProject.map((request) => (
+                      <option key={request.id} value={`req:${request.id}`}>{request.requestNumber} - {request.itemName}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </label>
             <div className="drive-card">
@@ -6924,6 +6953,7 @@ function Purchasing({
                 <strong>{doc.name}</strong>
                 <span>{doc.project}{doc.size ? ` - ${formatBytes(doc.size)}` : ""}{doc.storage ? ` - ${doc.storage}` : ""}</span>
                 <small>{formatDocumentProvenance(doc)}</small>
+                <small className={doc.purchaseOrderId || doc.purchaseRequestId ? "document-link-tag document-link-tag-linked" : "document-link-tag"}>{documentLinkLabel(doc, purchaseOrders, purchaseRequests)}</small>
               </div>
               <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
                 <option>Uploaded</option>
@@ -7021,7 +7051,7 @@ function Purchasing({
                     <option>On Hold</option>
                   </select>
                 </td>
-                <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small></td>
+                <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small><small>{projectDocuments.filter((doc) => doc.purchaseOrderId === po.id).length} doc(s) attached</small></td>
                 <td>{moneyExact(po.total)}</td>
               </tr>
             ))}
@@ -7042,7 +7072,7 @@ function Purchasing({
                 </span>
                 <b>{moneyExact(po.total)}</b>
               </span>
-              <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""}</span>
+              <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""} &middot; {projectDocuments.filter((doc) => doc.purchaseOrderId === po.id).length} doc(s)</span>
               <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
                 <option>Imported</option>
                 <option>In Processing</option>
@@ -14472,6 +14502,18 @@ function formatDocumentProvenance(doc: UploadedDoc): string {
     parts.push(doc.storage);
   }
   return parts.join(" -- ");
+}
+
+function documentLinkLabel(doc: UploadedDoc, purchaseOrders: PurchaseOrder[], purchaseRequests: PurchaseRequest[]): string {
+  if (doc.purchaseOrderId) {
+    const order = purchaseOrders.find((candidate) => candidate.id === doc.purchaseOrderId);
+    return order ? `Linked to PO ${order.number}` : "Linked to a Purchase Order";
+  }
+  if (doc.purchaseRequestId) {
+    const request = purchaseRequests.find((candidate) => candidate.id === doc.purchaseRequestId);
+    return request ? `Linked to ${request.requestNumber}` : "Linked to a Purchase Request";
+  }
+  return "Not linked to a specific order";
 }
 
 function clampPreviewZoom(value: number) {

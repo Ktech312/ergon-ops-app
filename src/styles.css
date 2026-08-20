@@ -1639,6 +1639,14 @@ td small.quote-ref-tag {
   line-height: 1.3;
 }
 
+.document-link-tag {
+  font-weight: 700;
+}
+
+.document-link-tag-linked {
+  color: #0f5a4d;
+}
+
 .upload-rule-note {
   align-items: center;
   background: #f8f5ef;

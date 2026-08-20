@@ -3287,6 +3287,11 @@ export type ProjectDocument = {
   // once the real file bytes were actually uploaded (Phase: real file
   // storage). Resolve it to a usable link with getDocumentDownloadUrl.
   storagePath?: string;
+  // Real link to the exact Purchase Order / Purchase Request this document
+  // belongs to (migration 080) -- not just the project it's filed under.
+  // Most documents (general project files) link to neither.
+  purchaseOrderId?: string;
+  purchaseRequestId?: string;
 };
 
 type ProjectDocumentRow = {
@@ -3300,6 +3305,8 @@ type ProjectDocumentRow = {
   uploaded_at: string | null;
   uploaded_by_email: string | null;
   file_url: string | null;
+  purchase_order_id?: string | null;
+  purchase_request_id?: string | null;
 };
 
 function appDocumentType(type: ProjectDocument["type"]): string {
@@ -3373,6 +3380,8 @@ function mapProjectDocumentRow(row: ProjectDocumentRow): ProjectDocument {
     uploadedAt: row.uploaded_at ?? undefined,
     uploadedByEmail: row.uploaded_by_email ?? undefined,
     storagePath: row.file_url ?? undefined,
+    purchaseOrderId: row.purchase_order_id ?? undefined,
+    purchaseRequestId: row.purchase_request_id ?? undefined,
   };
 }
 
@@ -3380,7 +3389,7 @@ export async function loadProjectDocuments(accessToken?: string): Promise<Projec
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,uploaded_by_email,file_url&order=uploaded_at.desc"), {
+  const response = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,uploaded_by_email,file_url,purchase_order_id,purchase_request_id&order=uploaded_at.desc"), {
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok && response.status === 400) {
@@ -3390,8 +3399,8 @@ export async function loadProjectDocuments(accessToken?: string): Promise<Projec
     if (!fallbackResponse.ok) {
       return [];
     }
-    const fallbackRows = (await fallbackResponse.json()) as Array<Omit<ProjectDocumentRow, "uploaded_by_email">>;
-    return fallbackRows.map((row) => mapProjectDocumentRow({ ...row, uploaded_by_email: null }));
+    const fallbackRows = (await fallbackResponse.json()) as Array<Omit<ProjectDocumentRow, "uploaded_by_email" | "purchase_order_id" | "purchase_request_id">>;
+    return fallbackRows.map((row) => mapProjectDocumentRow({ ...row, uploaded_by_email: null, purchase_order_id: null, purchase_request_id: null }));
   }
   if (!response.ok) {
     return [];
@@ -3419,6 +3428,8 @@ export async function createProjectDocuments(
     file_url: doc.storagePath ?? null,
     uploaded_at: doc.uploadedAt ?? new Date().toISOString(),
     uploaded_by_email: doc.uploadedByEmail ?? null,
+    purchase_order_id: doc.purchaseOrderId ?? null,
+    purchase_request_id: doc.purchaseRequestId ?? null,
   }));
   const response = await fetch(supabaseUrl("project_documents"), {
     method: "POST",
@@ -3427,15 +3438,15 @@ export async function createProjectDocuments(
   });
   if (!response.ok) {
     if (response.status === 400) {
-      const fallbackPayload = payload.map(({ uploaded_by_email: _uploadedByEmail, ...doc }) => doc);
+      const fallbackPayload = payload.map(({ uploaded_by_email: _uploadedByEmail, purchase_order_id: _purchaseOrderId, purchase_request_id: _purchaseRequestId, ...doc }) => doc);
       const fallbackResponse = await fetch(supabaseUrl("project_documents"), {
         method: "POST",
         headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
         body: JSON.stringify(fallbackPayload),
       });
       if (fallbackResponse.ok) {
-        const fallbackRows = (await fallbackResponse.json()) as Array<Omit<ProjectDocumentRow, "uploaded_by_email">>;
-        return fallbackRows.map((row) => mapProjectDocumentRow({ ...row, uploaded_by_email: null }));
+        const fallbackRows = (await fallbackResponse.json()) as Array<Omit<ProjectDocumentRow, "uploaded_by_email" | "purchase_order_id" | "purchase_request_id">>;
+        return fallbackRows.map((row) => mapProjectDocumentRow({ ...row, uploaded_by_email: null, purchase_order_id: null, purchase_request_id: null }));
       }
     }
     throw new Error(`Could not save document(s): ${response.status}`);
