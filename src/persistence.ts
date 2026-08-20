@@ -5498,11 +5498,20 @@ async function saveRestoredProjectDocuments(docs: ProjectDocument[], accessToken
 export type PurchaseLineCategory = "Compute" | "Storage" | "Network" | "Power" | "Enclosure" | "Hardware" | "Rack" | "Other";
 
 export type PurchaseOrderLine = {
+  // Present for any line that's actually been saved (id is the DB primary
+  // key) -- absent only for a line still being drafted client-side before
+  // "Save Purchase" is clicked. Needed to log a receipt against the exact
+  // line, since lines have no other stable identity (item name can repeat).
+  id?: string;
   name: string;
   category: PurchaseLineCategory;
   qty: number;
   unitCost: number;
   lineTotal?: number;
+  // purchase_order_lines.quantity_received has existed since migration
+  // 001 but was never read/written by the app until the receiving-log
+  // work (migration 082). Defaults to 0.
+  receivedQty: number;
 };
 
 export type PurchaseOrderFile = {
@@ -5513,6 +5522,16 @@ export type PurchaseOrderFile = {
   description: string;
   uploadedAt: string;
   uploadedByEmail: string;
+};
+
+export type PurchaseOrderReceipt = {
+  id: string;
+  purchaseOrderId: string;
+  purchaseOrderLineId?: string;
+  itemName: string;
+  qty: number;
+  receivedByEmail?: string;
+  receivedAt: string;
 };
 
 export type PurchaseOrder = {
@@ -5542,15 +5561,43 @@ export type PurchaseOrder = {
   // 081) -- the order confirmation attached at creation, and receiving
   // photos/packing slips attached once it arrives. Not a shared bucket.
   files: PurchaseOrderFile[];
+  // Receiving log (migration 082) -- one entry per receiving action,
+  // newest first. Not the same as the running total on each line; this
+  // is the audit trail of who checked in what and when.
+  receipts: PurchaseOrderReceipt[];
 };
 
 type PurchaseOrderLineRow = {
+  id?: string;
   item_name: string;
   category: string | null;
   quantity_ordered: number | string;
   unit_cost: number | string;
   line_total: number | string | null;
+  quantity_received?: number | string | null;
 };
+
+type PurchaseOrderReceiptRow = {
+  id: string;
+  purchase_order_id: string;
+  purchase_order_line_id: string | null;
+  item_name: string;
+  qty: number | string;
+  received_by_email: string | null;
+  received_at: string;
+};
+
+function mapPurchaseOrderReceiptRow(row: PurchaseOrderReceiptRow): PurchaseOrderReceipt {
+  return {
+    id: row.id,
+    purchaseOrderId: row.purchase_order_id,
+    purchaseOrderLineId: row.purchase_order_line_id ?? undefined,
+    itemName: row.item_name,
+    qty: Number(row.qty) || 0,
+    receivedByEmail: row.received_by_email ?? undefined,
+    receivedAt: row.received_at,
+  };
+}
 
 type PurchaseOrderFileRow = {
   id: string;
@@ -5591,6 +5638,7 @@ type PurchaseOrderRow = {
   purchase_order_lines: PurchaseOrderLineRow[];
   source_request_id?: string | null;
   purchase_order_files?: PurchaseOrderFileRow[] | null;
+  purchase_order_receipts?: PurchaseOrderReceiptRow[] | null;
 };
 
 function appPoCategory(category: string | null): PurchaseLineCategory {
@@ -5612,11 +5660,13 @@ function pgPoStatus(status: PurchaseOrder["status"]): string {
 
 function mapPurchaseOrderLineRow(row: PurchaseOrderLineRow): PurchaseOrderLine {
   return {
+    id: row.id,
     name: row.item_name,
     category: appPoCategory(row.category),
     qty: Number(row.quantity_ordered) || 0,
     unitCost: Number(row.unit_cost) || 0,
     lineTotal: row.line_total !== null ? Number(row.line_total) || undefined : undefined,
+    receivedQty: Number(row.quantity_received) || 0,
   };
 }
 
@@ -5641,13 +5691,19 @@ function mapPurchaseOrderRow(row: PurchaseOrderRow): PurchaseOrder {
     sourceRequestId: row.source_request_id ?? undefined,
     files: (row.purchase_order_files ?? []).map(mapPurchaseOrderFileRow),
     lines: (row.purchase_order_lines ?? []).map(mapPurchaseOrderLineRow),
+    receipts: (row.purchase_order_receipts ?? [])
+      .map(mapPurchaseOrderReceiptRow)
+      .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1)),
   };
 }
 
+const PURCHASE_ORDER_LINES_EMBED = "purchase_order_lines(id,item_name,category,quantity_ordered,unit_cost,line_total,quantity_received)";
 const PURCHASE_ORDER_SELECT_BASE =
-  "id,po_number,app_status,requested_date,subtotal,tax_amount,shipping_amount,total_amount,project_name,ship_to,payment_note,source_file,vendor:vendors(name),purchase_order_lines(item_name,category,quantity_ordered,unit_cost,line_total)";
-const PURCHASE_ORDER_SELECT =
+  `id,po_number,app_status,requested_date,subtotal,tax_amount,shipping_amount,total_amount,project_name,ship_to,payment_note,source_file,vendor:vendors(name),${PURCHASE_ORDER_LINES_EMBED}`;
+const PURCHASE_ORDER_SELECT_WITH_LINKS =
   `${PURCHASE_ORDER_SELECT_BASE},source_request_id,purchase_order_files(id,purchase_order_id,storage_path,file_name,description,uploaded_at,uploaded_by_email)`;
+const PURCHASE_ORDER_SELECT =
+  `${PURCHASE_ORDER_SELECT_WITH_LINKS},purchase_order_receipts(id,purchase_order_id,purchase_order_line_id,item_name,qty,received_by_email,received_at)`;
 
 export async function loadPurchaseOrders(accessToken?: string): Promise<PurchaseOrder[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5657,14 +5713,29 @@ export async function loadPurchaseOrders(accessToken?: string): Promise<Purchase
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok && response.status === 400) {
-    const fallbackResponse = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT_BASE}&order=requested_date.desc`), {
+    // Migration 082 (purchase_order_receipts) hasn't run yet -- retry
+    // without that embed.
+    const midResponse = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT_WITH_LINKS}&order=requested_date.desc`), {
       headers: supabaseHeaders(accessToken),
     });
-    if (!fallbackResponse.ok) {
-      return [];
+    if (midResponse.ok) {
+      const midRows = (await midResponse.json()) as Array<Omit<PurchaseOrderRow, "purchase_order_receipts">>;
+      return midRows.map((row) => mapPurchaseOrderRow({ ...row, purchase_order_receipts: [] }));
     }
-    const fallbackRows = (await fallbackResponse.json()) as Array<Omit<PurchaseOrderRow, "source_request_id" | "purchase_order_files">>;
-    return fallbackRows.map((row) => mapPurchaseOrderRow({ ...row, source_request_id: null, purchase_order_files: [] }));
+    if (midResponse.status === 400) {
+      // Migration 081 hasn't run either -- retry with just the always-safe
+      // base columns (purchase_order_lines.id/quantity_received have
+      // existed since migration 001, so those stay in every tier).
+      const baseResponse = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT_BASE}&order=requested_date.desc`), {
+        headers: supabaseHeaders(accessToken),
+      });
+      if (!baseResponse.ok) {
+        return [];
+      }
+      const baseRows = (await baseResponse.json()) as Array<Omit<PurchaseOrderRow, "source_request_id" | "purchase_order_files" | "purchase_order_receipts">>;
+      return baseRows.map((row) => mapPurchaseOrderRow({ ...row, source_request_id: null, purchase_order_files: [], purchase_order_receipts: [] }));
+    }
+    return [];
   }
   if (!response.ok) {
     return [];
@@ -5895,9 +5966,10 @@ export async function createPurchaseOrder(
     sourceFile: input.sourceFile,
     shipTo: input.shipTo,
     paymentNote: input.paymentNote,
-    lines: lineRows.length > 0 ? lineRows.map(mapPurchaseOrderLineRow) : input.lines.map((line) => ({ ...line })),
+    lines: lineRows.length > 0 ? lineRows.map(mapPurchaseOrderLineRow) : input.lines.map((line) => ({ ...line, receivedQty: 0 })),
     sourceRequestId: input.sourceRequestId,
     files: [],
+    receipts: [],
   };
 }
 
@@ -5910,6 +5982,53 @@ export async function updatePurchaseOrderStatus(id: string, status: PurchaseOrde
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ app_status: status, status: pgPoStatus(status) }),
   });
+}
+
+// Per-line receiving + the receiving log (migration 082). Two separate
+// writes, not a DB transaction/RPC (matches this codebase's existing
+// simple-write style elsewhere) -- the line's running total, and a
+// standalone log row snapshotting who received what and when.
+export async function updatePurchaseOrderLineReceivedQty(lineId: string, receivedQty: number, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`purchase_order_lines?id=eq.${lineId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ quantity_received: receivedQty }),
+  });
+  return response.ok;
+}
+
+export async function createPurchaseOrderReceipt(
+  input: {
+    purchaseOrderId: string;
+    purchaseOrderLineId?: string;
+    itemName: string;
+    qty: number;
+    receivedByEmail?: string;
+  },
+  accessToken?: string,
+): Promise<PurchaseOrderReceipt | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("purchase_order_receipts"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      purchase_order_id: input.purchaseOrderId,
+      purchase_order_line_id: input.purchaseOrderLineId ?? null,
+      item_name: input.itemName,
+      qty: input.qty,
+      received_by_email: input.receivedByEmail ?? null,
+    }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as PurchaseOrderReceiptRow[];
+  return rows[0] ? mapPurchaseOrderReceiptRow(rows[0]) : null;
 }
 
 // Paperwork attached directly to one Purchase Order (migration 081) -- the

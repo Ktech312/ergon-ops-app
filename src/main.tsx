@@ -78,6 +78,8 @@ import {
   addPurchaseOrderFile,
   deletePurchaseOrderFile,
   getPurchaseOrderFileDownloadUrl,
+  updatePurchaseOrderLineReceivedQty,
+  createPurchaseOrderReceipt,
   createProjectFromClosedWonQuote,
   createProjectDocuments,
   createPurchaseOrder,
@@ -273,6 +275,7 @@ import {
   type PurchaseOrder,
   type PurchaseOrderLine,
   type PurchaseOrderFile,
+  type PurchaseOrderReceipt,
   type PurchaseRequest,
   type PurchaseUrl,
   type SalesQuote,
@@ -1534,6 +1537,92 @@ function App() {
       return null;
     }
     return getPurchaseOrderFileDownloadUrl(storagePath, authSession.accessToken);
+  }
+
+  // Real per-line receiving + receiving log (2026-08-20). E: "we need to
+  // be able to accept each line item and by quantity... create a log of
+  // who checked in what and when." A line's cumulative receivedQty is one
+  // write (purchase_order_lines.quantity_received); the log entry is a
+  // second, separate write (purchase_order_receipts) -- see persistence.ts.
+  // Auto-flips the order to "Received" once every line is fully in.
+  async function handleReceivePurchaseOrderLine(purchaseOrderId: string, lineId: string, itemName: string, qty: number): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const order = purchaseOrders.find((candidate) => candidate.id === purchaseOrderId);
+    const line = order?.lines.find((candidate) => candidate.id === lineId);
+    if (!order || !line) {
+      return false;
+    }
+    const nextReceivedQty = Math.min(line.qty, (line.receivedQty ?? 0) + Math.max(0, qty));
+    const ok = await updatePurchaseOrderLineReceivedQty(lineId, nextReceivedQty, authSession.accessToken);
+    if (!ok) {
+      return false;
+    }
+    const receipt = await createPurchaseOrderReceipt(
+      { purchaseOrderId, purchaseOrderLineId: lineId, itemName, qty: Math.max(0, qty), receivedByEmail: authSession.email },
+      authSession.accessToken,
+    );
+    const allReceived = order.lines.every((candidate) => (candidate.id === lineId ? nextReceivedQty : candidate.receivedQty ?? 0) >= candidate.qty);
+    setPurchaseOrders((current) =>
+      current.map((candidate) => {
+        if (candidate.id !== purchaseOrderId) {
+          return candidate;
+        }
+        return {
+          ...candidate,
+          lines: candidate.lines.map((candidateLine) => (candidateLine.id === lineId ? { ...candidateLine, receivedQty: nextReceivedQty } : candidateLine)),
+          receipts: receipt ? [receipt, ...candidate.receipts] : candidate.receipts,
+          status: allReceived ? "Received" : candidate.status,
+        };
+      }),
+    );
+    if (allReceived && order.status !== "Received") {
+      await updatePurchaseOrderStatus(purchaseOrderId, "Received", authSession.accessToken);
+    }
+    return true;
+  }
+
+  async function handleReceiveAllPurchaseOrderLines(purchaseOrderId: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const order = purchaseOrders.find((candidate) => candidate.id === purchaseOrderId);
+    if (!order) {
+      return false;
+    }
+    const newReceipts: PurchaseOrderReceipt[] = [];
+    for (const line of order.lines) {
+      const remaining = line.qty - (line.receivedQty ?? 0);
+      if (!line.id || remaining <= 0) {
+        continue;
+      }
+      const ok = await updatePurchaseOrderLineReceivedQty(line.id, line.qty, authSession.accessToken);
+      if (!ok) {
+        continue;
+      }
+      const receipt = await createPurchaseOrderReceipt(
+        { purchaseOrderId, purchaseOrderLineId: line.id, itemName: line.name, qty: remaining, receivedByEmail: authSession.email },
+        authSession.accessToken,
+      );
+      if (receipt) {
+        newReceipts.push(receipt);
+      }
+    }
+    setPurchaseOrders((current) =>
+      current.map((candidate) =>
+        candidate.id === purchaseOrderId
+          ? {
+              ...candidate,
+              lines: candidate.lines.map((line) => ({ ...line, receivedQty: line.qty })),
+              receipts: [...newReceipts, ...candidate.receipts],
+              status: "Received",
+            }
+          : candidate,
+      ),
+    );
+    await updatePurchaseOrderStatus(purchaseOrderId, "Received", authSession.accessToken);
+    return true;
   }
 
   // Vendors (Inventory & Purchasing nav merge, 2026-08-19). The `vendors`
@@ -5765,7 +5854,7 @@ function App() {
               {allowedTabs.includes("purchasing") && <button className={view === "purchasing" ? "active" : ""} type="button" onClick={() => navigateToView("purchasing")}>Purchasing</button>}
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
-            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
+            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
             {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
@@ -6478,6 +6567,8 @@ function Purchasing({
   onUploadPurchaseOrderFile,
   onDeletePurchaseOrderFile,
   onGetPurchaseOrderFileUrl,
+  onReceivePurchaseOrderLine,
+  onReceiveAllPurchaseOrderLines,
   lowStock,
   buildTransactions,
   onQueueReorderRequests,
@@ -6521,6 +6612,8 @@ function Purchasing({
   onUploadPurchaseOrderFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
   onDeletePurchaseOrderFile: (purchaseOrderId: string, fileId: string, storagePath: string) => Promise<boolean>;
   onGetPurchaseOrderFileUrl: (storagePath: string) => Promise<string | null>;
+  onReceivePurchaseOrderLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number) => Promise<boolean>;
+  onReceiveAllPurchaseOrderLines: (purchaseOrderId: string) => Promise<boolean>;
   lowStock: Part[];
   buildTransactions: BuildTransaction[];
   onQueueReorderRequests: () => void;
@@ -7060,7 +7153,7 @@ function Purchasing({
                   {isExpanded && (
                     <tr className="order-detail-row">
                       <td colSpan={7}>
-                        <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} />
+                        <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} onReceiveLine={onReceivePurchaseOrderLine} onReceiveAll={onReceiveAllPurchaseOrderLines} />
                       </td>
                     </tr>
                   )}
@@ -7095,7 +7188,7 @@ function Purchasing({
                 </select>
                 <button className="secondary-action mini-action" type="button" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>{isExpanded ? "Hide details" : "View details"}</button>
                 {isExpanded && (
-                  <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} />
+                  <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} onReceiveLine={onReceivePurchaseOrderLine} onReceiveAll={onReceiveAllPurchaseOrderLines} />
                 )}
               </div>
             );
@@ -7137,57 +7230,148 @@ function PurchaseOrderDetailPanel({
   onFileSelect,
   onGetFileUrl,
   onDeleteFile,
+  onReceiveLine,
+  onReceiveAll,
 }: {
   po: PurchaseOrder;
   receivingFileFor: string | null;
   onFileSelect: (purchaseOrderId: string, event: React.ChangeEvent<HTMLInputElement>) => void;
   onGetFileUrl: (storagePath: string) => Promise<string | null>;
   onDeleteFile: (purchaseOrderId: string, fileId: string, storagePath: string) => void;
+  onReceiveLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number) => Promise<boolean>;
+  onReceiveAll: (purchaseOrderId: string) => Promise<boolean>;
 }) {
   const isUploading = receivingFileFor === po.id;
+  const [receiveDrafts, setReceiveDrafts] = useState<Record<string, number>>({});
+  const [loggingLineId, setLoggingLineId] = useState<string | null>(null);
+  const [isReceivingAll, setIsReceivingAll] = useState(false);
+  const allReceived = po.lines.length > 0 && po.lines.every((line) => (line.receivedQty ?? 0) >= line.qty);
+
+  async function logLine(line: PurchaseOrderLine) {
+    if (!line.id) {
+      return;
+    }
+    const remaining = Math.max(0, line.qty - (line.receivedQty ?? 0));
+    const qty = Math.max(1, Math.min(remaining, receiveDrafts[line.id] ?? remaining));
+    setLoggingLineId(line.id);
+    await onReceiveLine(po.id, line.id, line.name, qty);
+    setReceiveDrafts((current) => {
+      const next = { ...current };
+      delete next[line.id!];
+      return next;
+    });
+    setLoggingLineId(null);
+  }
+
+  async function receiveAll() {
+    setIsReceivingAll(true);
+    await onReceiveAll(po.id);
+    setIsReceivingAll(false);
+  }
+
   return (
     <div className="order-detail-panel">
       <div className="order-meta">
         <span>{po.shipTo || "No ship-to on file"}</span>
         <span>{po.paymentNote || "No payment note"}</span>
       </div>
-      <div className="line-list">
-        {po.lines.map((line, index) => (
-          <div className="line-item" key={`${po.id}-${line.name}-${index}`}>
-            <div>
-              <strong>{line.name}</strong>
-              <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
-            </div>
-            <b>{moneyExact(lineTotal(line))}</b>
+
+      <div className="compact-edit-section">
+        <div className="compact-section-header">
+          <div>
+            <h3>Paperwork on this order</h3>
+            <p>{po.files.length === 0 ? "Nothing attached yet." : `${po.files.length} file(s) attached.`}</p>
           </div>
-        ))}
-        {po.lines.length === 0 && <div className="empty-compact-state">No line items.</div>}
+          <div className="order-detail-upload-actions">
+            <label className="secondary-action mini-action hidden-file-label">
+              <Upload size={14} /> {isUploading ? "..." : "Add file"}
+              <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(event) => onFileSelect(po.id, event)} disabled={isUploading} />
+            </label>
+            <label className="secondary-action mini-action hidden-file-label">
+              <Camera size={14} /> {isUploading ? "..." : "Take photo"}
+              <input type="file" accept="image/*" capture="environment" onChange={(event) => onFileSelect(po.id, event)} disabled={isUploading} />
+            </label>
+          </div>
+        </div>
+        {po.files.length > 0 && (
+          <div className="document-queue">
+            {po.files.map((file) => (
+              <div className="document-row" key={file.id}>
+                <div>
+                  <strong>{file.fileName || "Untitled file"}</strong>
+                  <small>{file.description}{file.uploadedByEmail ? ` -- ${file.uploadedByEmail}` : ""}{file.uploadedAt ? ` -- ${new Date(file.uploadedAt).toLocaleDateString()}` : ""}</small>
+                </div>
+                <button className="secondary-action mini-action" type="button" onClick={async () => { const url = await onGetFileUrl(file.storagePath); if (url) window.open(url, "_blank", "noopener"); }}>View</button>
+                <button className="secondary-action mini-action" type="button" onClick={() => onDeleteFile(po.id, file.id, file.storagePath)}>Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      <div className="compact-edit-section">
+        <div className="compact-section-header">
+          <div>
+            <h3>Line items</h3>
+            <p>Log what actually arrived, by quantity -- partial shipments are expected.</p>
+          </div>
+          <button className="primary-action mini-action" type="button" onClick={receiveAll} disabled={allReceived || isReceivingAll}>
+            {allReceived ? "All received" : isReceivingAll ? "Receiving..." : "Received All"}
+          </button>
+        </div>
+        <div className="line-list">
+          {po.lines.map((line, index) => {
+            const received = line.receivedQty ?? 0;
+            const remaining = Math.max(0, line.qty - received);
+            const draftQty = line.id ? receiveDrafts[line.id] ?? remaining : remaining;
+            return (
+              <div className="line-item receiving-line-item" key={line.id ?? `${po.id}-${line.name}-${index}`}>
+                <div>
+                  <strong>{line.name}</strong>
+                  <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
+                  <small className={remaining === 0 ? "document-link-tag document-link-tag-linked" : "document-link-tag"}>{received} of {line.qty} received</small>
+                </div>
+                <b>{moneyExact(lineTotal(line))}</b>
+                {line.id && remaining > 0 && (
+                  <div className="receiving-line-controls">
+                    <input
+                      type="number"
+                      min={1}
+                      max={remaining}
+                      value={draftQty}
+                      onChange={(event) => setReceiveDrafts((current) => ({ ...current, [line.id as string]: Math.max(1, Math.min(remaining, Number(event.target.value) || 1)) }))}
+                      aria-label={`Quantity received for ${line.name}`}
+                    />
+                    <button className="secondary-action mini-action" type="button" onClick={() => logLine(line)} disabled={loggingLineId === line.id}>
+                      {loggingLineId === line.id ? "Logging..." : "Log"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {po.lines.length === 0 && <div className="empty-compact-state">No line items.</div>}
+        </div>
+      </div>
+
       <div className="order-totals">
         <span>Subtotal {moneyExact(po.subtotal)}</span>
         <span>Tax {moneyExact(po.tax)}</span>
         <strong>{moneyExact(po.total)}</strong>
       </div>
-      <span className="document-queue-label">Paperwork on this order</span>
+
+      <span className="document-queue-label">Receiving log</span>
       <div className="document-queue">
-        {po.files.length === 0 && <div className="empty-compact-state">Nothing attached yet -- add the order confirmation, packing slip, or a photo of what arrived.</div>}
-        {po.files.map((file) => (
-          <div className="document-row" key={file.id}>
+        {po.receipts.length === 0 && <div className="empty-compact-state">Nothing received yet.</div>}
+        {po.receipts.map((receipt) => (
+          <div className="document-row" key={receipt.id}>
             <div>
-              <strong>{file.fileName || "Untitled file"}</strong>
-              <small>{file.description}{file.uploadedByEmail ? ` -- ${file.uploadedByEmail}` : ""}{file.uploadedAt ? ` -- ${new Date(file.uploadedAt).toLocaleDateString()}` : ""}</small>
+              <strong>{receipt.qty} x {receipt.itemName}</strong>
+              <small>{receipt.receivedByEmail || "Unknown"} -- {new Date(receipt.receivedAt).toLocaleString()}</small>
             </div>
-            <button className="secondary-action mini-action" type="button" onClick={async () => { const url = await onGetFileUrl(file.storagePath); if (url) window.open(url, "_blank", "noopener"); }}>View</button>
-            <button className="secondary-action mini-action" type="button" onClick={() => onDeleteFile(po.id, file.id, file.storagePath)}>Remove</button>
           </div>
         ))}
       </div>
-      <label className="upload-drop compact-upload">
-        <Upload size={18} />
-        <strong>{isUploading ? "Uploading..." : "Take a picture or add a file"}</strong>
-        <span>Packing slip, receipt, or a photo of what arrived -- attaches to this order only</span>
-        <input type="file" accept="image/*,.pdf" capture="environment" onChange={(event) => onFileSelect(po.id, event)} disabled={isUploading} />
-      </label>
     </div>
   );
 }

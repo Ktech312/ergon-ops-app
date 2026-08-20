@@ -5044,6 +5044,31 @@ td.empty-compact-state {
   padding: 10px;
 }
 
+.order-detail-upload-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.receiving-line-item {
+  flex-wrap: wrap;
+}
+
+.receiving-line-controls {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.receiving-line-controls input {
+  border: 1px solid #ded7cb;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 6px;
+  width: 56px;
+}
+
 /* Camera/Sign/Space Sensor/Misc location lines: Location label + item +
    qty + accessory + accessory qty, all in one row. Higher specificity
    than ".line-item div" (display:grid/gap:3px) so it isn't overridden by
