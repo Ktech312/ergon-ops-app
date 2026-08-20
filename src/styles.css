@@ -1927,6 +1927,10 @@ td small.quote-ref-tag {
   margin-top: 12px;
 }
 
+.operations-subtabs {
+  margin-top: 12px;
+}
+
 .locked-ref {
   background: #f8f5ef;
   border: 1px solid #ded7cb;

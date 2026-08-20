@@ -80,6 +80,10 @@ import {
   createPurchaseOrder,
   createPurchaseRequestRemote,
   createSalesQuote,
+  createVendor,
+  updateVendor,
+  loadVendors,
+  type Vendor,
   updateSalesQuoteStatus,
   deleteSalesQuote,
   updateSalesQuoteProposalFields,
@@ -292,7 +296,7 @@ import {
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library";
+type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -339,12 +343,13 @@ type RoleMode = "warehouse" | "purchasing" | "pm" | "manager" | "sales" | "engin
 
 const ALL_ROLE_KEYS: RoleMode[] = ["warehouse", "purchasing", "pm", "manager", "sales", "engineering", "product_development", "implementation", "support", "marketing"];
 
-const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "saas_calendar"];
+const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "tasks", "reports", "saas_calendar"];
 
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
   purchasing: "Procurement",
   inventory: "Inventory",
+  vendors: "Vendors",
   projects: "Projects",
   sales: "Sales",
   tasks: "Tasks",
@@ -359,13 +364,13 @@ const TAB_LABELS: Record<View, string> = {
 // regardless of these defaults.
 const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
   warehouse: ["dashboard", "inventory", "projects", "tasks"],
-  purchasing: ["dashboard", "purchasing", "inventory", "tasks", "reports"],
+  purchasing: ["dashboard", "purchasing", "inventory", "vendors", "tasks", "reports"],
   pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports", "saas_calendar"],
-  manager: ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "saas_calendar"],
+  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "tasks", "reports", "saas_calendar"],
   sales: ["dashboard", "sales", "tasks", "reports", "saas_calendar"],
   engineering: ["dashboard", "projects", "inventory", "tasks", "reports"],
   product_development: ["dashboard", "projects", "tasks", "reports"],
-  implementation: ["dashboard", "projects", "purchasing", "inventory", "tasks"],
+  implementation: ["dashboard", "projects", "purchasing", "inventory", "vendors", "tasks"],
   support: ["dashboard", "tasks", "reports"],
   marketing: ["dashboard", "reports", "tasks"],
 };
@@ -394,6 +399,7 @@ const MOBILE_NAV_TAB_ICON: Record<View, (size: number) => React.ReactNode> = {
   dashboard: (size) => <LayoutDashboard size={size} />,
   purchasing: (size) => <ShoppingCart size={size} />,
   inventory: (size) => <Boxes size={size} />,
+  vendors: (size) => <Building2 size={size} />,
   projects: (size) => <ClipboardList size={size} />,
   sales: (size) => <DollarSign size={size} />,
   tasks: (size) => <ListChecks size={size} />,
@@ -912,7 +918,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "projects", "sales", "tasks", "reports", "saas_calendar", "admin", "library"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "tasks", "reports", "saas_calendar", "admin", "library"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -1454,6 +1460,42 @@ function App() {
     setPurchaseOrders((current) => current.map((order) => (order.id === id ? { ...order, status } : order)));
     if (authSession) {
       await updatePurchaseOrderStatus(id, status, authSession.accessToken);
+    }
+  }
+
+  // Vendors (Inventory & Purchasing nav merge, 2026-08-19). The `vendors`
+  // table has been real since migration 001 -- name, contact, email,
+  // phone, website, notes -- but was only ever touched silently by
+  // getOrCreateVendorId when a PO is submitted. This is the first real
+  // page for it.
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendorStatus, setVendorStatus] = useState("");
+
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadVendors(authSession.accessToken).then(setVendors).catch(() => {});
+  }, [authSession]);
+
+  async function handleCreateVendor(input: Parameters<typeof createVendor>[0]) {
+    if (!authSession) {
+      setVendorStatus("Sign in to add a vendor.");
+      return;
+    }
+    const created = await createVendor(input, authSession.accessToken);
+    if (created) {
+      setVendors((current) => [...current, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setVendorStatus(`${created.name} added.`);
+    } else {
+      setVendorStatus("Could not save that vendor.");
+    }
+  }
+
+  async function handleUpdateVendor(id: string, updates: Parameters<typeof updateVendor>[1]) {
+    setVendors((current) => current.map((vendor) => (vendor.id === id ? { ...vendor, ...updates } : vendor)));
+    if (authSession) {
+      await updateVendor(id, updates, authSession.accessToken);
     }
   }
 
@@ -5477,8 +5519,18 @@ function App() {
           </div>
           <nav className="nav-list">
             {allowedTabs.includes("dashboard") && <NavButton icon={<LayoutDashboard size={16} />} label="Dashboard" active={view === "dashboard"} onClick={() => navigateToView("dashboard")} />}
-            {allowedTabs.includes("purchasing") && <NavButton icon={<ShoppingCart size={16} />} label="Procurement" active={view === "purchasing"} onClick={() => navigateToView("purchasing")} />}
-            {allowedTabs.includes("inventory") && <NavButton icon={<Boxes size={16} />} label="Inventory" active={view === "inventory"} onClick={() => navigateToView("inventory")} />}
+            {(allowedTabs.includes("purchasing") || allowedTabs.includes("inventory") || allowedTabs.includes("vendors")) && (
+              <NavButton
+                icon={<Boxes size={16} />}
+                label="Inventory & Purchasing"
+                active={view === "purchasing" || view === "inventory" || view === "vendors"}
+                onClick={() => {
+                  if (view !== "purchasing" && view !== "inventory" && view !== "vendors") {
+                    navigateToView(allowedTabs.includes("inventory") ? "inventory" : allowedTabs.includes("purchasing") ? "purchasing" : "vendors");
+                  }
+                }}
+              />
+            )}
             {allowedTabs.includes("projects") && <NavButton icon={<ClipboardList size={16} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />}
             {allowedTabs.includes("sales") && <NavButton icon={<DollarSign size={16} />} label="Sales" active={view === "sales"} onClick={() => navigateToView("sales")} />}
             {allowedTabs.includes("tasks") && <NavButton icon={<ListChecks size={16} />} label="Tasks" active={view === "tasks"} onClick={() => navigateToView("tasks")} />}
@@ -5641,8 +5693,18 @@ function App() {
         </div>
 
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
-        {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-        {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
+        {(view === "purchasing" || view === "inventory" || view === "vendors") && (
+          <>
+            <div className="segmented-tabs operations-subtabs">
+              {allowedTabs.includes("inventory") && <button className={view === "inventory" ? "active" : ""} type="button" onClick={() => navigateToView("inventory")}>Stock</button>}
+              {allowedTabs.includes("purchasing") && <button className={view === "purchasing" ? "active" : ""} type="button" onClick={() => navigateToView("purchasing")}>Purchasing</button>}
+              {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
+            </div>
+            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
+            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
+            {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
+          </>
+        )}
         {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
@@ -5845,7 +5907,22 @@ function MobileBottomNav({
   onNavigate: (view: View) => void;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
-  const orderedTabs = ALL_TABS.filter((tab) => allowedTabs.includes(tab));
+  // Desktop nav merges Purchasing/Inventory/Vendors into one "Inventory &
+  // Purchasing" button (2026-08-19) -- mirrored here so mobile doesn't
+  // regress back to 3 separate bottom-nav slots for what's now meant to
+  // read as one section. "inventory" is the single slot that represents
+  // all three; purchasing/vendors never get their own icon.
+  const operationsTabs: View[] = ["inventory", "purchasing", "vendors"];
+  const hasAnyOperationsTab = operationsTabs.some((tab) => allowedTabs.includes(tab));
+  const orderedTabs = ALL_TABS.filter((tab) => {
+    if (tab === "purchasing" || tab === "vendors") {
+      return false;
+    }
+    if (tab === "inventory") {
+      return hasAnyOperationsTab;
+    }
+    return allowedTabs.includes(tab);
+  });
   const primaryTabs = orderedTabs.slice(0, 3);
   const overflowTabs = orderedTabs.slice(3);
   const hasMore = overflowTabs.length > 0 || canReviewApprovals;
@@ -5855,9 +5932,14 @@ function MobileBottomNav({
   const quickAction = ROLE_QUICK_ACTION[roleMode];
   const centerTarget = allowedTabs.includes(quickAction.view) ? quickAction : { view: "dashboard" as View, label: "Dashboard" };
 
+  function isTabActive(tab: View) {
+    return tab === "inventory" ? operationsTabs.includes(view) : view === tab;
+  }
+
   function go(target: View) {
     setMoreOpen(false);
-    onNavigate(target);
+    const resolved = target === "inventory" ? operationsTabs.find((tab) => allowedTabs.includes(tab)) ?? "inventory" : target;
+    onNavigate(resolved);
   }
 
   return (
@@ -5891,7 +5973,7 @@ function MobileBottomNav({
       )}
       <div className="mobile-bottom-nav-bar">
         {leftTabs.map((tab) => (
-          <button key={tab} type="button" className={`mobile-nav-tab ${view === tab ? "active" : ""}`} onClick={() => go(tab)}>
+          <button key={tab} type="button" className={`mobile-nav-tab ${isTabActive(tab) ? "active" : ""}`} onClick={() => go(tab)}>
             {MOBILE_NAV_TAB_ICON[tab](21)}
             <span>{TAB_LABELS[tab]}</span>
           </button>
@@ -5903,7 +5985,7 @@ function MobileBottomNav({
           <span className="mobile-nav-center-label">{centerTarget.label}</span>
         </button>
         {rightTabs.map((tab) => (
-          <button key={tab} type="button" className={`mobile-nav-tab ${view === tab ? "active" : ""}`} onClick={() => go(tab)}>
+          <button key={tab} type="button" className={`mobile-nav-tab ${isTabActive(tab) ? "active" : ""}`} onClick={() => go(tab)}>
             {MOBILE_NAV_TAB_ICON[tab](21)}
             <span>{TAB_LABELS[tab]}</span>
           </button>
@@ -6016,10 +6098,18 @@ function InstallAppBanner() {
 }
 
 function pageTitle(view: View) {
+  // Purchasing/Inventory/Vendors share one nav entry and one sub-tab strip
+  // (2026-08-19 merge) -- the page H1 stays fixed across all three instead
+  // of flipping title on every sub-tab click, same as Reports' page title
+  // doesn't change per report sub-tab.
+  if (view === "purchasing" || view === "inventory" || view === "vendors") {
+    return "Inventory & Purchasing";
+  }
   const titles: Record<View, string> = {
     dashboard: "Dashboard",
     purchasing: "Procurement",
     inventory: "Inventory",
+    vendors: "Vendors",
     projects: "Projects",
     sales: "Sales",
     tasks: "Tasks",
@@ -6036,10 +6126,14 @@ function pageTitle(view: View) {
 // Sales page was showing "Procurement, inventory, project transfers..."
 // text with nothing to do with Sales.
 function pageSubtitle(view: View) {
+  if (view === "purchasing" || view === "inventory" || view === "vendors") {
+    return "Stock, purchase requests/orders, and vendor accounts -- pick a tab below.";
+  }
   const subtitles: Record<View, string> = {
     dashboard: "Procurement, inventory, project transfers, and reports for field packages.",
     purchasing: "Purchase requests, purchase orders, and receiving for field packages.",
     inventory: "Stock levels, movements, and equipment builds across the warehouse and projects.",
+    vendors: "Suppliers, contact info, and account notes.",
     projects: "Project list, completion tracking, BOM, and PM handoff status.",
     sales: "Pipeline, quotes, and the product catalog for new deals.",
     tasks: "Work items and requests across every team and project.",
@@ -7016,6 +7110,132 @@ function Purchasing({
           {purchaseOrders.length === 0 && <div className="empty-compact-state">No purchase orders yet.</div>}
         </div>
       </section>
+    </div>
+  );
+}
+
+// New 2026-08-19 (Inventory & Purchasing nav merge). The `vendors` table
+// (migration 001) has been real since day one -- name, contact, email,
+// phone, website, notes -- but was only ever touched silently by
+// getOrCreateVendorId when a PO is submitted. This is the first page for it.
+function Vendors({
+  vendors,
+  vendorStatus,
+  onCreate,
+  onUpdate,
+}: {
+  vendors: Vendor[];
+  vendorStatus: string;
+  onCreate: (input: { name: string; contactName?: string; email?: string; phone?: string; website?: string; notes?: string }) => void;
+  onUpdate: (id: string, updates: Partial<{ name: string; contactName: string; email: string; phone: string; website: string; notes: string; isActive: boolean }>) => void;
+}) {
+  const [showModal, setShowModal] = useState(false);
+  const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ name: "", contactName: "", email: "", phone: "", website: "", notes: "" });
+  const [showInactive, setShowInactive] = useState(false);
+
+  const visibleVendors = vendors.filter((vendor) => showInactive || vendor.isActive);
+  const editingVendor = vendors.find((vendor) => vendor.id === editingVendorId) ?? null;
+
+  function openAdd() {
+    setEditingVendorId(null);
+    setDraft({ name: "", contactName: "", email: "", phone: "", website: "", notes: "" });
+    setShowModal(true);
+  }
+
+  function openEdit(vendor: Vendor) {
+    setEditingVendorId(vendor.id);
+    setDraft({ name: vendor.name, contactName: vendor.contactName, email: vendor.email, phone: vendor.phone, website: vendor.website, notes: vendor.notes });
+    setShowModal(true);
+  }
+
+  function save() {
+    if (!draft.name.trim()) {
+      return;
+    }
+    if (editingVendorId) {
+      onUpdate(editingVendorId, draft);
+    } else {
+      onCreate(draft);
+    }
+    setShowModal(false);
+  }
+
+  return (
+    <div className="content-grid">
+      <section className="panel full">
+        <div className="panel-title-row">
+          <div>
+            <h2>Vendors</h2>
+            <p>Suppliers you buy hardware and materials from -- contact info, lead times, and account notes in one place.</p>
+          </div>
+          <div className="action-row">
+            <label className="checkbox-inline">
+              <input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} /> Show inactive
+            </label>
+            <button className="primary-action" type="button" onClick={openAdd}><Plus size={16} /> Add Vendor</button>
+          </div>
+        </div>
+        {vendorStatus && <small className="muted">{vendorStatus}</small>}
+        <div className="table-scroll">
+          <table className="stack-table-mobile">
+            <thead>
+              <tr><th>Name</th><th>Contact</th><th>Email</th><th>Phone</th><th>Website</th><th>Notes</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              {visibleVendors.map((vendor) => (
+                <tr className="table-row-clickable" key={vendor.id} onClick={() => openEdit(vendor)}>
+                  <td><strong>{vendor.name}</strong></td>
+                  <td data-label="Contact">{vendor.contactName || "-"}</td>
+                  <td data-label="Email">{vendor.email || "-"}</td>
+                  <td data-label="Phone">{vendor.phone || "-"}</td>
+                  <td data-label="Website">{vendor.website || "-"}</td>
+                  <td data-label="Notes">{vendor.notes || "-"}</td>
+                  <td data-label="Status"><span className={`status ${vendor.isActive ? "ok" : ""}`}>{vendor.isActive ? "Active" : "Inactive"}</span></td>
+                </tr>
+              ))}
+              {visibleVendors.length === 0 && (
+                <tr><td colSpan={7} className="empty-compact-state">No vendors yet -- add one, or they'll show up automatically the first time a Purchase Order names them.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {showModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="vendor-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="vendor-modal-title">{editingVendorId ? "Edit Vendor" : "Add Vendor"}</h2>
+                <p>Contact info shows up wherever this vendor is picked -- Purchase Orders, Preferred Vendor on requests.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowModal(false)} aria-label="Close">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">Vendor name<input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+              <label>Contact name<input value={draft.contactName} onChange={(event) => setDraft((current) => ({ ...current, contactName: event.target.value }))} /></label>
+              <label>Phone<input value={draft.phone} onChange={(event) => setDraft((current) => ({ ...current, phone: event.target.value }))} /></label>
+              <label>Email<input value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} /></label>
+              <label>Website<input value={draft.website} onChange={(event) => setDraft((current) => ({ ...current, website: event.target.value }))} /></label>
+              <label className="span-2">Notes<textarea value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Lead times, minimum order, account number, etc." /></label>
+            </div>
+            <div className="modal-actions">
+              {editingVendor && (
+                <button
+                  className="secondary-action danger-action"
+                  type="button"
+                  onClick={() => { onUpdate(editingVendor.id, { isActive: !editingVendor.isActive }); setShowModal(false); }}
+                >
+                  {editingVendor.isActive ? "Mark Inactive" : "Mark Active"}
+                </button>
+              )}
+              <button className="secondary-action" type="button" onClick={() => setShowModal(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={save} disabled={!draft.name.trim()}>{editingVendorId ? "Save Vendor" : "Add Vendor"}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

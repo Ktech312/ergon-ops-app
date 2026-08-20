@@ -5568,6 +5568,115 @@ export async function loadPurchaseOrders(accessToken?: string): Promise<Purchase
   return rows.map(mapPurchaseOrderRow);
 }
 
+// The `vendors` table (migration 001) has been real -- name, contact_name,
+// email, phone, website, notes, is_active, all with a working RLS policy
+// -- since the very first schema, but only ever touched via
+// getOrCreateVendorId below (a silent upsert-by-name when a PO is
+// submitted). No page ever let anyone see or fill in the directory info.
+// Added a real Vendors page 2026-08-19 (Inventory & Purchasing nav merge).
+export type Vendor = {
+  id: string;
+  name: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  website: string;
+  notes: string;
+  isActive: boolean;
+};
+
+type VendorRow = {
+  id: string;
+  name: string;
+  contact_name: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  notes: string | null;
+  is_active: boolean;
+};
+
+const VENDOR_SELECT = "id,name,contact_name,email,phone,website,notes,is_active";
+
+function mapVendorRow(row: VendorRow): Vendor {
+  return {
+    id: row.id,
+    name: row.name,
+    contactName: row.contact_name ?? "",
+    email: row.email ?? "",
+    phone: row.phone ?? "",
+    website: row.website ?? "",
+    notes: row.notes ?? "",
+    isActive: row.is_active,
+  };
+}
+
+export async function loadVendors(accessToken?: string): Promise<Vendor[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`vendors?select=${VENDOR_SELECT}&order=name.asc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as VendorRow[];
+  return rows.map(mapVendorRow);
+}
+
+export async function createVendor(
+  input: { name: string; contactName?: string; email?: string; phone?: string; website?: string; notes?: string },
+  accessToken?: string,
+): Promise<Vendor | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !input.name.trim()) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("vendors?on_conflict=name"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify({
+      name: input.name.trim(),
+      contact_name: input.contactName || null,
+      email: input.email || null,
+      phone: input.phone || null,
+      website: input.website || null,
+      notes: input.notes || null,
+    }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as VendorRow[];
+  return rows[0] ? mapVendorRow(rows[0]) : null;
+}
+
+export async function updateVendor(
+  id: string,
+  updates: Partial<{ name: string; contactName: string; email: string; phone: string; website: string; notes: string; isActive: boolean }>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.contactName !== undefined) payload.contact_name = updates.contactName || null;
+  if (updates.email !== undefined) payload.email = updates.email || null;
+  if (updates.phone !== undefined) payload.phone = updates.phone || null;
+  if (updates.website !== undefined) payload.website = updates.website || null;
+  if (updates.notes !== undefined) payload.notes = updates.notes || null;
+  if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl(`vendors?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
 async function getOrCreateVendorId(name: string, accessToken: string): Promise<string | null> {
   const trimmed = name.trim();
   if (!trimmed) {
