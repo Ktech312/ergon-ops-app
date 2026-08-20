@@ -6909,31 +6909,24 @@ function Purchasing({
           </div>
         </div>
         <div className="document-queue">
-          {(activeProjectDocuments.length ? activeProjectDocuments : purchaseOrders.slice(0, 3).map((order, index) => ({
-            id: `sample-${index}`,
-            name: order.sourceFile,
-            project: order.projectRef,
-            size: 0,
-            status: "Ready to review" as const,
-            type: "Procurement" as const,
-            storage: "Browser" as const,
-            uploadedAt: "",
-            uploadedByEmail: "",
-          }))).map((doc) => (
+          {activeProjectDocuments.length === 0 && (
+            <div className="empty-compact-state">No documents uploaded for this project yet -- choose a file above to get started.</div>
+          )}
+          {activeProjectDocuments.map((doc) => (
             <div className="document-row" key={`${doc.id}-${doc.name}`}>
               <div>
                 <strong>{doc.name}</strong>
-                <span>{doc.project}{doc.size ? ` - ${formatBytes(doc.size)}` : " - imported sample"}{doc.storage ? ` - ${doc.storage}` : ""}</span>
-                <small>{doc.id.startsWith("sample-") ? "Sample row from imported order data" : formatDocumentProvenance(doc as UploadedDoc)}</small>
+                <span>{doc.project}{doc.size ? ` - ${formatBytes(doc.size)}` : ""}{doc.storage ? ` - ${doc.storage}` : ""}</span>
+                <small>{formatDocumentProvenance(doc)}</small>
               </div>
-              <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])} disabled={doc.id.startsWith("sample-")}>
+              <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
                 <option>Uploaded</option>
                 <option>Ready to review</option>
                 <option>Backed up</option>
                 <option>Archived</option>
               </select>
-              {"storagePath" in doc && doc.storagePath && (
-                <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc as UploadedDoc)}>Download</button>
+              {doc.storagePath && (
+                <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc)}>Download</button>
               )}
             </div>
           ))}
