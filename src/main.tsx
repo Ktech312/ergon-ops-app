@@ -6796,7 +6796,7 @@ function Purchasing({
             <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
               <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
               <span data-label="Need">{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
-              <span data-label="Source">{request.reason}<small>{request.projectName ? `${request.projectName} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small></span>
+              <span data-label="Source">{request.reason}<small>{request.projectName ? `${request.projectName} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small><small>Requested by {request.requestedByEmail || "Unknown"} on {new Date(request.createdAt).toLocaleDateString()}</small></span>
               <span data-label="Est.">{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
               <span data-label="Status">
                 <select value={request.status} onChange={(event) => onUpdatePurchaseRequestStatus(request.id, event.target.value as PurchaseRequest["status"])}>
@@ -6873,6 +6873,7 @@ function Purchasing({
               <label>Expected date<input type="date" value={requestEditDraft.expectedDate} onChange={(event) => setRequestEditDraft((current) => ({ ...current, expectedDate: event.target.value }))} /></label>
               <label className="span-2">Notes<textarea value={requestEditDraft.notes} onChange={(event) => setRequestEditDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Vendor response, substitutions, purchasing notes, delivery details." /></label>
             </div>
+            <small className="muted request-edit-provenance">Requested by {editingRequest.requestedByEmail || "Unknown"} on {new Date(editingRequest.createdAt).toLocaleDateString()}</small>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setEditingRequestId(null)}>Cancel</button>
               <button className="primary-action" type="button" onClick={submitRequestEdit}>Save Request</button>
@@ -6882,7 +6883,11 @@ function Purchasing({
       )}
 
       <section className="panel wide">
-        <PanelHeader title="Upload Procurement Document" label="Assign a PDF or receipt to a project before review" />
+        <PanelHeader title="Attach Purchase Paperwork" label="Invoices, packing slips, receipts, and order confirmations tied to an actual purchase" />
+        <div className="upload-rule-note">
+          <FileText size={15} />
+          <span>Use this for paperwork that comes with a purchase (invoice, packing slip, receipt, order confirmation). General project files -- contracts, drawings, references -- are uploaded by the PM team from the Project page instead. Both land in the same per-project Documents list, so nothing gets lost either way.</span>
+        </div>
         <div className="upload-layout">
           <label className="upload-drop">
             <Upload size={24} />
