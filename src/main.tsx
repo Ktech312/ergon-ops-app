@@ -1458,19 +1458,26 @@ function App() {
   // the request "Ordered" rather than deleting or replacing it, so the
   // request stays as the log/audit trail. E: "we dont want to loose
   // record of the request, so that info needs to stay for logging."
+  // Returns whether the save actually succeeded -- the caller (Purchasing's
+  // submitCreatePurchase) awaits this and only shows a success confirmation
+  // / closes the modal when it's true. Previously this was fire-and-forget:
+  // the UI claimed "saved" unconditionally the instant this was called, so
+  // a real failure (see migration 083 -- app_status was DB-constrained to
+  // the three legacy values and rejected "Ordered"/"Received" outright)
+  // looked exactly like success. E: "the green pop up came up... but it
+  // never went down there and it also wasn't removed from this requests."
   async function createPurchase(
     order: Omit<Parameters<typeof createPurchaseOrder>[0], "sourceRequestId">,
     sourceRequest?: PurchaseRequest,
     file?: File,
-  ) {
+  ): Promise<{ ok: boolean; error?: string }> {
     if (!authSession) {
-      setAuthStatus("Sign in to create a purchase.");
-      return;
+      return { ok: false, error: "Sign in to create a purchase." };
     }
     try {
       const created = await createPurchaseOrder({ ...order, sourceRequestId: sourceRequest?.id }, authSession.accessToken);
       if (!created) {
-        return;
+        return { ok: false, error: "Could not save the purchase -- check the vendor name and try again." };
       }
       let finalOrder = created;
       if (file) {
@@ -1497,8 +1504,9 @@ function App() {
           syncBomLineStatusFromRequest(sourceRequest, nextStatus);
         }
       }
+      return { ok: true };
     } catch (error) {
-      setAuthStatus(error instanceof Error ? error.message : "Could not save the purchase.");
+      return { ok: false, error: error instanceof Error ? error.message : "Could not save the purchase." };
     }
   }
 
@@ -6607,7 +6615,7 @@ function Purchasing({
     },
     sourceRequest?: PurchaseRequest,
     file?: File,
-  ) => void;
+  ) => Promise<{ ok: boolean; error?: string }>;
   onUpdatePurchaseOrderStatus: (id: string, status: PurchaseOrder["status"]) => void;
   onUploadPurchaseOrderFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
   onDeletePurchaseOrderFile: (purchaseOrderId: string, fileId: string, storagePath: string) => Promise<boolean>;
@@ -6631,12 +6639,12 @@ function Purchasing({
   onOpenTasksView: () => void;
   searchFocus?: { term: string; token: number } | null;
 }) {
-  const [requestFilters, setRequestFilters] = useState({ text: "", status: "Open", reason: "All" });
+  const [requestFilters, setRequestFilters] = useState({ text: "", status: "Open", source: "All" as "All" | "Reorder" | "Project" });
   useEffect(() => {
     if (!searchFocus) {
       return;
     }
-    setRequestFilters({ text: searchFocus.term, status: "All", reason: "All" });
+    setRequestFilters({ text: searchFocus.term, status: "All", source: "All" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchFocus?.token]);
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
@@ -6656,7 +6664,7 @@ function Purchasing({
   // Explicit confirmation for save/receive actions -- this page had no
   // visible "it worked" signal anywhere (the modal just closes and the row
   // updates in place), which E read as buttons doing nothing.
-  const [purchaseActionStatus, setPurchaseActionStatus] = useState("");
+  const [purchaseActionStatus, setPurchaseActionStatus] = useState<{ message: string; isError: boolean } | null>(null);
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
   const totalTax = purchaseOrders.reduce((sum, order) => sum + order.tax, 0);
   const openOrders = purchaseOrders.filter((order) => order.status !== "Received").length;
@@ -6673,8 +6681,10 @@ function Purchasing({
       requestFilters.status === "All" ||
       (requestFilters.status === "Open" && !["Received", "Cancelled"].includes(request.status)) ||
       request.status === requestFilters.status;
-    const reasonMatch = requestFilters.reason === "All" || request.reason === requestFilters.reason;
-    return haystack.includes(requestFilters.text.toLowerCase()) && statusMatch && reasonMatch;
+    const sourceMatch =
+      requestFilters.source === "All" ||
+      (requestFilters.source === "Project" ? request.reason === "Project BOM" : request.reason !== "Project BOM");
+    return haystack.includes(requestFilters.text.toLowerCase()) && statusMatch && sourceMatch;
   });
 
   // Unified "Create Purchase" (2026-08-20) -- replaces the old separate
@@ -6750,8 +6760,10 @@ function Purchasing({
     setCreatePurchaseOpen(true);
   }
 
-  function submitCreatePurchase() {
-    if (!purchaseDraft.vendor.trim()) {
+  const [isSavingPurchase, setIsSavingPurchase] = useState(false);
+
+  async function submitCreatePurchase() {
+    if (!purchaseDraft.vendor.trim() || isSavingPurchase) {
       return;
     }
     // Order # is nice to have but plenty of real purchases (a quick reorder
@@ -6763,7 +6775,11 @@ function Purchasing({
     const orderNumber = purchaseDraft.number.trim() || `PO-${Date.now().toString(36).toUpperCase()}`;
     const cleanLines = purchaseDraft.lines.filter((line) => line.name.trim() && line.qty > 0);
     const sourceRequest = createPurchaseSourceId ? purchaseRequests.find((request) => request.id === createPurchaseSourceId) : undefined;
-    onCreatePurchase(
+    setIsSavingPurchase(true);
+    // Awaited -- previously this fired the save and claimed success in the
+    // same tick without checking the outcome, so a real failure (see
+    // migration 083) still showed "saved" and closed the modal.
+    const result = await onCreatePurchase(
       {
         number: orderNumber,
         vendor: purchaseDraft.vendor.trim(),
@@ -6781,9 +6797,14 @@ function Purchasing({
       sourceRequest,
       purchaseDraftFile ?? undefined,
     );
-    setPurchaseActionStatus(`Purchase ${orderNumber} saved -- see it in Waiting on Receiving below.`);
-    setCreatePurchaseOpen(false);
-    setPurchaseDraftFile(null);
+    setIsSavingPurchase(false);
+    if (result.ok) {
+      setPurchaseActionStatus({ message: `Purchase ${orderNumber} saved -- see it in Waiting on Receiving below.`, isError: false });
+      setCreatePurchaseOpen(false);
+      setPurchaseDraftFile(null);
+    } else {
+      setPurchaseActionStatus({ message: `Could not save this purchase: ${result.error ?? "unknown error"}. Nothing was created -- try again.`, isError: true });
+    }
   }
 
   const [receivingFileFor, setReceivingFileFor] = useState<string | null>(null);
@@ -6810,7 +6831,7 @@ function Purchasing({
       return;
     }
     onReceivePurchaseRequest(receivingRequest.id, requestReceiveDraft.qty, requestReceiveDraft.unitCost, requestReceiveDraft.notes);
-    setPurchaseActionStatus(`Receipt posted -- ${requestReceiveDraft.qty} of ${receivingRequest.itemName} (${receivingRequest.requestNumber}).`);
+    setPurchaseActionStatus({ message: `Receipt posted -- ${requestReceiveDraft.qty} of ${receivingRequest.itemName} (${receivingRequest.requestNumber}).`, isError: false });
     setReceivingRequestId(null);
   }
 
@@ -6834,7 +6855,7 @@ function Purchasing({
       return;
     }
     onUpdatePurchaseRequest(editingRequest.id, requestEditDraft);
-    setPurchaseActionStatus(`Request ${editingRequest.requestNumber} saved.`);
+    setPurchaseActionStatus({ message: `Request ${editingRequest.requestNumber} saved.`, isError: false });
     setEditingRequestId(null);
   }
 
@@ -6919,22 +6940,20 @@ function Purchasing({
             </select>
           </label>
           <label>
-            Reason
-            <select value={requestFilters.reason} onChange={(event) => setRequestFilters((current) => ({ ...current, reason: event.target.value }))}>
-              <option>All</option>
-              <option>Reorder Point</option>
-              <option>Planned Build Shortage</option>
-              <option>Project BOM</option>
-              <option>Manual</option>
+            Source
+            <select value={requestFilters.source} onChange={(event) => setRequestFilters((current) => ({ ...current, source: event.target.value as typeof current.source }))}>
+              <option value="All">All</option>
+              <option value="Reorder">Reorder</option>
+              <option value="Project">Project</option>
             </select>
           </label>
         </div>
       </section>
 
       {purchaseActionStatus && (
-        <div className="purchasing-action-status">
-          <span>{purchaseActionStatus}</span>
-          <button className="icon-button" type="button" onClick={() => setPurchaseActionStatus("")} aria-label="Dismiss">x</button>
+        <div className={`purchasing-action-status${purchaseActionStatus.isError ? " purchasing-action-status-error" : ""}`}>
+          <span>{purchaseActionStatus.message}</span>
+          <button className="icon-button" type="button" onClick={() => setPurchaseActionStatus(null)} aria-label="Dismiss">x</button>
         </div>
       )}
 
@@ -6953,7 +6972,12 @@ function Purchasing({
             <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
               <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
               <span data-label="Need">{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
-              <span data-label="Source">{request.reason}<small>{request.projectName ? `${request.projectName} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small><small>Requested by {request.requestedByEmail || "Unknown"} on {new Date(request.createdAt).toLocaleDateString()}</small>{linkedOrder && <small className="document-link-tag document-link-tag-linked">Order placed: PO {linkedOrder.number}</small>}</span>
+              <span data-label="Source">
+                {request.projectName || request.reason}
+                <small>{request.projectName ? `${request.reason} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small>
+                <small>Requested by {request.requestedByEmail || "Unknown"} on {new Date(request.createdAt).toLocaleDateString()}</small>
+                {linkedOrder && <small className="document-link-tag document-link-tag-linked">Order placed: PO {linkedOrder.number}</small>}
+              </span>
               <span data-label="Est.">{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
               <span data-label="Status">
                 <select value={request.status} onChange={(event) => onUpdatePurchaseRequestStatus(request.id, event.target.value as PurchaseRequest["status"])}>
@@ -7112,7 +7136,7 @@ function Purchasing({
             </label>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setCreatePurchaseOpen(false)}>Cancel</button>
-              <button className="primary-action" type="button" onClick={submitCreatePurchase} disabled={!purchaseDraft.vendor.trim()}>Save Purchase</button>
+              <button className="primary-action" type="button" onClick={submitCreatePurchase} disabled={!purchaseDraft.vendor.trim() || isSavingPurchase}>{isSavingPurchase ? "Saving..." : "Save Purchase"}</button>
             </div>
           </section>
         </div>

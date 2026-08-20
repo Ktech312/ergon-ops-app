@@ -1676,6 +1676,16 @@ td small.quote-ref-tag {
   padding: 10px 14px;
 }
 
+.purchasing-action-status-error {
+  background: #fbeaea;
+  border-color: #e8c2c2;
+  color: #a01029;
+}
+
+.purchasing-action-status-error .icon-button {
+  color: #a01029;
+}
+
 .purchasing-action-status .icon-button {
   color: #0f5a4d;
 }
