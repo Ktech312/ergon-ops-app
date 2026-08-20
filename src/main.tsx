@@ -6560,6 +6560,10 @@ function Purchasing({
   });
   const [receivingRequestId, setReceivingRequestId] = useState<string | null>(null);
   const [requestReceiveDraft, setRequestReceiveDraft] = useState({ qty: 1, unitCost: 0, notes: "" });
+  // Explicit confirmation for save/receive actions -- this page had no
+  // visible "it worked" signal anywhere (the modal just closes and the row
+  // updates in place), which E read as buttons doing nothing.
+  const [purchaseActionStatus, setPurchaseActionStatus] = useState("");
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
   const totalTax = purchaseOrders.reduce((sum, order) => sum + order.tax, 0);
   const openOrders = purchaseOrders.filter((order) => order.status !== "Received").length;
@@ -6654,14 +6658,21 @@ function Purchasing({
   }
 
   function submitCreatePurchase() {
-    if (!purchaseDraft.number.trim() || !purchaseDraft.vendor.trim()) {
+    if (!purchaseDraft.vendor.trim()) {
       return;
     }
+    // Order # is nice to have but plenty of real purchases (a quick reorder
+    // off a webstore, no formal PO cut yet) don't have one yet -- don't
+    // block saving on it. E hit this immediately: pre-filling from a
+    // Reorder Point request leaves Order # blank (those never carry a PO#),
+    // and requiring it here made Save silently sit disabled with no
+    // indication why -- looked exactly like "the button does nothing."
+    const orderNumber = purchaseDraft.number.trim() || `PO-${Date.now().toString(36).toUpperCase()}`;
     const cleanLines = purchaseDraft.lines.filter((line) => line.name.trim() && line.qty > 0);
     const sourceRequest = createPurchaseSourceId ? purchaseRequests.find((request) => request.id === createPurchaseSourceId) : undefined;
     onCreatePurchase(
       {
-        number: purchaseDraft.number.trim(),
+        number: orderNumber,
         vendor: purchaseDraft.vendor.trim(),
         date: purchaseDraft.date,
         projectRef: purchaseDraft.projectRef.trim(),
@@ -6677,6 +6688,7 @@ function Purchasing({
       sourceRequest,
       purchaseDraftFile ?? undefined,
     );
+    setPurchaseActionStatus(`Purchase ${orderNumber} saved -- see it in Waiting on Receiving below.`);
     setCreatePurchaseOpen(false);
     setPurchaseDraftFile(null);
   }
@@ -6705,6 +6717,7 @@ function Purchasing({
       return;
     }
     onReceivePurchaseRequest(receivingRequest.id, requestReceiveDraft.qty, requestReceiveDraft.unitCost, requestReceiveDraft.notes);
+    setPurchaseActionStatus(`Receipt posted -- ${requestReceiveDraft.qty} of ${receivingRequest.itemName} (${receivingRequest.requestNumber}).`);
     setReceivingRequestId(null);
   }
 
@@ -6728,6 +6741,7 @@ function Purchasing({
       return;
     }
     onUpdatePurchaseRequest(editingRequest.id, requestEditDraft);
+    setPurchaseActionStatus(`Request ${editingRequest.requestNumber} saved.`);
     setEditingRequestId(null);
   }
 
@@ -6783,7 +6797,7 @@ function Purchasing({
         <div className="panel-title-row">
           <div>
             <h2>Purchase Request Queue</h2>
-            <p>Buying work from the PM team's BOMs, plus low-stock and planned-build reorders. Log/audit trail -- "Create Purchase" turns one into a real order without losing the record.</p>
+            <p>Search, filter, and bulk-generate the buying work below. "Create Purchase" turns one into a real order without losing the record.</p>
           </div>
           <div className="action-row">
             <button className="secondary-action" type="button" onClick={exportPurchaseRequestQueue} disabled={filteredPurchaseRequests.length === 0}><FileText size={16} /> Export CSV</button>
@@ -6793,36 +6807,52 @@ function Purchasing({
             <RequestTaskButton section="purchasing" teamMembers={teamMembers} projectSites={projectSites} onCreate={onCreateTask} />
           </div>
         </div>
-        <div className="request-queue">
-          <div className="request-filter-row">
-            <label>
-              Search
-              <input value={requestFilters.text} onChange={(event) => setRequestFilters((current) => ({ ...current, text: event.target.value }))} placeholder="Request, SKU, part, vendor, build" />
-            </label>
-            <label>
-              Status
-              <select value={requestFilters.status} onChange={(event) => setRequestFilters((current) => ({ ...current, status: event.target.value }))}>
-                <option>Open</option>
-                <option>All</option>
-                <option>Draft</option>
-                <option>Need Quote</option>
-                <option>Ready to Order</option>
-                <option>Ordered</option>
-                <option>Received</option>
-                <option>Cancelled</option>
-              </select>
-            </label>
-            <label>
-              Reason
-              <select value={requestFilters.reason} onChange={(event) => setRequestFilters((current) => ({ ...current, reason: event.target.value }))}>
-                <option>All</option>
-                <option>Reorder Point</option>
-                <option>Planned Build Shortage</option>
-                <option>Project BOM</option>
-                <option>Manual</option>
-              </select>
-            </label>
+        <div className="request-filter-row">
+          <label>
+            Search
+            <input value={requestFilters.text} onChange={(event) => setRequestFilters((current) => ({ ...current, text: event.target.value }))} placeholder="Request, SKU, part, vendor, build" />
+          </label>
+          <label>
+            Status
+            <select value={requestFilters.status} onChange={(event) => setRequestFilters((current) => ({ ...current, status: event.target.value }))}>
+              <option>Open</option>
+              <option>All</option>
+              <option>Draft</option>
+              <option>Need Quote</option>
+              <option>Ready to Order</option>
+              <option>Ordered</option>
+              <option>Received</option>
+              <option>Cancelled</option>
+            </select>
+          </label>
+          <label>
+            Reason
+            <select value={requestFilters.reason} onChange={(event) => setRequestFilters((current) => ({ ...current, reason: event.target.value }))}>
+              <option>All</option>
+              <option>Reorder Point</option>
+              <option>Planned Build Shortage</option>
+              <option>Project BOM</option>
+              <option>Manual</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      {purchaseActionStatus && (
+        <div className="purchasing-action-status">
+          <span>{purchaseActionStatus}</span>
+          <button className="icon-button" type="button" onClick={() => setPurchaseActionStatus("")} aria-label="Dismiss">x</button>
+        </div>
+      )}
+
+      <section className="panel wide requests-hero">
+        <div className="panel-title-row">
+          <div>
+            <h2>Requests</h2>
+            <p>Right now these come from the PM team's Project BOMs, plus automatic low-stock and planned-build reorders.</p>
           </div>
+        </div>
+        <div className="request-queue">
           <div className="request-queue-head"><span>Request</span><span>Need</span><span>Source</span><span>Est.</span><span>Status</span><span></span></div>
           {filteredPurchaseRequests.slice(0, 14).map((request) => {
             const linkedOrder = request.linkedPurchaseOrderId ? purchaseOrders.find((order) => order.id === request.linkedPurchaseOrderId) : undefined;
@@ -6989,7 +7019,7 @@ function Purchasing({
             </label>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setCreatePurchaseOpen(false)}>Cancel</button>
-              <button className="primary-action" type="button" onClick={submitCreatePurchase} disabled={!purchaseDraft.number.trim() || !purchaseDraft.vendor.trim()}>Save Purchase</button>
+              <button className="primary-action" type="button" onClick={submitCreatePurchase} disabled={!purchaseDraft.vendor.trim()}>Save Purchase</button>
             </div>
           </section>
         </div>
