@@ -6512,6 +6512,7 @@ function Purchasing({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentProjects.join("|")]);
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [documentLinkTarget, setDocumentLinkTarget] = useState("");
   useEffect(() => {
     setDocumentLinkTarget("");
@@ -7036,50 +7037,116 @@ function Purchasing({
         <div className="po-table-scroll">
         <table>
           <thead>
-            <tr><th>Order</th><th>Vendor</th><th>Project Ref</th><th>Status</th><th>Lines</th><th>Total</th></tr>
+            <tr><th>Order</th><th>Vendor</th><th>Project Ref</th><th>Status</th><th>Lines</th><th>Total</th><th></th></tr>
           </thead>
           <tbody>
-            {purchaseOrders.map((po) => (
-              <tr key={po.id}>
-                <td><strong>{po.number}</strong><small>{formatPoDate(po.date)}</small></td>
-                <td>{po.vendor}</td>
-                <td>{po.projectRef}</td>
-                <td>
-                  <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
-                    <option>Imported</option>
-                    <option>In Processing</option>
-                    <option>On Hold</option>
-                  </select>
-                </td>
-                <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small><small>{projectDocuments.filter((doc) => doc.purchaseOrderId === po.id).length} doc(s) attached</small></td>
-                <td>{moneyExact(po.total)}</td>
-              </tr>
-            ))}
+            {purchaseOrders.map((po) => {
+              const isExpanded = expandedOrderId === po.id;
+              return (
+                <Fragment key={po.id}>
+                  <tr>
+                    <td><strong>{po.number}</strong><small>{formatPoDate(po.date)}</small></td>
+                    <td>{po.vendor}</td>
+                    <td>{po.projectRef}</td>
+                    <td>
+                      <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
+                        <option>Imported</option>
+                        <option>In Processing</option>
+                        <option>On Hold</option>
+                      </select>
+                    </td>
+                    <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small><small>{projectDocuments.filter((doc) => doc.purchaseOrderId === po.id).length} doc(s) attached</small></td>
+                    <td>{moneyExact(po.total)}</td>
+                    <td>
+                      <button className="secondary-action mini-action" type="button" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>{isExpanded ? "Hide" : "Details"}</button>
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr className="order-detail-row">
+                      <td colSpan={7}>
+                        <div className="order-detail-panel">
+                          <div className="order-meta">
+                            <span>{po.shipTo || "No ship-to on file"}</span>
+                            <span>{po.paymentNote || "No payment note"}</span>
+                          </div>
+                          <div className="line-list">
+                            {po.lines.map((line, index) => (
+                              <div className="line-item" key={`${po.id}-${line.name}-${index}`}>
+                                <div>
+                                  <strong>{line.name}</strong>
+                                  <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
+                                </div>
+                                <b>{moneyExact(lineTotal(line))}</b>
+                              </div>
+                            ))}
+                            {po.lines.length === 0 && <div className="empty-compact-state">No line items.</div>}
+                          </div>
+                          <div className="order-totals">
+                            <span>Subtotal {moneyExact(po.subtotal)}</span>
+                            <span>Tax {moneyExact(po.tax)}</span>
+                            <strong>{moneyExact(po.total)}</strong>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
             {purchaseOrders.length === 0 && (
-              <tr><td colSpan={6} className="empty-compact-state">No purchase orders yet. Add one above.</td></tr>
+              <tr><td colSpan={7} className="empty-compact-state">No purchase orders yet. Add one above.</td></tr>
             )}
           </tbody>
         </table>
         </div>
 
         <div className="mobile-card-list">
-          {purchaseOrders.map((po) => (
-            <div key={po.id} className="mobile-card">
-              <span className="mobile-card-row">
-                <span className="mobile-card-title">
-                  <strong>{po.number}</strong>
-                  <small className="muted">{po.vendor} &middot; {po.projectRef || "No project ref"}</small>
+          {purchaseOrders.map((po) => {
+            const isExpanded = expandedOrderId === po.id;
+            return (
+              <div key={po.id} className="mobile-card">
+                <span className="mobile-card-row">
+                  <span className="mobile-card-title">
+                    <strong>{po.number}</strong>
+                    <small className="muted">{po.vendor} &middot; {po.projectRef || "No project ref"}</small>
+                  </span>
+                  <b>{moneyExact(po.total)}</b>
                 </span>
-                <b>{moneyExact(po.total)}</b>
-              </span>
-              <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""} &middot; {projectDocuments.filter((doc) => doc.purchaseOrderId === po.id).length} doc(s)</span>
-              <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
-                <option>Imported</option>
-                <option>In Processing</option>
-                <option>On Hold</option>
-              </select>
-            </div>
-          ))}
+                <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""} &middot; {projectDocuments.filter((doc) => doc.purchaseOrderId === po.id).length} doc(s)</span>
+                <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
+                  <option>Imported</option>
+                  <option>In Processing</option>
+                  <option>On Hold</option>
+                </select>
+                <button className="secondary-action mini-action" type="button" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>{isExpanded ? "Hide details" : "View details"}</button>
+                {isExpanded && (
+                  <div className="order-detail-panel">
+                    <div className="order-meta">
+                      <span>{po.shipTo || "No ship-to on file"}</span>
+                      <span>{po.paymentNote || "No payment note"}</span>
+                    </div>
+                    <div className="line-list">
+                      {po.lines.map((line, index) => (
+                        <div className="line-item" key={`${po.id}-${line.name}-${index}`}>
+                          <div>
+                            <strong>{line.name}</strong>
+                            <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
+                          </div>
+                          <b>{moneyExact(lineTotal(line))}</b>
+                        </div>
+                      ))}
+                      {po.lines.length === 0 && <div className="empty-compact-state">No line items.</div>}
+                    </div>
+                    <div className="order-totals">
+                      <span>Subtotal {moneyExact(po.subtotal)}</span>
+                      <span>Tax {moneyExact(po.tax)}</span>
+                      <strong>{moneyExact(po.total)}</strong>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {purchaseOrders.length === 0 && <div className="empty-compact-state">No purchase orders yet. Add one above.</div>}
         </div>
       </section>
@@ -7097,46 +7164,6 @@ function Purchasing({
             </div>
           ))}
           {projectSpend.length === 0 && <div className="empty-compact-state">No purchase orders yet.</div>}
-        </div>
-      </section>
-
-      <section className="panel full">
-        <PanelHeader title="Order Line Items" label="Grouped by purchase order" />
-        <div className="order-grid">
-          {purchaseOrders.map((order) => (
-            <article className="order-card" key={order.id}>
-              <div className="order-card-header">
-                <div>
-                  <h3>{order.vendor}</h3>
-                  <p>{order.number} - {order.projectRef}</p>
-                </div>
-                <span className={`status ${order.status === "On Hold" ? "warn" : order.status === "Imported" ? "ok" : ""}`}>{order.status}</span>
-              </div>
-              <div className="order-meta">
-                <span>{formatPoDate(order.date)}</span>
-                <span>{order.shipTo}</span>
-                <span>{order.paymentNote}</span>
-              </div>
-              <div className="line-list">
-                {order.lines.map((line, index) => (
-                  <div className="line-item" key={`${order.id}-${line.name}-${index}`}>
-                    <div>
-                      <strong>{line.name}</strong>
-                      <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
-                    </div>
-                    <b>{moneyExact(lineTotal(line))}</b>
-                  </div>
-                ))}
-                {order.lines.length === 0 && <div className="empty-compact-state">No line items.</div>}
-              </div>
-              <div className="order-totals">
-                <span>Subtotal {moneyExact(order.subtotal)}</span>
-                <span>Tax {moneyExact(order.tax)}</span>
-                <strong>{moneyExact(order.total)}</strong>
-              </div>
-            </article>
-          ))}
-          {purchaseOrders.length === 0 && <div className="empty-compact-state">No purchase orders yet.</div>}
         </div>
       </section>
     </div>

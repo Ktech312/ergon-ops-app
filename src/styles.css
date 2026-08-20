@@ -4989,6 +4989,23 @@ td.empty-compact-state {
   white-space: nowrap;
 }
 
+.order-detail-row td {
+  background: #f8f5ef;
+  padding: 0;
+}
+
+.order-detail-panel {
+  padding: 14px 16px;
+}
+
+.mobile-card .order-detail-panel {
+  background: #f8f5ef;
+  border: 1px solid #eee7dc;
+  border-radius: 8px;
+  margin-top: 8px;
+  padding: 10px;
+}
+
 /* Camera/Sign/Space Sensor/Misc location lines: Location label + item +
    qty + accessory + accessory qty, all in one row. Higher specificity
    than ".line-item div" (display:grid/gap:3px) so it isn't overridden by
