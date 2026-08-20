@@ -4949,6 +4949,45 @@ function App() {
     return true;
   }
 
+  // The missing link E flagged: a Purchase Request created from a Project
+  // BOM line (reason "Project BOM") is its own record in Purchasing --
+  // nothing was ever syncing its status back onto the BOM line that
+  // spawned it, so a PM watching the Project page had no way to see that
+  // their requested material had shipped/arrived without going and
+  // checking Purchasing themselves. Called from every place a request's
+  // status actually changes (status dropdown, the broader edit form, and
+  // receiving). BOM lines have no stable id (existing convention, see
+  // persistence.ts) -- matched by item name within the project, and only
+  // a line still genuinely in flight ("Need Quote"/"Ordered") is touched,
+  // so this can't silently clobber an unrelated line that happens to
+  // share a name.
+  function syncBomLineStatusFromRequest(request: PurchaseRequest, nextStatus: PurchaseRequest["status"]) {
+    if (request.reason !== "Project BOM" || !request.projectName) {
+      return;
+    }
+    const bomLineStatus: BomLine["status"] | null =
+      nextStatus === "Received" ? "Completed" : nextStatus === "Ordered" ? "Ordered" : nextStatus === "Cancelled" ? "Not started" : null;
+    if (bomLineStatus === null) {
+      return;
+    }
+    setProjectSites((current) =>
+      current.map((project) => {
+        if (project.name !== request.projectName) {
+          return project;
+        }
+        let matched = false;
+        const bom = project.bom.map((line) => {
+          if (matched || line.item !== request.itemName || (line.status !== "Need Quote" && line.status !== "Ordered")) {
+            return line;
+          }
+          matched = true;
+          return { ...line, status: bomLineStatus, sentToPurchasingAt: nextStatus === "Cancelled" ? null : line.sentToPurchasingAt };
+        });
+        return matched ? { ...project, bom } : project;
+      }),
+    );
+  }
+
   async function updatePurchaseRequestStatus(requestId: string, status: PurchaseRequest["status"]) {
     const existing = purchaseRequestsRef.current.find((request) => request.id === requestId);
     const next = purchaseRequestsRef.current.map((request) => (request.id === requestId ? { ...request, status } : request));
@@ -4959,6 +4998,7 @@ function App() {
     }
     if (existing && existing.status !== status) {
       notifyPurchaseRequestStatusChanged({ ...existing, status }, status);
+      syncBomLineStatusFromRequest(existing, status);
     }
   }
 
@@ -5014,6 +5054,7 @@ function App() {
     }
     if (existing.status !== nextStatus) {
       notifyPurchaseRequestStatusChanged({ ...existing, status: nextStatus }, nextStatus);
+      syncBomLineStatusFromRequest(existing, nextStatus);
     }
   }
 
@@ -5092,6 +5133,7 @@ function App() {
     }
     if (request.status !== nextStatus) {
       notifyPurchaseRequestStatusChanged({ ...request, receivedQuantity: nextReceived, status: nextStatus }, nextStatus);
+      syncBomLineStatusFromRequest(request, nextStatus);
     }
   }
 
