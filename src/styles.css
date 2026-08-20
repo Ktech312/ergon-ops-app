@@ -3297,6 +3297,12 @@ tr:hover .row-delete-btn,
   color: #55492f;
 }
 
+.bom-custom-item-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .icon-count-button {
   align-items: center;
   background: #f8f5ef;

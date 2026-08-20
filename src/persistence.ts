@@ -4498,6 +4498,12 @@ export type BomLine = {
   // main.tsx's handleSendBomToPurchasing. Prevents a repeat click from
   // double-queuing the same purchase request or inventory pull.
   sentToPurchasingAt?: string | null;
+  // Migration 079: where this line ships -- "EnSight Office," "Project
+  // Site," or one of the project's saved Shipping Addresses (see Address
+  // Book). Plain text snapshot, same convention as PurchaseOrder.shipTo
+  // and ProjectShipment.addressSnapshot -- not an FK, so it survives even
+  // if the saved address it was picked from is later edited or removed.
+  shipTo?: string;
 };
 
 // Migration 064: the Project-side mirror of SalesQuoteLocation/Image/Item
@@ -4719,6 +4725,7 @@ type ProjectBomLineRow = {
   line_sort: number;
   procurement_track: string | null;
   purchasing_sent_at: string | null;
+  ship_to: string | null;
 };
 
 type ProjectLocationImageRow = {
@@ -4988,7 +4995,7 @@ type ProjectSiteRow = {
 };
 
 const PROJECT_SITE_SELECT =
-  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -5016,6 +5023,7 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
       notes: line.notes ?? undefined,
       procurementTrack: (line.procurement_track as BomLine["procurementTrack"]) ?? "warehouse_stock",
       sentToPurchasingAt: line.purchasing_sent_at ?? null,
+      shipTo: line.ship_to ?? "",
     }));
   return {
     id: row.id,
@@ -5191,6 +5199,7 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
       line_sort: index,
       procurement_track: line.procurementTrack ?? "warehouse_stock",
       purchasing_sent_at: line.sentToPurchasingAt ?? null,
+      ship_to: line.shipTo || null,
     }));
   });
 

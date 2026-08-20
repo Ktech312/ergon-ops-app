@@ -301,6 +301,35 @@ type View = "dashboard" | "purchasing" | "inventory" | "projects" | "sales" | "t
 
 const inventoryTags = ["VPU Part", "Edge Box Part", "Solar Part", "Server Part", "Network Part", "Power Part", "Field Hardware"];
 
+// Groups the BOM material dropdown (Projects -> Add BOM Material) into the
+// 4 buckets E asked for. Best-effort, not a real per-item category the way
+// Catalog items have -- Inventory items only have the coarse
+// Base/Communications/Power/Lighting/Display/Build category above, which
+// doesn't map to "VPUs/Cameras/Sign Controllers." VPU match uses the real
+// "VPU Part" tag (reliable, already applied to VPU hardware); Camera/Sign
+// fall back to a name match since there's no equivalent tag for those yet.
+// If this needs to be precise rather than best-effort, the clean fix is a
+// real category/tag on inventory items themselves, same as Catalog already
+// has -- flag it if that's wanted.
+const BOM_ITEM_GROUPS = ["VPUs", "Cameras", "Sign Controllers", "Misc Parts"] as const;
+
+function categorizeInventoryItemForBom(part: Part): (typeof BOM_ITEM_GROUPS)[number] {
+  const name = part.name.toLowerCase();
+  const tags = (part.tags ?? []).map((tag) => tag.toLowerCase());
+  if (tags.includes("vpu part") || name.includes("vpu")) {
+    return "VPUs";
+  }
+  if (name.includes("camera")) {
+    return "Cameras";
+  }
+  if (name.includes("sign")) {
+    return "Sign Controllers";
+  }
+  return "Misc Parts";
+}
+
+const DEFAULT_BOM_SHIP_TO = "EnSight Office";
+
 // BuildComponent and BuildRecipe used to be defined locally; as of Phase 10d
 // they're imported from persistence.ts (see the import block above) since
 // equipment recipes are now backed by the real `equipment_types` /
@@ -8645,7 +8674,14 @@ function Projects({
     action: "pull" as BomMaterialAction,
     requestSpeed: "Standard" as BomLine["requestSpeed"],
     notes: "",
+    shipTo: DEFAULT_BOM_SHIP_TO,
   });
+  // "Select" mode shows the grouped dropdown; "custom" mode shows a plain
+  // text field for a one-off item that isn't in inventory. Editing a line
+  // whose item doesn't match any real inventory part opens in custom mode
+  // so the actual value isn't silently lost against a blank/mismatched
+  // <select>.
+  const [bomItemMode, setBomItemMode] = useState<"select" | "custom">("select");
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
   const selectedProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject.name || doc.project === selectedProject.ref);
 
@@ -8696,20 +8732,25 @@ function Projects({
   const totalProjectValue = projectSites.reduce((sum, project) => sum + project.allocated, 0);
   const purchasingProjects = projectSites.filter((project) => project.status === "Procurement").length;
   const draftProjects = projectSites.filter((project) => project.status === "Draft" || project.status === "Planning").length;
-  const bomItemSuggestions = [
-    ...inventoryItems.map((part) => part.name),
-    "Single Space Sensor",
-    "Outdoor PoE Box",
-    "UPS Unit",
-    "VMS Sign",
-    "Sign Controller",
-    "CAT6 Cable",
-    "Conduit",
-    "Pole Mount",
-    "Server Rack",
-    "LTE Modem",
-    "Solar Kit",
-  ];
+  // Add BOM Material's grouped Item dropdown -- real inventory parts (so
+  // "X available now" works) plus a handful of common items that were
+  // previously just free-text suggestions and aren't real inventory SKUs
+  // yet. Dedup by name so a real inventory part always wins over a bare
+  // suggestion with the same name.
+  const bomItemCandidates = [
+    ...inventoryItems.filter((part) => !part.retired).map((part) => ({ name: part.name, group: categorizeInventoryItemForBom(part), ref: part.ref as string | undefined })),
+    { name: "Single Space Sensor", group: "Misc Parts" as const, ref: undefined },
+    { name: "Outdoor PoE Box", group: "Misc Parts" as const, ref: undefined },
+    { name: "UPS Unit", group: "Misc Parts" as const, ref: undefined },
+    { name: "VMS Sign", group: "Sign Controllers" as const, ref: undefined },
+    { name: "Sign Controller", group: "Sign Controllers" as const, ref: undefined },
+    { name: "CAT6 Cable", group: "Misc Parts" as const, ref: undefined },
+    { name: "Conduit", group: "Misc Parts" as const, ref: undefined },
+    { name: "Pole Mount", group: "Misc Parts" as const, ref: undefined },
+    { name: "Server Rack", group: "Misc Parts" as const, ref: undefined },
+    { name: "LTE Modem", group: "Misc Parts" as const, ref: undefined },
+    { name: "Solar Kit", group: "Misc Parts" as const, ref: undefined },
+  ].filter((entry, index, all) => all.findIndex((other) => other.name === entry.name) === index);
   const selectedInventoryItem = inventoryItems.find((part) => part.name === bomDraft.item);
 
   function nextProjectRef() {
@@ -8860,7 +8901,8 @@ function Projects({
 
   function openAddBomModal() {
     setEditingBomIndex(null);
-    setBomDraft({ item: "", qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
+    setBomDraft({ item: "", qty: 1, action: "pull", requestSpeed: "Standard", notes: "", shipTo: DEFAULT_BOM_SHIP_TO });
+    setBomItemMode("select");
     setShowBomModal(true);
   }
 
@@ -8937,7 +8979,9 @@ function Projects({
       action: line.procurementTrack === "direct_to_project" ? "direct" : line.procurementTrack === "pull" ? "pull" : "order",
       requestSpeed: line.requestSpeed,
       notes: line.notes ?? "",
+      shipTo: line.shipTo || DEFAULT_BOM_SHIP_TO,
     });
+    setBomItemMode(bomItemCandidates.some((entry) => entry.name === line.item) ? "select" : "custom");
     setShowBomModal(true);
   }
 
@@ -8975,6 +9019,7 @@ function Projects({
       notes: bomDraft.notes || trackNote,
       procurementTrack,
       sentToPurchasingAt: editingBomIndex !== null ? selectedProject.bom[editingBomIndex]?.sentToPurchasingAt ?? null : null,
+      shipTo: bomDraft.shipTo || DEFAULT_BOM_SHIP_TO,
     };
 
     updateSelectedProject((project) => ({
@@ -8991,7 +9036,8 @@ function Projects({
         : `${qty} ${item} added to ${selectedProject.ref} as a draft -- it won't reach Procurement until the client approves a submittal and it's sent.`,
     );
 
-    setBomDraft({ item: parts[0].name, qty: 1, action: "pull", requestSpeed: "Standard", notes: "" });
+    setBomDraft({ item: "", qty: 1, action: "pull", requestSpeed: "Standard", notes: "", shipTo: DEFAULT_BOM_SHIP_TO });
+    setBomItemMode("select");
     closeBomModal();
   }
 
@@ -10195,11 +10241,51 @@ function Projects({
             </div>
 
             <div className="bom-modal-grid">
-              <label className="span-2">Item
-                <input list="bom-item-options" value={bomDraft.item} onChange={(event) => updateBomDraft("item", event.target.value)} />
-                <datalist id="bom-item-options">
-                  {bomItemSuggestions.map((item) => <option value={item} key={item} />)}
-                </datalist>
+              <label>
+                Item
+                {bomItemMode === "select" ? (
+                  <select
+                    value={bomDraft.item}
+                    onChange={(event) => {
+                      if (event.target.value === "__custom__") {
+                        setBomItemMode("custom");
+                        updateBomDraft("item", "");
+                        return;
+                      }
+                      updateBomDraft("item", event.target.value);
+                    }}
+                  >
+                    <option value="">Select an item...</option>
+                    {BOM_ITEM_GROUPS.map((group) => {
+                      const groupItems = bomItemCandidates.filter((entry) => entry.group === group);
+                      return groupItems.length > 0 ? (
+                        <optgroup label={group} key={group}>
+                          {groupItems.map((entry) => <option value={entry.name} key={entry.ref ?? entry.name}>{entry.name}</option>)}
+                        </optgroup>
+                      ) : null;
+                    })}
+                    <option value="__custom__">+ Custom / other item...</option>
+                  </select>
+                ) : (
+                  <div className="bom-custom-item-row">
+                    <input value={bomDraft.item} onChange={(event) => updateBomDraft("item", event.target.value)} placeholder="Type a custom item name" />
+                    <button className="link-button" type="button" onClick={() => { setBomItemMode("select"); updateBomDraft("item", ""); }}>
+                      Use dropdown instead
+                    </button>
+                  </div>
+                )}
+              </label>
+              <label>
+                Ship to
+                <select value={bomDraft.shipTo} onChange={(event) => updateBomDraft("shipTo", event.target.value)}>
+                  <option value={DEFAULT_BOM_SHIP_TO}>{DEFAULT_BOM_SHIP_TO}</option>
+                  <option value="Project Site">Project Site ({selectedProject.name})</option>
+                  {(selectedProject.shippingAddresses ?? []).map((address) => (
+                    <option value={address.label || address.streetAddress} key={address.id}>
+                      {address.label || address.streetAddress}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>Number of items
                 <input type="number" min="1" value={bomDraft.qty} onChange={(event) => updateBomDraft("qty", Number(event.target.value))} />
