@@ -7017,7 +7017,7 @@ export type PendingSitePhoto = {
   createdAt: string;
   // Missing/undefined on anything queued before this field existed --
   // treat as "quote" (the only owner type that existed then).
-  ownerType?: "quote" | "project" | "shipment";
+  ownerType?: "quote" | "project" | "shipment" | "purchase_order";
   uploaderEmail?: string;
   lat?: number | null;
   lng?: number | null;

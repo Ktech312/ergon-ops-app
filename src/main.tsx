@@ -25,6 +25,7 @@ import {
   ListChecks,
   MapPin,
   MoreHorizontal,
+  PackageCheck,
   Plus,
   Search,
   ShoppingCart,
@@ -2681,9 +2682,11 @@ function App() {
       const ok =
         item.ownerType === "shipment"
           ? await handleUploadProjectShipmentPhoto(item.quoteId, item.locationId, file, item.description).catch(() => false)
-          : item.ownerType === "project"
-            ? await handleUploadProjectLocationImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false)
-            : await handleUploadSalesQuoteImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false);
+          : item.ownerType === "purchase_order"
+            ? await handleUploadPurchaseOrderFile(item.locationId, file, item.description).catch(() => false)
+            : item.ownerType === "project"
+              ? await handleUploadProjectLocationImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false)
+              : await handleUploadSalesQuoteImage(item.quoteId, item.locationId, "photo", file, item.description, coords).catch(() => false);
       if (ok) {
         await removePendingSitePhoto(item.id);
       }
@@ -6676,6 +6679,14 @@ function Purchasing({
   const editingRequest = purchaseRequests.find((request) => request.id === editingRequestId) ?? null;
   const receivingRemaining = receivingRequest ? Math.max(0, receivingRequest.quantity - (receivingRequest.receivedQuantity ?? 0)) : 0;
   const filteredPurchaseRequests = purchaseRequests.filter((request) => {
+    // Once a request has become a real order (Create Purchase), it's done
+    // living here -- E: "I also processed this and its still in requests,
+    // it should only be in Waiting for receiving now." The request itself
+    // isn't deleted (still the audit trail, still reachable via the order
+    // it's linked to), it just stops showing in this active queue.
+    if (request.linkedPurchaseOrderId) {
+      return false;
+    }
     const haystack = `${request.requestNumber} ${request.sku} ${request.itemName} ${request.preferredVendor ?? ""} ${request.sourceRef ?? ""} ${request.projectName ?? ""} ${request.procurementTrack ?? ""}`.toLowerCase();
     const statusMatch =
       requestFilters.status === "All" ||
@@ -6944,7 +6955,7 @@ function Purchasing({
             <select value={requestFilters.source} onChange={(event) => setRequestFilters((current) => ({ ...current, source: event.target.value as typeof current.source }))}>
               <option value="All">All</option>
               <option value="Reorder">Reorder</option>
-              <option value="Project">Project</option>
+              <option value="Project">From PM</option>
             </select>
           </label>
         </div>
@@ -6966,21 +6977,26 @@ function Purchasing({
         </div>
         <div className="request-queue">
           <div className="request-queue-head"><span>Request</span><span>Need</span><span>Source</span><span>Est.</span><span>Status</span><span></span></div>
-          {filteredPurchaseRequests.slice(0, 14).map((request) => {
-            const linkedOrder = request.linkedPurchaseOrderId ? purchaseOrders.find((order) => order.id === request.linkedPurchaseOrderId) : undefined;
-            return (
-            <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
+          {filteredPurchaseRequests.slice(0, 14).map((request) => (
+            <div
+              className={`request-row clickable-row ${request.status === "Cancelled" ? "muted-row" : ""}`}
+              key={request.id}
+              onClick={() => openRequestEditModal(request)}
+            >
               <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
               <span data-label="Need">{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
               <span data-label="Source">
                 {request.projectName || request.reason}
                 <small>{request.projectName ? `${request.reason} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small>
                 <small>Requested by {request.requestedByEmail || "Unknown"} on {new Date(request.createdAt).toLocaleDateString()}</small>
-                {linkedOrder && <small className="document-link-tag document-link-tag-linked">Order placed: PO {linkedOrder.number}</small>}
               </span>
               <span data-label="Est.">{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
               <span data-label="Status">
-                <select value={request.status} onChange={(event) => onUpdatePurchaseRequestStatus(request.id, event.target.value as PurchaseRequest["status"])}>
+                <select
+                  value={request.status}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => onUpdatePurchaseRequestStatus(request.id, event.target.value as PurchaseRequest["status"])}
+                >
                   <option>Draft</option>
                   <option>Need Quote</option>
                   <option>Ready to Order</option>
@@ -6990,16 +7006,31 @@ function Purchasing({
                 </select>
               </span>
               <span className="table-actions">
-                {!request.linkedPurchaseOrderId && (
-                  <button className="table-action" type="button" onClick={() => openCreatePurchase(request)} disabled={request.status === "Cancelled" || request.status === "Received"}>Create Purchase</button>
-                )}
-                <button className="table-action secondary-table-action" type="button" onClick={() => openRequestEditModal(request)}>Edit</button>
-                <button className="table-action" type="button" onClick={() => openRequestReceiveModal(request)} disabled={request.status === "Cancelled" || request.status === "Received"}>Receive</button>
-                <button className="table-action secondary-table-action" type="button" onClick={() => onCancelPurchaseRequest(request.id)} disabled={request.status === "Cancelled" || request.status === "Received"}>Cancel</button>
+                <button
+                  className="table-action"
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); openCreatePurchase(request); }}
+                  disabled={request.status === "Cancelled" || request.status === "Received"}
+                >
+                  Create Purchase
+                </button>
+                <button
+                  className="icon-button-sm"
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (window.confirm(`Cancel ${request.requestNumber} - ${request.itemName}? It stays on record as Cancelled, but stops being active buying work.`)) {
+                      onCancelPurchaseRequest(request.id);
+                    }
+                  }}
+                  disabled={request.status === "Cancelled" || request.status === "Received"}
+                  aria-label={`Cancel ${request.requestNumber}`}
+                >
+                  <Trash2 size={15} />
+                </button>
               </span>
             </div>
-            );
-          })}
+          ))}
           {purchaseRequests.length === 0 && <div className="empty-compact-state">No purchase requests yet. Queue reorder or build shortages to start the buying list.</div>}
           {purchaseRequests.length > 0 && filteredPurchaseRequests.length === 0 && <div className="empty-compact-state">No purchase requests match the current filters.</div>}
         </div>
@@ -7156,12 +7187,17 @@ function Purchasing({
               const isExpanded = expandedOrderId === po.id;
               return (
                 <Fragment key={po.id}>
-                  <tr>
+                  <tr className="clickable-row" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>
                     <td><strong>{po.number}</strong><small>{formatPoDate(po.date)}</small></td>
                     <td>{po.vendor}</td>
                     <td>{po.projectRef}</td>
                     <td>
-                      <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
+                      <select
+                        className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}
+                        value={po.status}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}
+                      >
                         <option value="Ordered">Ordered</option>
                         <option value="On Hold">On Hold</option>
                         <option value="Received">Received</option>
@@ -7171,13 +7207,20 @@ function Purchasing({
                     <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small><small>{po.files.length} file(s) attached</small></td>
                     <td>{moneyExact(po.total)}</td>
                     <td>
-                      <button className="secondary-action mini-action" type="button" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>{isExpanded ? "Hide" : "Details"}</button>
+                      <button
+                        className="icon-button-sm"
+                        type="button"
+                        onClick={(event) => { event.stopPropagation(); setExpandedOrderId(isExpanded ? null : po.id); }}
+                        aria-label={isExpanded ? "Hide details" : "Show receiving details"}
+                      >
+                        <PackageCheck size={16} />
+                      </button>
                     </td>
                   </tr>
                   {isExpanded && (
                     <tr className="order-detail-row">
                       <td colSpan={7}>
-                        <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} onReceiveLine={onReceivePurchaseOrderLine} onReceiveAll={onReceiveAllPurchaseOrderLines} />
+                        <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onUploadFile={onUploadPurchaseOrderFile} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} onReceiveLine={onReceivePurchaseOrderLine} onReceiveAll={onReceiveAllPurchaseOrderLines} />
                       </td>
                     </tr>
                   )}
@@ -7195,24 +7238,36 @@ function Purchasing({
           {purchaseOrders.map((po) => {
             const isExpanded = expandedOrderId === po.id;
             return (
-              <div key={po.id} className="mobile-card">
+              <div key={po.id} className="mobile-card clickable-row" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>
                 <span className="mobile-card-row">
                   <span className="mobile-card-title">
                     <strong>{po.number}</strong>
                     <small className="muted">{po.vendor} &middot; {po.projectRef || "No project ref"}</small>
                   </span>
                   <b>{moneyExact(po.total)}</b>
+                  <button
+                    className="icon-button-sm"
+                    type="button"
+                    onClick={(event) => { event.stopPropagation(); setExpandedOrderId(isExpanded ? null : po.id); }}
+                    aria-label={isExpanded ? "Hide details" : "Show receiving details"}
+                  >
+                    <PackageCheck size={16} />
+                  </button>
                 </span>
                 <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""} &middot; {po.files.length} file(s)</span>
-                <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
+                <select
+                  className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}
+                  value={po.status}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}
+                >
                   <option value="Ordered">Ordered</option>
                   <option value="On Hold">On Hold</option>
                   <option value="Received">Received</option>
                   {(po.status === "Imported" || po.status === "In Processing") && <option value={po.status}>{po.status}</option>}
                 </select>
-                <button className="secondary-action mini-action" type="button" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>{isExpanded ? "Hide details" : "View details"}</button>
                 {isExpanded && (
-                  <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} onReceiveLine={onReceivePurchaseOrderLine} onReceiveAll={onReceiveAllPurchaseOrderLines} />
+                  <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onUploadFile={onUploadPurchaseOrderFile} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} onReceiveLine={onReceivePurchaseOrderLine} onReceiveAll={onReceiveAllPurchaseOrderLines} />
                 )}
               </div>
             );
@@ -7252,6 +7307,7 @@ function PurchaseOrderDetailPanel({
   po,
   receivingFileFor,
   onFileSelect,
+  onUploadFile,
   onGetFileUrl,
   onDeleteFile,
   onReceiveLine,
@@ -7260,6 +7316,7 @@ function PurchaseOrderDetailPanel({
   po: PurchaseOrder;
   receivingFileFor: string | null;
   onFileSelect: (purchaseOrderId: string, event: React.ChangeEvent<HTMLInputElement>) => void;
+  onUploadFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
   onGetFileUrl: (storagePath: string) => Promise<string | null>;
   onDeleteFile: (purchaseOrderId: string, fileId: string, storagePath: string) => void;
   onReceiveLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number) => Promise<boolean>;
@@ -7269,6 +7326,7 @@ function PurchaseOrderDetailPanel({
   const [receiveDrafts, setReceiveDrafts] = useState<Record<string, number>>({});
   const [loggingLineId, setLoggingLineId] = useState<string | null>(null);
   const [isReceivingAll, setIsReceivingAll] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
   const allReceived = po.lines.length > 0 && po.lines.every((line) => (line.receivedQty ?? 0) >= line.qty);
 
   async function logLine(line: PurchaseOrderLine) {
@@ -7294,7 +7352,7 @@ function PurchaseOrderDetailPanel({
   }
 
   return (
-    <div className="order-detail-panel">
+    <div className="order-detail-panel" onClick={(event) => event.stopPropagation()}>
       <div className="order-meta">
         <span>{po.shipTo || "No ship-to on file"}</span>
         <span>{po.paymentNote || "No payment note"}</span>
@@ -7311,10 +7369,9 @@ function PurchaseOrderDetailPanel({
               <Upload size={14} /> {isUploading ? "..." : "Add file"}
               <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(event) => onFileSelect(po.id, event)} disabled={isUploading} />
             </label>
-            <label className="secondary-action mini-action hidden-file-label">
-              <Camera size={14} /> {isUploading ? "..." : "Take photo"}
-              <input type="file" accept="image/*" capture="environment" onChange={(event) => onFileSelect(po.id, event)} disabled={isUploading} />
-            </label>
+            <button className="secondary-action mini-action" type="button" onClick={() => setShowCamera(true)}>
+              <Camera size={14} /> Take photo
+            </button>
           </div>
         </div>
         {po.files.length > 0 && (
@@ -7396,6 +7453,16 @@ function PurchaseOrderDetailPanel({
           </div>
         ))}
       </div>
+      {showCamera && (
+        <CameraCaptureModal
+          quoteId=""
+          locationId={po.id}
+          locationName={po.number}
+          ownerType="purchase_order"
+          onClose={() => setShowCamera(false)}
+          onSavePhoto={(file, description) => onUploadFile(po.id, file, description)}
+        />
+      )}
     </div>
   );
 }
@@ -14190,7 +14257,7 @@ function CameraCaptureModal({
   // Which offline-queue owner bucket this belongs to -- see
   // persistence.ts's PendingSitePhoto.ownerType. Defaults to "quote" so the
   // existing Sales Site Builder call site doesn't need updating.
-  ownerType?: "quote" | "project";
+  ownerType?: "quote" | "project" | "purchase_order";
   onClose: () => void;
   onSavePhoto: (file: File, description: string, coords: { lat: number; lng: number } | null) => Promise<boolean>;
 }) {
