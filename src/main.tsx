@@ -6908,9 +6908,10 @@ function Purchasing({
             </div>
           </div>
         </div>
+        {selectedProject && <span className="document-queue-label">Documents for {selectedProject}</span>}
         <div className="document-queue">
           {activeProjectDocuments.length === 0 && (
-            <div className="empty-compact-state">No documents uploaded for this project yet -- choose a file above to get started.</div>
+            <div className="empty-compact-state">No documents uploaded for {selectedProject || "this project"} yet -- choose a file above to get started.</div>
           )}
           {activeProjectDocuments.map((doc) => (
             <div className="document-row" key={`${doc.id}-${doc.name}`}>
@@ -6935,7 +6936,7 @@ function Purchasing({
 
       <section className="panel wide">
         <div className="panel-title-row">
-          <PanelHeader title="Imported Purchase Queue" label="Vendor orders organized by vendor, project reference, and status" />
+          <PanelHeader title="Purchase Orders" label="Orders already placed with a vendor -- logged here for tracking and receiving, organized by vendor, project reference, and status" />
           <button className="secondary-action mini-action" type="button" onClick={() => setShowPoForm((current) => !current)}>
             {showPoForm ? "Cancel" : "New Purchase Order"}
           </button>

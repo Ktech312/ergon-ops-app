@@ -1661,11 +1661,21 @@ td small.quote-ref-tag {
   line-height: 1.35;
 }
 
+.document-queue-label {
+  color: #756d62;
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  margin-top: 14px;
+  text-transform: uppercase;
+}
+
 .document-queue {
   border-top: 1px solid #eee7dc;
   display: grid;
   gap: 10px;
-  margin-top: 16px;
+  margin-top: 8px;
   padding-top: 16px;
 }
 
