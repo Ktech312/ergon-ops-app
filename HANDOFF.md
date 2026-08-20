@@ -1,6 +1,6 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 Purpose: carry context between chat sessions. Read this first in any new session before making changes.
 
@@ -8,9 +8,10 @@ Purpose: carry context between chat sessions. Read this first in any new session
 - Do not use, import from, migrate against, or reference VLTD. VLTD is a separate project. If Supabase Studio or Vercel shows VLTD selected, switch away before touching anything for Ergon.
 - The live user-facing target is Vercel production: `https://ergon-ops-app.vercel.app/`.
 - The intended Ergon Supabase project id is `hnjxvsxsxoowhegcqurf`.
-- Repo migrations currently exist from `001_initial_ops_schema.sql` through `080_project_document_links.sql`.
+- Repo migrations currently exist from `001_initial_ops_schema.sql` through `081_create_purchase_flow.sql`.
 - GitHub/Vercel deploys app code. It does not automatically apply Supabase SQL migrations. Supabase setup remains separate unless a migration pipeline is added.
-- **Migrations confirmed run in Supabase by E: 069, 070, 071, 072, 074, 075, 076, 077, 078, 079, 080.** Migration **073 (SaaS contract columns) is still unconfirmed** — it was sent early in this handoff's span and never got an explicit "Success" back; verify before trusting the SaaS tile/Calendar's data. If it errors or the SaaS fields silently no-op, this is why.
+- **Migrations confirmed run in Supabase by E: 069, 070, 071, 072, 074, 075, 076, 077, 078, 079, 080.** Migration **081 (Create Purchase flow) is NOT yet run — required before the new "Create Purchase" feature works for real** (see the dedicated work-log entry below for the exact SQL). Migration **073 (SaaS contract columns) is still unconfirmed** — it was sent early in this handoff's span and never got an explicit "Success" back; verify before trusting the SaaS tile/Calendar's data. If it errors or the SaaS fields silently no-op, this is why.
+- **Migration 080's document-linking feature (Purchasing's old "Attach Purchase Paperwork" section) was fully superseded and removed 2026-08-20** — see the Create Purchase work-log entry. The `project_documents.purchase_order_id`/`purchase_request_id` columns from migration 080 are still in the DB (harmless, unused) but nothing in the app writes to them anymore.
 - E has repeatedly had trouble pasting SQL from a downloaded file into the Supabase SQL editor (a stray `;` character appeared mid-statement, source unclear — not present in the actual repo file). When handing off a migration, paste the raw SQL directly into the chat message as a code block in addition to (or instead of) sending the file, so E can copy straight from the chat.
 - Dedicated setup handoff: `backend/docs/supabase-production-handoff.md`.
 
@@ -83,6 +84,45 @@ Status (updated after E called out that curating which tables got done, silently
 - **New: Portfolio Budget & Schedule panel**, Projects list page (`ProjectPortfolioHealth` component, `main.tsx`, right before `function Projects`) -- E asked what to do with the "extra room" on that page once the missing-boxes question resolved; proposed a mockup (published as a Claude Artifact, sketch only, placeholder data), E approved, then it got built for real. Two blocks: **Budget health** (Purchase Order spend per `project.ref`, new `purchaseOrders` prop threaded into `Projects`, vs `project.allocated`, target tick + green/amber/red) and **Schedule health** (`projectCompletion()`, moved to module scope so this component can share it, vs target date). See the data-model note below on `ProjectSite.due` -- the schedule side has to degrade gracefully because that field isn't a real date.
 
 ## Recent work log (most recent first — 2026-08-13 through 2026-08-20)
+- **(pending commit, migration 081 NOT yet run)** — **Unified "Create Purchase" flow, replacing the old disconnected Purchase Request / Purchase Order split.** E pushed back hard and correctly on the day's earlier document-linking work ("you are linking orders already completed to thing i uploaded... make it make sense to me first"), then typed out the actual flow she wanted after a live walkthrough surfaced several real problems: the "+Request" button was actually a Task-request button in the wrong place; "Add Request" looked broken but was just masked by a leftover Search filter; "Queue Reorders"/"Queue Build Shortages" weren't explained; and Purchase Requests vs Purchase Orders were "two different ways to do the same thing" with no real link between them, forcing double data entry.
+  - **One "Create Purchase" modal replaces both the old "Manual request" row and the old "New Purchase Order" form** -- combined fields (vendor, PO#, line items, project, ship-to, tax/shipping, status). Opens two ways: standalone from the Request Queue's new primary "Create Purchase" button (no source request), or from a **new "Create Purchase" button on each Request Queue row**, which pre-fills the same form from that request's item/qty/vendor/cost so nothing gets retyped.
+  - **The originating request is never deleted or replaced** -- E: "we dont want to loose record of the request, so that info needs to stay for logging." Saving links the two records (`purchase_orders.source_request_id`, `purchase_requests.linked_purchase_order_id`), stamps the request `Ordered` + its `poNumber`, and the Request Queue row shows "Order placed: PO {number}" going forward instead of losing the request.
+  - **PM notification reuses the existing mechanism** -- `notifyPurchaseRequestStatusChanged` already notifies the requester + Purchasing team on any status change; creating a Purchase from a request just triggers that same call for the "Ordered" transition. No new notification system needed.
+  - **"Purchase Orders" renamed "Waiting on Receiving"** -- same table/mobile cards (still using the migration-079-era expandable "Details" row from the entry below), status options now include real `Ordered`/`Received` values (`PurchaseOrder.status` extended; legacy `Imported`/`In Processing`/`On Hold` still selectable on old rows so nothing already in the DB breaks).
+  - **Real per-order paperwork, not a shared bucket** -- E: "there should be a spot for uploading or taking a picture to be connected directly to the exact order." New `purchase_order_files` table (migration 081, mirrors `project_shipment_photos`'s shape exactly) + its own private storage bucket. The "Attach Purchase Paperwork" section (built earlier today, migration 080) is now fully removed -- its filename-guess/generic-bucket approach is exactly what E was objecting to. The Create Purchase modal has a plain file-attach for the order confirmation at creation time; the "Waiting on Receiving" detail panel has a `capture="environment"` file input (camera on mobile, picker on desktop) for receiving photos/packing slips, both saving straight against that order's `id`.
+  - **Deliberately scoped out of this pass** (E: "might not be perfect the first time... lets start with that"): (1) auto-extracting a form from the attached order-confirmation file (OCR/AI-fill) -- the upload works, the extraction doesn't exist yet, and the modal says so honestly rather than faking it. (2) A separate "Order History" view for fully-Received orders -- "Waiting on Receiving" currently still shows every order regardless of status (same as the old unfiltered Purchase Orders table) rather than dropping Received ones into a separate history section. Both are reasonable fast-follows, not silently dropped.
+  - **`onQueueManualPurchaseRequest`/`queueManualPurchaseRequest` (the old Manual Request row's App-level handler) removed entirely** -- fully dead once its one call site was replaced.
+  - Migration 081 SQL:
+    ```sql
+    alter table purchase_orders add column if not exists source_request_id uuid references purchase_requests(id) on delete set null;
+    alter table purchase_requests add column if not exists linked_purchase_order_id uuid references purchase_orders(id) on delete set null;
+
+    create table if not exists purchase_order_files (
+      id uuid primary key default gen_random_uuid(),
+      purchase_order_id uuid not null references purchase_orders(id) on delete cascade,
+      storage_path text not null,
+      file_name text,
+      description text,
+      uploaded_at timestamptz not null default now(),
+      uploaded_by_email text
+    );
+    create index if not exists idx_purchase_order_files_order on purchase_order_files(purchase_order_id);
+    alter table purchase_order_files enable row level security;
+    create policy "authenticated read purchase_order_files" on purchase_order_files for select to authenticated using (true);
+    create policy "authenticated write purchase_order_files" on purchase_order_files for all to authenticated using (true) with check (true);
+
+    insert into storage.buckets (id, name, public) values ('purchase-order-files', 'purchase-order-files', false) on conflict (id) do nothing;
+    drop policy if exists "authenticated read purchase-order-files objects" on storage.objects;
+    create policy "authenticated read purchase-order-files objects" on storage.objects for select to authenticated using (bucket_id = 'purchase-order-files');
+    drop policy if exists "authenticated write purchase-order-files objects" on storage.objects;
+    create policy "authenticated write purchase-order-files objects" on storage.objects for insert to authenticated with check (bucket_id = 'purchase-order-files');
+    drop policy if exists "authenticated update purchase-order-files objects" on storage.objects;
+    create policy "authenticated update purchase-order-files objects" on storage.objects for update to authenticated using (bucket_id = 'purchase-order-files') with check (bucket_id = 'purchase-order-files');
+    drop policy if exists "authenticated delete purchase-order-files objects" on storage.objects;
+    create policy "authenticated delete purchase-order-files objects" on storage.objects for delete to authenticated using (bucket_id = 'purchase-order-files');
+    ```
+  - Every persistence.ts write path that touches the new columns/table has a 400-triggered fallback (matching the codebase's existing pattern for optional-column safety), so the app won't break in prod before the migration runs -- it just can't actually link/attach anything real until it does.
+  - tsc/build both clean.
 - **(pending commit)** — **Folded "Order Line Items" into the Purchase Orders table as an expandable row, instead of a fully separate duplicate section.** E, after walking through the Purchasing page live: "Order Line Items Grouped by purchase order - being the same as the info above makes no sense, why doesn't it live inside of it. they are actual order[s]." Correct -- it was rendering the exact same `purchaseOrders` array a second time as one large card per order (line items, ship-to, payment note, totals), tripling the page's length for no new information beyond what the summary table already showed in condensed form. Removed the standalone `panel full` section entirely. Each Purchase Orders row (desktop table + mobile card) now has a "Details" toggle that expands an inline panel with the same line-item/ship-to/payment-note/totals content, one row at a time (`expandedOrderId` state, no persistence -- collapses on nav away, matches how the rest of the page behaves). tsc/build both clean.
 - **(pending commit, migration 080 confirmed run 2026-08-19)** — **Real document -> Purchase Order/Purchase Request linking, replacing the filename-guess heuristic.** E, after the rename/clarity pass below: "it sound like it all goes to one bundle and not to the exact order places" -- correct, and a fair thing to push on. Checked the data model: `ProjectDocument` had no field linking it to an order or request at all -- the Purchasing page's document list only ever matched by `doc.project === selectedProject`, plus a fragile secondary guess (`purchaseOrders.some(order => order.sourceFile === doc.name)`) that only worked if an uploaded filename happened to exactly match a PO's manually-typed "source file" text field.
   - **Migration 080**: two new nullable columns, `project_documents.purchase_order_id` and `.purchase_request_id`, both FKs (`on delete set null`).

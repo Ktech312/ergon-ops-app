@@ -1582,6 +1582,21 @@ td small.quote-ref-tag {
   width: 1px;
 }
 
+.upload-drop.compact-upload {
+  gap: 3px;
+  margin-top: 10px;
+  min-height: 64px;
+  padding: 10px;
+}
+
+.upload-drop.compact-upload strong {
+  font-size: 13px;
+}
+
+.upload-drop.compact-upload span {
+  font-size: 11px;
+}
+
 .upload-controls {
   display: grid;
   gap: 12px;

@@ -3556,6 +3556,11 @@ export type PurchaseRequest = {
   createdAt: string;
   notes: string;
   requestedByEmail?: string;
+  // Real link to the Purchase Order this request became, once someone
+  // clicks "Create Purchase" on it (migration 081) -- the request record
+  // itself is never deleted or replaced, this just points at what it
+  // turned into. Undefined until that happens.
+  linkedPurchaseOrderId?: string;
 };
 
 type PurchaseRequestRow = {
@@ -3577,6 +3582,7 @@ type PurchaseRequestRow = {
   created_at: string;
   notes: string | null;
   requested_by_email: string | null;
+  linked_purchase_order_id: string | null;
 };
 
 function appPurchaseReason(reason: string): PurchaseRequest["reason"] {
@@ -3648,10 +3654,14 @@ function mapPurchaseRequestRow(row: PurchaseRequestRow): PurchaseRequest {
     createdAt: row.created_at,
     notes: row.notes ?? "",
     requestedByEmail: row.requested_by_email ?? undefined,
+    linkedPurchaseOrderId: row.linked_purchase_order_id ?? undefined,
   };
 }
 
 const PURCHASE_REQUEST_SELECT =
+  "id,request_number,sku_snapshot,item_name_snapshot,quantity_requested,reason,source_ref,project_name,procurement_track,preferred_vendor,po_number,expected_date,estimated_unit_cost,quantity_received,status,created_at,notes,requested_by_email,linked_purchase_order_id";
+
+const PURCHASE_REQUEST_SELECT_LEGACY =
   "id,request_number,sku_snapshot,item_name_snapshot,quantity_requested,reason,source_ref,project_name,procurement_track,preferred_vendor,po_number,expected_date,estimated_unit_cost,quantity_received,status,created_at,notes,requested_by_email";
 
 export async function loadPurchaseRequests(accessToken?: string): Promise<PurchaseRequest[]> {
@@ -3661,6 +3671,16 @@ export async function loadPurchaseRequests(accessToken?: string): Promise<Purcha
   const response = await fetch(supabaseUrl(`purchase_requests?select=${PURCHASE_REQUEST_SELECT}&order=created_at.desc`), {
     headers: supabaseHeaders(accessToken),
   });
+  if (!response.ok && response.status === 400) {
+    const fallbackResponse = await fetch(supabaseUrl(`purchase_requests?select=${PURCHASE_REQUEST_SELECT_LEGACY}&order=created_at.desc`), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (!fallbackResponse.ok) {
+      return [];
+    }
+    const fallbackRows = (await fallbackResponse.json()) as Array<Omit<PurchaseRequestRow, "linked_purchase_order_id">>;
+    return fallbackRows.map((row) => mapPurchaseRequestRow({ ...row, linked_purchase_order_id: null }));
+  }
   if (!response.ok) {
     return [];
   }
@@ -3730,6 +3750,7 @@ export async function updatePurchaseRequestRemote(
     procurementTrack: PurchaseRequest["procurementTrack"];
     projectName: string | null;
     receivedQuantity: number;
+    linkedPurchaseOrderId: string | null;
   }>,
   accessToken?: string,
 ): Promise<void> {
@@ -3747,14 +3768,23 @@ export async function updatePurchaseRequestRemote(
   if (updates.procurementTrack !== undefined) payload.procurement_track = updates.procurementTrack;
   if (updates.projectName !== undefined) payload.project_name = updates.projectName || null;
   if (updates.receivedQuantity !== undefined) payload.quantity_received = updates.receivedQuantity;
+  if (updates.linkedPurchaseOrderId !== undefined) payload.linked_purchase_order_id = updates.linkedPurchaseOrderId;
   if (Object.keys(payload).length === 0) {
     return;
   }
-  await fetch(supabaseUrl(`purchase_requests?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`purchase_requests?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+  if (!response.ok && response.status === 400 && "linked_purchase_order_id" in payload) {
+    const { linked_purchase_order_id: _linkedPurchaseOrderId, ...fallbackPayload } = payload;
+    await fetch(supabaseUrl(`purchase_requests?id=eq.${id}`), {
+      method: "PATCH",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify(fallbackPayload),
+    });
+  }
 }
 
 // --- Phase 10c: Inventory Items + Price History (cut over from the
@@ -5475,13 +5505,27 @@ export type PurchaseOrderLine = {
   lineTotal?: number;
 };
 
+export type PurchaseOrderFile = {
+  id: string;
+  purchaseOrderId: string;
+  storagePath: string;
+  fileName: string;
+  description: string;
+  uploadedAt: string;
+  uploadedByEmail: string;
+};
+
 export type PurchaseOrder = {
   id: string;
   number: string;
   vendor: string;
   date: string;
   projectRef: string;
-  status: "Imported" | "In Processing" | "On Hold";
+  // "Ordered"/"Received" (migration 081) are the real lifecycle for orders
+  // created through "Create Purchase" -- Ordered means placed and waiting
+  // to arrive, Received closes it out. "Imported"/"In Processing"/"On
+  // Hold" are kept for older rows created before that flow existed.
+  status: "Imported" | "In Processing" | "On Hold" | "Ordered" | "Received";
   subtotal: number;
   tax: number;
   shipping: number;
@@ -5490,6 +5534,14 @@ export type PurchaseOrder = {
   shipTo: string;
   paymentNote: string;
   lines: PurchaseOrderLine[];
+  // The Purchase Request this order was created from, if any (via "Create
+  // Purchase" on a Request Queue row) -- undefined for orders entered
+  // directly with no originating request.
+  sourceRequestId?: string;
+  // Paperwork/photos attached directly to this exact order (migration
+  // 081) -- the order confirmation attached at creation, and receiving
+  // photos/packing slips attached once it arrives. Not a shared bucket.
+  files: PurchaseOrderFile[];
 };
 
 type PurchaseOrderLineRow = {
@@ -5499,6 +5551,28 @@ type PurchaseOrderLineRow = {
   unit_cost: number | string;
   line_total: number | string | null;
 };
+
+type PurchaseOrderFileRow = {
+  id: string;
+  purchase_order_id: string;
+  storage_path: string;
+  file_name: string | null;
+  description: string | null;
+  uploaded_at: string;
+  uploaded_by_email: string | null;
+};
+
+function mapPurchaseOrderFileRow(row: PurchaseOrderFileRow): PurchaseOrderFile {
+  return {
+    id: row.id,
+    purchaseOrderId: row.purchase_order_id,
+    storagePath: row.storage_path,
+    fileName: row.file_name ?? "",
+    description: row.description ?? "",
+    uploadedAt: row.uploaded_at,
+    uploadedByEmail: row.uploaded_by_email ?? "",
+  };
+}
 
 type PurchaseOrderRow = {
   id: string;
@@ -5515,6 +5589,8 @@ type PurchaseOrderRow = {
   source_file: string | null;
   vendor: { name: string } | null;
   purchase_order_lines: PurchaseOrderLineRow[];
+  source_request_id?: string | null;
+  purchase_order_files?: PurchaseOrderFileRow[] | null;
 };
 
 function appPoCategory(category: string | null): PurchaseLineCategory {
@@ -5522,10 +5598,14 @@ function appPoCategory(category: string | null): PurchaseLineCategory {
   return (allowed as string[]).includes(category ?? "") ? (category as PurchaseLineCategory) : "Other";
 }
 
+const PURCHASE_ORDER_STATUSES: PurchaseOrder["status"][] = ["Imported", "In Processing", "On Hold", "Ordered", "Received"];
+
 function pgPoStatus(status: PurchaseOrder["status"]): string {
   switch (status) {
     case "In Processing": return "ordered";
     case "On Hold": return "submitted";
+    case "Ordered": return "ordered";
+    case "Received": return "received";
     default: return "received";
   }
 }
@@ -5550,7 +5630,7 @@ function mapPurchaseOrderRow(row: PurchaseOrderRow): PurchaseOrder {
     vendor: row.vendor?.name ?? "Unknown vendor",
     date: row.requested_date,
     projectRef: row.project_name ?? "",
-    status: row.app_status === "In Processing" || row.app_status === "On Hold" ? row.app_status : "Imported",
+    status: (PURCHASE_ORDER_STATUSES as string[]).includes(row.app_status) ? (row.app_status as PurchaseOrder["status"]) : "Imported",
     subtotal,
     tax,
     shipping,
@@ -5558,12 +5638,16 @@ function mapPurchaseOrderRow(row: PurchaseOrderRow): PurchaseOrder {
     sourceFile: row.source_file ?? "",
     shipTo: row.ship_to ?? "",
     paymentNote: row.payment_note ?? "",
+    sourceRequestId: row.source_request_id ?? undefined,
+    files: (row.purchase_order_files ?? []).map(mapPurchaseOrderFileRow),
     lines: (row.purchase_order_lines ?? []).map(mapPurchaseOrderLineRow),
   };
 }
 
-const PURCHASE_ORDER_SELECT =
+const PURCHASE_ORDER_SELECT_BASE =
   "id,po_number,app_status,requested_date,subtotal,tax_amount,shipping_amount,total_amount,project_name,ship_to,payment_note,source_file,vendor:vendors(name),purchase_order_lines(item_name,category,quantity_ordered,unit_cost,line_total)";
+const PURCHASE_ORDER_SELECT =
+  `${PURCHASE_ORDER_SELECT_BASE},source_request_id,purchase_order_files(id,purchase_order_id,storage_path,file_name,description,uploaded_at,uploaded_by_email)`;
 
 export async function loadPurchaseOrders(accessToken?: string): Promise<PurchaseOrder[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5572,6 +5656,16 @@ export async function loadPurchaseOrders(accessToken?: string): Promise<Purchase
   const response = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT}&order=requested_date.desc`), {
     headers: supabaseHeaders(accessToken),
   });
+  if (!response.ok && response.status === 400) {
+    const fallbackResponse = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT_BASE}&order=requested_date.desc`), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (!fallbackResponse.ok) {
+      return [];
+    }
+    const fallbackRows = (await fallbackResponse.json()) as Array<Omit<PurchaseOrderRow, "source_request_id" | "purchase_order_files">>;
+    return fallbackRows.map((row) => mapPurchaseOrderRow({ ...row, source_request_id: null, purchase_order_files: [] }));
+  }
   if (!response.ok) {
     return [];
   }
@@ -5719,6 +5813,7 @@ export async function createPurchaseOrder(
     shipTo: string;
     paymentNote: string;
     lines: Array<{ name: string; category: PurchaseLineCategory; qty: number; unitCost: number }>;
+    sourceRequestId?: string;
   },
   accessToken?: string,
 ): Promise<PurchaseOrder | null> {
@@ -5742,12 +5837,21 @@ export async function createPurchaseOrder(
     ship_to: input.shipTo || null,
     payment_note: input.paymentNote || null,
     source_file: input.sourceFile || null,
+    source_request_id: input.sourceRequestId || null,
   };
-  const orderResponse = await fetch(supabaseUrl("purchase_orders"), {
+  let orderResponse = await fetch(supabaseUrl("purchase_orders"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify(orderPayload),
   });
+  if (!orderResponse.ok && orderResponse.status === 400) {
+    const { source_request_id: _sourceRequestId, ...fallbackPayload } = orderPayload;
+    orderResponse = await fetch(supabaseUrl("purchase_orders"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+      body: JSON.stringify(fallbackPayload),
+    });
+  }
   if (!orderResponse.ok) {
     throw new Error(`Could not save purchase order: ${orderResponse.status}`);
   }
@@ -5792,6 +5896,8 @@ export async function createPurchaseOrder(
     shipTo: input.shipTo,
     paymentNote: input.paymentNote,
     lines: lineRows.length > 0 ? lineRows.map(mapPurchaseOrderLineRow) : input.lines.map((line) => ({ ...line })),
+    sourceRequestId: input.sourceRequestId,
+    files: [],
   };
 }
 
@@ -5804,6 +5910,82 @@ export async function updatePurchaseOrderStatus(id: string, status: PurchaseOrde
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ app_status: status, status: pgPoStatus(status) }),
   });
+}
+
+// Paperwork attached directly to one Purchase Order (migration 081) -- the
+// order confirmation attached at creation, plus receiving photos/packing
+// slips attached once it arrives. Same shape as project_shipment_photos
+// (see addProjectShipmentPhoto above), just keyed to purchase_order_id
+// instead of shipment_id, and not restricted to images -- accepts PDFs too.
+const PURCHASE_ORDER_FILE_BUCKET = "purchase-order-files";
+
+export function buildPurchaseOrderFileStoragePath(purchaseOrderId: string, fileName: string): string {
+  const stamp = Date.now().toString(36);
+  return `${purchaseOrderId}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
+}
+
+export async function uploadPurchaseOrderFile(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
+  return uploadStorageObjectFile(PURCHASE_ORDER_FILE_BUCKET, file, storagePath, accessToken);
+}
+
+export async function getPurchaseOrderFileDownloadUrl(storagePath: string, accessToken?: string): Promise<string | null> {
+  return getStorageObjectSignedUrl(PURCHASE_ORDER_FILE_BUCKET, storagePath, accessToken);
+}
+
+export async function addPurchaseOrderFile(
+  purchaseOrderId: string,
+  file: File,
+  accessToken?: string,
+  description?: string,
+  uploaderEmail?: string,
+): Promise<PurchaseOrderFile | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  try {
+    const storagePath = buildPurchaseOrderFileStoragePath(purchaseOrderId, file.name);
+    const uploaded = await uploadPurchaseOrderFile(file, storagePath, accessToken);
+    if (!uploaded) {
+      return null;
+    }
+    const response = await fetch(supabaseUrl("purchase_order_files"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+      body: JSON.stringify({
+        purchase_order_id: purchaseOrderId,
+        storage_path: storagePath,
+        file_name: file.name,
+        description: description || null,
+        uploaded_by_email: uploaderEmail || null,
+      }),
+    });
+    if (!response.ok) {
+      console.error("addPurchaseOrderFile insert failed", response.status, await response.text().catch(() => ""));
+      return null;
+    }
+    const rows = (await response.json()) as PurchaseOrderFileRow[];
+    return rows[0] ? mapPurchaseOrderFileRow(rows[0]) : null;
+  } catch (error) {
+    console.error("addPurchaseOrderFile threw", error);
+    return null;
+  }
+}
+
+export async function deletePurchaseOrderFile(fileId: string, storagePath: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  try {
+    await deleteStorageObject(PURCHASE_ORDER_FILE_BUCKET, storagePath, accessToken);
+    const response = await fetch(supabaseUrl(`purchase_order_files?id=eq.${fileId}`), {
+      method: "DELETE",
+      headers: supabaseHeaders(accessToken),
+    });
+    return response.ok;
+  } catch (error) {
+    console.error("deletePurchaseOrderFile threw", error);
+    return false;
+  }
 }
 
 // Sales Quote Builder (migration 033). A quote starts with a client/site and

@@ -75,6 +75,9 @@ import {
   addProjectShipmentPhoto,
   deleteProjectShipmentPhoto,
   getShipmentPhotoDownloadUrl,
+  addPurchaseOrderFile,
+  deletePurchaseOrderFile,
+  getPurchaseOrderFileDownloadUrl,
   createProjectFromClosedWonQuote,
   createProjectDocuments,
   createPurchaseOrder,
@@ -269,6 +272,7 @@ import {
   type PurchaseLineCategory,
   type PurchaseOrder,
   type PurchaseOrderLine,
+  type PurchaseOrderFile,
   type PurchaseRequest,
   type PurchaseUrl,
   type SalesQuote,
@@ -1441,18 +1445,57 @@ function App() {
     loadPurchaseOrders(authSession.accessToken).then(setPurchaseOrders).catch(() => {});
   }, [authSession]);
 
-  async function handleCreatePurchaseOrder(order: Parameters<typeof createPurchaseOrder>[0]) {
+  // Unified "Create Purchase" (2026-08-20). Replaces the old separate
+  // "New Purchase Order" form and "Manual request" row -- E: "this
+  // combines your Purchase request and Purchase order fillable sections."
+  // Two ways in: standalone (sourceRequest undefined, just places an
+  // order directly), or from a Request Queue row's own "Create Purchase"
+  // button (sourceRequest given) -- which pre-fills this same form from
+  // the request, then on save links the two records together and stamps
+  // the request "Ordered" rather than deleting or replacing it, so the
+  // request stays as the log/audit trail. E: "we dont want to loose
+  // record of the request, so that info needs to stay for logging."
+  async function createPurchase(
+    order: Omit<Parameters<typeof createPurchaseOrder>[0], "sourceRequestId">,
+    sourceRequest?: PurchaseRequest,
+    file?: File,
+  ) {
     if (!authSession) {
-      setAuthStatus("Sign in to create a purchase order.");
+      setAuthStatus("Sign in to create a purchase.");
       return;
     }
     try {
-      const created = await createPurchaseOrder(order, authSession.accessToken);
-      if (created) {
-        setPurchaseOrders((current) => [created, ...current]);
+      const created = await createPurchaseOrder({ ...order, sourceRequestId: sourceRequest?.id }, authSession.accessToken);
+      if (!created) {
+        return;
+      }
+      let finalOrder = created;
+      if (file) {
+        const uploaded = await addPurchaseOrderFile(created.id, file, authSession.accessToken, "Order confirmation", authSession.email);
+        if (uploaded) {
+          finalOrder = { ...created, files: [uploaded] };
+        }
+      }
+      setPurchaseOrders((current) => [finalOrder, ...current]);
+
+      if (sourceRequest) {
+        const nextStatus: PurchaseRequest["status"] = "Ordered";
+        const nextRequests = purchaseRequestsRef.current.map((request) =>
+          request.id === sourceRequest.id ? { ...request, status: nextStatus, linkedPurchaseOrderId: created.id, poNumber: order.number } : request,
+        );
+        purchaseRequestsRef.current = nextRequests;
+        setPurchaseRequests(nextRequests);
+        await updatePurchaseRequestRemote(sourceRequest.id, { status: nextStatus, linkedPurchaseOrderId: created.id, poNumber: order.number }, authSession.accessToken);
+        if (sourceRequest.status !== nextStatus) {
+          // Reuses the existing purchase-request-status-changed notification
+          // (requester + Purchasing team) -- this is exactly "let the PM
+          // know their order has been started", no separate mechanism needed.
+          notifyPurchaseRequestStatusChanged({ ...sourceRequest, status: nextStatus }, nextStatus);
+          syncBomLineStatusFromRequest(sourceRequest, nextStatus);
+        }
       }
     } catch (error) {
-      setAuthStatus(error instanceof Error ? error.message : "Could not save the purchase order.");
+      setAuthStatus(error instanceof Error ? error.message : "Could not save the purchase.");
     }
   }
 
@@ -1461,6 +1504,36 @@ function App() {
     if (authSession) {
       await updatePurchaseOrderStatus(id, status, authSession.accessToken);
     }
+  }
+
+  async function handleUploadPurchaseOrderFile(purchaseOrderId: string, file: File, description?: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const created = await addPurchaseOrderFile(purchaseOrderId, file, authSession.accessToken, description, authSession.email);
+    if (!created) {
+      return false;
+    }
+    setPurchaseOrders((current) => current.map((order) => (order.id === purchaseOrderId ? { ...order, files: [created, ...order.files] } : order)));
+    return true;
+  }
+
+  async function handleDeletePurchaseOrderFile(purchaseOrderId: string, fileId: string, storagePath: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const ok = await deletePurchaseOrderFile(fileId, storagePath, authSession.accessToken);
+    if (ok) {
+      setPurchaseOrders((current) => current.map((order) => (order.id === purchaseOrderId ? { ...order, files: order.files.filter((file) => file.id !== fileId) } : order)));
+    }
+    return ok;
+  }
+
+  async function handleGetPurchaseOrderFileUrl(storagePath: string): Promise<string | null> {
+    if (!authSession) {
+      return null;
+    }
+    return getPurchaseOrderFileDownloadUrl(storagePath, authSession.accessToken);
   }
 
   // Vendors (Inventory & Purchasing nav merge, 2026-08-19). The `vendors`
@@ -4973,14 +5046,6 @@ function App() {
     }
   }
 
-  async function queueManualPurchaseRequest(partRef: string, quantity: number, notes: string, projectName?: string, procurementTrack: PurchaseRequest["procurementTrack"] = "warehouse_stock") {
-    const part = inventoryItems.find((item) => item.ref === partRef);
-    if (!part) {
-      return;
-    }
-    await queuePurchaseRequest(part, quantity, "Manual", notes.trim() || "Manual purchasing request.", projectName ? "Manual project request" : undefined, projectName, procurementTrack);
-  }
-
   async function queueProjectBomPurchaseRequest(partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) {
     const part = inventoryItems.find((item) => item.name === partName || item.ref === partName);
     if (!part) {
@@ -5700,7 +5765,7 @@ function App() {
               {allowedTabs.includes("purchasing") && <button className={view === "purchasing" ? "active" : ""} type="button" onClick={() => navigateToView("purchasing")}>Purchasing</button>}
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
-            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchaseOrder={handleCreatePurchaseOrder} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onQueueManualPurchaseRequest={queueManualPurchaseRequest} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
+            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
             {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
@@ -6408,17 +6473,15 @@ function Purchasing({
   inventoryItems,
   purchaseRequests,
   purchaseOrders,
-  onCreatePurchaseOrder,
+  onCreatePurchase,
   onUpdatePurchaseOrderStatus,
-  projectDocuments,
-  onCreateDocuments,
-  onUpdateDocumentStatus,
-  onDownloadDocument,
+  onUploadPurchaseOrderFile,
+  onDeletePurchaseOrderFile,
+  onGetPurchaseOrderFileUrl,
   lowStock,
   buildTransactions,
   onQueueReorderRequests,
   onQueuePlannedBuildShortageRequests,
-  onQueueManualPurchaseRequest,
   onUpdatePurchaseRequest,
   onUpdatePurchaseRequestStatus,
   onCancelPurchaseRequest,
@@ -6436,30 +6499,32 @@ function Purchasing({
   inventoryItems: Part[];
   purchaseRequests: PurchaseRequest[];
   purchaseOrders: PurchaseOrder[];
-  onCreatePurchaseOrder: (order: {
-    number: string;
-    vendor: string;
-    date: string;
-    projectRef: string;
-    status: PurchaseOrder["status"];
-    subtotal: number;
-    tax: number;
-    shipping: number;
-    sourceFile: string;
-    shipTo: string;
-    paymentNote: string;
-    lines: Array<{ name: string; category: PurchaseLineCategory; qty: number; unitCost: number }>;
-  }) => void;
+  onCreatePurchase: (
+    order: {
+      number: string;
+      vendor: string;
+      date: string;
+      projectRef: string;
+      status: PurchaseOrder["status"];
+      subtotal: number;
+      tax: number;
+      shipping: number;
+      sourceFile: string;
+      shipTo: string;
+      paymentNote: string;
+      lines: Array<{ name: string; category: PurchaseLineCategory; qty: number; unitCost: number }>;
+    },
+    sourceRequest?: PurchaseRequest,
+    file?: File,
+  ) => void;
   onUpdatePurchaseOrderStatus: (id: string, status: PurchaseOrder["status"]) => void;
-  projectDocuments: UploadedDoc[];
-  onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
-  onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
-  onDownloadDocument: (doc: UploadedDoc) => void;
+  onUploadPurchaseOrderFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
+  onDeletePurchaseOrderFile: (purchaseOrderId: string, fileId: string, storagePath: string) => Promise<boolean>;
+  onGetPurchaseOrderFileUrl: (storagePath: string) => Promise<string | null>;
   lowStock: Part[];
   buildTransactions: BuildTransaction[];
   onQueueReorderRequests: () => void;
   onQueuePlannedBuildShortageRequests: () => void;
-  onQueueManualPurchaseRequest: (partRef: string, quantity: number, notes: string, projectName?: string, procurementTrack?: PurchaseRequest["procurementTrack"]) => void;
   onUpdatePurchaseRequest: (requestId: string, updates: Partial<Pick<PurchaseRequest, "quantity" | "preferredVendor" | "poNumber" | "expectedDate" | "estimatedUnitCost" | "status" | "notes" | "procurementTrack" | "projectName">>) => void;
   onUpdatePurchaseRequestStatus: (requestId: string, status: PurchaseRequest["status"]) => void;
   onCancelPurchaseRequest: (requestId: string) => void;
@@ -6473,12 +6538,6 @@ function Purchasing({
   onOpenTasksView: () => void;
   searchFocus?: { term: string; token: number } | null;
 }) {
-  const [selectedProject, setSelectedProject] = useState("");
-  const [manualRequestPartRef, setManualRequestPartRef] = useState(() => inventoryItems.find((item) => !item.retired)?.ref ?? "");
-  const [manualRequestQty, setManualRequestQty] = useState(1);
-  const [manualRequestNotes, setManualRequestNotes] = useState("");
-  const [manualRequestProject, setManualRequestProject] = useState("");
-  const [manualRequestTrack, setManualRequestTrack] = useState<NonNullable<PurchaseRequest["procurementTrack"]>>("warehouse_stock");
   const [requestFilters, setRequestFilters] = useState({ text: "", status: "Open", reason: "All" });
   useEffect(() => {
     if (!searchFocus) {
@@ -6503,23 +6562,9 @@ function Purchasing({
   const [requestReceiveDraft, setRequestReceiveDraft] = useState({ qty: 1, unitCost: 0, notes: "" });
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
   const totalTax = purchaseOrders.reduce((sum, order) => sum + order.tax, 0);
-  const openOrders = purchaseOrders.filter((order) => order.status !== "Imported").length;
+  const openOrders = purchaseOrders.filter((order) => order.status !== "Received").length;
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
-  const documentProjects = Array.from(new Set([...purchaseOrders.map((order) => order.projectRef), ...projectSites.map((project) => project.name)]));
-  useEffect(() => {
-    if (!selectedProject && documentProjects.length > 0) {
-      setSelectedProject(documentProjects[0]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentProjects.join("|")]);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
-  const [documentLinkTarget, setDocumentLinkTarget] = useState("");
-  useEffect(() => {
-    setDocumentLinkTarget("");
-  }, [selectedProject]);
-  const ordersForSelectedProject = purchaseOrders.filter((order) => order.projectRef === selectedProject);
-  const requestsForSelectedProject = purchaseRequests.filter((request) => request.projectName === selectedProject);
-  const activeProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject);
   const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
   const receivingRequest = purchaseRequests.find((request) => request.id === receivingRequestId) ?? null;
@@ -6535,111 +6580,118 @@ function Purchasing({
     return haystack.includes(requestFilters.text.toLowerCase()) && statusMatch && reasonMatch;
   });
 
-  function handleDocumentSelect(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
-    const [linkKind, linkId] = documentLinkTarget.split(":");
-    const entries = files.map((file, index) => ({
-      doc: {
-        name: file.name,
-        project: selectedProject,
-        size: file.size,
-        status: "Ready to review" as const,
-        type: "Procurement" as const,
-        storage: "Browser" as const,
-        uploadedAt: new Date(Date.now() + index).toISOString(),
-        purchaseOrderId: linkKind === "po" ? linkId : undefined,
-        purchaseRequestId: linkKind === "req" ? linkId : undefined,
-      },
-      file,
-    }));
-    onCreateDocuments(entries);
-    event.target.value = "";
+  // Unified "Create Purchase" (2026-08-20) -- replaces the old separate
+  // "New Purchase Order" form and "Manual request" row. Opened two ways:
+  // standalone (no source request, for a buy that never went through the
+  // Request Queue), or via a Request row's own "Create Purchase" button
+  // (pre-fills every field below from that request so nothing gets
+  // retyped -- see openCreatePurchase).
+  const blankPurchaseLine = { name: "", category: "Other" as PurchaseLineCategory, qty: 1, unitCost: 0 };
+  function emptyPurchaseDraft() {
+    return {
+      number: "",
+      vendor: "",
+      date: new Date().toISOString().slice(0, 10),
+      projectRef: "",
+      status: "Ordered" as PurchaseOrder["status"],
+      tax: 0,
+      shipping: 0,
+      shipTo: "",
+      paymentNote: "",
+      lines: [{ ...blankPurchaseLine }],
+    };
   }
+  const [createPurchaseOpen, setCreatePurchaseOpen] = useState(false);
+  const [createPurchaseSourceId, setCreatePurchaseSourceId] = useState<string | null>(null);
+  const [purchaseDraft, setPurchaseDraft] = useState(emptyPurchaseDraft);
+  const [purchaseDraftFile, setPurchaseDraftFile] = useState<File | null>(null);
+  const purchaseSubtotal = purchaseDraft.lines.reduce((sum, line) => sum + line.qty * line.unitCost, 0);
+  const purchaseVendorOptions = Array.from(new Set(purchaseOrders.map((order) => order.vendor)));
 
-  function updateProjectDocumentStatus(docId: UploadedDoc["id"], status: UploadedDoc["status"]) {
-    onUpdateDocumentStatus(docId, status);
-  }
-
-  const blankPoLine = { name: "", category: "Other" as PurchaseLineCategory, qty: 1, unitCost: 0 };
-  const [showPoForm, setShowPoForm] = useState(false);
-  const [poDraft, setPoDraft] = useState({
-    number: "",
-    vendor: "",
-    date: new Date().toISOString().slice(0, 10),
-    projectRef: "",
-    status: "Imported" as PurchaseOrder["status"],
-    tax: 0,
-    shipping: 0,
-    sourceFile: "",
-    shipTo: "",
-    paymentNote: "",
-    lines: [{ ...blankPoLine }],
-  });
-  const poSubtotal = poDraft.lines.reduce((sum, line) => sum + line.qty * line.unitCost, 0);
-  const poVendorOptions = Array.from(new Set(purchaseOrders.map((order) => order.vendor)));
-
-  function updatePoLine(index: number, updates: Partial<typeof blankPoLine>) {
-    setPoDraft((current) => ({
+  function updatePurchaseLine(index: number, updates: Partial<typeof blankPurchaseLine>) {
+    setPurchaseDraft((current) => ({
       ...current,
       lines: current.lines.map((line, lineIndex) => (lineIndex === index ? { ...line, ...updates } : line)),
     }));
   }
 
-  function addPoLine() {
-    setPoDraft((current) => ({ ...current, lines: [...current.lines, { ...blankPoLine }] }));
+  function addPurchaseLine() {
+    setPurchaseDraft((current) => ({ ...current, lines: [...current.lines, { ...blankPurchaseLine }] }));
   }
 
-  function removePoLine(index: number) {
-    setPoDraft((current) => ({ ...current, lines: current.lines.filter((_, lineIndex) => lineIndex !== index) }));
+  function removePurchaseLine(index: number) {
+    setPurchaseDraft((current) => ({ ...current, lines: current.lines.filter((_, lineIndex) => lineIndex !== index) }));
   }
 
-  function resetPoDraft() {
-    setPoDraft({
-      number: "",
-      vendor: "",
-      date: new Date().toISOString().slice(0, 10),
-      projectRef: "",
-      status: "Imported",
-      tax: 0,
-      shipping: 0,
-      sourceFile: "",
-      shipTo: "",
-      paymentNote: "",
-      lines: [{ ...blankPoLine }],
-    });
+  function openCreatePurchase(sourceRequest?: PurchaseRequest) {
+    if (sourceRequest) {
+      setCreatePurchaseSourceId(sourceRequest.id);
+      setPurchaseDraft({
+        number: sourceRequest.poNumber || "",
+        vendor: sourceRequest.preferredVendor || "",
+        date: new Date().toISOString().slice(0, 10),
+        projectRef: sourceRequest.projectName || "",
+        status: "Ordered",
+        tax: 0,
+        shipping: 0,
+        shipTo: "",
+        paymentNote: "",
+        lines: [
+          {
+            name: sourceRequest.itemName,
+            category: "Other",
+            qty: Math.max(1, sourceRequest.quantity - (sourceRequest.receivedQuantity ?? 0)),
+            unitCost: sourceRequest.estimatedUnitCost,
+          },
+        ],
+      });
+    } else {
+      setCreatePurchaseSourceId(null);
+      setPurchaseDraft(emptyPurchaseDraft());
+    }
+    setPurchaseDraftFile(null);
+    setCreatePurchaseOpen(true);
   }
 
-  function submitPurchaseOrder() {
-    if (!poDraft.number.trim() || !poDraft.vendor.trim()) {
+  function submitCreatePurchase() {
+    if (!purchaseDraft.number.trim() || !purchaseDraft.vendor.trim()) {
       return;
     }
-    const cleanLines = poDraft.lines.filter((line) => line.name.trim() && line.qty > 0);
-    onCreatePurchaseOrder({
-      number: poDraft.number.trim(),
-      vendor: poDraft.vendor.trim(),
-      date: poDraft.date,
-      projectRef: poDraft.projectRef.trim(),
-      status: poDraft.status,
-      subtotal: poSubtotal,
-      tax: poDraft.tax,
-      shipping: poDraft.shipping,
-      sourceFile: poDraft.sourceFile.trim(),
-      shipTo: poDraft.shipTo.trim(),
-      paymentNote: poDraft.paymentNote.trim(),
-      lines: cleanLines,
-    });
-    resetPoDraft();
-    setShowPoForm(false);
+    const cleanLines = purchaseDraft.lines.filter((line) => line.name.trim() && line.qty > 0);
+    const sourceRequest = createPurchaseSourceId ? purchaseRequests.find((request) => request.id === createPurchaseSourceId) : undefined;
+    onCreatePurchase(
+      {
+        number: purchaseDraft.number.trim(),
+        vendor: purchaseDraft.vendor.trim(),
+        date: purchaseDraft.date,
+        projectRef: purchaseDraft.projectRef.trim(),
+        status: purchaseDraft.status,
+        subtotal: purchaseSubtotal,
+        tax: purchaseDraft.tax,
+        shipping: purchaseDraft.shipping,
+        sourceFile: purchaseDraftFile?.name ?? "",
+        shipTo: purchaseDraft.shipTo.trim(),
+        paymentNote: purchaseDraft.paymentNote.trim(),
+        lines: cleanLines,
+      },
+      sourceRequest,
+      purchaseDraftFile ?? undefined,
+    );
+    setCreatePurchaseOpen(false);
+    setPurchaseDraftFile(null);
   }
 
-  function submitManualRequest() {
-    if (!manualRequestPartRef) {
+  const [receivingFileFor, setReceivingFileFor] = useState<string | null>(null);
+
+  async function handleReceivingFileSelect(purchaseOrderId: string, event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
       return;
     }
-    const targetProject = manualRequestProject || undefined;
-    onQueueManualPurchaseRequest(manualRequestPartRef, manualRequestQty, manualRequestNotes, targetProject, targetProject ? manualRequestTrack : "warehouse_stock");
-    setManualRequestQty(1);
-    setManualRequestNotes("");
+    setReceivingFileFor(purchaseOrderId);
+    await onUploadPurchaseOrderFile(purchaseOrderId, file, "Receiving paperwork");
+    setReceivingFileFor(null);
   }
 
   function openRequestReceiveModal(request: PurchaseRequest) {
@@ -6731,12 +6783,13 @@ function Purchasing({
         <div className="panel-title-row">
           <div>
             <h2>Purchase Request Queue</h2>
-            <p>Buying work created from low stock, planned builds, and future manual requests.</p>
+            <p>Buying work from the PM team's BOMs, plus low-stock and planned-build reorders. Log/audit trail -- "Create Purchase" turns one into a real order without losing the record.</p>
           </div>
           <div className="action-row">
             <button className="secondary-action" type="button" onClick={exportPurchaseRequestQueue} disabled={filteredPurchaseRequests.length === 0}><FileText size={16} /> Export CSV</button>
             <button className="secondary-action" type="button" onClick={onQueueReorderRequests} disabled={lowStock.length === 0}><Plus size={16} /> Queue Reorders</button>
-            <button className="primary-action" type="button" onClick={onQueuePlannedBuildShortageRequests} disabled={plannedBuilds === 0}><ShoppingCart size={16} /> Queue Build Shortages</button>
+            <button className="secondary-action" type="button" onClick={onQueuePlannedBuildShortageRequests} disabled={plannedBuilds === 0}><ShoppingCart size={16} /> Queue Build Shortages</button>
+            <button className="primary-action" type="button" onClick={() => openCreatePurchase()}><Plus size={16} /> Create Purchase</button>
             <RequestTaskButton section="purchasing" teamMembers={teamMembers} projectSites={projectSites} onCreate={onCreateTask} />
           </div>
         </div>
@@ -6770,43 +6823,14 @@ function Purchasing({
               </select>
             </label>
           </div>
-          <div className="manual-request-row">
-            <label>
-              Manual request
-              <select value={manualRequestPartRef} onChange={(event) => setManualRequestPartRef(event.target.value)}>
-                {inventoryItems.filter((item) => !item.retired).map((item) => <option key={item.ref} value={item.ref}>{item.ref} - {item.name}</option>)}
-              </select>
-            </label>
-            <label>
-              Qty
-              <input type="number" min={1} value={manualRequestQty} onChange={(event) => setManualRequestQty(Number(event.target.value))} />
-            </label>
-            <label>
-              Project
-              <select value={manualRequestProject} onChange={(event) => setManualRequestProject(event.target.value)}>
-                <option value="">Warehouse stock</option>
-                {projectSites.map((project) => <option key={project.ref} value={project.name}>{project.ref} - {project.name}</option>)}
-              </select>
-            </label>
-            <label>
-              Source path
-              <select value={manualRequestTrack} onChange={(event) => setManualRequestTrack(event.target.value as NonNullable<PurchaseRequest["procurementTrack"]>)}>
-                <option value="warehouse_stock">Receive into warehouse</option>
-                <option value="direct_to_project">Direct to project</option>
-              </select>
-            </label>
-            <label>
-              Notes
-              <input value={manualRequestNotes} onChange={(event) => setManualRequestNotes(event.target.value)} placeholder="Reason, vendor note, project, or quote detail" />
-            </label>
-            <button className="secondary-action" type="button" onClick={submitManualRequest}><Plus size={16} /> Add Request</button>
-          </div>
           <div className="request-queue-head"><span>Request</span><span>Need</span><span>Source</span><span>Est.</span><span>Status</span><span></span></div>
-          {filteredPurchaseRequests.slice(0, 14).map((request) => (
+          {filteredPurchaseRequests.slice(0, 14).map((request) => {
+            const linkedOrder = request.linkedPurchaseOrderId ? purchaseOrders.find((order) => order.id === request.linkedPurchaseOrderId) : undefined;
+            return (
             <div className={`request-row ${request.status === "Cancelled" ? "muted-row" : ""}`} key={request.id}>
               <span><strong>{request.itemName}</strong><small>{request.requestNumber} - {request.sku}</small></span>
               <span data-label="Need">{Math.max(0, request.quantity - (request.receivedQuantity ?? 0))}<small>of {request.quantity}</small></span>
-              <span data-label="Source">{request.reason}<small>{request.projectName ? `${request.projectName} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small><small>Requested by {request.requestedByEmail || "Unknown"} on {new Date(request.createdAt).toLocaleDateString()}</small></span>
+              <span data-label="Source">{request.reason}<small>{request.projectName ? `${request.projectName} - ${request.procurementTrack === "direct_to_project" ? "direct to project" : "warehouse stock"}` : request.sourceRef ?? request.preferredVendor ?? "No source"}</small><small>Requested by {request.requestedByEmail || "Unknown"} on {new Date(request.createdAt).toLocaleDateString()}</small>{linkedOrder && <small className="document-link-tag document-link-tag-linked">Order placed: PO {linkedOrder.number}</small>}</span>
               <span data-label="Est.">{moneyExact(Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost)}<small>{request.preferredVendor ?? "Vendor TBD"}</small></span>
               <span data-label="Status">
                 <select value={request.status} onChange={(event) => onUpdatePurchaseRequestStatus(request.id, event.target.value as PurchaseRequest["status"])}>
@@ -6819,12 +6843,16 @@ function Purchasing({
                 </select>
               </span>
               <span className="table-actions">
+                {!request.linkedPurchaseOrderId && (
+                  <button className="table-action" type="button" onClick={() => openCreatePurchase(request)} disabled={request.status === "Cancelled" || request.status === "Received"}>Create Purchase</button>
+                )}
                 <button className="table-action secondary-table-action" type="button" onClick={() => openRequestEditModal(request)}>Edit</button>
                 <button className="table-action" type="button" onClick={() => openRequestReceiveModal(request)} disabled={request.status === "Cancelled" || request.status === "Received"}>Receive</button>
                 <button className="table-action secondary-table-action" type="button" onClick={() => onCancelPurchaseRequest(request.id)} disabled={request.status === "Cancelled" || request.status === "Received"}>Cancel</button>
               </span>
             </div>
-          ))}
+            );
+          })}
           {purchaseRequests.length === 0 && <div className="empty-compact-state">No purchase requests yet. Queue reorder or build shortages to start the buying list.</div>}
           {purchaseRequests.length > 0 && filteredPurchaseRequests.length === 0 && <div className="empty-compact-state">No purchase requests match the current filters.</div>}
         </div>
@@ -6883,7 +6911,7 @@ function Purchasing({
               <label>Expected date<input type="date" value={requestEditDraft.expectedDate} onChange={(event) => setRequestEditDraft((current) => ({ ...current, expectedDate: event.target.value }))} /></label>
               <label className="span-2">Notes<textarea value={requestEditDraft.notes} onChange={(event) => setRequestEditDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Vendor response, substitutions, purchasing notes, delivery details." /></label>
             </div>
-            <small className="muted request-edit-provenance">Requested by {editingRequest.requestedByEmail || "Unknown"} on {new Date(editingRequest.createdAt).toLocaleDateString()} -- {projectDocuments.filter((doc) => doc.purchaseRequestId === editingRequest.id).length} document(s) attached</small>
+            <small className="muted request-edit-provenance">Requested by {editingRequest.requestedByEmail || "Unknown"} on {new Date(editingRequest.createdAt).toLocaleDateString()}{editingRequest.linkedPurchaseOrderId ? ` -- order placed (PO ${purchaseOrders.find((order) => order.id === editingRequest.linkedPurchaseOrderId)?.number ?? editingRequest.poNumber})` : ""}</small>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setEditingRequestId(null)}>Cancel</button>
               <button className="primary-action" type="button" onClick={submitRequestEdit}>Save Request</button>
@@ -6892,122 +6920,40 @@ function Purchasing({
         </div>
       )}
 
-      <section className="panel wide">
-        <PanelHeader title="Attach Purchase Paperwork" label="Invoices, packing slips, receipts, and order confirmations tied to an actual purchase" />
-        <div className="upload-rule-note">
-          <FileText size={15} />
-          <span>Use this for paperwork that comes with a purchase (invoice, packing slip, receipt, order confirmation). Pick the exact Purchase Order or Purchase Request it belongs to in "Link to" below -- it attaches to that record specifically, not just the project in general. General project files -- contracts, drawings, references -- are uploaded by the PM team from the Project page instead.</span>
-        </div>
-        <div className="upload-layout">
-          <label className="upload-drop">
-            <Upload size={24} />
-            <strong>Choose document</strong>
-            <span>PDF invoices, order confirmations, packing slips, or receipts</span>
-            <input type="file" accept=".pdf,.png,.jpg,.jpeg" multiple onChange={handleDocumentSelect} />
-          </label>
-          <div className="upload-controls">
-            <label>
-              Project
-              <select value={selectedProject} onChange={(event) => setSelectedProject(event.target.value)}>
-                {documentProjects.map((project) => (
-                  <option key={project} value={project}>{project}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Link to
-              <select value={documentLinkTarget} onChange={(event) => setDocumentLinkTarget(event.target.value)}>
-                <option value="">Not tied to a specific order</option>
-                {ordersForSelectedProject.length > 0 && (
-                  <optgroup label="Purchase Orders">
-                    {ordersForSelectedProject.map((order) => (
-                      <option key={order.id} value={`po:${order.id}`}>PO {order.number} - {order.vendor}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {requestsForSelectedProject.length > 0 && (
-                  <optgroup label="Purchase Requests">
-                    {requestsForSelectedProject.map((request) => (
-                      <option key={request.id} value={`req:${request.id}`}>{request.requestNumber} - {request.itemName}</option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </label>
-            <div className="drive-card">
-              <FolderOpen size={18} />
+      {createPurchaseOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel purchase-request-edit-panel" role="dialog" aria-modal="true" aria-labelledby="create-purchase-title">
+            <div className="modal-header">
               <div>
-                <strong>Future Google Drive backup</strong>
-                <span>Documents can later be copied into the selected project folder automatically.</span>
+                <h2 id="create-purchase-title">Create Purchase</h2>
+                <p>{createPurchaseSourceId ? "Placing this order against a Purchase Request -- the request stays on file, this just links to it." : "Places a new order directly, with no originating request."}</p>
               </div>
+              <button className="icon-button" type="button" onClick={() => setCreatePurchaseOpen(false)} aria-label="Close create purchase">x</button>
             </div>
-          </div>
-        </div>
-        {selectedProject && <span className="document-queue-label">Documents for {selectedProject}</span>}
-        <div className="document-queue">
-          {activeProjectDocuments.length === 0 && (
-            <div className="empty-compact-state">No documents uploaded for {selectedProject || "this project"} yet -- choose a file above to get started.</div>
-          )}
-          {activeProjectDocuments.map((doc) => (
-            <div className="document-row" key={`${doc.id}-${doc.name}`}>
-              <div>
-                <strong>{doc.name}</strong>
-                <span>{doc.project}{doc.size ? ` - ${formatBytes(doc.size)}` : ""}{doc.storage ? ` - ${doc.storage}` : ""}</span>
-                <small>{formatDocumentProvenance(doc)}</small>
-                <small className={doc.purchaseOrderId || doc.purchaseRequestId ? "document-link-tag document-link-tag-linked" : "document-link-tag"}>{documentLinkLabel(doc, purchaseOrders, purchaseRequests)}</small>
-              </div>
-              <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
-                <option>Uploaded</option>
-                <option>Ready to review</option>
-                <option>Backed up</option>
-                <option>Archived</option>
-              </select>
-              {doc.storagePath && (
-                <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc)}>Download</button>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel wide">
-        <div className="panel-title-row">
-          <PanelHeader title="Purchase Orders" label="Orders already placed with a vendor -- logged here for tracking and receiving, organized by vendor, project reference, and status" />
-          <button className="secondary-action mini-action" type="button" onClick={() => setShowPoForm((current) => !current)}>
-            {showPoForm ? "Cancel" : "New Purchase Order"}
-          </button>
-        </div>
-        {showPoForm && (
-          <div className="inline-form">
             <div className="form-grid">
-              <label>Order # <input value={poDraft.number} onChange={(event) => setPoDraft((current) => ({ ...current, number: event.target.value }))} placeholder="PO or order number" /></label>
-              <label>Vendor <input value={poDraft.vendor} onChange={(event) => setPoDraft((current) => ({ ...current, vendor: event.target.value }))} list="po-vendor-options" placeholder="Vendor name" /></label>
-              <datalist id="po-vendor-options">
-                {poVendorOptions.map((vendor) => <option key={vendor} value={vendor} />)}
+              <label>Order # <input value={purchaseDraft.number} onChange={(event) => setPurchaseDraft((current) => ({ ...current, number: event.target.value }))} placeholder="PO or order number" /></label>
+              <label>Vendor <input value={purchaseDraft.vendor} onChange={(event) => setPurchaseDraft((current) => ({ ...current, vendor: event.target.value }))} list="purchase-vendor-options" placeholder="Vendor name" /></label>
+              <datalist id="purchase-vendor-options">
+                {purchaseVendorOptions.map((vendor) => <option key={vendor} value={vendor} />)}
               </datalist>
-              <label>Date <input type="date" value={poDraft.date} onChange={(event) => setPoDraft((current) => ({ ...current, date: event.target.value }))} /></label>
-              <label>Project Ref <input value={poDraft.projectRef} onChange={(event) => setPoDraft((current) => ({ ...current, projectRef: event.target.value }))} list="po-project-options" placeholder="Project name" /></label>
-              <datalist id="po-project-options">
-                {projectSites.map((project) => <option key={project.name} value={project.name} />)}
-              </datalist>
+              <label>Date <input type="date" value={purchaseDraft.date} onChange={(event) => setPurchaseDraft((current) => ({ ...current, date: event.target.value }))} /></label>
+              <label>Project<select value={purchaseDraft.projectRef} onChange={(event) => setPurchaseDraft((current) => ({ ...current, projectRef: event.target.value }))}><option value="">Warehouse stock</option>{projectSites.map((project) => <option key={project.ref} value={project.name}>{project.ref} - {project.name}</option>)}</select></label>
               <label>Status
-                <select value={poDraft.status} onChange={(event) => setPoDraft((current) => ({ ...current, status: event.target.value as PurchaseOrder["status"] }))}>
-                  <option>Imported</option>
-                  <option>In Processing</option>
-                  <option>On Hold</option>
+                <select value={purchaseDraft.status} onChange={(event) => setPurchaseDraft((current) => ({ ...current, status: event.target.value as PurchaseOrder["status"] }))}>
+                  <option value="Ordered">Ordered</option>
+                  <option value="On Hold">On Hold</option>
                 </select>
               </label>
-              <label>Ship To <input value={poDraft.shipTo} onChange={(event) => setPoDraft((current) => ({ ...current, shipTo: event.target.value }))} /></label>
-              <label>Payment Note <input value={poDraft.paymentNote} onChange={(event) => setPoDraft((current) => ({ ...current, paymentNote: event.target.value }))} /></label>
-              <label>Source File <input value={poDraft.sourceFile} onChange={(event) => setPoDraft((current) => ({ ...current, sourceFile: event.target.value }))} placeholder="Attached PDF name (optional)" /></label>
-              <label>Tax <input type="number" min={0} step="0.01" value={poDraft.tax} onChange={(event) => setPoDraft((current) => ({ ...current, tax: Number(event.target.value) || 0 }))} /></label>
-              <label>Shipping <input type="number" min={0} step="0.01" value={poDraft.shipping} onChange={(event) => setPoDraft((current) => ({ ...current, shipping: Number(event.target.value) || 0 }))} /></label>
+              <label>Ship To <input value={purchaseDraft.shipTo} onChange={(event) => setPurchaseDraft((current) => ({ ...current, shipTo: event.target.value }))} /></label>
+              <label>Payment Note <input value={purchaseDraft.paymentNote} onChange={(event) => setPurchaseDraft((current) => ({ ...current, paymentNote: event.target.value }))} /></label>
+              <label>Tax <input type="number" min={0} step="0.01" value={purchaseDraft.tax} onChange={(event) => setPurchaseDraft((current) => ({ ...current, tax: Number(event.target.value) || 0 }))} /></label>
+              <label>Shipping <input type="number" min={0} step="0.01" value={purchaseDraft.shipping} onChange={(event) => setPurchaseDraft((current) => ({ ...current, shipping: Number(event.target.value) || 0 }))} /></label>
             </div>
             <div className="line-list">
-              {poDraft.lines.map((line, index) => (
+              {purchaseDraft.lines.map((line, index) => (
                 <div className="line-item" key={index}>
-                  <input value={line.name} onChange={(event) => updatePoLine(index, { name: event.target.value })} placeholder="Item name" />
-                  <select value={line.category} onChange={(event) => updatePoLine(index, { category: event.target.value as PurchaseLineCategory })}>
+                  <input value={line.name} onChange={(event) => updatePurchaseLine(index, { name: event.target.value })} placeholder="Item name" />
+                  <select value={line.category} onChange={(event) => updatePurchaseLine(index, { category: event.target.value as PurchaseLineCategory })}>
                     <option>Compute</option>
                     <option>Storage</option>
                     <option>Network</option>
@@ -7017,23 +6963,42 @@ function Purchasing({
                     <option>Rack</option>
                     <option>Other</option>
                   </select>
-                  <input type="number" min={1} value={line.qty} onChange={(event) => updatePoLine(index, { qty: Number(event.target.value) || 0 })} aria-label="Quantity" />
-                  <input type="number" min={0} step="0.01" value={line.unitCost} onChange={(event) => updatePoLine(index, { unitCost: Number(event.target.value) || 0 })} aria-label="Unit cost" />
+                  <input type="number" min={1} value={line.qty} onChange={(event) => updatePurchaseLine(index, { qty: Number(event.target.value) || 0 })} aria-label="Quantity" />
+                  <input type="number" min={0} step="0.01" value={line.unitCost} onChange={(event) => updatePurchaseLine(index, { unitCost: Number(event.target.value) || 0 })} aria-label="Unit cost" />
                   <b>{moneyExact(line.qty * line.unitCost)}</b>
-                  {poDraft.lines.length > 1 && <button className="secondary-action mini-action" type="button" onClick={() => removePoLine(index)}>Remove</button>}
+                  {purchaseDraft.lines.length > 1 && <button className="secondary-action mini-action" type="button" onClick={() => removePurchaseLine(index)}>Remove</button>}
                 </div>
               ))}
-              <button className="secondary-action mini-action" type="button" onClick={addPoLine}>Add Line</button>
+              <button className="secondary-action mini-action" type="button" onClick={addPurchaseLine}>Add Line</button>
             </div>
             <div className="order-totals">
-              <span>Subtotal {moneyExact(poSubtotal)}</span>
-              <span>Tax {moneyExact(poDraft.tax)}</span>
-              <span>Shipping {moneyExact(poDraft.shipping)}</span>
-              <strong>{moneyExact(poSubtotal + poDraft.tax + poDraft.shipping)}</strong>
+              <span>Subtotal {moneyExact(purchaseSubtotal)}</span>
+              <span>Tax {moneyExact(purchaseDraft.tax)}</span>
+              <span>Shipping {moneyExact(purchaseDraft.shipping)}</span>
+              <strong>{moneyExact(purchaseSubtotal + purchaseDraft.tax + purchaseDraft.shipping)}</strong>
             </div>
-            <button className="primary-action" type="button" onClick={submitPurchaseOrder} disabled={!poDraft.number.trim() || !poDraft.vendor.trim()}>Save Purchase Order</button>
-          </div>
-        )}
+            <div className="upload-rule-note">
+              <FileText size={15} />
+              <span>Attach the vendor's order confirmation or receipt -- it's saved directly against this exact order, not a shared bucket. (Auto-filling this form from the file is a planned follow-up, not built yet -- for now it's a plain attachment.)</span>
+            </div>
+            <label className="upload-drop">
+              <Upload size={24} />
+              <strong>{purchaseDraftFile ? purchaseDraftFile.name : "Choose order confirmation (optional)"}</strong>
+              <span>PDF, photo, or screenshot of the order</span>
+              <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(event) => setPurchaseDraftFile(event.target.files?.[0] ?? null)} />
+            </label>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setCreatePurchaseOpen(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={submitCreatePurchase} disabled={!purchaseDraft.number.trim() || !purchaseDraft.vendor.trim()}>Save Purchase</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <PanelHeader title="Waiting on Receiving" label="Orders placed with a vendor -- tracked here through arrival, with paperwork attached to the exact order, not a shared bucket" />
+        </div>
         <div className="po-table-scroll">
         <table>
           <thead>
@@ -7049,13 +7014,14 @@ function Purchasing({
                     <td>{po.vendor}</td>
                     <td>{po.projectRef}</td>
                     <td>
-                      <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
-                        <option>Imported</option>
-                        <option>In Processing</option>
-                        <option>On Hold</option>
+                      <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
+                        <option value="Ordered">Ordered</option>
+                        <option value="On Hold">On Hold</option>
+                        <option value="Received">Received</option>
+                        {(po.status === "Imported" || po.status === "In Processing") && <option value={po.status}>{po.status}</option>}
                       </select>
                     </td>
-                    <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small><small>{projectDocuments.filter((doc) => doc.purchaseOrderId === po.id).length} doc(s) attached</small></td>
+                    <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small><small>{po.files.length} file(s) attached</small></td>
                     <td>{moneyExact(po.total)}</td>
                     <td>
                       <button className="secondary-action mini-action" type="button" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>{isExpanded ? "Hide" : "Details"}</button>
@@ -7064,29 +7030,7 @@ function Purchasing({
                   {isExpanded && (
                     <tr className="order-detail-row">
                       <td colSpan={7}>
-                        <div className="order-detail-panel">
-                          <div className="order-meta">
-                            <span>{po.shipTo || "No ship-to on file"}</span>
-                            <span>{po.paymentNote || "No payment note"}</span>
-                          </div>
-                          <div className="line-list">
-                            {po.lines.map((line, index) => (
-                              <div className="line-item" key={`${po.id}-${line.name}-${index}`}>
-                                <div>
-                                  <strong>{line.name}</strong>
-                                  <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
-                                </div>
-                                <b>{moneyExact(lineTotal(line))}</b>
-                              </div>
-                            ))}
-                            {po.lines.length === 0 && <div className="empty-compact-state">No line items.</div>}
-                          </div>
-                          <div className="order-totals">
-                            <span>Subtotal {moneyExact(po.subtotal)}</span>
-                            <span>Tax {moneyExact(po.tax)}</span>
-                            <strong>{moneyExact(po.total)}</strong>
-                          </div>
-                        </div>
+                        <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} />
                       </td>
                     </tr>
                   )}
@@ -7094,7 +7038,7 @@ function Purchasing({
               );
             })}
             {purchaseOrders.length === 0 && (
-              <tr><td colSpan={7} className="empty-compact-state">No purchase orders yet. Add one above.</td></tr>
+              <tr><td colSpan={7} className="empty-compact-state">No purchases yet -- Create Purchase above to place one.</td></tr>
             )}
           </tbody>
         </table>
@@ -7112,42 +7056,21 @@ function Purchasing({
                   </span>
                   <b>{moneyExact(po.total)}</b>
                 </span>
-                <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""} &middot; {projectDocuments.filter((doc) => doc.purchaseOrderId === po.id).length} doc(s)</span>
-                <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Imported" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
-                  <option>Imported</option>
-                  <option>In Processing</option>
-                  <option>On Hold</option>
+                <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""} &middot; {po.files.length} file(s)</span>
+                <select className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`} value={po.status} onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}>
+                  <option value="Ordered">Ordered</option>
+                  <option value="On Hold">On Hold</option>
+                  <option value="Received">Received</option>
+                  {(po.status === "Imported" || po.status === "In Processing") && <option value={po.status}>{po.status}</option>}
                 </select>
                 <button className="secondary-action mini-action" type="button" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>{isExpanded ? "Hide details" : "View details"}</button>
                 {isExpanded && (
-                  <div className="order-detail-panel">
-                    <div className="order-meta">
-                      <span>{po.shipTo || "No ship-to on file"}</span>
-                      <span>{po.paymentNote || "No payment note"}</span>
-                    </div>
-                    <div className="line-list">
-                      {po.lines.map((line, index) => (
-                        <div className="line-item" key={`${po.id}-${line.name}-${index}`}>
-                          <div>
-                            <strong>{line.name}</strong>
-                            <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
-                          </div>
-                          <b>{moneyExact(lineTotal(line))}</b>
-                        </div>
-                      ))}
-                      {po.lines.length === 0 && <div className="empty-compact-state">No line items.</div>}
-                    </div>
-                    <div className="order-totals">
-                      <span>Subtotal {moneyExact(po.subtotal)}</span>
-                      <span>Tax {moneyExact(po.tax)}</span>
-                      <strong>{moneyExact(po.total)}</strong>
-                    </div>
-                  </div>
+                  <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} />
                 )}
               </div>
             );
           })}
-          {purchaseOrders.length === 0 && <div className="empty-compact-state">No purchase orders yet. Add one above.</div>}
+          {purchaseOrders.length === 0 && <div className="empty-compact-state">No purchases yet -- Create Purchase above to place one.</div>}
         </div>
       </section>
 
@@ -7166,6 +7089,75 @@ function Purchasing({
           {projectSpend.length === 0 && <div className="empty-compact-state">No purchase orders yet.</div>}
         </div>
       </section>
+    </div>
+  );
+}
+
+// Shared between the desktop table row and mobile card in "Waiting on
+// Receiving" (2026-08-20) -- previously this whole block (line items,
+// ship-to, totals) was duplicated as a second full section further down
+// the page ("Order Line Items"), which E flagged as making no sense
+// ("why doesn't it live inside of it"). One component now, expanded
+// inline wherever "Details" is clicked. Also where the real per-order
+// receiving upload lives -- attaches straight to this exact order via
+// purchase_order_files (migration 081), not a shared document bucket.
+function PurchaseOrderDetailPanel({
+  po,
+  receivingFileFor,
+  onFileSelect,
+  onGetFileUrl,
+  onDeleteFile,
+}: {
+  po: PurchaseOrder;
+  receivingFileFor: string | null;
+  onFileSelect: (purchaseOrderId: string, event: React.ChangeEvent<HTMLInputElement>) => void;
+  onGetFileUrl: (storagePath: string) => Promise<string | null>;
+  onDeleteFile: (purchaseOrderId: string, fileId: string, storagePath: string) => void;
+}) {
+  const isUploading = receivingFileFor === po.id;
+  return (
+    <div className="order-detail-panel">
+      <div className="order-meta">
+        <span>{po.shipTo || "No ship-to on file"}</span>
+        <span>{po.paymentNote || "No payment note"}</span>
+      </div>
+      <div className="line-list">
+        {po.lines.map((line, index) => (
+          <div className="line-item" key={`${po.id}-${line.name}-${index}`}>
+            <div>
+              <strong>{line.name}</strong>
+              <span>{line.category} - Qty {line.qty} at {moneyExact(line.unitCost)}</span>
+            </div>
+            <b>{moneyExact(lineTotal(line))}</b>
+          </div>
+        ))}
+        {po.lines.length === 0 && <div className="empty-compact-state">No line items.</div>}
+      </div>
+      <div className="order-totals">
+        <span>Subtotal {moneyExact(po.subtotal)}</span>
+        <span>Tax {moneyExact(po.tax)}</span>
+        <strong>{moneyExact(po.total)}</strong>
+      </div>
+      <span className="document-queue-label">Paperwork on this order</span>
+      <div className="document-queue">
+        {po.files.length === 0 && <div className="empty-compact-state">Nothing attached yet -- add the order confirmation, packing slip, or a photo of what arrived.</div>}
+        {po.files.map((file) => (
+          <div className="document-row" key={file.id}>
+            <div>
+              <strong>{file.fileName || "Untitled file"}</strong>
+              <small>{file.description}{file.uploadedByEmail ? ` -- ${file.uploadedByEmail}` : ""}{file.uploadedAt ? ` -- ${new Date(file.uploadedAt).toLocaleDateString()}` : ""}</small>
+            </div>
+            <button className="secondary-action mini-action" type="button" onClick={async () => { const url = await onGetFileUrl(file.storagePath); if (url) window.open(url, "_blank", "noopener"); }}>View</button>
+            <button className="secondary-action mini-action" type="button" onClick={() => onDeleteFile(po.id, file.id, file.storagePath)}>Remove</button>
+          </div>
+        ))}
+      </div>
+      <label className="upload-drop compact-upload">
+        <Upload size={18} />
+        <strong>{isUploading ? "Uploading..." : "Take a picture or add a file"}</strong>
+        <span>Packing slip, receipt, or a photo of what arrived -- attaches to this order only</span>
+        <input type="file" accept="image/*,.pdf" capture="environment" onChange={(event) => onFileSelect(po.id, event)} disabled={isUploading} />
+      </label>
     </div>
   );
 }
@@ -14529,18 +14521,6 @@ function formatDocumentProvenance(doc: UploadedDoc): string {
     parts.push(doc.storage);
   }
   return parts.join(" -- ");
-}
-
-function documentLinkLabel(doc: UploadedDoc, purchaseOrders: PurchaseOrder[], purchaseRequests: PurchaseRequest[]): string {
-  if (doc.purchaseOrderId) {
-    const order = purchaseOrders.find((candidate) => candidate.id === doc.purchaseOrderId);
-    return order ? `Linked to PO ${order.number}` : "Linked to a Purchase Order";
-  }
-  if (doc.purchaseRequestId) {
-    const request = purchaseRequests.find((candidate) => candidate.id === doc.purchaseRequestId);
-    return request ? `Linked to ${request.requestNumber}` : "Linked to a Purchase Request";
-  }
-  return "Not linked to a specific order";
 }
 
 function clampPreviewZoom(value: number) {
