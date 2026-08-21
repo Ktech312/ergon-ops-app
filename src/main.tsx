@@ -80,6 +80,7 @@ import {
   getPurchaseOrderFileDownloadUrl,
   updatePurchaseOrderLineReceivedQty,
   createPurchaseOrderReceipt,
+  createPurchaseOrderHold,
   createProjectFromClosedWonQuote,
   createProjectDocuments,
   createPurchaseOrder,
@@ -276,6 +277,7 @@ import {
   type PurchaseOrderLine,
   type PurchaseOrderFile,
   type PurchaseOrderReceipt,
+  type PurchaseOrderHold,
   type PurchaseRequest,
   type PurchaseUrl,
   type SalesQuote,
@@ -1510,12 +1512,6 @@ function App() {
     }
   }
 
-  async function handleUpdatePurchaseOrderStatus(id: string, status: PurchaseOrder["status"]) {
-    setPurchaseOrders((current) => current.map((order) => (order.id === id ? { ...order, status } : order)));
-    if (authSession) {
-      await updatePurchaseOrderStatus(id, status, authSession.accessToken);
-    }
-  }
 
   async function handleUploadPurchaseOrderFile(purchaseOrderId: string, file: File, description?: string): Promise<boolean> {
     if (!authSession) {
@@ -1701,6 +1697,33 @@ function App() {
     );
     await updatePurchaseOrderStatus(purchaseOrderId, "Received", authSession.accessToken);
     await syncLinkedRequestOnFullReceipt(order);
+    return true;
+  }
+
+  // On Hold is the one manual status change on a Purchase Order (Ordered
+  // comes from Create Purchase, Received comes from actually receiving
+  // it) -- E: "that should trigger a box that asked why and then is
+  // logged." Real reason, on record, not just a status flip.
+  async function handlePutPurchaseOrderOnHold(purchaseOrderId: string, reason: string): Promise<boolean> {
+    if (!authSession || !reason.trim()) {
+      return false;
+    }
+    await updatePurchaseOrderStatus(purchaseOrderId, "On Hold", authSession.accessToken);
+    const hold = await createPurchaseOrderHold({ purchaseOrderId, reason: reason.trim(), placedByEmail: authSession.email }, authSession.accessToken);
+    setPurchaseOrders((current) =>
+      current.map((order) =>
+        order.id === purchaseOrderId ? { ...order, status: "On Hold", holds: hold ? [hold, ...order.holds] : order.holds } : order,
+      ),
+    );
+    return true;
+  }
+
+  async function handleResumePurchaseOrder(purchaseOrderId: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    await updatePurchaseOrderStatus(purchaseOrderId, "Ordered", authSession.accessToken);
+    setPurchaseOrders((current) => current.map((order) => (order.id === purchaseOrderId ? { ...order, status: "Ordered" } : order)));
     return true;
   }
 
@@ -5941,7 +5964,7 @@ function App() {
               {allowedTabs.includes("purchasing") && <button className={view === "purchasing" ? "active" : ""} type="button" onClick={() => navigateToView("purchasing")}>Purchasing</button>}
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
-            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
+            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
             {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
@@ -6650,12 +6673,13 @@ function Purchasing({
   purchaseRequests,
   purchaseOrders,
   onCreatePurchase,
-  onUpdatePurchaseOrderStatus,
   onUploadPurchaseOrderFile,
   onDeletePurchaseOrderFile,
   onGetPurchaseOrderFileUrl,
   onReceivePurchaseOrderLine,
   onReceiveAllPurchaseOrderLines,
+  onPutPurchaseOrderOnHold,
+  onResumePurchaseOrder,
   lowStock,
   buildTransactions,
   onQueueReorderRequests,
@@ -6695,12 +6719,13 @@ function Purchasing({
     sourceRequest?: PurchaseRequest,
     file?: File,
   ) => Promise<{ ok: boolean; error?: string }>;
-  onUpdatePurchaseOrderStatus: (id: string, status: PurchaseOrder["status"]) => void;
   onUploadPurchaseOrderFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
   onDeletePurchaseOrderFile: (purchaseOrderId: string, fileId: string, storagePath: string) => Promise<boolean>;
   onGetPurchaseOrderFileUrl: (storagePath: string) => Promise<string | null>;
   onReceivePurchaseOrderLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
   onReceiveAllPurchaseOrderLines: (purchaseOrderId: string, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
+  onPutPurchaseOrderOnHold: (purchaseOrderId: string, reason: string) => Promise<boolean>;
+  onResumePurchaseOrder: (purchaseOrderId: string) => Promise<boolean>;
   lowStock: Part[];
   buildTransactions: BuildTransaction[];
   onQueueReorderRequests: () => void;
@@ -7294,7 +7319,8 @@ function Purchasing({
           orders={waitingPurchaseOrders}
           expandedOrderId={expandedOrderId}
           onToggleExpand={(id) => setExpandedOrderId(expandedOrderId === id ? null : id)}
-          onUpdateStatus={onUpdatePurchaseOrderStatus}
+          onPutOnHold={onPutPurchaseOrderOnHold}
+          onResumeFromHold={onResumePurchaseOrder}
           receivingFileFor={receivingFileFor}
           onFileSelect={handleReceivingFileSelect}
           onUploadFile={onUploadPurchaseOrderFile}
@@ -7314,7 +7340,8 @@ function Purchasing({
           orders={completedPurchaseOrders}
           expandedOrderId={expandedOrderId}
           onToggleExpand={(id) => setExpandedOrderId(expandedOrderId === id ? null : id)}
-          onUpdateStatus={onUpdatePurchaseOrderStatus}
+          onPutOnHold={onPutPurchaseOrderOnHold}
+          onResumeFromHold={onResumePurchaseOrder}
           receivingFileFor={receivingFileFor}
           onFileSelect={handleReceivingFileSelect}
           onUploadFile={onUploadPurchaseOrderFile}
@@ -7357,7 +7384,8 @@ function PurchaseOrdersTable({
   orders,
   expandedOrderId,
   onToggleExpand,
-  onUpdateStatus,
+  onPutOnHold,
+  onResumeFromHold,
   receivingFileFor,
   onFileSelect,
   onUploadFile,
@@ -7370,7 +7398,8 @@ function PurchaseOrdersTable({
   orders: PurchaseOrder[];
   expandedOrderId: string | null;
   onToggleExpand: (id: string) => void;
-  onUpdateStatus: (id: string, status: PurchaseOrder["status"]) => void;
+  onPutOnHold: (purchaseOrderId: string, reason: string) => Promise<boolean>;
+  onResumeFromHold: (purchaseOrderId: string) => Promise<boolean>;
   receivingFileFor: string | null;
   onFileSelect: (purchaseOrderId: string, event: React.ChangeEvent<HTMLInputElement>) => void;
   onUploadFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
@@ -7380,14 +7409,47 @@ function PurchaseOrdersTable({
   onReceiveAll: (purchaseOrderId: string, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
   emptyMessage: string;
 }) {
-  const statusOptions = (po: PurchaseOrder) => (
-    <>
-      <option value="Ordered">Ordered</option>
-      <option value="On Hold">On Hold</option>
-      <option value="Received">Received</option>
-      {(po.status === "Imported" || po.status === "In Processing") && <option value={po.status}>{po.status}</option>}
-    </>
-  );
+  const [holdTargetId, setHoldTargetId] = useState<string | null>(null);
+  const [holdReason, setHoldReason] = useState("");
+  const [isSavingHold, setIsSavingHold] = useState(false);
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const holdTarget = orders.find((po) => po.id === holdTargetId) ?? null;
+
+  async function submitHold() {
+    if (!holdTargetId || !holdReason.trim()) {
+      return;
+    }
+    setIsSavingHold(true);
+    await onPutOnHold(holdTargetId, holdReason.trim());
+    setIsSavingHold(false);
+    setHoldTargetId(null);
+    setHoldReason("");
+  }
+
+  async function resume(poId: string) {
+    setResumingId(poId);
+    await onResumeFromHold(poId);
+    setResumingId(null);
+  }
+
+  function statusActions(po: PurchaseOrder) {
+    if (po.status === "On Hold") {
+      return (
+        <button className="table-action secondary-table-action" type="button" onClick={(event) => { event.stopPropagation(); resume(po.id); }} disabled={resumingId === po.id}>
+          {resumingId === po.id ? "..." : "Resume"}
+        </button>
+      );
+    }
+    if (po.status === "Ordered" || po.status === "Imported" || po.status === "In Processing") {
+      return (
+        <button className="table-action secondary-table-action" type="button" onClick={(event) => { event.stopPropagation(); setHoldTargetId(po.id); setHoldReason(""); }}>
+          Put On Hold
+        </button>
+      );
+    }
+    return null;
+  }
+
   return (
     <>
       <div className="po-table-scroll">
@@ -7405,14 +7467,10 @@ function PurchaseOrdersTable({
                   <td>{po.vendor}</td>
                   <td>{po.projectRef}</td>
                   <td>
-                    <select
-                      className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}
-                      value={po.status}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) => onUpdateStatus(po.id, event.target.value as PurchaseOrder["status"])}
-                    >
-                      {statusOptions(po)}
-                    </select>
+                    <div className="po-status-cell">
+                      <span className={`status ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}>{po.status}</span>
+                      {statusActions(po)}
+                    </div>
                   </td>
                   <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small><small>{po.files.length} file(s) attached</small></td>
                   <td>{moneyExact(po.total)}</td>
@@ -7447,14 +7505,10 @@ function PurchaseOrdersTable({
                 <b>{moneyExact(po.total)}</b>
               </span>
               <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""} &middot; {po.files.length} file(s)</span>
-              <select
-                className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}
-                value={po.status}
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) => onUpdateStatus(po.id, event.target.value as PurchaseOrder["status"])}
-              >
-                {statusOptions(po)}
-              </select>
+              <div className="po-status-cell">
+                <span className={`status ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}>{po.status}</span>
+                {statusActions(po)}
+              </div>
               {isExpanded && (
                 <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={onFileSelect} onUploadFile={onUploadFile} onGetFileUrl={onGetFileUrl} onDeleteFile={onDeleteFile} onReceiveLine={onReceiveLine} onReceiveAll={onReceiveAll} />
               )}
@@ -7463,6 +7517,25 @@ function PurchaseOrdersTable({
         })}
         {orders.length === 0 && <div className="empty-compact-state">{emptyMessage}</div>}
       </div>
+
+      {holdTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="hold-order-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="hold-order-title">Put On Hold</h2>
+                <p>{holdTarget.number} - {holdTarget.vendor}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setHoldTargetId(null)} aria-label="Close">x</button>
+            </div>
+            <label className="span-2">Reason<textarea value={holdReason} onChange={(event) => setHoldReason(event.target.value)} placeholder="Why is this order on hold? Payment issue, vendor delay, wrong items, etc." autoFocus /></label>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setHoldTargetId(null)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={submitHold} disabled={!holdReason.trim() || isSavingHold}>{isSavingHold ? "Saving..." : "Put On Hold"}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </>
   );
 }
@@ -7533,6 +7606,22 @@ function PurchaseOrderDetailPanel({
         <span>{po.shipTo || "No ship-to on file"}</span>
         <span>{po.paymentNote || "No payment note"}</span>
       </div>
+
+      {po.holds.length > 0 && (
+        <>
+          <span className="document-queue-label">Hold history</span>
+          <div className="document-queue">
+            {po.holds.map((hold) => (
+              <div className="document-row" key={hold.id}>
+                <div>
+                  <strong>{hold.reason}</strong>
+                  <small>{hold.placedByEmail || "Unknown"} -- {new Date(hold.placedAt).toLocaleString()}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="compact-edit-section">
         <div className="compact-section-header">

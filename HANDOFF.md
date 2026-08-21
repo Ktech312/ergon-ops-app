@@ -8,9 +8,9 @@ Purpose: carry context between chat sessions. Read this first in any new session
 - Do not use, import from, migrate against, or reference VLTD. VLTD is a separate project. If Supabase Studio or Vercel shows VLTD selected, switch away before touching anything for Ergon.
 - The live user-facing target is Vercel production: `https://ergon-ops-app.vercel.app/`.
 - The intended Ergon Supabase project id is `hnjxvsxsxoowhegcqurf`.
-- Repo migrations currently exist from `001_initial_ops_schema.sql` through `084_purchase_order_created_by.sql`.
+- Repo migrations currently exist from `001_initial_ops_schema.sql` through `085_purchase_order_holds.sql`.
 - GitHub/Vercel deploys app code. It does not automatically apply Supabase SQL migrations. Supabase setup remains separate unless a migration pipeline is added.
-- **Migrations confirmed run in Supabase by E: 069, 070, 071, 072, 074, 075, 076, 077, 078, 079, 080, 081, 082, 083, 084.** "Who purchased it" is fully live -- new Purchase Orders now stamp and can be filtered by who created them. Migration **073 (SaaS contract columns) is still unconfirmed** — it was sent early in this handoff's span and never got an explicit "Success" back; verify before trusting the SaaS tile/Calendar's data. If it errors or the SaaS fields silently no-op, this is why.
+- **Migrations confirmed run in Supabase by E: 069, 070, 071, 072, 074, 075, 076, 077, 078, 079, 080, 081, 082, 083, 084.** Migration **085 (purchase_order_holds) is NOT yet run** -- see the dedicated work-log entry for the exact SQL; `loadPurchaseOrders` falls back gracefully without it, but "Put On Hold" won't actually save a reason until it's run. Migration **073 (SaaS contract columns) is still unconfirmed** — it was sent early in this handoff's span and never got an explicit "Success" back; verify before trusting the SaaS tile/Calendar's data. If it errors or the SaaS fields silently no-op, this is why.
 - **Migration 080's document-linking feature (Purchasing's old "Attach Purchase Paperwork" section) was fully superseded and removed 2026-08-20** — see the Create Purchase work-log entry. The `project_documents.purchase_order_id`/`purchase_request_id` columns from migration 080 are still in the DB (harmless, unused) but nothing in the app writes to them anymore.
 - E has repeatedly had trouble pasting SQL from a downloaded file into the Supabase SQL editor (a stray `;` character appeared mid-statement, source unclear — not present in the actual repo file). When handing off a migration, paste the raw SQL directly into the chat message as a code block in addition to (or instead of) sending the file, so E can copy straight from the chat.
 - Dedicated setup handoff: `backend/docs/supabase-production-handoff.md`.
@@ -84,6 +84,26 @@ Status (updated after E called out that curating which tables got done, silently
 - **New: Portfolio Budget & Schedule panel**, Projects list page (`ProjectPortfolioHealth` component, `main.tsx`, right before `function Projects`) -- E asked what to do with the "extra room" on that page once the missing-boxes question resolved; proposed a mockup (published as a Claude Artifact, sketch only, placeholder data), E approved, then it got built for real. Two blocks: **Budget health** (Purchase Order spend per `project.ref`, new `purchaseOrders` prop threaded into `Projects`, vs `project.allocated`, target tick + green/amber/red) and **Schedule health** (`projectCompletion()`, moved to module scope so this component can share it, vs target date). See the data-model note below on `ProjectSite.due` -- the schedule side has to degrade gracefully because that field isn't a real date.
 
 ## Recent work log (most recent first — 2026-08-13 through 2026-08-20)
+- **(pending commit, migration 085 NOT yet run)** — **Replaced the free-form Purchase Order status dropdown with a real status pill + a reasoned "Put On Hold" action.** E: "I don't think this dropdown is useful, the status is useful but not being able to change it here. the only thing that would be handy is the On hold but that should trigger a box that asked why and then is logged." Right -- Ordered comes from Create Purchase, Received comes from actually receiving (migration 082's per-line flow); letting someone just flip either via a dropdown was never honest. On Hold is the one real manual action.
+  - **Status is now a plain pill** (`.status`/`.status.warn`/`.status.ok`, same classes/colors the dropdown used), not editable directly.
+  - **"Put On Hold"** button (shown when Ordered/legacy-Imported/In Processing) opens a small modal requiring a reason before it'll save -- on submit, sets status to On Hold *and* logs the reason via a new `purchase_order_holds` table (migration 085). **"Resume"** (shown when On Hold) just clears it back to Ordered, no reason required -- E only asked for a reason going *into* hold, not coming out.
+  - **Hold history shown in the detail panel** (`PurchaseOrderDetailPanel`), same list style as the receiving log -- every hold placed on an order, who, when, why, newest first. Not just captured, actually visible.
+  - **`handleUpdatePurchaseOrderStatus` (the old generic dropdown handler) removed** -- fully dead once the dropdown was gone; every status change now goes through a real, specific action (Create Purchase, receiving, hold, resume) instead of a bare setter.
+  - Migration 085 SQL:
+    ```sql
+    create table if not exists purchase_order_holds (
+      id uuid primary key default gen_random_uuid(),
+      purchase_order_id uuid not null references purchase_orders(id) on delete cascade,
+      reason text not null,
+      placed_by_email text,
+      placed_at timestamptz not null default now()
+    );
+    create index if not exists idx_purchase_order_holds_order on purchase_order_holds(purchase_order_id, placed_at desc);
+    alter table purchase_order_holds enable row level security;
+    create policy "authenticated read purchase_order_holds" on purchase_order_holds for select to authenticated using (true);
+    create policy "authenticated write purchase_order_holds" on purchase_order_holds for all to authenticated using (true) with check (true);
+    ```
+  - tsc/build both clean.
 - **(pending commit, migration 084 confirmed run 2026-08-20)** — **"Completed" section, search/filter, and who-purchased tracking for Purchase Orders; removed a redundant expand icon.** E, live-testing Waiting on Receiving: the small expand icon on each row "only opens Edit, I thought I asked for a receive button here" -- turned out the whole row was already clickable to expand (built earlier this session) and the icon just duplicated that ("the whole cell is a expand button, so i don't need an extra button for that, unless you give me reason to have it?" -- no good reason, removed it). Also: "I clicked received all, this should move down to another area titled Completed," plus a request for search/filter by PO, part, date, and who purchased it, "more handy in a year when there have been many products purchased."
   - **New `PurchaseOrdersTable` component** shared between two sections -- **Waiting on Receiving** (anything not yet `Received`) and a new **Completed** section (anything that is), so an order fully received via "Received All" or the status dropdown now visibly moves itself out of the active list instead of just sitting there with a green status pill. Same table/card rendering both places, so they can't drift apart in behavior.
   - **Removed the standalone expand icon** from both the desktop row and mobile card -- the row/card's own `onClick` already did this; having a second, redundant control was exactly what read as confusing/pointless.

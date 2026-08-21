@@ -5567,6 +5567,18 @@ export type PurchaseOrder = {
   receipts: PurchaseOrderReceipt[];
   // Who placed the order (migration 084).
   createdByEmail?: string;
+  // "On Hold" reason log (migration 085) -- newest first. Ordered/Received
+  // are driven by real events; On Hold is the one manual status change,
+  // and it always carries a reason on record.
+  holds: PurchaseOrderHold[];
+};
+
+export type PurchaseOrderHold = {
+  id: string;
+  purchaseOrderId: string;
+  reason: string;
+  placedByEmail?: string;
+  placedAt: string;
 };
 
 type PurchaseOrderLineRow = {
@@ -5642,7 +5654,26 @@ type PurchaseOrderRow = {
   purchase_order_files?: PurchaseOrderFileRow[] | null;
   purchase_order_receipts?: PurchaseOrderReceiptRow[] | null;
   created_by_email?: string | null;
+  purchase_order_holds?: PurchaseOrderHoldRow[] | null;
 };
+
+type PurchaseOrderHoldRow = {
+  id: string;
+  purchase_order_id: string;
+  reason: string;
+  placed_by_email: string | null;
+  placed_at: string;
+};
+
+function mapPurchaseOrderHoldRow(row: PurchaseOrderHoldRow): PurchaseOrderHold {
+  return {
+    id: row.id,
+    purchaseOrderId: row.purchase_order_id,
+    reason: row.reason,
+    placedByEmail: row.placed_by_email ?? undefined,
+    placedAt: row.placed_at,
+  };
+}
 
 function appPoCategory(category: string | null): PurchaseLineCategory {
   const allowed: PurchaseLineCategory[] = ["Compute", "Storage", "Network", "Power", "Enclosure", "Hardware", "Rack", "Other"];
@@ -5698,6 +5729,9 @@ function mapPurchaseOrderRow(row: PurchaseOrderRow): PurchaseOrder {
       .map(mapPurchaseOrderReceiptRow)
       .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1)),
     createdByEmail: row.created_by_email ?? undefined,
+    holds: (row.purchase_order_holds ?? [])
+      .map(mapPurchaseOrderHoldRow)
+      .sort((a, b) => (a.placedAt < b.placedAt ? 1 : -1)),
   };
 }
 
@@ -5708,7 +5742,9 @@ const PURCHASE_ORDER_SELECT_WITH_LINKS =
   `${PURCHASE_ORDER_SELECT_BASE},source_request_id,purchase_order_files(id,purchase_order_id,storage_path,file_name,description,uploaded_at,uploaded_by_email)`;
 const PURCHASE_ORDER_SELECT_WITH_RECEIPTS =
   `${PURCHASE_ORDER_SELECT_WITH_LINKS},purchase_order_receipts(id,purchase_order_id,purchase_order_line_id,item_name,qty,received_by_email,received_at)`;
-const PURCHASE_ORDER_SELECT = `${PURCHASE_ORDER_SELECT_WITH_RECEIPTS},created_by_email`;
+const PURCHASE_ORDER_SELECT_WITH_CREATED_BY = `${PURCHASE_ORDER_SELECT_WITH_RECEIPTS},created_by_email`;
+const PURCHASE_ORDER_SELECT =
+  `${PURCHASE_ORDER_SELECT_WITH_CREATED_BY},purchase_order_holds(id,purchase_order_id,reason,placed_by_email,placed_at)`;
 
 export async function loadPurchaseOrders(accessToken?: string): Promise<PurchaseOrder[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5718,6 +5754,17 @@ export async function loadPurchaseOrders(accessToken?: string): Promise<Purchase
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok && response.status === 400) {
+    // Migration 085 (purchase_order_holds) hasn't run yet -- retry without it.
+    const holdsResponse = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT_WITH_CREATED_BY}&order=requested_date.desc`), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (holdsResponse.ok) {
+      const holdsRows = (await holdsResponse.json()) as Array<Omit<PurchaseOrderRow, "purchase_order_holds">>;
+      return holdsRows.map((row) => mapPurchaseOrderRow({ ...row, purchase_order_holds: [] }));
+    }
+    if (holdsResponse.status !== 400) {
+      return [];
+    }
     // Migration 084 (created_by_email) hasn't run yet -- retry without it.
     const receiptsResponse = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT_WITH_RECEIPTS}&order=requested_date.desc`), {
       headers: supabaseHeaders(accessToken),
@@ -5989,6 +6036,7 @@ export async function createPurchaseOrder(
     createdByEmail: input.createdByEmail,
     files: [],
     receipts: [],
+    holds: [],
   };
 }
 
@@ -6048,6 +6096,29 @@ export async function createPurchaseOrderReceipt(
   }
   const rows = (await response.json()) as PurchaseOrderReceiptRow[];
   return rows[0] ? mapPurchaseOrderReceiptRow(rows[0]) : null;
+}
+
+export async function createPurchaseOrderHold(
+  input: { purchaseOrderId: string; reason: string; placedByEmail?: string },
+  accessToken?: string,
+): Promise<PurchaseOrderHold | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("purchase_order_holds"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      purchase_order_id: input.purchaseOrderId,
+      reason: input.reason,
+      placed_by_email: input.placedByEmail ?? null,
+    }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as PurchaseOrderHoldRow[];
+  return rows[0] ? mapPurchaseOrderHoldRow(rows[0]) : null;
 }
 
 // Paperwork attached directly to one Purchase Order (migration 081) -- the

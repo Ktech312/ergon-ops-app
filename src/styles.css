@@ -5078,6 +5078,13 @@ td.empty-compact-state {
   gap: 8px;
 }
 
+.po-status-cell {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .receiving-destination-picker {
   align-items: center;
   color: #756d62;
