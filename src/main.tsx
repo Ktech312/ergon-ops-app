@@ -5943,7 +5943,7 @@ function App() {
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
             {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUpdatePurchaseOrderStatus={handleUpdatePurchaseOrderStatus} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
+            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
@@ -7714,6 +7714,7 @@ function Inventory({
   onOpenTasksView,
   searchFocus,
   purchaseRequests,
+  purchaseOrders,
   onOpenPurchasing,
 }: {
   roleMode: RoleMode;
@@ -7744,6 +7745,7 @@ function Inventory({
   onOpenTasksView: () => void;
   searchFocus?: { term: string; token: number } | null;
   purchaseRequests: PurchaseRequest[];
+  purchaseOrders: PurchaseOrder[];
   onOpenPurchasing: (term: string) => void;
 }) {
   const emptyItemDraft: Part = {
@@ -7884,6 +7886,64 @@ function Inventory({
   function openAddItemModal() {
     setEditingItemRef(null);
     setItemDraft({ ...emptyItemDraft, ref: nextSkuRef(inventoryItems) });
+    setShowItemModal(true);
+  }
+
+  // One-off items (2026-08-20). E: "can there be a created list of one
+  // Offs so they are tracked, then we can determine if we need to add
+  // them to inventory in the future, in case a 1 off turns into many
+  // over time." Purely derived, no new table -- every real receipt is
+  // already in a Purchase Order's receiving log (purchase_order_receipts,
+  // migration 082); anything whose name doesn't match a real inventory
+  // item by the time it's actually received is a one-off. Recomputes
+  // live, so adding the item to inventory naturally drops it off this
+  // list on the next render -- nothing to manually dismiss.
+  const oneOffItems = (() => {
+    const inventoryNames = new Set(inventoryItems.map((item) => item.name.trim().toLowerCase()));
+    const byName = new Map<string, { name: string; totalQty: number; occurrences: number; lastUnitCost: number; lastVendor: string; firstReceivedAt: string; lastReceivedAt: string; orderNumbers: string[] }>();
+    for (const po of purchaseOrders) {
+      for (const receipt of po.receipts) {
+        const key = receipt.itemName.trim().toLowerCase();
+        if (!key || receipt.qty <= 0 || inventoryNames.has(key)) {
+          continue;
+        }
+        const line = po.lines.find((candidate) => candidate.name === receipt.itemName);
+        const existing = byName.get(key);
+        if (existing) {
+          existing.totalQty += receipt.qty;
+          existing.occurrences += 1;
+          existing.lastUnitCost = line?.unitCost ?? existing.lastUnitCost;
+          existing.lastVendor = po.vendor;
+          if (receipt.receivedAt > existing.lastReceivedAt) existing.lastReceivedAt = receipt.receivedAt;
+          if (receipt.receivedAt < existing.firstReceivedAt) existing.firstReceivedAt = receipt.receivedAt;
+          if (!existing.orderNumbers.includes(po.number)) existing.orderNumbers.push(po.number);
+        } else {
+          byName.set(key, {
+            name: receipt.itemName,
+            totalQty: receipt.qty,
+            occurrences: 1,
+            lastUnitCost: line?.unitCost ?? 0,
+            lastVendor: po.vendor,
+            firstReceivedAt: receipt.receivedAt,
+            lastReceivedAt: receipt.receivedAt,
+            orderNumbers: [po.number],
+          });
+        }
+      }
+    }
+    return Array.from(byName.values()).sort((a, b) => b.occurrences - a.occurrences || b.totalQty - a.totalQty);
+  })();
+
+  function openAddItemModalFromOneOff(oneOff: (typeof oneOffItems)[number]) {
+    setEditingItemRef(null);
+    setItemDraft({
+      ...emptyItemDraft,
+      ref: nextSkuRef(inventoryItems),
+      name: oneOff.name,
+      cost: oneOff.lastUnitCost,
+      manufacturer: oneOff.lastVendor,
+      description: `Received as a one-off ${oneOff.occurrences} time(s), ${oneOff.totalQty} unit(s) total, across ${oneOff.orderNumbers.join(", ")}.`,
+    });
     setShowItemModal(true);
   }
 
@@ -8623,6 +8683,29 @@ function Inventory({
               <span data-label="Reference">{movement.projectName ?? movement.buildNumber ?? movement.poNumber ?? movement.source}<small>{movement.notes}</small></span>
             </div>
           ))}
+        </div>
+      </section>
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <div>
+            <h2>One-Off Items</h2>
+            <p>Things received on a purchase order that don't match a real inventory item yet -- sorted by how often they've come up, so a real pattern is easy to spot.</p>
+          </div>
+        </div>
+        <div className="report-table compact-report-table">
+          <div className="report-table-head"><span>Item</span><span>Received</span><span>Last seen</span><span>Est. cost</span><span></span></div>
+          {oneOffItems.slice(0, 20).map((oneOff) => (
+            <div className="report-table-row" key={oneOff.name}>
+              <span data-label="Item"><strong>{oneOff.name}</strong><small>{oneOff.orderNumbers.join(", ")}</small></span>
+              <span data-label="Received">{oneOff.totalQty} unit(s)<small>{oneOff.occurrences} time{oneOff.occurrences === 1 ? "" : "s"}</small></span>
+              <span data-label="Last seen">{new Date(oneOff.lastReceivedAt).toLocaleDateString()}<small>{oneOff.lastVendor}</small></span>
+              <span data-label="Est. cost">{moneyExact(oneOff.lastUnitCost)}</span>
+              <span className="table-actions">
+                <button className="table-action secondary-table-action" type="button" onClick={() => openAddItemModalFromOneOff(oneOff)}>Add to Inventory</button>
+              </span>
+            </div>
+          ))}
+          {oneOffItems.length === 0 && <div className="empty-compact-state">Nothing untracked -- every received item so far matches something already in inventory.</div>}
         </div>
       </section>
       {showDeviceModal && (
