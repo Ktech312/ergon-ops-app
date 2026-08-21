@@ -7435,14 +7435,14 @@ function PurchaseOrdersTable({
   function statusActions(po: PurchaseOrder) {
     if (po.status === "On Hold") {
       return (
-        <button className="table-action mini-action" type="button" onClick={(event) => { event.stopPropagation(); resume(po.id); }} disabled={resumingId === po.id}>
+        <button className="po-hold-action" type="button" onClick={(event) => { event.stopPropagation(); resume(po.id); }} disabled={resumingId === po.id}>
           {resumingId === po.id ? "..." : "Resume"}
         </button>
       );
     }
     if (po.status === "Ordered" || po.status === "Imported" || po.status === "In Processing") {
       return (
-        <button className="table-action mini-action" type="button" onClick={(event) => { event.stopPropagation(); setHoldTargetId(po.id); setHoldReason(""); }}>
+        <button className="po-hold-action" type="button" onClick={(event) => { event.stopPropagation(); setHoldTargetId(po.id); setHoldReason(""); }}>
           Put On Hold
         </button>
       );

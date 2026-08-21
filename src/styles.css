@@ -5073,6 +5073,34 @@ td.empty-compact-state {
   text-align: center;
 }
 
+/* On Hold is a rare, deliberately unencouraged manual action -- E: "these
+   will not be used or encouraged to be used." Sized to match the status
+   pill next to it, not a normal call-to-action button. */
+.po-hold-action {
+  background: #f8f5ef;
+  border: 1px solid #ded7cb;
+  border-radius: 999px;
+  color: #756d62;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.1;
+  min-width: 84px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.po-hold-action:hover:not(:disabled) {
+  border-color: #a01029;
+  color: #a01029;
+}
+
+.po-hold-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .receiving-destination-picker {
   align-items: center;
   color: #756d62;
