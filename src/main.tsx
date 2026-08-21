@@ -5965,7 +5965,7 @@ function App() {
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
             {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onReceiveStock={receiveInventoryStock} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onOpenPurchasing={(term) => { setPurchasingSearchFocus({ term, token: Date.now() }); navigateToView("purchasing"); }} />}
+            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
@@ -7882,7 +7882,6 @@ function Inventory({
   inventoryMovements,
   onAddItem,
   onUpdateItem,
-  onReceiveStock,
   onAdjustStock,
   onTransferToProject,
   onPlanBuild,
@@ -7899,9 +7898,7 @@ function Inventory({
   onDeleteTask,
   onOpenTasksView,
   searchFocus,
-  purchaseRequests,
   purchaseOrders,
-  onOpenPurchasing,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
@@ -7913,7 +7910,6 @@ function Inventory({
   inventoryMovements: InventoryMovement[];
   onAddItem: (part: Part) => void;
   onUpdateItem: (ref: string, part: Part) => void;
-  onReceiveStock: (partRef: string, qty: number, unitCost: number, poNumber: string, notes: string) => void;
   onAdjustStock: (partRef: string, nextQty: number, notes: string) => void;
   onTransferToProject: (partRef: string, projectName: string, qty: number, notes: string) => void;
   onPlanBuild: (recipe: BuildRecipe, qty: number) => void;
@@ -7930,9 +7926,7 @@ function Inventory({
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
   searchFocus?: { term: string; token: number } | null;
-  purchaseRequests: PurchaseRequest[];
   purchaseOrders: PurchaseOrder[];
-  onOpenPurchasing: (term: string) => void;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -7954,7 +7948,6 @@ function Inventory({
   const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
   const [itemDraft, setItemDraft] = useState<Part>(emptyItemDraft);
   const [previewItem, setPreviewItem] = useState<Part | null>(null);
-  const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustModalMode, setAdjustModalMode] = useState<"count" | "transfer">("count");
   const [adjustLockedPart, setAdjustLockedPart] = useState<Part | null>(null);
@@ -7978,13 +7971,6 @@ function Inventory({
   const [scanStatus, setScanStatus] = useState("Scan or enter a SKU to pull up the item.");
   const [buildDraft, setBuildDraft] = useState({ recipeName: deviceRecipes.find((recipe) => !recipe.retired)?.name ?? deviceRecipes[0]?.name ?? "", qty: 1 });
   const [newComponentDraft, setNewComponentDraft] = useState({ itemName: "", qty: 1 });
-  const [receiveDraft, setReceiveDraft] = useState({
-    partRef: inventoryItems[0]?.ref ?? "",
-    qty: 1,
-    unitCost: 0,
-    poNumber: "",
-    notes: "",
-  });
   const [adjustDraft, setAdjustDraft] = useState({
     partRef: inventoryItems[0]?.ref ?? "",
     nextQty: inventoryItems[0]?.stock ?? 0,
@@ -7996,7 +7982,6 @@ function Inventory({
     qty: 1,
     notes: "",
   });
-  const receiveItem = inventoryItems.find((part) => part.ref === receiveDraft.partRef);
   const adjustItem = inventoryItems.find((part) => part.ref === adjustDraft.partRef);
   const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
   const selectedBuildRecipe = deviceRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? deviceRecipes.find((recipe) => !recipe.retired) ?? deviceRecipes[0];
@@ -8296,36 +8281,6 @@ function Inventory({
     setItemDraft((current) => ({ ...current, retired: !current.retired }));
   }
 
-  function findPendingRequest(part: Part) {
-    return purchaseRequests.find((request) => request.sku === part.ref && request.status === "Ordered");
-  }
-
-  function openReceiveModal(part?: Part) {
-    const target = part ?? inventoryItems.find((item) => !item.retired) ?? inventoryItems[0];
-    if (!target) {
-      return;
-    }
-    const pending = findPendingRequest(target);
-    setReceiveDraft({
-      partRef: target.ref,
-      qty: pending ? Math.max(1, pending.quantity - (pending.receivedQuantity ?? 0)) : 1,
-      unitCost: pending ? pending.estimatedUnitCost : target.cost,
-      poNumber: pending?.poNumber ?? "",
-      notes: "",
-    });
-    setShowReceiveModal(true);
-  }
-
-  function saveReceive() {
-    const part = inventoryItems.find((item) => item.ref === receiveDraft.partRef);
-    if (!part || part.retired) {
-      return;
-    }
-
-    onReceiveStock(part.ref, receiveDraft.qty, Number(receiveDraft.unitCost) || 0, receiveDraft.poNumber, receiveDraft.notes);
-    setShowReceiveModal(false);
-  }
-
   function openAdjustModal(part?: Part) {
     const target = part ?? inventoryItems.find((item) => !item.retired) ?? inventoryItems[0];
     if (!target) {
@@ -8349,7 +8304,7 @@ function Inventory({
 
   function saveAdjust() {
     const part = inventoryItems.find((item) => item.ref === adjustDraft.partRef);
-    if (!part || part.retired) {
+    if (!part || part.retired || !adjustDraft.notes.trim()) {
       return;
     }
 
@@ -8591,7 +8546,6 @@ function Inventory({
           </div>
           <div className="action-row">
             <button className="secondary-action" type="button" onClick={exportVisibleInventory} disabled={filteredInventoryItems.length === 0}><FileText size={16} /> Export CSV</button>
-            <button className="secondary-action" type="button" onClick={() => openReceiveModal()}><Truck size={16} /> Receive Stock</button>
             <button className="secondary-action" type="button" onClick={() => openAdjustModal()}><ClipboardList size={16} /> Adjust Count</button>
             <button className="primary-action" type="button" onClick={openAddItemModal}><Plus size={17} /> Add New Item</button>
             <RequestTaskButton section="inventory" teamMembers={teamMembers} projectSites={projectSites} onCreate={onCreateTask} />
@@ -8649,9 +8603,7 @@ function Inventory({
               </tr>
             </thead>
             <tbody>
-              {filteredInventoryItems.map((part) => {
-                const pendingRequest = findPendingRequest(part);
-                return (
+              {filteredInventoryItems.map((part) => (
                 <tr key={part.ref} className="clickable-row" onClick={() => openEditItemModal(part)}>
                   <td onClick={(event) => event.stopPropagation()}>
                     <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(part)} aria-label={`Open image for ${part.name}`}>
@@ -8675,21 +8627,11 @@ function Inventory({
                   <td>{part.retired ? <span className="status retired">Retired</span> : part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
                   <td onClick={(event) => event.stopPropagation()}>
                     <div className="table-actions">
-                      <button
-                        className={`table-action secondary-table-action${pendingRequest ? " receive-pending" : ""}`}
-                        type="button"
-                        onClick={() => openReceiveModal(part)}
-                        disabled={part.retired}
-                        title={pendingRequest ? `PO ${pendingRequest.poNumber || pendingRequest.requestNumber} is on order, not yet received` : undefined}
-                      >
-                        {pendingRequest ? "Receive Pending" : "Receive"}
-                      </button>
                       <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
                     </div>
                   </td>
                 </tr>
-                );
-              })}
+              ))}
             </tbody>
           </table>
         </div>
@@ -8714,47 +8656,35 @@ function Inventory({
               <option>Retired</option>
             </select>
           </div>
-          {filteredInventoryItems.map((part) => {
-            const pendingRequest = findPendingRequest(part);
-            return (
-              <div key={part.ref} className="mobile-card" role="button" tabIndex={0} onClick={() => openEditItemModal(part)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") openEditItemModal(part); }}>
-                <span className="mobile-card-row">
-                  <span
-                    className="thumbnail-button"
-                    role="img"
-                    aria-label={`Image for ${part.name}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setPreviewItem(part);
-                    }}
-                  >
-                    {part.imageUrl ? <img src={part.imageUrl} alt="" /> : <Image size={18} />}
-                  </span>
-                  <span className="mobile-card-title">
-                    <strong>{part.name}</strong>
-                    <small className="muted">{part.ref} &middot; {part.category} &middot; {part.manufacturer}</small>
-                  </span>
+          {filteredInventoryItems.map((part) => (
+            <div key={part.ref} className="mobile-card" role="button" tabIndex={0} onClick={() => openEditItemModal(part)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") openEditItemModal(part); }}>
+              <span className="mobile-card-row">
+                <span
+                  className="thumbnail-button"
+                  role="img"
+                  aria-label={`Image for ${part.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setPreviewItem(part);
+                  }}
+                >
+                  {part.imageUrl ? <img src={part.imageUrl} alt="" /> : <Image size={18} />}
                 </span>
-                <span className="mobile-card-pills">
-                  <span className="status">Stock: {part.stock}</span>
-                  <span className="status">{money(part.cost)}</span>
-                  {part.retired ? <span className="status retired">Retired</span> : part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
+                <span className="mobile-card-title">
+                  <strong>{part.name}</strong>
+                  <small className="muted">{part.ref} &middot; {part.category} &middot; {part.manufacturer}</small>
                 </span>
-                <span className="table-actions" onClick={(event) => event.stopPropagation()}>
-                  <button
-                    className={`table-action secondary-table-action${pendingRequest ? " receive-pending" : ""}`}
-                    type="button"
-                    onClick={() => openReceiveModal(part)}
-                    disabled={part.retired}
-                    title={pendingRequest ? `PO ${pendingRequest.poNumber || pendingRequest.requestNumber} is on order, not yet received` : undefined}
-                  >
-                    {pendingRequest ? "Receive Pending" : "Receive"}
-                  </button>
-                  <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
-                </span>
-              </div>
-            );
-          })}
+              </span>
+              <span className="mobile-card-pills">
+                <span className="status">Stock: {part.stock}</span>
+                <span className="status">{money(part.cost)}</span>
+                {part.retired ? <span className="status retired">Retired</span> : part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
+              </span>
+              <span className="table-actions" onClick={(event) => event.stopPropagation()}>
+                <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
+              </span>
+            </div>
+          ))}
           {filteredInventoryItems.length === 0 && <div className="empty-compact-state">No items match the current filters.</div>}
         </div>
       </section>
@@ -9174,55 +9104,6 @@ function Inventory({
           </section>
         </div>
       )}
-      {showReceiveModal && receiveItem && (() => {
-        const pendingRequest = findPendingRequest(receiveItem);
-        return (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-receive-modal-title">
-            <div className="modal-header">
-              <div>
-                <h2 id="inventory-receive-modal-title">Receive Stock</h2>
-                <p>Add arrived parts to inventory and record the PO or vendor reference.</p>
-              </div>
-              <button className="icon-button" type="button" onClick={() => setShowReceiveModal(false)} aria-label="Close receive modal">x</button>
-            </div>
-            {pendingRequest && (
-              <div className="source-file receive-pending-banner">
-                <Truck size={16} />
-                <span>
-                  {pendingRequest.poNumber || pendingRequest.requestNumber} is on order and not yet received.{" "}
-                  <button
-                    className="link-button"
-                    type="button"
-                    onClick={() => {
-                      setShowReceiveModal(false);
-                      onOpenPurchasing(pendingRequest.sku);
-                    }}
-                  >
-                    View in Procurement
-                  </button>
-                </span>
-              </div>
-            )}
-            <div className="bom-modal-grid">
-              <label className="span-2">Item<select value={receiveDraft.partRef} onChange={(event) => {
-                const next = inventoryItems.find((part) => part.ref === event.target.value);
-                setReceiveDraft((current) => ({ ...current, partRef: event.target.value, unitCost: next?.cost ?? current.unitCost }));
-              }}>{inventoryItems.filter((part) => !part.retired).map((part) => <option key={part.ref} value={part.ref}>{part.ref} - {part.name} ({part.stock} on hand)</option>)}</select></label>
-              <label>Quantity received<input type="number" min="1" value={receiveDraft.qty} onChange={(event) => setReceiveDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
-              <label>Unit cost<input type="number" min="0" value={receiveDraft.unitCost} onChange={(event) => setReceiveDraft((current) => ({ ...current, unitCost: Number(event.target.value) }))} /></label>
-              <label>PO / vendor ref<input value={receiveDraft.poNumber} onChange={(event) => setReceiveDraft((current) => ({ ...current, poNumber: event.target.value }))} placeholder="PO, receipt, or vendor" /></label>
-              <label className="span-2">Notes<textarea value={receiveDraft.notes} onChange={(event) => setReceiveDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Packing slip, order note, condition, or receiving issue." /></label>
-            </div>
-            <div className="source-file"><Truck size={16} /><span>{receiveItem.ref} currently has {receiveItem.stock}. Receipt will leave {receiveItem.stock + Math.max(1, Math.round(Number(receiveDraft.qty) || 1))} on hand.</span></div>
-            <div className="modal-actions">
-              <button className="secondary-action" type="button" onClick={() => setShowReceiveModal(false)}>Cancel</button>
-              <button className="primary-action" type="button" onClick={saveReceive}>Receive Stock</button>
-            </div>
-          </section>
-        </div>
-        );
-      })()}
       {showAdjustModal && adjustItem && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-adjust-modal-title">
@@ -9253,7 +9134,7 @@ function Inventory({
               {adjustModalMode === "count" ? (
                 <>
                   <label>New count<input type="number" min="0" value={adjustDraft.nextQty} onChange={(event) => setAdjustDraft((current) => ({ ...current, nextQty: Number(event.target.value) }))} /></label>
-                  <label className="span-2">Reason / notes<textarea value={adjustDraft.notes} onChange={(event) => setAdjustDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Cycle count, damaged, missing, found, returned, or correction reason." /></label>
+                  <label className="span-2">Reason (required)<textarea value={adjustDraft.notes} onChange={(event) => setAdjustDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Cycle count, damaged, missing, found, returned, or correction reason." /></label>
                 </>
               ) : (
                 <>
@@ -9271,7 +9152,7 @@ function Inventory({
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowAdjustModal(false)}>Cancel</button>
               {adjustModalMode === "count" ? (
-                <button className="primary-action" type="button" onClick={saveAdjust}>Save Adjustment</button>
+                <button className="primary-action" type="button" onClick={saveAdjust} disabled={!adjustDraft.notes.trim()}>Save Adjustment</button>
               ) : (
                 <button className="primary-action" type="button" onClick={saveTransfer} disabled={adjustItem.stock <= 0}>Transfer To Project</button>
               )}
