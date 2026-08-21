@@ -6745,6 +6745,17 @@ function Purchasing({
   // visible "it worked" signal anywhere (the modal just closes and the row
   // updates in place), which E read as buttons doing nothing.
   const [purchaseActionStatus, setPurchaseActionStatus] = useState<{ message: string; isError: boolean } | null>(null);
+  useEffect(() => {
+    if (!purchaseActionStatus) {
+      return;
+    }
+    // Auto-clears after 5s -- E: "i have to scroll way far up to see it
+    // and then i have to close it each time." Now centered on the
+    // viewport (CSS) and self-dismissing, so there's nothing to scroll to
+    // or manually close. Each new message gets its own fresh 5s window.
+    const timer = setTimeout(() => setPurchaseActionStatus(null), 5000);
+    return () => clearTimeout(timer);
+  }, [purchaseActionStatus]);
   const totalSpend = purchaseOrders.reduce((sum, order) => sum + order.total, 0);
   const totalTax = purchaseOrders.reduce((sum, order) => sum + order.tax, 0);
   const openOrders = purchaseOrders.filter((order) => order.status !== "Received").length;

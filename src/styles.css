@@ -1662,18 +1662,35 @@ td small.quote-ref-tag {
   color: #0f5a4d;
 }
 
+/* Fixed to the viewport, not the page -- centers on whatever the person
+   is currently looking at regardless of scroll position, and auto-clears
+   itself (see the Purchasing component's timer) so it never has to be
+   closed by hand. */
 .purchasing-action-status {
   align-items: center;
+  animation: purchasing-action-status-in 160ms ease-out;
   background: #eaf5f1;
   border: 1px solid #bfe0d5;
-  border-radius: 8px;
+  border-radius: 10px;
+  box-shadow: 0 20px 45px rgba(64, 52, 38, 0.28);
   color: #0f5a4d;
   display: flex;
   font-size: 13px;
   font-weight: 700;
-  grid-column: 1 / -1;
+  gap: 14px;
   justify-content: space-between;
-  padding: 10px 14px;
+  left: 50%;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 14px 16px;
+  position: fixed;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 500;
+}
+
+@keyframes purchasing-action-status-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 
 .purchasing-action-status-error {
