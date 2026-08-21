@@ -5074,31 +5074,33 @@ td.empty-compact-state {
 }
 
 /* On Hold is a rare, deliberately unencouraged manual action -- E: "these
-   will not be used or encouraged to be used." Sized to match the status
-   pill next to it, not a normal call-to-action button. */
+   will not be used or encouraged to be used" -- sized to match the
+   status pill next to it, not the full 34px row-action size. Same red
+   theme as .table-action, just smaller (E: "I didn't say change the
+   color, i just said smaller"). */
 .po-hold-action {
-  background: #f8f5ef;
-  border: 1px solid #ded7cb;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(135deg, #5c150c 0%, #6e1916 4%, #882429 8%, #96232e 12%, #981729 16%, #af1f38 20%, #cf3f48 24%, #ca3932 28%, #e04f37 32%, #ff966e 36%, #ffcc93 40%, #ffa867 44%, #fe6c2b 48%, #f2601f 52%, #ff6e2d 56%, #e8571e 60%, #d4431a 64%, #db4a32 68%, #e5544d 72%, #c3333c 76%, #a4142d 80%, #9a192b 84%, #97242f 88%, #7f1a1f 92%, #6a1512 96%, #5c150c 100%);
+  border: 1px solid #5c150c;
   border-radius: 999px;
-  color: #756d62;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+  color: white;
   cursor: pointer;
   font: inherit;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   line-height: 1.1;
   min-width: 84px;
   padding: 3px 10px;
   white-space: nowrap;
 }
 
-.po-hold-action:hover:not(:disabled) {
-  border-color: #a01029;
-  color: #a01029;
-}
-
 .po-hold-action:disabled {
+  background: #d8d0c4;
+  border-color: #d8d0c4;
+  color: #756d62;
   cursor: not-allowed;
-  opacity: 0.6;
 }
 
 .receiving-destination-picker {
