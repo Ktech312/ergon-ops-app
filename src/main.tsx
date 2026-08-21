@@ -7616,8 +7616,7 @@ function PurchaseOrderDetailPanel({
             {po.holds.map((hold) => (
               <div className="document-row" key={hold.id}>
                 <div>
-                  <strong>{hold.reason}</strong>
-                  <small>{hold.placedByEmail || "Unknown"} -- {new Date(hold.placedAt).toLocaleString()}</small>
+                  <small><strong>{hold.reason}</strong> -- {hold.placedByEmail || "Unknown"}, {new Date(hold.placedAt).toLocaleString()}</small>
                 </div>
               </div>
             ))}
