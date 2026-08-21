@@ -5055,9 +5055,31 @@ td.empty-compact-state {
 }
 
 .order-detail-upload-actions {
+  align-items: center;
   display: flex;
   flex-shrink: 0;
   gap: 8px;
+}
+
+.receiving-destination-picker {
+  align-items: center;
+  color: #756d62;
+  display: flex;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.receiving-destination-picker select {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 7px;
+  color: #1b1a18;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 32px;
+  padding: 0 8px;
 }
 
 .receiving-line-item {

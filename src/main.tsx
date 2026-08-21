@@ -1554,7 +1554,73 @@ function App() {
   // write (purchase_order_lines.quantity_received); the log entry is a
   // second, separate write (purchase_order_receipts) -- see persistence.ts.
   // Auto-flips the order to "Received" once every line is fully in.
-  async function handleReceivePurchaseOrderLine(purchaseOrderId: string, lineId: string, itemName: string, qty: number): Promise<boolean> {
+  // Where a receipt's quantity actually goes -- default is warehouse
+  // stock (E: "by default it goes to the inventory"), with the option to
+  // route it straight to the project instead, same as Purchase Requests
+  // already support. Only meaningful when the order has a project on it;
+  // matched to a real inventory item by name (line items are free text,
+  // same convention as BOM lines -- no match means nothing to credit, the
+  // receiving log entry still records the fact it arrived either way).
+  function applyPurchaseOrderReceiptToInventory(order: PurchaseOrder, line: PurchaseOrderLine, qty: number, destination: "warehouse_stock" | "direct_to_project") {
+    const part = inventoryItems.find((item) => item.name === line.name);
+    if (!part || part.retired) {
+      return;
+    }
+    if (destination === "direct_to_project" && order.projectRef) {
+      const receivedAt = new Date().toISOString();
+      const movement: InventoryMovement = {
+        id: makeId("txn"),
+        type: "receive",
+        sku: part.ref,
+        itemName: part.name,
+        quantity: qty,
+        quantityBefore: 0,
+        quantityAfter: 0,
+        projectName: order.projectRef,
+        poNumber: order.number,
+        source: "purchasing",
+        notes: `Direct-to-project receipt from PO ${order.number}. Quantity was not added to warehouse stock.`,
+        createdAt: receivedAt,
+      };
+      recordMovements([movement]);
+      setProjectAllocations((current) => [
+        {
+          id: makeId("alloc"),
+          projectName: order.projectRef,
+          projectRef: projectSites.find((project) => project.name === order.projectRef)?.ref,
+          sku: part.ref,
+          itemName: part.name,
+          quantity: qty,
+          movementId: movement.id,
+          action: "allocated",
+          notes: `Direct-to-project receipt from PO ${order.number}.`,
+          createdAt: receivedAt,
+        },
+        ...current,
+      ]);
+    } else {
+      receiveInventoryStock(part.ref, qty, line.unitCost, order.number, `Received from PO ${order.number}.`, order.projectRef || undefined);
+    }
+  }
+
+  // Once every line on an order is in, sync the linked Purchase Request
+  // (if any) to "Received" too and notify the PM -- E: "the dropdown
+  // should update the PM and its status." Reuses updatePurchaseRequestStatus,
+  // which already handles the local update, remote save, notification,
+  // and BOM-line sync in one place.
+  async function syncLinkedRequestOnFullReceipt(order: PurchaseOrder) {
+    if (order.sourceRequestId) {
+      await updatePurchaseRequestStatus(order.sourceRequestId, "Received");
+    }
+  }
+
+  async function handleReceivePurchaseOrderLine(
+    purchaseOrderId: string,
+    lineId: string,
+    itemName: string,
+    qty: number,
+    destination: "warehouse_stock" | "direct_to_project" = "warehouse_stock",
+  ): Promise<boolean> {
     if (!authSession) {
       return false;
     }
@@ -1563,13 +1629,15 @@ function App() {
     if (!order || !line) {
       return false;
     }
-    const nextReceivedQty = Math.min(line.qty, (line.receivedQty ?? 0) + Math.max(0, qty));
+    const receiveQty = Math.max(0, qty);
+    const nextReceivedQty = Math.min(line.qty, (line.receivedQty ?? 0) + receiveQty);
     const ok = await updatePurchaseOrderLineReceivedQty(lineId, nextReceivedQty, authSession.accessToken);
     if (!ok) {
       return false;
     }
+    applyPurchaseOrderReceiptToInventory(order, line, receiveQty, destination);
     const receipt = await createPurchaseOrderReceipt(
-      { purchaseOrderId, purchaseOrderLineId: lineId, itemName, qty: Math.max(0, qty), receivedByEmail: authSession.email },
+      { purchaseOrderId, purchaseOrderLineId: lineId, itemName, qty: receiveQty, receivedByEmail: authSession.email },
       authSession.accessToken,
     );
     const allReceived = order.lines.every((candidate) => (candidate.id === lineId ? nextReceivedQty : candidate.receivedQty ?? 0) >= candidate.qty);
@@ -1588,11 +1656,12 @@ function App() {
     );
     if (allReceived && order.status !== "Received") {
       await updatePurchaseOrderStatus(purchaseOrderId, "Received", authSession.accessToken);
+      await syncLinkedRequestOnFullReceipt(order);
     }
     return true;
   }
 
-  async function handleReceiveAllPurchaseOrderLines(purchaseOrderId: string): Promise<boolean> {
+  async function handleReceiveAllPurchaseOrderLines(purchaseOrderId: string, destination: "warehouse_stock" | "direct_to_project" = "warehouse_stock"): Promise<boolean> {
     if (!authSession) {
       return false;
     }
@@ -1610,6 +1679,7 @@ function App() {
       if (!ok) {
         continue;
       }
+      applyPurchaseOrderReceiptToInventory(order, line, remaining, destination);
       const receipt = await createPurchaseOrderReceipt(
         { purchaseOrderId, purchaseOrderLineId: line.id, itemName: line.name, qty: remaining, receivedByEmail: authSession.email },
         authSession.accessToken,
@@ -1631,6 +1701,7 @@ function App() {
       ),
     );
     await updatePurchaseOrderStatus(purchaseOrderId, "Received", authSession.accessToken);
+    await syncLinkedRequestOnFullReceipt(order);
     return true;
   }
 
@@ -4670,7 +4741,7 @@ function App() {
     });
   }
 
-  function receiveInventoryStock(partRef: string, qty: number, unitCost: number, poNumber: string, notes: string) {
+  function receiveInventoryStock(partRef: string, qty: number, unitCost: number, poNumber: string, notes: string, projectName?: string) {
     withProductionLock("inventory_item", partRef, () => {
     const part = inventoryItems.find((item) => item.ref === partRef);
     const receiveQty = Math.max(1, Math.round(Number(qty) || 1));
@@ -4689,6 +4760,12 @@ function App() {
       quantityBefore: part.stock,
       quantityAfter: part.stock + receiveQty,
       poNumber: poNumber.trim() || undefined,
+      // Still lands in warehouse stock either way -- projectName here is
+      // purely a "this batch was for X" tag so it's visible in the
+      // movement history, not a routing decision (see the
+      // direct-to-project branch elsewhere for the "don't touch
+      // warehouse stock at all" case).
+      projectName: projectName || undefined,
       source: "purchasing",
       notes: notes.trim() || "Received stock into inventory.",
       createdAt: receivedAt,
@@ -6623,8 +6700,8 @@ function Purchasing({
   onUploadPurchaseOrderFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
   onDeletePurchaseOrderFile: (purchaseOrderId: string, fileId: string, storagePath: string) => Promise<boolean>;
   onGetPurchaseOrderFileUrl: (storagePath: string) => Promise<string | null>;
-  onReceivePurchaseOrderLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number) => Promise<boolean>;
-  onReceiveAllPurchaseOrderLines: (purchaseOrderId: string) => Promise<boolean>;
+  onReceivePurchaseOrderLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
+  onReceiveAllPurchaseOrderLines: (purchaseOrderId: string, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
   lowStock: Part[];
   buildTransactions: BuildTransaction[];
   onQueueReorderRequests: () => void;
@@ -7319,14 +7396,18 @@ function PurchaseOrderDetailPanel({
   onUploadFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
   onGetFileUrl: (storagePath: string) => Promise<string | null>;
   onDeleteFile: (purchaseOrderId: string, fileId: string, storagePath: string) => void;
-  onReceiveLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number) => Promise<boolean>;
-  onReceiveAll: (purchaseOrderId: string) => Promise<boolean>;
+  onReceiveLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
+  onReceiveAll: (purchaseOrderId: string, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
 }) {
   const isUploading = receivingFileFor === po.id;
   const [receiveDrafts, setReceiveDrafts] = useState<Record<string, number>>({});
   const [loggingLineId, setLoggingLineId] = useState<string | null>(null);
   const [isReceivingAll, setIsReceivingAll] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
+  // Default: goes into warehouse stock. Only offer the project-direct
+  // option when the order actually has a project on it -- E: "give the
+  // option to where it goes, by default it goes to the inventory."
+  const [destination, setDestination] = useState<"warehouse_stock" | "direct_to_project">("warehouse_stock");
   const allReceived = po.lines.length > 0 && po.lines.every((line) => (line.receivedQty ?? 0) >= line.qty);
 
   async function logLine(line: PurchaseOrderLine) {
@@ -7336,7 +7417,7 @@ function PurchaseOrderDetailPanel({
     const remaining = Math.max(0, line.qty - (line.receivedQty ?? 0));
     const qty = Math.max(1, Math.min(remaining, receiveDrafts[line.id] ?? remaining));
     setLoggingLineId(line.id);
-    await onReceiveLine(po.id, line.id, line.name, qty);
+    await onReceiveLine(po.id, line.id, line.name, qty, destination);
     setReceiveDrafts((current) => {
       const next = { ...current };
       delete next[line.id!];
@@ -7347,7 +7428,7 @@ function PurchaseOrderDetailPanel({
 
   async function receiveAll() {
     setIsReceivingAll(true);
-    await onReceiveAll(po.id);
+    await onReceiveAll(po.id, destination);
     setIsReceivingAll(false);
   }
 
@@ -7396,9 +7477,20 @@ function PurchaseOrderDetailPanel({
             <h3>Line items</h3>
             <p>Log what actually arrived, by quantity -- partial shipments are expected.</p>
           </div>
-          <button className="primary-action mini-action" type="button" onClick={receiveAll} disabled={allReceived || isReceivingAll}>
-            {allReceived ? "All received" : isReceivingAll ? "Receiving..." : "Received All"}
-          </button>
+          <div className="order-detail-upload-actions">
+            {po.projectRef && (
+              <label className="receiving-destination-picker">
+                Goes to
+                <select value={destination} onChange={(event) => setDestination(event.target.value as typeof destination)}>
+                  <option value="warehouse_stock">Warehouse stock</option>
+                  <option value="direct_to_project">{po.projectRef} directly</option>
+                </select>
+              </label>
+            )}
+            <button className="primary-action mini-action" type="button" onClick={receiveAll} disabled={allReceived || isReceivingAll}>
+              {allReceived ? "All received" : isReceivingAll ? "Receiving..." : "Received All"}
+            </button>
+          </div>
         </div>
         <div className="line-list">
           {po.lines.map((line, index) => {
