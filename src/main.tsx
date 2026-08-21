@@ -7435,14 +7435,14 @@ function PurchaseOrdersTable({
   function statusActions(po: PurchaseOrder) {
     if (po.status === "On Hold") {
       return (
-        <button className="table-action secondary-table-action" type="button" onClick={(event) => { event.stopPropagation(); resume(po.id); }} disabled={resumingId === po.id}>
+        <button className="table-action mini-action" type="button" onClick={(event) => { event.stopPropagation(); resume(po.id); }} disabled={resumingId === po.id}>
           {resumingId === po.id ? "..." : "Resume"}
         </button>
       );
     }
     if (po.status === "Ordered" || po.status === "Imported" || po.status === "In Processing") {
       return (
-        <button className="table-action secondary-table-action" type="button" onClick={(event) => { event.stopPropagation(); setHoldTargetId(po.id); setHoldReason(""); }}>
+        <button className="table-action mini-action" type="button" onClick={(event) => { event.stopPropagation(); setHoldTargetId(po.id); setHoldReason(""); }}>
           Put On Hold
         </button>
       );
@@ -7528,7 +7528,9 @@ function PurchaseOrdersTable({
               </div>
               <button className="icon-button" type="button" onClick={() => setHoldTargetId(null)} aria-label="Close">x</button>
             </div>
-            <label className="span-2">Reason<textarea value={holdReason} onChange={(event) => setHoldReason(event.target.value)} placeholder="Why is this order on hold? Payment issue, vendor delay, wrong items, etc." autoFocus /></label>
+            <div className="bom-modal-grid">
+              <label className="span-2">Reason<textarea value={holdReason} onChange={(event) => setHoldReason(event.target.value)} placeholder="Why is this order on hold? Payment issue, vendor delay, wrong items, etc." autoFocus /></label>
+            </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setHoldTargetId(null)}>Cancel</button>
               <button className="primary-action" type="button" onClick={submitHold} disabled={!holdReason.trim() || isSavingHold}>{isSavingHold ? "Saving..." : "Put On Hold"}</button>

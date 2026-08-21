@@ -5078,11 +5078,20 @@ td.empty-compact-state {
   gap: 8px;
 }
 
+/* Stacked and centered so the pill/button line up cleanly down the
+   column regardless of how wide a given status word is ("In Processing"
+   vs "Ordered") -- a side-by-side row let the button drift left/right
+   per row. */
 .po-status-cell {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.po-status-cell .status {
+  min-width: 84px;
+  text-align: center;
 }
 
 .receiving-destination-picker {
