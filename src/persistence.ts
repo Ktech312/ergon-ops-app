@@ -5565,6 +5565,8 @@ export type PurchaseOrder = {
   // newest first. Not the same as the running total on each line; this
   // is the audit trail of who checked in what and when.
   receipts: PurchaseOrderReceipt[];
+  // Who placed the order (migration 084).
+  createdByEmail?: string;
 };
 
 type PurchaseOrderLineRow = {
@@ -5639,6 +5641,7 @@ type PurchaseOrderRow = {
   source_request_id?: string | null;
   purchase_order_files?: PurchaseOrderFileRow[] | null;
   purchase_order_receipts?: PurchaseOrderReceiptRow[] | null;
+  created_by_email?: string | null;
 };
 
 function appPoCategory(category: string | null): PurchaseLineCategory {
@@ -5694,6 +5697,7 @@ function mapPurchaseOrderRow(row: PurchaseOrderRow): PurchaseOrder {
     receipts: (row.purchase_order_receipts ?? [])
       .map(mapPurchaseOrderReceiptRow)
       .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1)),
+    createdByEmail: row.created_by_email ?? undefined,
   };
 }
 
@@ -5702,8 +5706,9 @@ const PURCHASE_ORDER_SELECT_BASE =
   `id,po_number,app_status,requested_date,subtotal,tax_amount,shipping_amount,total_amount,project_name,ship_to,payment_note,source_file,vendor:vendors(name),${PURCHASE_ORDER_LINES_EMBED}`;
 const PURCHASE_ORDER_SELECT_WITH_LINKS =
   `${PURCHASE_ORDER_SELECT_BASE},source_request_id,purchase_order_files(id,purchase_order_id,storage_path,file_name,description,uploaded_at,uploaded_by_email)`;
-const PURCHASE_ORDER_SELECT =
+const PURCHASE_ORDER_SELECT_WITH_RECEIPTS =
   `${PURCHASE_ORDER_SELECT_WITH_LINKS},purchase_order_receipts(id,purchase_order_id,purchase_order_line_id,item_name,qty,received_by_email,received_at)`;
+const PURCHASE_ORDER_SELECT = `${PURCHASE_ORDER_SELECT_WITH_RECEIPTS},created_by_email`;
 
 export async function loadPurchaseOrders(accessToken?: string): Promise<PurchaseOrder[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5713,14 +5718,25 @@ export async function loadPurchaseOrders(accessToken?: string): Promise<Purchase
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok && response.status === 400) {
+    // Migration 084 (created_by_email) hasn't run yet -- retry without it.
+    const receiptsResponse = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT_WITH_RECEIPTS}&order=requested_date.desc`), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (receiptsResponse.ok) {
+      const receiptsRows = (await receiptsResponse.json()) as Array<Omit<PurchaseOrderRow, "created_by_email">>;
+      return receiptsRows.map((row) => mapPurchaseOrderRow({ ...row, created_by_email: null }));
+    }
+    if (receiptsResponse.status !== 400) {
+      return [];
+    }
     // Migration 082 (purchase_order_receipts) hasn't run yet -- retry
     // without that embed.
     const midResponse = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT_WITH_LINKS}&order=requested_date.desc`), {
       headers: supabaseHeaders(accessToken),
     });
     if (midResponse.ok) {
-      const midRows = (await midResponse.json()) as Array<Omit<PurchaseOrderRow, "purchase_order_receipts">>;
-      return midRows.map((row) => mapPurchaseOrderRow({ ...row, purchase_order_receipts: [] }));
+      const midRows = (await midResponse.json()) as Array<Omit<PurchaseOrderRow, "purchase_order_receipts" | "created_by_email">>;
+      return midRows.map((row) => mapPurchaseOrderRow({ ...row, purchase_order_receipts: [], created_by_email: null }));
     }
     if (midResponse.status === 400) {
       // Migration 081 hasn't run either -- retry with just the always-safe
@@ -5732,8 +5748,8 @@ export async function loadPurchaseOrders(accessToken?: string): Promise<Purchase
       if (!baseResponse.ok) {
         return [];
       }
-      const baseRows = (await baseResponse.json()) as Array<Omit<PurchaseOrderRow, "source_request_id" | "purchase_order_files" | "purchase_order_receipts">>;
-      return baseRows.map((row) => mapPurchaseOrderRow({ ...row, source_request_id: null, purchase_order_files: [], purchase_order_receipts: [] }));
+      const baseRows = (await baseResponse.json()) as Array<Omit<PurchaseOrderRow, "source_request_id" | "purchase_order_files" | "purchase_order_receipts" | "created_by_email">>;
+      return baseRows.map((row) => mapPurchaseOrderRow({ ...row, source_request_id: null, purchase_order_files: [], purchase_order_receipts: [], created_by_email: null }));
     }
     return [];
   }
@@ -5885,6 +5901,7 @@ export async function createPurchaseOrder(
     paymentNote: string;
     lines: Array<{ name: string; category: PurchaseLineCategory; qty: number; unitCost: number }>;
     sourceRequestId?: string;
+    createdByEmail?: string;
   },
   accessToken?: string,
 ): Promise<PurchaseOrder | null> {
@@ -5909,6 +5926,7 @@ export async function createPurchaseOrder(
     payment_note: input.paymentNote || null,
     source_file: input.sourceFile || null,
     source_request_id: input.sourceRequestId || null,
+    created_by_email: input.createdByEmail || null,
   };
   let orderResponse = await fetch(supabaseUrl("purchase_orders"), {
     method: "POST",
@@ -5916,7 +5934,7 @@ export async function createPurchaseOrder(
     body: JSON.stringify(orderPayload),
   });
   if (!orderResponse.ok && orderResponse.status === 400) {
-    const { source_request_id: _sourceRequestId, ...fallbackPayload } = orderPayload;
+    const { source_request_id: _sourceRequestId, created_by_email: _createdByEmail, ...fallbackPayload } = orderPayload;
     orderResponse = await fetch(supabaseUrl("purchase_orders"), {
       method: "POST",
       headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
@@ -5968,6 +5986,7 @@ export async function createPurchaseOrder(
     paymentNote: input.paymentNote,
     lines: lineRows.length > 0 ? lineRows.map(mapPurchaseOrderLineRow) : input.lines.map((line) => ({ ...line, receivedQty: 0 })),
     sourceRequestId: input.sourceRequestId,
+    createdByEmail: input.createdByEmail,
     files: [],
     receipts: [],
   };

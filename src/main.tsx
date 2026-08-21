@@ -25,7 +25,6 @@ import {
   ListChecks,
   MapPin,
   MoreHorizontal,
-  PackageCheck,
   Plus,
   Search,
   ShoppingCart,
@@ -1476,7 +1475,7 @@ function App() {
       return { ok: false, error: "Sign in to create a purchase." };
     }
     try {
-      const created = await createPurchaseOrder({ ...order, sourceRequestId: sourceRequest?.id }, authSession.accessToken);
+      const created = await createPurchaseOrder({ ...order, sourceRequestId: sourceRequest?.id, createdByEmail: authSession.email }, authSession.accessToken);
       if (!created) {
         return { ok: false, error: "Could not save the purchase -- check the vendor name and try again." };
       }
@@ -6761,6 +6760,18 @@ function Purchasing({
   const openOrders = purchaseOrders.filter((order) => order.status !== "Received").length;
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [poFilters, setPoFilters] = useState({ text: "", dateFrom: "", dateTo: "" });
+  const filteredPurchaseOrders = purchaseOrders.filter((po) => {
+    const haystack = `${po.number} ${po.vendor} ${po.projectRef} ${po.createdByEmail ?? ""} ${po.lines.map((line) => line.name).join(" ")}`.toLowerCase();
+    const textMatch = haystack.includes(poFilters.text.toLowerCase());
+    const dateMatch = (!poFilters.dateFrom || po.date >= poFilters.dateFrom) && (!poFilters.dateTo || po.date <= poFilters.dateTo);
+    return textMatch && dateMatch;
+  });
+  // Once fully received, an order graduates out of "Waiting on Receiving"
+  // into its own history section -- E: "this should move down to another
+  // area titled Completed."
+  const waitingPurchaseOrders = filteredPurchaseOrders.filter((po) => po.status !== "Received");
+  const completedPurchaseOrders = filteredPurchaseOrders.filter((po) => po.status === "Received");
   const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
   const receivingRequest = purchaseRequests.find((request) => request.id === receivingRequestId) ?? null;
@@ -7265,103 +7276,54 @@ function Purchasing({
         <div className="panel-title-row">
           <PanelHeader title="Waiting on Receiving" label="Orders placed with a vendor -- tracked here through arrival, with paperwork attached to the exact order, not a shared bucket" />
         </div>
-        <div className="po-table-scroll">
-        <table>
-          <thead>
-            <tr><th>Order</th><th>Vendor</th><th>Project Ref</th><th>Status</th><th>Lines</th><th>Total</th><th></th></tr>
-          </thead>
-          <tbody>
-            {purchaseOrders.map((po) => {
-              const isExpanded = expandedOrderId === po.id;
-              return (
-                <Fragment key={po.id}>
-                  <tr className="clickable-row" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>
-                    <td><strong>{po.number}</strong><small>{formatPoDate(po.date)}</small></td>
-                    <td>{po.vendor}</td>
-                    <td>{po.projectRef}</td>
-                    <td>
-                      <select
-                        className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}
-                        value={po.status}
-                        onClick={(event) => event.stopPropagation()}
-                        onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}
-                      >
-                        <option value="Ordered">Ordered</option>
-                        <option value="On Hold">On Hold</option>
-                        <option value="Received">Received</option>
-                        {(po.status === "Imported" || po.status === "In Processing") && <option value={po.status}>{po.status}</option>}
-                      </select>
-                    </td>
-                    <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small><small>{po.files.length} file(s) attached</small></td>
-                    <td>{moneyExact(po.total)}</td>
-                    <td>
-                      <button
-                        className="icon-button-sm"
-                        type="button"
-                        onClick={(event) => { event.stopPropagation(); setExpandedOrderId(isExpanded ? null : po.id); }}
-                        aria-label={isExpanded ? "Hide details" : "Show receiving details"}
-                      >
-                        <PackageCheck size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                  {isExpanded && (
-                    <tr className="order-detail-row">
-                      <td colSpan={7}>
-                        <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onUploadFile={onUploadPurchaseOrderFile} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} onReceiveLine={onReceivePurchaseOrderLine} onReceiveAll={onReceiveAllPurchaseOrderLines} />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-            {purchaseOrders.length === 0 && (
-              <tr><td colSpan={7} className="empty-compact-state">No purchases yet -- Create Purchase above to place one.</td></tr>
-            )}
-          </tbody>
-        </table>
+        <div className="request-filter-row">
+          <label>
+            Search
+            <input value={poFilters.text} onChange={(event) => setPoFilters((current) => ({ ...current, text: event.target.value }))} placeholder="PO number, part, vendor, project, who purchased" />
+          </label>
+          <label>
+            From
+            <input type="date" value={poFilters.dateFrom} onChange={(event) => setPoFilters((current) => ({ ...current, dateFrom: event.target.value }))} />
+          </label>
+          <label>
+            To
+            <input type="date" value={poFilters.dateTo} onChange={(event) => setPoFilters((current) => ({ ...current, dateTo: event.target.value }))} />
+          </label>
         </div>
+        <PurchaseOrdersTable
+          orders={waitingPurchaseOrders}
+          expandedOrderId={expandedOrderId}
+          onToggleExpand={(id) => setExpandedOrderId(expandedOrderId === id ? null : id)}
+          onUpdateStatus={onUpdatePurchaseOrderStatus}
+          receivingFileFor={receivingFileFor}
+          onFileSelect={handleReceivingFileSelect}
+          onUploadFile={onUploadPurchaseOrderFile}
+          onGetFileUrl={onGetPurchaseOrderFileUrl}
+          onDeleteFile={onDeletePurchaseOrderFile}
+          onReceiveLine={onReceivePurchaseOrderLine}
+          onReceiveAll={onReceiveAllPurchaseOrderLines}
+          emptyMessage={purchaseOrders.length === 0 ? "No purchases yet -- Create Purchase above to place one." : "Nothing matches the current search/filters."}
+        />
+      </section>
 
-        <div className="mobile-card-list">
-          {purchaseOrders.map((po) => {
-            const isExpanded = expandedOrderId === po.id;
-            return (
-              <div key={po.id} className="mobile-card clickable-row" onClick={() => setExpandedOrderId(isExpanded ? null : po.id)}>
-                <span className="mobile-card-row">
-                  <span className="mobile-card-title">
-                    <strong>{po.number}</strong>
-                    <small className="muted">{po.vendor} &middot; {po.projectRef || "No project ref"}</small>
-                  </span>
-                  <b>{moneyExact(po.total)}</b>
-                  <button
-                    className="icon-button-sm"
-                    type="button"
-                    onClick={(event) => { event.stopPropagation(); setExpandedOrderId(isExpanded ? null : po.id); }}
-                    aria-label={isExpanded ? "Hide details" : "Show receiving details"}
-                  >
-                    <PackageCheck size={16} />
-                  </button>
-                </span>
-                <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""} &middot; {po.files.length} file(s)</span>
-                <select
-                  className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}
-                  value={po.status}
-                  onClick={(event) => event.stopPropagation()}
-                  onChange={(event) => onUpdatePurchaseOrderStatus(po.id, event.target.value as PurchaseOrder["status"])}
-                >
-                  <option value="Ordered">Ordered</option>
-                  <option value="On Hold">On Hold</option>
-                  <option value="Received">Received</option>
-                  {(po.status === "Imported" || po.status === "In Processing") && <option value={po.status}>{po.status}</option>}
-                </select>
-                {isExpanded && (
-                  <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={handleReceivingFileSelect} onUploadFile={onUploadPurchaseOrderFile} onGetFileUrl={onGetPurchaseOrderFileUrl} onDeleteFile={onDeletePurchaseOrderFile} onReceiveLine={onReceivePurchaseOrderLine} onReceiveAll={onReceiveAllPurchaseOrderLines} />
-                )}
-              </div>
-            );
-          })}
-          {purchaseOrders.length === 0 && <div className="empty-compact-state">No purchases yet -- Create Purchase above to place one.</div>}
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <PanelHeader title="Completed" label="Orders fully received -- kept here as history once nothing's left waiting" />
         </div>
+        <PurchaseOrdersTable
+          orders={completedPurchaseOrders}
+          expandedOrderId={expandedOrderId}
+          onToggleExpand={(id) => setExpandedOrderId(expandedOrderId === id ? null : id)}
+          onUpdateStatus={onUpdatePurchaseOrderStatus}
+          receivingFileFor={receivingFileFor}
+          onFileSelect={handleReceivingFileSelect}
+          onUploadFile={onUploadPurchaseOrderFile}
+          onGetFileUrl={onGetPurchaseOrderFileUrl}
+          onDeleteFile={onDeletePurchaseOrderFile}
+          onReceiveLine={onReceivePurchaseOrderLine}
+          onReceiveAll={onReceiveAllPurchaseOrderLines}
+          emptyMessage="Nothing completed yet."
+        />
       </section>
 
       <section className="panel">
@@ -7380,6 +7342,128 @@ function Purchasing({
         </div>
       </section>
     </div>
+  );
+}
+
+// Shared between "Waiting on Receiving" and "Completed" (2026-08-20) --
+// E: "I clicked received all, this should move down to another area
+// titled Completed." Same table/card rendering, just fed a different
+// slice of purchaseOrders, so the two sections can't drift apart in
+// behavior. The whole row/card is the expand target -- E pointed out the
+// separate expand icon duplicated that ("the whole cell is a expand
+// button, so i don't need an extra button for that"), so there's no
+// third click target here anymore.
+function PurchaseOrdersTable({
+  orders,
+  expandedOrderId,
+  onToggleExpand,
+  onUpdateStatus,
+  receivingFileFor,
+  onFileSelect,
+  onUploadFile,
+  onGetFileUrl,
+  onDeleteFile,
+  onReceiveLine,
+  onReceiveAll,
+  emptyMessage,
+}: {
+  orders: PurchaseOrder[];
+  expandedOrderId: string | null;
+  onToggleExpand: (id: string) => void;
+  onUpdateStatus: (id: string, status: PurchaseOrder["status"]) => void;
+  receivingFileFor: string | null;
+  onFileSelect: (purchaseOrderId: string, event: React.ChangeEvent<HTMLInputElement>) => void;
+  onUploadFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
+  onGetFileUrl: (storagePath: string) => Promise<string | null>;
+  onDeleteFile: (purchaseOrderId: string, fileId: string, storagePath: string) => void;
+  onReceiveLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
+  onReceiveAll: (purchaseOrderId: string, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
+  emptyMessage: string;
+}) {
+  const statusOptions = (po: PurchaseOrder) => (
+    <>
+      <option value="Ordered">Ordered</option>
+      <option value="On Hold">On Hold</option>
+      <option value="Received">Received</option>
+      {(po.status === "Imported" || po.status === "In Processing") && <option value={po.status}>{po.status}</option>}
+    </>
+  );
+  return (
+    <>
+      <div className="po-table-scroll">
+      <table>
+        <thead>
+          <tr><th>Order</th><th>Vendor</th><th>Project Ref</th><th>Status</th><th>Lines</th><th>Total</th></tr>
+        </thead>
+        <tbody>
+          {orders.map((po) => {
+            const isExpanded = expandedOrderId === po.id;
+            return (
+              <Fragment key={po.id}>
+                <tr className="clickable-row" onClick={() => onToggleExpand(po.id)}>
+                  <td><strong>{po.number}</strong><small>{formatPoDate(po.date)}</small>{po.createdByEmail && <small>by {po.createdByEmail}</small>}</td>
+                  <td>{po.vendor}</td>
+                  <td>{po.projectRef}</td>
+                  <td>
+                    <select
+                      className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}
+                      value={po.status}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) => onUpdateStatus(po.id, event.target.value as PurchaseOrder["status"])}
+                    >
+                      {statusOptions(po)}
+                    </select>
+                  </td>
+                  <td>{po.lines.reduce((sum, line) => sum + line.qty, 0)} units <small>{po.sourceFile}</small><small>{po.files.length} file(s) attached</small></td>
+                  <td>{moneyExact(po.total)}</td>
+                </tr>
+                {isExpanded && (
+                  <tr className="order-detail-row">
+                    <td colSpan={6}>
+                      <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={onFileSelect} onUploadFile={onUploadFile} onGetFileUrl={onGetFileUrl} onDeleteFile={onDeleteFile} onReceiveLine={onReceiveLine} onReceiveAll={onReceiveAll} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+          {orders.length === 0 && (
+            <tr><td colSpan={6} className="empty-compact-state">{emptyMessage}</td></tr>
+          )}
+        </tbody>
+      </table>
+      </div>
+
+      <div className="mobile-card-list">
+        {orders.map((po) => {
+          const isExpanded = expandedOrderId === po.id;
+          return (
+            <div key={po.id} className="mobile-card clickable-row" onClick={() => onToggleExpand(po.id)}>
+              <span className="mobile-card-row">
+                <span className="mobile-card-title">
+                  <strong>{po.number}</strong>
+                  <small className="muted">{po.vendor} &middot; {po.projectRef || "No project ref"}{po.createdByEmail ? ` · ${po.createdByEmail}` : ""}</small>
+                </span>
+                <b>{moneyExact(po.total)}</b>
+              </span>
+              <span className="mobile-card-meta">{formatPoDate(po.date)} &middot; {po.lines.reduce((sum, line) => sum + line.qty, 0)} units{po.sourceFile ? ` · ${po.sourceFile}` : ""} &middot; {po.files.length} file(s)</span>
+              <select
+                className={`status-select ${po.status === "On Hold" ? "warn" : po.status === "Received" ? "ok" : ""}`}
+                value={po.status}
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => onUpdateStatus(po.id, event.target.value as PurchaseOrder["status"])}
+              >
+                {statusOptions(po)}
+              </select>
+              {isExpanded && (
+                <PurchaseOrderDetailPanel po={po} receivingFileFor={receivingFileFor} onFileSelect={onFileSelect} onUploadFile={onUploadFile} onGetFileUrl={onGetFileUrl} onDeleteFile={onDeleteFile} onReceiveLine={onReceiveLine} onReceiveAll={onReceiveAll} />
+              )}
+            </div>
+          );
+        })}
+        {orders.length === 0 && <div className="empty-compact-state">{emptyMessage}</div>}
+      </div>
+    </>
   );
 }
 
