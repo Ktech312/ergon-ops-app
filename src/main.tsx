@@ -305,7 +305,7 @@ import {
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library";
+type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -352,7 +352,7 @@ type RoleMode = "warehouse" | "purchasing" | "pm" | "manager" | "sales" | "engin
 
 const ALL_ROLE_KEYS: RoleMode[] = ["warehouse", "purchasing", "pm", "manager", "sales", "engineering", "product_development", "implementation", "support", "marketing"];
 
-const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "tasks", "reports", "saas_calendar"];
+const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar"];
 
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
@@ -361,6 +361,7 @@ const TAB_LABELS: Record<View, string> = {
   vendors: "Vendors",
   projects: "Projects",
   sales: "Sales",
+  marketing: "Marketing",
   tasks: "Tasks",
   reports: "Reports",
   saas_calendar: "SaaS Calendar",
@@ -375,13 +376,13 @@ const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
   warehouse: ["dashboard", "inventory", "projects", "tasks"],
   purchasing: ["dashboard", "purchasing", "inventory", "vendors", "tasks", "reports"],
   pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports", "saas_calendar"],
-  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "tasks", "reports", "saas_calendar"],
-  sales: ["dashboard", "sales", "tasks", "reports", "saas_calendar"],
+  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar"],
+  sales: ["dashboard", "sales", "marketing", "tasks", "reports", "saas_calendar"],
   engineering: ["dashboard", "projects", "inventory", "tasks", "reports"],
   product_development: ["dashboard", "projects", "tasks", "reports"],
   implementation: ["dashboard", "projects", "purchasing", "inventory", "vendors", "tasks"],
   support: ["dashboard", "tasks", "reports"],
-  marketing: ["dashboard", "reports", "tasks"],
+  marketing: ["dashboard", "marketing", "reports", "tasks"],
 };
 
 // Mobile bottom nav's center button -- v1 is a navigation shortcut to
@@ -411,6 +412,7 @@ const MOBILE_NAV_TAB_ICON: Record<View, (size: number) => React.ReactNode> = {
   vendors: (size) => <Building2 size={size} />,
   projects: (size) => <ClipboardList size={size} />,
   sales: (size) => <DollarSign size={size} />,
+  marketing: (size) => <Image size={size} />,
   tasks: (size) => <ListChecks size={size} />,
   reports: (size) => <BarChart3 size={size} />,
   saas_calendar: (size) => <CalendarDays size={size} />,
@@ -927,7 +929,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "tasks", "reports", "saas_calendar", "admin", "library"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -5797,6 +5799,7 @@ function App() {
             )}
             {allowedTabs.includes("projects") && <NavButton icon={<ClipboardList size={16} />} label="Projects" active={view === "projects"} onClick={() => navigateToView("projects")} />}
             {allowedTabs.includes("sales") && <NavButton icon={<DollarSign size={16} />} label="Sales" active={view === "sales"} onClick={() => navigateToView("sales")} />}
+            {allowedTabs.includes("marketing") && <NavButton icon={<Image size={16} />} label="Marketing" active={view === "marketing"} onClick={() => navigateToView("marketing")} />}
             {allowedTabs.includes("tasks") && <NavButton icon={<ListChecks size={16} />} label="Tasks" active={view === "tasks"} onClick={() => navigateToView("tasks")} />}
             {allowedTabs.includes("reports") && <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />}
             {allowedTabs.includes("saas_calendar") && <NavButton icon={<CalendarDays size={16} />} label="SaaS Calendar" active={view === "saas_calendar"} onClick={() => navigateToView("saas_calendar")} />}
@@ -6034,6 +6037,9 @@ function App() {
             onDeleteTask={handleDeleteTask}
             onOpenTasksView={() => navigateToView("tasks")}
           />
+        )}
+        {view === "marketing" && allowedTabs.includes("marketing") && (
+          <Marketing projectSites={projectSites} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} />
         )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
           <TasksBoard
@@ -6376,6 +6382,7 @@ function pageTitle(view: View) {
     vendors: "Vendors",
     projects: "Projects",
     sales: "Sales",
+    marketing: "Marketing",
     tasks: "Tasks",
     reports: "Reports",
     saas_calendar: "SaaS Calendar",
@@ -6400,6 +6407,7 @@ function pageSubtitle(view: View) {
     vendors: "Suppliers, contact info, and account notes.",
     projects: "Project list, completion tracking, BOM, and PM handoff status.",
     sales: "Pipeline, quotes, and the product catalog for new deals.",
+    marketing: "Every project's photos in one place, tagged by what's actually installed there.",
     tasks: "Work items and requests across every team and project.",
     reports: "Cross-project analytics and exportable reports.",
     saas_calendar: "Renewal outreach tracker and recurring revenue outlook.",
@@ -16108,6 +16116,136 @@ function ProjectShippingSection({
           </section>
         </div>
       )}
+    </section>
+  );
+}
+
+const MARKETING_HIGHLIGHT_LABELS = ["FLI", "LPR", "People Counting", "Signs", "Cameras", "Sensors", "VPU"] as const;
+
+function locationHighlights(location: ProjectLocation): string[] {
+  const tags: string[] = [];
+  if (location.fli) tags.push("FLI");
+  if (location.lpr) tags.push("LPR");
+  if (location.peopleCounting) tags.push("People Counting");
+  if (location.signLines.length > 0) tags.push("Signs");
+  if (location.cameraLines.length > 0) tags.push("Cameras");
+  if (location.sensorLines.length > 0) tags.push("Sensors");
+  if (location.vpuLines.length > 0) tags.push("VPU");
+  return tags;
+}
+
+function Marketing({
+  projectSites,
+  onGetProjectLocationImageUrl,
+}: {
+  projectSites: ProjectSite[];
+  onGetProjectLocationImageUrl: (image: ProjectLocationImage) => Promise<string | null>;
+}) {
+  const [search, setSearch] = useState("");
+  const [activeHighlights, setActiveHighlights] = useState<string[]>([]);
+  const [expandedRef, setExpandedRef] = useState<string | null>(null);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+
+  const groups = projectSites
+    .map((site) => {
+      const locations = site.locations ?? [];
+      const photos = locations.flatMap((location) => location.images.filter((image) => image.imageType === "photo").map((image) => ({ image, location })));
+      const highlights = Array.from(new Set(locations.flatMap((location) => locationHighlights(location))));
+      return { ref: site.ref, name: site.name, photos, highlights };
+    })
+    .filter((group) => group.photos.length > 0);
+
+  const searchLower = search.trim().toLowerCase();
+  const filteredGroups = groups.filter((group) => {
+    const matchesSearch =
+      !searchLower ||
+      group.name.toLowerCase().includes(searchLower) ||
+      group.ref.toLowerCase().includes(searchLower) ||
+      group.highlights.some((tag) => tag.toLowerCase().includes(searchLower));
+    const matchesHighlights = activeHighlights.every((tag) => group.highlights.includes(tag));
+    return matchesSearch && matchesHighlights;
+  });
+
+  const expandedGroup = filteredGroups.find((group) => group.ref === expandedRef) ?? null;
+
+  useEffect(() => {
+    if (!expandedGroup) {
+      return;
+    }
+    let cancelled = false;
+    expandedGroup.photos.forEach(({ image }) => {
+      if (photoUrls[image.id]) {
+        return;
+      }
+      onGetProjectLocationImageUrl(image).then((url) => {
+        if (!cancelled && url) {
+          setPhotoUrls((current) => ({ ...current, [image.id]: url }));
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedGroup?.ref, expandedGroup?.photos.length]);
+
+  function toggleHighlight(tag: string) {
+    setActiveHighlights((current) => (current.includes(tag) ? current.filter((entry) => entry !== tag) : [...current, tag]));
+  }
+
+  return (
+    <section className="panel full">
+      <div className="panel-title-row">
+        <div>
+          <h2>Marketing</h2>
+          <p>Every project's photos in one place, tagged by what's actually installed there.</p>
+        </div>
+      </div>
+      <div className="bom-modal-grid">
+        <label className="span-2">Search
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by project name or highlight" />
+        </label>
+      </div>
+      <div className="tag-picker-grid">
+        {MARKETING_HIGHLIGHT_LABELS.map((tag) => (
+          <label className={activeHighlights.includes(tag) ? "tag-toggle selected" : "tag-toggle"} key={tag}>
+            <input type="checkbox" checked={activeHighlights.includes(tag)} onChange={() => toggleHighlight(tag)} />
+            <span>{tag}</span>
+          </label>
+        ))}
+      </div>
+
+      {filteredGroups.length === 0 && <p className="empty-compact-state">No project photos match yet.</p>}
+
+      {filteredGroups.map((group) => {
+        const isExpanded = expandedRef === group.ref;
+        return (
+          <div className="compact-edit-section" key={group.ref}>
+            <div className="compact-section-header clickable-row" onClick={() => setExpandedRef(isExpanded ? null : group.ref)}>
+              <div>
+                <h3>{group.name}</h3>
+                <p>
+                  {group.ref} -- {group.photos.length} photo{group.photos.length === 1 ? "" : "s"}
+                  {group.highlights.length > 0 ? ` -- ${group.highlights.join(", ")}` : ""}
+                </p>
+              </div>
+              <button className="icon-button" type="button" aria-label={isExpanded ? "Collapse project" : "Expand project"}>
+                {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+              </button>
+            </div>
+            {isExpanded && (
+              <div className="site-gallery-grid">
+                {group.photos.map(({ image, location }) => (
+                  <div className="site-gallery-item" key={image.id}>
+                    {photoUrls[image.id] ? <img src={photoUrls[image.id]} alt={image.fileName} /> : <div className="site-gallery-item-fallback">Loading...</div>}
+                    <small>{location.name}</small>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }
