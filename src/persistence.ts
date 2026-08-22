@@ -4567,6 +4567,12 @@ export type ProjectLocationImage = {
   uploadedByEmail: string;
   lat: number | null;
   lng: number | null;
+  // "sales" = carried over from the Sales Quote on conversion; "project" =
+  // added since. Drives the Sales/Project grouping in the photo gallery.
+  // Optional (not undefined at runtime -- mapProjectLocationImageRow always
+  // sets it) purely so this stays assignable to the shared LocationImageLike
+  // shape used by Sales Quote images, which never have this field.
+  origin?: "sales" | "project";
 };
 
 export type ProjectLocationItem = {
@@ -4779,6 +4785,7 @@ type ProjectLocationImageRow = {
   uploaded_by_email: string | null;
   photo_lat: number | string | null;
   photo_lng: number | string | null;
+  origin: string | null;
 };
 
 type ProjectLocationItemRow = {
@@ -4825,6 +4832,7 @@ function mapProjectLocationImageRow(row: ProjectLocationImageRow): ProjectLocati
     uploadedByEmail: row.uploaded_by_email ?? "",
     lat: row.photo_lat === null || row.photo_lat === undefined ? null : Number(row.photo_lat),
     lng: row.photo_lng === null || row.photo_lng === undefined ? null : Number(row.photo_lng),
+    origin: row.origin === "sales" ? "sales" : "project",
   };
 }
 
@@ -4871,6 +4879,11 @@ function mapProjectLocationRow(row: ProjectLocationRow): ProjectLocation {
 }
 
 const PROJECT_LOCATION_SELECT =
+  "id,project_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,source_quote_location_id,project_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng,origin),project_location_items(id,project_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)";
+// Migration 087 safety: same shape minus `origin`, in case that column
+// hasn't landed yet -- without this, the whole Projects list 400s instead
+// of just missing the Sales/Project photo grouping.
+const PROJECT_LOCATION_SELECT_PRE_087 =
   "id,project_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,source_quote_location_id,project_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),project_location_items(id,project_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)";
 
 type ProjectShippingAddressRow = {
@@ -5037,6 +5050,10 @@ type ProjectSiteRow = {
 
 const PROJECT_SITE_SELECT =
   `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+// Migration 087 safety: same query with the pre-087 (no `origin`) location
+// select, used as a 400 fallback in loadProjectSites.
+const PROJECT_SITE_SELECT_PRE_087 =
+  `id,project_name,project_number,customer_name,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to),project_locations(${PROJECT_LOCATION_SELECT_PRE_087}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -5115,6 +5132,16 @@ export async function loadProjectSites(accessToken?: string): Promise<ProjectSit
   const response = await fetch(supabaseUrl(`projects?select=${PROJECT_SITE_SELECT}&order=project_name.asc`), {
     headers: supabaseHeaders(accessToken),
   });
+  if (!response.ok && response.status === 400) {
+    const fallbackResponse = await fetch(supabaseUrl(`projects?select=${PROJECT_SITE_SELECT_PRE_087}&order=project_name.asc`), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (!fallbackResponse.ok) {
+      return [];
+    }
+    const fallbackRows = (await fallbackResponse.json()) as ProjectSiteRow[];
+    return fallbackRows.map(mapProjectSiteRow);
+  }
   if (!response.ok) {
     return [];
   }
@@ -7874,7 +7901,7 @@ export async function createProjectFromClosedWonQuote(quote: SalesQuote, accessT
         if (!copied) {
           continue;
         }
-        await fetch(supabaseUrl("project_location_images"), {
+        const imageInsertResponse = await fetch(supabaseUrl("project_location_images"), {
           method: "POST",
           headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
           body: JSON.stringify({
@@ -7887,8 +7914,30 @@ export async function createProjectFromClosedWonQuote(quote: SalesQuote, accessT
             uploaded_by_email: image.uploadedByEmail || null,
             photo_lat: image.lat,
             photo_lng: image.lng,
+            origin: "sales",
           }),
         });
+        // Migration 087 safety: if it hasn't been run yet, the `origin`
+        // column won't exist and the insert above 400s -- retry without it
+        // so the photo still copies over (just untagged) instead of being
+        // silently dropped.
+        if (!imageInsertResponse.ok && imageInsertResponse.status === 400) {
+          await fetch(supabaseUrl("project_location_images"), {
+            method: "POST",
+            headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
+            body: JSON.stringify({
+              project_location_id: projectLocationId,
+              image_type: image.imageType,
+              storage_path: destinationPath,
+              file_name: image.fileName || null,
+              description: image.description || null,
+              uploaded_at: image.uploadedAt,
+              uploaded_by_email: image.uploadedByEmail || null,
+              photo_lat: image.lat,
+              photo_lng: image.lng,
+            }),
+          });
+        }
       }
     }
 

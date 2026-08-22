@@ -14433,6 +14433,9 @@ type LocationImageLike = {
   uploadedByEmail: string;
   lat: number | null;
   lng: number | null;
+  // Only present on Project location images -- undefined for Sales Quote
+  // images, which predate the sales/project split entirely.
+  origin?: "sales" | "project";
 };
 
 type LocationLike = {
@@ -15584,11 +15587,10 @@ function SiteGalleryModal({
         {!loadingUrls && groups.length === 0 && <p className="empty-compact-state">No photos saved for this site yet.</p>}
 
         {!loadingUrls &&
-          groups.map(({ location, photos }) => (
-            <div className="modal-section" key={location.id}>
-              <span className="modal-section-title">{location.name || (location.locationType === "garage" ? "Garage" : "Lot")}</span>
+          groups.map(({ location, photos }) => {
+            const renderPhotoGrid = (photoSet: typeof photos) => (
               <div className="site-gallery-grid">
-                {photos.map((photo) => (
+                {photoSet.map((photo) => (
                   <div className={`site-gallery-item ${selectedIds.has(photo.id) ? "selected" : ""}`} key={photo.id}>
                     <input
                       type="checkbox"
@@ -15608,8 +15610,29 @@ function SiteGalleryModal({
                   </div>
                 ))}
               </div>
-            </div>
-          ))}
+            );
+            // Sales-origin photos only exist on Project locations converted
+            // from a closed-won quote -- everything else (Sales Quote
+            // galleries, locations never carried over) has no "sales"-
+            // tagged photos, so this renders exactly as before for them.
+            const salesPhotos = photos.filter((photo) => photo.origin === "sales");
+            const projectPhotos = photos.filter((photo) => photo.origin !== "sales");
+            return (
+              <div className="modal-section" key={location.id}>
+                <span className="modal-section-title">{location.name || (location.locationType === "garage" ? "Garage" : "Lot")}</span>
+                {salesPhotos.length === 0 ? (
+                  renderPhotoGrid(photos)
+                ) : (
+                  <>
+                    <span className="modal-section-subtitle">Sales ({salesPhotos.length})</span>
+                    {renderPhotoGrid(salesPhotos)}
+                    <span className="modal-section-subtitle">Project ({projectPhotos.length})</span>
+                    {projectPhotos.length > 0 ? renderPhotoGrid(projectPhotos) : <p className="empty-compact-state">No photos added since conversion yet.</p>}
+                  </>
+                )}
+              </div>
+            );
+          })}
         {previewFile && (
           <MediaPreviewModal
             file={previewFile.image}
@@ -16145,6 +16168,8 @@ function Marketing({
   const [activeHighlights, setActiveHighlights] = useState<string[]>([]);
   const [expandedRef, setExpandedRef] = useState<string | null>(null);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [previewId, setPreviewId] = useState<string | null>(null);
 
   const groups = projectSites
     .map((site) => {
@@ -16193,6 +16218,43 @@ function Marketing({
     setActiveHighlights((current) => (current.includes(tag) ? current.filter((entry) => entry !== tag) : [...current, tag]));
   }
 
+  function toggleExpanded(ref: string) {
+    setExpandedRef((current) => (current === ref ? null : ref));
+    setSelectedIds(new Set());
+    setPreviewId(null);
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  async function downloadSelected() {
+    if (!expandedGroup) {
+      return;
+    }
+    for (const { image } of expandedGroup.photos) {
+      if (selectedIds.has(image.id)) {
+        const url = photoUrls[image.id];
+        if (url) {
+          // Sequential, not Promise.all -- browsers block a burst of
+          // simultaneous downloads as popups.
+          await triggerBrowserDownload(url, image.fileName || "photo");
+        }
+      }
+    }
+  }
+
+  const previewEntry = expandedGroup?.photos.find(({ image }) => image.id === previewId) ?? null;
+  const previewIndex = expandedGroup && previewEntry ? expandedGroup.photos.findIndex(({ image }) => image.id === previewId) : -1;
+
   return (
     <section className="panel full">
       <div className="panel-title-row">
@@ -16221,7 +16283,7 @@ function Marketing({
         const isExpanded = expandedRef === group.ref;
         return (
           <div className="compact-edit-section" key={group.ref}>
-            <div className="compact-section-header clickable-row" onClick={() => setExpandedRef(isExpanded ? null : group.ref)}>
+            <div className="compact-section-header clickable-row" onClick={() => toggleExpanded(group.ref)}>
               <div>
                 <h3>{group.name}</h3>
                 <p>
@@ -16234,18 +16296,86 @@ function Marketing({
               </button>
             </div>
             {isExpanded && (
-              <div className="site-gallery-grid">
-                {group.photos.map(({ image, location }) => (
-                  <div className="site-gallery-item" key={image.id}>
-                    {photoUrls[image.id] ? <img src={photoUrls[image.id]} alt={image.fileName} /> : <div className="site-gallery-item-fallback">Loading...</div>}
-                    <small>{location.name}</small>
-                  </div>
-                ))}
-              </div>
+              <>
+                <div className="quote-header-pill-row">
+                  <button
+                    className="secondary-action mini-action"
+                    type="button"
+                    onClick={() => setSelectedIds(new Set(group.photos.map(({ image }) => image.id)))}
+                  >
+                    Select all
+                  </button>
+                  <button className="secondary-action mini-action" type="button" onClick={() => setSelectedIds(new Set())} disabled={selectedIds.size === 0}>
+                    Clear
+                  </button>
+                  <button className="secondary-action mini-action" type="button" onClick={downloadSelected} disabled={selectedIds.size === 0}>
+                    <Download size={14} /> Download ({selectedIds.size})
+                  </button>
+                </div>
+                <div className="site-gallery-grid">
+                  {group.photos.map(({ image, location }) => (
+                    <div className={`site-gallery-item ${selectedIds.has(image.id) ? "selected" : ""}`} key={image.id}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(image.id)}
+                        onChange={() => toggleSelected(image.id)}
+                        onClick={(event) => event.stopPropagation()}
+                      />
+                      {photoUrls[image.id] ? (
+                        <button className="site-gallery-preview-button" type="button" onClick={() => setPreviewId(image.id)}>
+                          <img src={photoUrls[image.id]} alt={image.fileName} />
+                        </button>
+                      ) : (
+                        <div className="site-gallery-item-fallback">Loading...</div>
+                      )}
+                      <small>{location.name}</small>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         );
       })}
+
+      {previewEntry && (
+        <div className="modal-backdrop" role="presentation" onClick={() => setPreviewId(null)}>
+          <section className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="marketing-preview-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 id="marketing-preview-title">{previewEntry.image.fileName || previewEntry.location.name}</h2>
+                <p>{previewEntry.location.name}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setPreviewId(null)} aria-label="Close preview">x</button>
+            </div>
+            <div className="media-provenance-strip">
+              <span>{previewEntry.image.uploadedAt ? new Date(previewEntry.image.uploadedAt).toLocaleString() : "No timestamp saved"}</span>
+              {previewEntry.image.uploadedByEmail && <span>{previewEntry.image.uploadedByEmail}</span>}
+            </div>
+            {photoUrls[previewEntry.image.id] ? (
+              <ZoomablePreviewImage src={photoUrls[previewEntry.image.id]} alt={previewEntry.image.fileName} />
+            ) : (
+              <p className="muted">Loading preview...</p>
+            )}
+            <div className="modal-actions">
+              {expandedGroup && previewIndex > 0 && (
+                <button className="secondary-action" type="button" onClick={() => setPreviewId(expandedGroup.photos[previewIndex - 1].image.id)}>Previous</button>
+              )}
+              {expandedGroup && previewIndex >= 0 && previewIndex < expandedGroup.photos.length - 1 && (
+                <button className="secondary-action" type="button" onClick={() => setPreviewId(expandedGroup.photos[previewIndex + 1].image.id)}>Next</button>
+              )}
+              <button
+                className="primary-action"
+                type="button"
+                disabled={!photoUrls[previewEntry.image.id]}
+                onClick={() => triggerBrowserDownload(photoUrls[previewEntry.image.id], previewEntry.image.fileName || "photo")}
+              >
+                <Download size={14} /> Download
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </section>
   );
 }
@@ -16539,28 +16669,46 @@ function ProjectLocationsSection({
               onDelete={(itemId) => onDeleteLocationItem(selectedLocation.id, itemId)}
             />
 
-            {selectedLocation.images.length > 0 && (
-              <div className="line-list">
-                {selectedLocation.images.map((image) => (
-                  <div className="line-item quote-image-line-item" key={image.id}>
-                    <div>
-                      <strong>{image.fileName || (image.imageType === "photo" ? "Photo" : "Drawing")}</strong>
-                      <span>{image.imageType === "photo" ? "Photo" : "Drawing"}</span>
-                      {image.imageType === "photo" && (
-                        <input
-                          className="quote-image-description-input"
-                          value={image.description}
-                          placeholder="Description (optional)"
-                          onChange={(event) => onUpdateImageDescription(selectedLocation.id, image.id, event.target.value)}
-                        />
-                      )}
-                      <small className="muted">{formatImageProvenance(image)}</small>
+            {selectedLocation.images.length > 0 && (() => {
+              const renderImageList = (images: typeof selectedLocation.images) => (
+                <div className="line-list">
+                  {images.map((image) => (
+                    <div className="line-item quote-image-line-item" key={image.id}>
+                      <div>
+                        <strong>{image.fileName || (image.imageType === "photo" ? "Photo" : "Drawing")}</strong>
+                        <span>{image.imageType === "photo" ? "Photo" : "Drawing"}</span>
+                        {image.imageType === "photo" && (
+                          <input
+                            className="quote-image-description-input"
+                            value={image.description}
+                            placeholder="Description (optional)"
+                            onChange={(event) => onUpdateImageDescription(selectedLocation.id, image.id, event.target.value)}
+                          />
+                        )}
+                        <small className="muted">{formatImageProvenance(image)}</small>
+                      </div>
+                      <button className="secondary-action mini-action" type="button" onClick={() => onDownloadImage(image)}>Download</button>
                     </div>
-                    <button className="secondary-action mini-action" type="button" onClick={() => onDownloadImage(image)}>Download</button>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              );
+              // Only Project locations converted from a closed-won quote
+              // ever have "sales"-tagged images -- a location built fresh
+              // in the project renders exactly as before.
+              const salesImages = selectedLocation.images.filter((image) => image.origin === "sales");
+              const projectImages = selectedLocation.images.filter((image) => image.origin !== "sales");
+              if (salesImages.length === 0) {
+                return renderImageList(selectedLocation.images);
+              }
+              return (
+                <>
+                  <span className="modal-section-subtitle">Sales ({salesImages.length})</span>
+                  {renderImageList(salesImages)}
+                  <span className="modal-section-subtitle">Project ({projectImages.length})</span>
+                  {projectImages.length > 0 ? renderImageList(projectImages) : <p className="empty-compact-state">No photos added since conversion yet.</p>}
+                </>
+              );
+            })()}
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setSelectedLocationId(null)}>Close</button>
             </div>
