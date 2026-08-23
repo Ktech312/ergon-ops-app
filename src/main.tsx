@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import {
   AlertTriangle,
   Award,
+  Archive,
   BarChart3,
   Bell,
   BookOpen,
@@ -62,6 +63,12 @@ import {
   deleteProjectLocation,
   restoreProjectLocation,
   loadDeletedProjectLocations,
+  loadProjectLedgerInfo,
+  updateProjectLedgerInfo,
+  loadInstalledAssets,
+  addInstalledAssets,
+  updateInstalledAsset,
+  deleteInstalledAsset,
   addProjectLocationItem,
   updateProjectLocationItem,
   deleteProjectLocationItem,
@@ -274,6 +281,8 @@ import {
   type ProjectLocation,
   type DeletedProjectLocation,
   type DeletedProjectLocationImage,
+  type ProjectLedgerInfo,
+  type InstalledAsset,
   type ProjectLocationImage,
   type ProjectLocationItem,
   type ProjectShippingAddress,
@@ -323,7 +332,7 @@ import {
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing";
+type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -370,7 +379,7 @@ type RoleMode = "warehouse" | "purchasing" | "pm" | "manager" | "sales" | "engin
 
 const ALL_ROLE_KEYS: RoleMode[] = ["warehouse", "purchasing", "pm", "manager", "sales", "engineering", "product_development", "implementation", "support", "marketing"];
 
-const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar"];
+const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger"];
 
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
@@ -385,6 +394,7 @@ const TAB_LABELS: Record<View, string> = {
   saas_calendar: "SaaS Calendar",
   admin: "Admin",
   library: "Library",
+  client_ledger: "Client Ledger",
 };
 
 // Starting point when a role has no explicit per-user tab override. An admin
@@ -394,7 +404,7 @@ const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
   warehouse: ["dashboard", "inventory", "projects", "tasks"],
   purchasing: ["dashboard", "purchasing", "inventory", "vendors", "tasks", "reports"],
   pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports", "saas_calendar"],
-  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar"],
+  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger"],
   sales: ["dashboard", "sales", "marketing", "tasks", "reports", "saas_calendar"],
   engineering: ["dashboard", "projects", "inventory", "tasks", "reports"],
   product_development: ["dashboard", "projects", "tasks", "reports"],
@@ -436,6 +446,7 @@ const MOBILE_NAV_TAB_ICON: Record<View, (size: number) => React.ReactNode> = {
   saas_calendar: (size) => <CalendarDays size={size} />,
   admin: (size) => <User size={size} />,
   library: (size) => <BookOpen size={size} />,
+  client_ledger: (size) => <Archive size={size} />,
 };
 
 const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
@@ -947,7 +958,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library", "client_ledger"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -1085,6 +1096,12 @@ function App() {
   const [projectSites, setProjectSites] = useState<ProjectSite[]>([]);
   const [deletedProjectLocations, setDeletedProjectLocations] = useState<DeletedProjectLocation[]>([]);
   const [deletedProjectLocationImages, setDeletedProjectLocationImages] = useState<DeletedProjectLocationImage[]>([]);
+  // Client Ledger (migration 089). kickoff/warranty dates load once for
+  // every project (small, rarely-changing) -- installed assets are per-
+  // project and lazy-loaded only while that project's Ledger detail is
+  // open (a site could have 50+ units, no reason to load them all upfront).
+  const [projectLedgerInfo, setProjectLedgerInfo] = useState<ProjectLedgerInfo[]>([]);
+  const [installedAssets, setInstalledAssets] = useState<InstalledAsset[]>([]);
   // Phase 10d: Equipment Recipes no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [deviceRecipes, setDeviceRecipes] = useState<BuildRecipe[]>([]);
@@ -1327,7 +1344,65 @@ function App() {
     loadProjectSites(authSession.accessToken).then(setProjectSites).catch(() => {});
     loadDeletedProjectLocations(authSession.accessToken).then(setDeletedProjectLocations).catch(() => {});
     loadDeletedProjectLocationImages(authSession.accessToken).then(setDeletedProjectLocationImages).catch(() => {});
+    loadProjectLedgerInfo(authSession.accessToken).then(setProjectLedgerInfo).catch(() => {});
   }, [authSession]);
+
+  async function handleUpdateProjectLedgerInfo(projectId: string, updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string }>) {
+    if (!authSession) {
+      return;
+    }
+    setProjectLedgerInfo((current) => {
+      const existing = current.find((entry) => entry.projectId === projectId);
+      const next = { projectId, kickoffDate: existing?.kickoffDate ?? "", warrantyExpirationDate: existing?.warrantyExpirationDate ?? "", ...updates };
+      return existing ? current.map((entry) => (entry.projectId === projectId ? next : entry)) : [...current, next];
+    });
+    await updateProjectLedgerInfo(projectId, updates, authSession.accessToken);
+  }
+
+  async function handleLoadInstalledAssets(projectId: string) {
+    if (!authSession) {
+      setInstalledAssets([]);
+      return;
+    }
+    setInstalledAssets(await loadInstalledAssets(projectId, authSession.accessToken));
+  }
+
+  async function handleAddInstalledAssets(
+    projectId: string,
+    projectLocationId: string | null,
+    catalogItemId: string | null,
+    serialNumbers: string[],
+    installDate: string,
+    notes: string,
+  ): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    try {
+      const created = await addInstalledAssets(projectId, projectLocationId, catalogItemId, serialNumbers, installDate, notes, authSession.email, authSession.accessToken);
+      setInstalledAssets((current) => [...created, ...current]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function handleUpdateInstalledAsset(id: string, updates: Partial<{ installDate: string; notes: string; projectLocationId: string | null }>) {
+    if (!authSession) {
+      return;
+    }
+    setInstalledAssets((current) => current.map((asset) => (asset.id === id ? { ...asset, ...updates } : asset)));
+    await updateInstalledAsset(id, updates, authSession.accessToken);
+  }
+
+  async function handleDeleteInstalledAsset(id: string) {
+    if (!authSession) {
+      return;
+    }
+    const label = installedAssets.find((asset) => asset.id === id)?.serialNumber ?? "Installed asset";
+    setInstalledAssets((current) => current.filter((asset) => asset.id !== id));
+    await deleteInstalledAsset(id, label, authSession.email, authSession.accessToken);
+  }
 
   // Uploads Site Builder photos that got stuck in the offline queue (see
   // flushPendingSitePhotos above) as soon as there's a real chance they'll
@@ -5987,6 +6062,7 @@ function App() {
             {allowedTabs.includes("tasks") && <NavButton icon={<ListChecks size={16} />} label="Tasks" active={view === "tasks"} onClick={() => navigateToView("tasks")} />}
             {allowedTabs.includes("reports") && <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />}
             {allowedTabs.includes("saas_calendar") && <NavButton icon={<CalendarDays size={16} />} label="SaaS Calendar" active={view === "saas_calendar"} onClick={() => navigateToView("saas_calendar")} />}
+            {allowedTabs.includes("client_ledger") && <NavButton icon={<Archive size={16} />} label="Client Ledger" active={view === "client_ledger"} onClick={() => navigateToView("client_ledger")} />}
           </nav>
           <div className="top-nav-actions">
             <div className={`sync-status ${syncStatus}`} title={syncStatus === "error" ? authStatus : undefined}>
@@ -6229,6 +6305,22 @@ function App() {
         )}
         {view === "marketing" && allowedTabs.includes("marketing") && (
           <Marketing projectSites={projectSites} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} />
+        )}
+        {view === "client_ledger" && allowedTabs.includes("client_ledger") && (
+          <ClientLedger
+            projectSites={projectSites}
+            catalogItems={catalogItems}
+            ledgerInfo={projectLedgerInfo}
+            onUpdateLedgerInfo={handleUpdateProjectLedgerInfo}
+            installedAssets={installedAssets}
+            onLoadInstalledAssets={handleLoadInstalledAssets}
+            onAddInstalledAssets={handleAddInstalledAssets}
+            onDeleteInstalledAsset={handleDeleteInstalledAsset}
+            projectDocuments={projectDocuments}
+            onCreateDocuments={handleCreateProjectDocuments}
+            onDownloadDocument={handleDownloadDocument}
+            currentUserEmail={authSession?.email ?? ""}
+          />
         )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
           <TasksBoard
@@ -6578,6 +6670,7 @@ function pageTitle(view: View) {
     saas_calendar: "SaaS Calendar",
     admin: "Admin",
     library: "Learning Library",
+    client_ledger: "Client Ledger",
   };
   return titles[view];
 }
@@ -6603,6 +6696,7 @@ function pageSubtitle(view: View) {
     saas_calendar: "Renewal outreach tracker and recurring revenue outlook.",
     admin: "Users, roles, approvals, and system configuration.",
     library: "Reference guides and onboarding materials.",
+    client_ledger: "The permanent record for a site once it closes out -- lifecycle, financials, hardware, and final documents.",
   };
   return subtitles[view];
 }
@@ -11553,6 +11647,450 @@ function priceTrend(part: Part) {
   return { latest, previous, change, percent };
 }
 
+// Migration 089: Client Ledger. E: "Need an additional Tab up top for when
+// we close out a project, we need the information to go somewhere for
+// future." Deliberately built from data the app already has wherever
+// possible (SaaS fields, financials, project status) -- the two genuinely
+// new pieces are per-unit serialized hardware with an install date (see
+// installed_assets) and the Closeout Vault's dedicated document types.
+const CLOSEOUT_DOCUMENT_TYPES: Array<NonNullable<UploadedDoc["type"]>> = [
+  "As-Built Diagram",
+  "O&M Manual",
+  "Completion Certificate",
+  "Network/IP Schema",
+  "Power/Breaker Schedule",
+];
+
+// EOL math: target replacement date = install date + the catalog item's
+// expected lifespan. Badge thresholds straight from E's notes -- Active
+// (more than 6 months out), Approaching EOL (within 6 months), Deprecating
+// / Replace (already past). No install date or no lifespan set on the
+// catalog item is its own neutral state rather than guessing.
+function computeEolStatus(installDate: string, lifespanYears: number | null): { label: string; className: string; targetDate: string | null } {
+  if (!installDate || lifespanYears === null) {
+    return { label: "No lifespan set", className: "status retired", targetDate: null };
+  }
+  const eolDate = new Date(installDate);
+  const wholeYears = Math.floor(lifespanYears);
+  const extraMonths = Math.round((lifespanYears - wholeYears) * 12);
+  eolDate.setFullYear(eolDate.getFullYear() + wholeYears, eolDate.getMonth() + extraMonths);
+  const targetDate = eolDate.toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  const sixMonthsOut = new Date();
+  sixMonthsOut.setMonth(sixMonthsOut.getMonth() + 6);
+  const sixMonthsIso = sixMonthsOut.toISOString().slice(0, 10);
+  if (targetDate < today) {
+    return { label: "Deprecating / Replace", className: "status danger", targetDate };
+  }
+  if (targetDate <= sixMonthsIso) {
+    return { label: "Approaching EOL", className: "status warn", targetDate };
+  }
+  return { label: "Active", className: "status ok", targetDate };
+}
+
+function saasMonthlyAmount(project: ProjectSite): number {
+  const amount = project.saasContractAmount ?? 0;
+  if (project.saasBillingFrequency === "Quarterly") return amount / 3;
+  if (project.saasBillingFrequency === "Annual") return amount / 12;
+  return amount;
+}
+
+function ClientLedger({
+  projectSites,
+  catalogItems,
+  ledgerInfo,
+  onUpdateLedgerInfo,
+  installedAssets,
+  onLoadInstalledAssets,
+  onAddInstalledAssets,
+  onDeleteInstalledAsset,
+  projectDocuments,
+  onCreateDocuments,
+  onDownloadDocument,
+  currentUserEmail,
+}: {
+  projectSites: ProjectSite[];
+  catalogItems: CatalogItem[];
+  ledgerInfo: ProjectLedgerInfo[];
+  onUpdateLedgerInfo: (projectId: string, updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string }>) => void;
+  installedAssets: InstalledAsset[];
+  onLoadInstalledAssets: (projectId: string) => void;
+  onAddInstalledAssets: (
+    projectId: string,
+    projectLocationId: string | null,
+    catalogItemId: string | null,
+    serialNumbers: string[],
+    installDate: string,
+    notes: string,
+  ) => Promise<boolean>;
+  onDeleteInstalledAsset: (id: string) => void;
+  projectDocuments: UploadedDoc[];
+  onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
+  onDownloadDocument: (doc: UploadedDoc) => void;
+  currentUserEmail: string;
+}) {
+  const [tab, setTab] = useState<"active" | "archived" | "financial">("active");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [showAddAsset, setShowAddAsset] = useState(false);
+  const [assetDraft, setAssetDraft] = useState({ catalogItemId: "", locationId: "", installDate: "", serials: "", notes: "" });
+  const [assetStatus, setAssetStatus] = useState("");
+  const [closeoutUploadType, setCloseoutUploadType] = useState<NonNullable<UploadedDoc["type"]>>("As-Built Diagram");
+
+  const activeSites = projectSites.filter((project) => project.status !== "Closed");
+  const archivedSites = projectSites.filter((project) => project.status === "Closed");
+  const selectedProject = projectSites.find((project) => project.id === selectedProjectId) ?? null;
+  const selectedLedgerInfo = ledgerInfo.find((entry) => entry.projectId === selectedProjectId);
+
+  useEffect(() => {
+    if (selectedProjectId) {
+      onLoadInstalledAssets(selectedProjectId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId]);
+
+  function openLedger(project: ProjectSite) {
+    setSelectedProjectId(project.id ?? null);
+    setShowAddAsset(false);
+    setAssetDraft({ catalogItemId: "", locationId: "", installDate: "", serials: "", notes: "" });
+  }
+
+  async function submitAssetDraft() {
+    if (!selectedProject?.id || !assetDraft.catalogItemId) {
+      return;
+    }
+    const serials = assetDraft.serials
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (serials.length === 0) {
+      setAssetStatus("Enter at least one serial number (one per line).");
+      return;
+    }
+    setAssetStatus("Saving...");
+    const ok = await onAddInstalledAssets(selectedProject.id, assetDraft.locationId || null, assetDraft.catalogItemId, serials, assetDraft.installDate, assetDraft.notes);
+    setAssetStatus(ok ? "" : "Could not save -- check the fields and try again.");
+    if (ok) {
+      setShowAddAsset(false);
+      setAssetDraft({ catalogItemId: "", locationId: "", installDate: "", serials: "", notes: "" });
+    }
+  }
+
+  function handleCloseoutFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    if (!selectedProject) {
+      return;
+    }
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) {
+      return;
+    }
+    onCreateDocuments(
+      files.map((file, index) => ({
+        doc: {
+          name: file.name,
+          project: selectedProject.name,
+          size: file.size,
+          status: "Uploaded" as const,
+          type: closeoutUploadType,
+          storage: "Browser" as const,
+          uploadedAt: new Date(Date.now() + index).toISOString(),
+          uploadedByEmail: currentUserEmail,
+        },
+        file,
+      })),
+    );
+    event.target.value = "";
+  }
+
+  // ---- List view (Active Sites / Archived Footprint / Financial Summary) ----
+  if (!selectedProject) {
+    const listSites = (tab === "archived" ? archivedSites : activeSites).filter((site) => {
+      const haystack = `${site.name} ${site.ref} ${site.client}`.toLowerCase();
+      return haystack.includes(search.trim().toLowerCase());
+    });
+    const financialRows = projectSites.filter((site) => site.saleAmount || site.saasContractAmount || site.allocated);
+
+    return (
+      <div className="content-grid">
+        <section className="panel full">
+          <PanelHeader title="Client Ledger" label="The permanent record for a site once it closes out -- lifecycle, financials, hardware, and final documents." />
+        </section>
+
+        <div className="view-mode-tabs">
+          <button className={`view-mode-tab ${tab === "active" ? "active" : ""}`} type="button" onClick={() => setTab("active")}>Active Sites ({activeSites.length})</button>
+          <button className={`view-mode-tab ${tab === "archived" ? "active" : ""}`} type="button" onClick={() => setTab("archived")}>Archived Footprint ({archivedSites.length})</button>
+          <button className={`view-mode-tab ${tab === "financial" ? "active" : ""}`} type="button" onClick={() => setTab("financial")}>Financial Summary</button>
+        </div>
+
+        {tab !== "financial" && (
+          <section className="panel full">
+            <div className="bom-modal-grid">
+              <label className="span-2">Search
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by site name, ref, or client" />
+              </label>
+            </div>
+            <table className="stack-table-mobile">
+              <thead>
+                <tr><th>Site</th><th>Client</th><th>Status</th><th>SaaS</th><th>Sale Amount</th></tr>
+              </thead>
+              <tbody>
+                {listSites.map((site) => (
+                  <tr key={site.id ?? site.ref} className="clickable-row" onClick={() => openLedger(site)}>
+                    <td><strong>{site.name}</strong><small className="muted"> {site.ref}</small></td>
+                    <td data-label="Client">{site.client || "-"}</td>
+                    <td data-label="Status"><span className={`status ${site.status === "Closed" ? "retired" : "ok"}`}>{site.status}</span></td>
+                    <td data-label="SaaS">{site.saasType || "-"}</td>
+                    <td data-label="Sale Amount">{site.saleAmount ? money(site.saleAmount) : "-"}</td>
+                  </tr>
+                ))}
+                {listSites.length === 0 && (
+                  <tr><td colSpan={5} className="empty-compact-state">No {tab === "archived" ? "archived" : "active"} sites match yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </section>
+        )}
+
+        {tab === "financial" && (
+          <section className="panel full">
+            <PanelHeader title="Financial Summary" label="Contract values and recurring revenue per site. SaaS math matches the SaaS Calendar; lifetime Purchase Order billings aren't included here -- POs link to a project by name match, not a real database link, so that number wouldn't be reliable enough to show as fact." />
+            <div className="metric-grid">
+              <Metric icon={<DollarSign size={20} />} label="Total Sale Amount" value={money(financialRows.reduce((sum, site) => sum + (site.saleAmount ?? 0), 0))} />
+              <Metric icon={<CalendarDays size={20} />} label="SaaS MRR" value={money(financialRows.reduce((sum, site) => sum + saasMonthlyAmount(site), 0))} />
+              <Metric icon={<CalendarDays size={20} />} label="SaaS ARR" value={money(financialRows.reduce((sum, site) => sum + saasMonthlyAmount(site) * 12, 0))} />
+              <Metric icon={<Boxes size={20} />} label="Total Allocated Budget" value={money(financialRows.reduce((sum, site) => sum + (site.allocated ?? 0), 0))} />
+            </div>
+            <table className="stack-table-mobile">
+              <thead>
+                <tr><th>Site</th><th>Status</th><th>Sale Amount</th><th>SaaS Contract</th><th>SaaS MRR</th><th>Allocated</th></tr>
+              </thead>
+              <tbody>
+                {financialRows.map((site) => (
+                  <tr key={site.id ?? site.ref} className="clickable-row" onClick={() => openLedger(site)}>
+                    <td><strong>{site.name}</strong><small className="muted"> {site.ref}</small></td>
+                    <td data-label="Status"><span className={`status ${site.status === "Closed" ? "retired" : "ok"}`}>{site.status}</span></td>
+                    <td data-label="Sale Amount">{site.saleAmount ? money(site.saleAmount) : "-"}</td>
+                    <td data-label="SaaS Contract">{site.saasContractAmount ? `${money(site.saasContractAmount)} / ${site.saasBillingFrequency || "Monthly"}` : "-"}</td>
+                    <td data-label="SaaS MRR">{saasMonthlyAmount(site) ? money(saasMonthlyAmount(site)) : "-"}</td>
+                    <td data-label="Allocated">{site.allocated ? money(site.allocated) : "-"}</td>
+                  </tr>
+                ))}
+                {financialRows.length === 0 && <tr><td colSpan={6} className="empty-compact-state">No financial data set on any site yet.</td></tr>}
+              </tbody>
+            </table>
+          </section>
+        )}
+      </div>
+    );
+  }
+
+  // ---- Per-site Ledger detail ----
+  const locations = selectedProject.locations ?? [];
+  const hardwareCatalogItems = catalogItems.filter((item) => !item.isRetired);
+  const assetsByCategory = new Map<string, InstalledAsset[]>();
+  installedAssets.forEach((asset) => {
+    const category = catalogItems.find((item) => item.id === asset.catalogItemId)?.category || "Uncategorized";
+    assetsByCategory.set(category, [...(assetsByCategory.get(category) ?? []), asset]);
+  });
+  const closeoutDocs = projectDocuments.filter((doc) => doc.project === selectedProject.name && doc.type && CLOSEOUT_DOCUMENT_TYPES.includes(doc.type));
+
+  return (
+    <div className="content-grid">
+      <section className="panel full">
+        <div className="panel-title-row">
+          <div>
+            <h2>{selectedProject.name}</h2>
+            <p>{selectedProject.ref} -- {selectedProject.client || "No client set"}</p>
+          </div>
+          <button className="secondary-action mini-action" type="button" onClick={() => setSelectedProjectId(null)}>&larr; Back to Client Ledger</button>
+        </div>
+      </section>
+
+      <section className="panel wide">
+        <PanelHeader title="Site Profile" label="Location name, address, and primary contact" />
+        <div className="bom-modal-grid">
+          <div><small className="muted">Physical Address</small><p>{selectedProject.address || "Not set"}</p></div>
+          <div><small className="muted">Owner / Primary Contact</small><p>{selectedProject.owner || "Not set"}</p></div>
+          <div><small className="muted">Site Type</small><p>{selectedProject.type}</p></div>
+          <div><small className="muted">Status</small><p><span className={`status ${selectedProject.status === "Closed" ? "retired" : "ok"}`}>{selectedProject.status}</span></p></div>
+        </div>
+      </section>
+
+      <section className="panel wide">
+        <PanelHeader title="Lifecycle Dates" label="Kickoff, handover, and warranty" />
+        <div className="bom-modal-grid">
+          <label>Kickoff date
+            <input
+              type="date"
+              value={selectedLedgerInfo?.kickoffDate ?? ""}
+              onChange={(event) => onUpdateLedgerInfo(selectedProject.id!, { kickoffDate: event.target.value })}
+            />
+          </label>
+          <label>Handover / Completion date
+            <input value={selectedProject.saasStartDate || ""} disabled placeholder="Stamped automatically when this project is set to Closed" />
+          </label>
+          <label>Warranty expiration
+            <input
+              type="date"
+              value={selectedLedgerInfo?.warrantyExpirationDate ?? ""}
+              onChange={(event) => onUpdateLedgerInfo(selectedProject.id!, { warrantyExpirationDate: event.target.value })}
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className="panel wide">
+        <PanelHeader title="Financial Summary" label="Contract values for this site" />
+        <div className="metric-grid">
+          <Metric icon={<DollarSign size={20} />} label="Sale Amount" value={selectedProject.saleAmount ? money(selectedProject.saleAmount) : "Not set"} />
+          <Metric icon={<Boxes size={20} />} label="Allocated Budget" value={money(selectedProject.allocated)} />
+          <Metric icon={<CalendarDays size={20} />} label="SaaS MRR" value={money(saasMonthlyAmount(selectedProject))} />
+          <Metric icon={<CalendarDays size={20} />} label="SaaS ARR" value={money(saasMonthlyAmount(selectedProject) * 12)} />
+        </div>
+      </section>
+
+      <section className="panel wide">
+        <PanelHeader title="SaaS Subscription" label="Edit from this project's SaaS tile on the Projects page -- shown here read-only" />
+        <div className="bom-modal-grid">
+          <div><small className="muted">SaaS Type</small><p>{selectedProject.saasType || "Not set"}</p></div>
+          <div><small className="muted">Contract Amount</small><p>{selectedProject.saasContractAmount ? `${money(selectedProject.saasContractAmount)} / ${selectedProject.saasBillingFrequency || "Monthly"}` : "Not set"}</p></div>
+          <div><small className="muted">Start Date</small><p>{selectedProject.saasStartDate || "Not set"}</p></div>
+          <div><small className="muted">Renewal Date</small><p>{selectedProject.saasRenewalDate || "Not set"}</p></div>
+        </div>
+      </section>
+
+      <section className="panel full">
+        <div className="panel-title-row">
+          <div>
+            <h2>Hardware Inventory &amp; EOL Tracker</h2>
+            <p>Every serialized unit installed at this site, with an auto-calculated replacement date.</p>
+          </div>
+          <button className="primary-action mini-action" type="button" onClick={() => setShowAddAsset(true)}>
+            <Plus size={14} /> Add Hardware
+          </button>
+        </div>
+        {installedAssets.length === 0 && <p className="empty-compact-state">No hardware logged for this site yet.</p>}
+        {Array.from(assetsByCategory.entries()).map(([category, assets]) => (
+          <div className="compact-edit-section" key={category}>
+            <span className="modal-section-title">{category} ({assets.length})</span>
+            <table className="stack-table-mobile">
+              <thead>
+                <tr><th>Serial</th><th>Hardware</th><th>Location</th><th>Install Date</th><th>Target Replacement</th><th>Status</th><th></th></tr>
+              </thead>
+              <tbody>
+                {assets.map((asset) => {
+                  const catalogItem = catalogItems.find((item) => item.id === asset.catalogItemId);
+                  const location = locations.find((entry) => entry.id === asset.projectLocationId);
+                  const eol = computeEolStatus(asset.installDate, catalogItem?.expectedLifespanYears ?? null);
+                  return (
+                    <tr key={asset.id}>
+                      <td>{asset.serialNumber}</td>
+                      <td data-label="Hardware">{catalogItem?.productName ?? "Unknown"}</td>
+                      <td data-label="Location">{location?.name || "-"}</td>
+                      <td data-label="Install Date">{asset.installDate || "Not set"}</td>
+                      <td data-label="Target Replacement">{eol.targetDate ?? "-"}</td>
+                      <td data-label="Status"><span className={eol.className}>{eol.label}</span></td>
+                      <td>
+                        <button className="icon-button compact-remove" type="button" onClick={() => onDeleteInstalledAsset(asset.id)} aria-label="Remove asset">
+                          <Trash2 size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </section>
+
+      <section className="panel full">
+        <div className="panel-title-row">
+          <div>
+            <h2>Closeout Vault</h2>
+            <p>As-built diagrams, O&amp;M manuals, completion certificates, and network/power documentation.</p>
+          </div>
+          <div className="action-row">
+            <select value={closeoutUploadType} onChange={(event) => setCloseoutUploadType(event.target.value as NonNullable<UploadedDoc["type"]>)}>
+              {CLOSEOUT_DOCUMENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+            <label className="secondary-action mini-action project-doc-upload">
+              <Upload size={15} /> Upload
+              <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.dwg,.dxf,.rvt,.ifc,.step,.stp" multiple onChange={handleCloseoutFileSelect} />
+            </label>
+          </div>
+        </div>
+        <div className="project-doc-list">
+          {closeoutDocs.map((doc) => (
+            <div className="document-row" key={doc.id}>
+              <div>
+                <strong>{doc.name}</strong>
+                <span>{doc.type} - {doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.storage ?? "Browser"}</span>
+                <small>{formatDocumentProvenance(doc)}</small>
+              </div>
+              {doc.storagePath && (
+                <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc)}>Download</button>
+              )}
+            </div>
+          ))}
+          {closeoutDocs.length === 0 && <div className="empty-compact-state">No closeout documents uploaded yet.</div>}
+        </div>
+      </section>
+
+      {showAddAsset && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-asset-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="add-asset-title">Add Hardware</h2>
+                <p>One catalog item + install date, many serials at once -- paste one per line.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowAddAsset(false)} aria-label="Close">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">Hardware type
+                <select value={assetDraft.catalogItemId} onChange={(event) => setAssetDraft((current) => ({ ...current, catalogItemId: event.target.value }))}>
+                  <option value="">Select a catalog item...</option>
+                  {hardwareCatalogItems.map((item) => (
+                    <option key={item.id} value={item.id}>{item.productName} ({item.category}){item.expectedLifespanYears ? ` -- ${item.expectedLifespanYears}yr lifespan` : ""}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Location (optional)
+                <select value={assetDraft.locationId} onChange={(event) => setAssetDraft((current) => ({ ...current, locationId: event.target.value }))}>
+                  <option value="">Not location-specific</option>
+                  {locations.map((location) => (
+                    <option key={location.id} value={location.id}>{location.name || (location.locationType === "garage" ? "Garage" : "Lot")}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Install date
+                <input type="date" value={assetDraft.installDate} onChange={(event) => setAssetDraft((current) => ({ ...current, installDate: event.target.value }))} />
+              </label>
+              <label className="span-2">Serial numbers (one per line)
+                <textarea
+                  rows={6}
+                  value={assetDraft.serials}
+                  onChange={(event) => setAssetDraft((current) => ({ ...current, serials: event.target.value }))}
+                  placeholder={"SN-00123\nSN-00124\nSN-00125"}
+                />
+              </label>
+              <label className="span-2">Notes (optional)
+                <textarea rows={2} value={assetDraft.notes} onChange={(event) => setAssetDraft((current) => ({ ...current, notes: event.target.value }))} />
+              </label>
+            </div>
+            {assetStatus && <small className="muted">{assetStatus}</small>}
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowAddAsset(false)}>Cancel</button>
+              <button className="primary-action" type="button" disabled={!assetDraft.catalogItemId || !assetDraft.serials.trim()} onClick={submitAssetDraft}>Save</button>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Migration 073: renewal outreach tracker + recurring revenue outlook.
 // "Active" for revenue purposes means a contract amount AND a start date
 // are both set (saasStartDate only ever gets stamped once a project's
@@ -13871,6 +14409,7 @@ const EMPTY_CATALOG_DRAFT = {
   tags: [] as string[],
   specifications: {} as Record<string, string>,
   datasheetStoragePath: "",
+  expectedLifespanYears: null as number | null,
 };
 
 // Category-specific "Details" fields for the Add/Edit Product modal.
@@ -14031,6 +14570,7 @@ function SalesCatalog({
       tags: [...(item.tags ?? [])],
       specifications: { ...(item.specifications ?? {}) },
       datasheetStoragePath: item.datasheetStoragePath ?? "",
+      expectedLifespanYears: item.expectedLifespanYears,
     });
     setModalOpen(true);
   }
@@ -14176,6 +14716,7 @@ function SalesCatalog({
             insertQuantity,
             specifications: {},
             datasheetStoragePath: "",
+            expectedLifespanYears: null,
           };
           return item;
         })
@@ -14466,6 +15007,17 @@ function SalesCatalog({
               </label>
               <label>Markup %<input type="number" step="0.1" value={draft.markupPercent} onChange={(event) => setDraft((current) => ({ ...current, markupPercent: Number(event.target.value) }))} /></label>
               <label>Default sell price (fallback if no cost set)<input type="number" min={0} step="0.01" value={draft.defaultSellPrice} onChange={(event) => setDraft((current) => ({ ...current, defaultSellPrice: Number(event.target.value) }))} /></label>
+              <label>
+                Expected lifespan (years)
+                <input
+                  type="number"
+                  min={0}
+                  step="0.5"
+                  value={draft.expectedLifespanYears ?? ""}
+                  onChange={(event) => setDraft((current) => ({ ...current, expectedLifespanYears: event.target.value === "" ? null : Number(event.target.value) }))}
+                  placeholder="e.g. 5"
+                />
+              </label>
               <div className="span-2 muted">
                 Live suggested price: <strong>{money(computeCatalogSellPrice(draft as CatalogItem, inventoryItems))}</strong>
                 {draft.costSource === "inventory_unit_cost" && !findLinkedInventoryPart(draft as CatalogItem, inventoryItems) && " -- no inventory match found for that Linked SKU yet, using fallback unit cost."}

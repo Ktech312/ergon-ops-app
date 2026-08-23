@@ -1839,6 +1839,11 @@ td small.quote-ref-tag {
   color: #756d62;
 }
 
+.status.danger {
+  background: #fbe3df;
+  color: #9a2f20;
+}
+
 .status-select {
   background: #ebe5d8;
   border: none;

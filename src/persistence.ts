@@ -1124,6 +1124,13 @@ export type CatalogItem = {
   // (migration 052), distinct from datasheetUrl which is just a pasted
   // external link -- a product can have either or both.
   datasheetStoragePath: string;
+  // Migration 089 (Client Ledger): drives the auto-calculated target
+  // replacement date on every installed_assets row referencing this item
+  // (install_date + expectedLifespanYears). A real numeric column, not
+  // folded into `specifications`, because EOL math needs to parse it
+  // reliably -- null means "not set", the EOL tracker shows that plainly
+  // rather than guessing a default.
+  expectedLifespanYears: number | null;
 };
 
 type CatalogItemRow = {
@@ -1154,6 +1161,7 @@ type CatalogItemRow = {
   tags: string[] | null;
   specifications: Record<string, string> | null;
   datasheet_storage_path: string | null;
+  expected_lifespan_years: number | string | null;
 };
 
 function mapCatalogRow(row: CatalogItemRow): CatalogItem {
@@ -1185,6 +1193,7 @@ function mapCatalogRow(row: CatalogItemRow): CatalogItem {
     tags: row.tags ?? [],
     specifications: row.specifications ?? {},
     datasheetStoragePath: row.datasheet_storage_path ?? "",
+    expectedLifespanYears: row.expected_lifespan_years === null || row.expected_lifespan_years === undefined ? null : Number(row.expected_lifespan_years),
   };
 }
 
@@ -1216,6 +1225,7 @@ function catalogItemWritePayload(item: Omit<CatalogItem, "id">) {
     tags: item.tags ?? [],
     specifications: item.specifications ?? {},
     datasheet_storage_path: item.datasheetStoragePath || null,
+    expected_lifespan_years: item.expectedLifespanYears,
   };
 }
 
@@ -3380,7 +3390,19 @@ export type ProjectDocument = {
   project: string;
   size: number;
   status: "Uploaded" | "Ready to review" | "Backed up" | "Archived";
-  type?: "Procurement" | "Sales Quote" | "SOW" | "BOM" | "Project";
+  type?:
+    | "Procurement"
+    | "Sales Quote"
+    | "SOW"
+    | "BOM"
+    | "Project"
+    // Migration 089 (Client Ledger's Closeout Vault) -- final, handoff-time
+    // documents, distinct from the working documents above.
+    | "As-Built Diagram"
+    | "O&M Manual"
+    | "Completion Certificate"
+    | "Network/IP Schema"
+    | "Power/Breaker Schedule";
   storage?: "Browser" | "Google Drive" | "Supabase Storage";
   uploadedAt?: string;
   uploadedByEmail?: string;
@@ -3420,6 +3442,11 @@ function appDocumentType(type: ProjectDocument["type"]): string {
     case "SOW": return "sow";
     case "BOM": return "bom";
     case "Project": return "project";
+    case "As-Built Diagram": return "as_built";
+    case "O&M Manual": return "om_manual";
+    case "Completion Certificate": return "completion_certificate";
+    case "Network/IP Schema": return "network_schema";
+    case "Power/Breaker Schedule": return "power_schedule";
     default: return "other";
   }
 }
@@ -3431,6 +3458,11 @@ function pgDocumentType(documentType: string): ProjectDocument["type"] {
     case "sow": return "SOW";
     case "bom": return "BOM";
     case "project": return "Project";
+    case "as_built": return "As-Built Diagram";
+    case "om_manual": return "O&M Manual";
+    case "completion_certificate": return "Completion Certificate";
+    case "network_schema": return "Network/IP Schema";
+    case "power_schedule": return "Power/Breaker Schedule";
     default: return undefined;
   }
 }
@@ -5428,6 +5460,205 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
       body: JSON.stringify(bomPayload),
     });
   }
+}
+
+// --- Client Ledger (migration 089) -----------------------------------------
+// E: "Need an additional Tab up top for when we close out a project, we
+// need the information to go somewhere for future" -- a permanent per-site
+// record covering Active/Archived sites, Financial Summary, SaaS info
+// (already existed, just surfaced here), a Hardware/EOL tracker (genuinely
+// new -- nothing else in the app tracks a serialized physical unit with an
+// install date), and a Closeout Vault of final documents.
+//
+// kickoff_date/warranty_expiration_date deliberately live OUTSIDE
+// PROJECT_SITE_SELECT/ProjectSite -- that select is the app's biggest,
+// most-loaded query (every page needs projectSites), and these two fields
+// are only ever read/written from the Client Ledger tab. Keeping them on a
+// separate, lazily-loaded fetch means if migration 089 hasn't run yet, only
+// this one tab is affected -- not the whole app going blank the way adding
+// them to PROJECT_SITE_SELECT directly would risk.
+
+export type ProjectLedgerInfo = {
+  projectId: string;
+  kickoffDate: string;
+  warrantyExpirationDate: string;
+};
+
+type ProjectLedgerInfoRow = {
+  id: string;
+  kickoff_date: string | null;
+  warranty_expiration_date: string | null;
+};
+
+export async function loadProjectLedgerInfo(accessToken?: string): Promise<ProjectLedgerInfo[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("projects?select=id,kickoff_date,warranty_expiration_date"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ProjectLedgerInfoRow[];
+  return rows.map((row) => ({
+    projectId: row.id,
+    kickoffDate: row.kickoff_date ?? "",
+    warrantyExpirationDate: row.warranty_expiration_date ?? "",
+  }));
+}
+
+export async function updateProjectLedgerInfo(
+  projectId: string,
+  updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string }>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.kickoffDate !== undefined) payload.kickoff_date = updates.kickoffDate || null;
+  if (updates.warrantyExpirationDate !== undefined) payload.warranty_expiration_date = updates.warrantyExpirationDate || null;
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl(`projects?id=eq.${projectId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+// Per-unit, serial-level installed hardware -- the genuinely new piece.
+// project_location_items only ever tracked a planned QUANTITY of a catalog
+// item type per location; this tracks one physical unit with its own
+// serial and install date, so an End-of-Life date can be computed
+// (install_date + catalog item's expected_lifespan_years).
+export type InstalledAsset = {
+  id: string;
+  projectId: string;
+  projectLocationId: string | null;
+  catalogItemId: string | null;
+  serialNumber: string;
+  installDate: string;
+  notes: string;
+  createdByEmail: string;
+  createdAt: string;
+};
+
+type InstalledAssetRow = {
+  id: string;
+  project_id: string;
+  project_location_id: string | null;
+  catalog_item_id: string | null;
+  serial_number: string;
+  install_date: string | null;
+  notes: string | null;
+  created_by_email: string | null;
+  created_at: string;
+};
+
+function mapInstalledAssetRow(row: InstalledAssetRow): InstalledAsset {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    projectLocationId: row.project_location_id,
+    catalogItemId: row.catalog_item_id,
+    serialNumber: row.serial_number,
+    installDate: row.install_date ?? "",
+    notes: row.notes ?? "",
+    createdByEmail: row.created_by_email ?? "",
+    createdAt: row.created_at,
+  };
+}
+
+const INSTALLED_ASSET_SELECT = "id,project_id,project_location_id,catalog_item_id,serial_number,install_date,notes,created_by_email,created_at";
+
+export async function loadInstalledAssets(projectId: string, accessToken?: string): Promise<InstalledAsset[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`installed_assets?project_id=eq.${projectId}&select=${INSTALLED_ASSET_SELECT}&deleted_at=is.null&order=created_at.desc`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as InstalledAssetRow[];
+  return rows.map(mapInstalledAssetRow);
+}
+
+// One catalog item + location + install date, many serials at once -- a
+// garage can easily have 50+ sensors, so the add form supports pasting a
+// whole list of serials (one per line) rather than one round trip each.
+export async function addInstalledAssets(
+  projectId: string,
+  projectLocationId: string | null,
+  catalogItemId: string | null,
+  serialNumbers: string[],
+  installDate: string,
+  notes: string,
+  actorEmail: string,
+  accessToken?: string,
+): Promise<InstalledAsset[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || serialNumbers.length === 0) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("installed_assets"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify(
+      serialNumbers.map((serialNumber) => ({
+        project_id: projectId,
+        project_location_id: projectLocationId,
+        catalog_item_id: catalogItemId,
+        serial_number: serialNumber,
+        install_date: installDate || null,
+        notes: notes || null,
+        created_by_email: actorEmail || null,
+      })),
+    ),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not add asset(s): ${await readSupabaseError(response, "unknown error")}`);
+  }
+  const rows = (await response.json()) as InstalledAssetRow[];
+  return rows.map(mapInstalledAssetRow);
+}
+
+export async function updateInstalledAsset(
+  id: string,
+  updates: Partial<{ installDate: string; notes: string; projectLocationId: string | null }>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.installDate !== undefined) payload.install_date = updates.installDate || null;
+  if (updates.notes !== undefined) payload.notes = updates.notes || null;
+  if (updates.projectLocationId !== undefined) payload.project_location_id = updates.projectLocationId;
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl(`installed_assets?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteInstalledAsset(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`installed_assets?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
+  });
+  await logDeletionEvent("installed_asset", id, label, "deleted", actorEmail, accessToken);
 }
 
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
