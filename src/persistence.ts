@@ -52,6 +52,30 @@ function supabaseAuthUrl(path: string) {
   return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/auth/v1/${path}`;
 }
 
+// Migration 088 safety: every loader below adds a `deleted_at=is.null`
+// (or embedded equivalent) filter for the new soft-delete columns. Until
+// E runs 088 in Supabase, that column won't exist and the filtered query
+// 400s -- this retries with the same URL minus the deleted_at filter(s) so
+// the page still loads (just without soft-delete filtering) instead of
+// going blank. `stripDeletedAtFilters` removes any `<path>deleted_at=...`
+// query param from a URL string.
+function stripDeletedAtFilters(url: string): string {
+  return url
+    .replace(/[&?][^&?=]*deleted_at=is\.null/g, "")
+    .replace(/[&?][^&?=]*deleted_at=not\.is\.null/g, "");
+}
+
+async function fetchWithDeletedAtFallback(url: string, headers: Record<string, string>): Promise<Response> {
+  const response = await fetch(url, { headers });
+  if (!response.ok && response.status === 400) {
+    const fallbackUrl = stripDeletedAtFilters(url);
+    if (fallbackUrl !== url) {
+      return fetch(fallbackUrl, { headers });
+    }
+  }
+  return response;
+}
+
 async function readSupabaseError(response: Response, fallback: string) {
   try {
     const payload = (await response.json()) as {
@@ -2439,7 +2463,7 @@ export async function loadScheduleTemplates(accessToken?: string): Promise<Sched
   }
   const [templatesRes, phasesRes] = await Promise.all([
     fetch(supabaseUrl("project_schedule_templates?select=*&order=name.asc"), { headers: supabaseHeaders(accessToken) }),
-    fetch(supabaseUrl("project_schedule_template_phases?select=*&deleted_at=is.null&order=sequence_order.asc"), { headers: supabaseHeaders(accessToken) }),
+    fetchWithDeletedAtFallback(supabaseUrl("project_schedule_template_phases?select=*&deleted_at=is.null&order=sequence_order.asc"), supabaseHeaders(accessToken)),
   ]);
   if (!templatesRes.ok || !phasesRes.ok) {
     return [];
@@ -2849,9 +2873,9 @@ export async function loadFormSchema(formKey: string, accessToken?: string): Pro
   }
   const schema = schemaRows[0];
 
-  const fieldsRes = await fetch(
+  const fieldsRes = await fetchWithDeletedAtFallback(
     supabaseUrl(`form_schema_fields?form_schema_id=eq.${schema.id}&select=*&deleted_at=is.null&order=sequence_order.asc`),
-    { headers: supabaseHeaders(accessToken) },
+    supabaseHeaders(accessToken),
   );
   const fieldRows = fieldsRes.ok ? ((await fieldsRes.json()) as FormSchemaFieldRow[]) : [];
 
@@ -3064,9 +3088,7 @@ export async function loadPresalesRules(accessToken?: string): Promise<PresalesH
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("presales_hardware_rules?select=*&deleted_at=is.null&order=tier.asc,sequence_order.asc"), {
-    headers: supabaseHeaders(accessToken),
-  });
+  const response = await fetchWithDeletedAtFallback(supabaseUrl("presales_hardware_rules?select=*&deleted_at=is.null&order=tier.asc,sequence_order.asc"), supabaseHeaders(accessToken));
   if (!response.ok) {
     return [];
   }
@@ -3156,9 +3178,7 @@ export async function loadSiteHardwareRules(accessToken?: string): Promise<SiteH
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("site_hardware_rules?select=*&deleted_at=is.null&order=metric.asc,sequence_order.asc"), {
-    headers: supabaseHeaders(accessToken),
-  });
+  const response = await fetchWithDeletedAtFallback(supabaseUrl("site_hardware_rules?select=*&deleted_at=is.null&order=metric.asc,sequence_order.asc"), supabaseHeaders(accessToken));
   if (!response.ok) {
     return [];
   }
@@ -3255,9 +3275,7 @@ export async function loadTaskHardwareDependencies(accessToken?: string): Promis
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("task_hardware_dependencies?select=*"), {
-    headers: supabaseHeaders(accessToken),
-  });
+  const response = await fetchWithDeletedAtFallback(supabaseUrl("task_hardware_dependencies?select=*&deleted_at=is.null"), supabaseHeaders(accessToken));
   if (!response.ok) {
     return [];
   }
@@ -5208,17 +5226,26 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   };
 }
 
+// Migration 088: soft-deleted locations/items/images shouldn't show up in
+// the normal app -- filtered out here via embedded PostgREST filters
+// rather than dropped from the select, so `fetchWithDeletedAtFallback` can
+// strip just these params (and nothing else) if 088 hasn't run yet.
+const PROJECT_LOCATIONS_DELETED_AT_FILTERS =
+  "&project_locations.deleted_at=is.null&project_locations.project_location_images.deleted_at=is.null&project_locations.project_location_items.deleted_at=is.null&project_shipments.project_shipment_photos.deleted_at=is.null";
+
 export async function loadProjectSites(accessToken?: string): Promise<ProjectSite[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl(`projects?select=${PROJECT_SITE_SELECT}&order=project_name.asc`), {
-    headers: supabaseHeaders(accessToken),
-  });
+  const response = await fetchWithDeletedAtFallback(
+    supabaseUrl(`projects?select=${PROJECT_SITE_SELECT}&order=project_name.asc${PROJECT_LOCATIONS_DELETED_AT_FILTERS}`),
+    supabaseHeaders(accessToken),
+  );
   if (!response.ok && response.status === 400) {
-    const fallbackResponse = await fetch(supabaseUrl(`projects?select=${PROJECT_SITE_SELECT_PRE_087}&order=project_name.asc`), {
-      headers: supabaseHeaders(accessToken),
-    });
+    const fallbackResponse = await fetchWithDeletedAtFallback(
+      supabaseUrl(`projects?select=${PROJECT_SITE_SELECT_PRE_087}&order=project_name.asc${PROJECT_LOCATIONS_DELETED_AT_FILTERS}`),
+      supabaseHeaders(accessToken),
+    );
     if (!fallbackResponse.ok) {
       return [];
     }
@@ -5860,9 +5887,7 @@ export async function loadPurchaseOrders(accessToken?: string): Promise<Purchase
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT}&purchase_order_files.deleted_at=is.null&order=requested_date.desc`), {
-    headers: supabaseHeaders(accessToken),
-  });
+  const response = await fetchWithDeletedAtFallback(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT}&purchase_order_files.deleted_at=is.null&order=requested_date.desc`), supabaseHeaders(accessToken));
   if (!response.ok && response.status === 400) {
     // Migration 085 (purchase_order_holds) hasn't run yet -- retry without it.
     const holdsResponse = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT_WITH_CREATED_BY}&order=requested_date.desc`), {
@@ -7507,14 +7532,77 @@ export async function updateProjectLocation(
   });
 }
 
-export async function deleteProjectLocation(id: string, accessToken?: string): Promise<void> {
+export async function deleteProjectLocation(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`project_locations?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("project_location", id, label, "deleted", actorEmail, accessToken);
+}
+
+export type DeletedProjectLocation = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  locationName: string;
+  locationType: "garage" | "lot";
+  deletedByEmail: string;
+  deletedAt: string;
+};
+
+type DeletedProjectLocationRow = {
+  id: string;
+  project_id: string;
+  name: string;
+  location_type: string;
+  deleted_by_email: string | null;
+  deleted_at: string;
+  projects: { project_name: string } | { project_name: string }[] | null;
+};
+
+export async function loadDeletedProjectLocations(accessToken?: string): Promise<DeletedProjectLocation[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl("project_locations?select=id,project_id,name,location_type,deleted_by_email,deleted_at,projects(project_name)&deleted_at=not.is.null&order=deleted_at.desc"),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as DeletedProjectLocationRow[];
+  return rows.map((row) => {
+    const project = Array.isArray(row.projects) ? row.projects[0] : row.projects;
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      projectName: project?.project_name ?? "Unknown project",
+      locationName: row.name,
+      locationType: row.location_type === "lot" ? "lot" : "garage",
+      deletedByEmail: row.deleted_by_email ?? "",
+      deletedAt: row.deleted_at,
+    };
+  });
+}
+
+export async function restoreProjectLocation(id: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`project_locations?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: null, deleted_at: null }),
+  });
+  if (response.ok) {
+    await logDeletionEvent("project_location", id, label, "restored", actorEmail, accessToken);
+  }
+  return response.ok;
 }
 
 export async function addProjectLocationItem(
@@ -7570,14 +7658,16 @@ export async function updateProjectLocationItem(
   });
 }
 
-export async function deleteProjectLocationItem(id: string, accessToken?: string): Promise<void> {
+export async function deleteProjectLocationItem(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`project_location_items?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("project_location_item", id, label, "deleted", actorEmail, accessToken);
 }
 
 export function buildProjectImageStoragePath(projectLocationId: string, fileName: string): string {
@@ -7675,21 +7765,97 @@ export async function moveProjectLocationImage(imageId: string, targetLocationId
   return response.ok;
 }
 
-export async function deleteProjectLocationImage(imageId: string, storagePath: string, accessToken?: string): Promise<boolean> {
+// Migration 088: soft delete only now -- the Storage object is deliberately
+// left in place so a restored photo isn't just an empty DB row pointing at
+// nothing. This was the audit's highest-severity finding: a deleted site
+// photo used to be genuinely unrecoverable evidence, not just a lost row.
+export async function deleteProjectLocationImage(imageId: string, _storagePath: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return false;
   }
   try {
-    await deleteStorageObject(PROJECT_LOCATION_IMAGE_BUCKET, storagePath, accessToken);
     const response = await fetch(supabaseUrl(`project_location_images?id=eq.${imageId}`), {
-      method: "DELETE",
+      method: "PATCH",
       headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
     });
+    if (response.ok) {
+      await logDeletionEvent("project_location_image", imageId, label, "deleted", actorEmail, accessToken);
+    }
     return response.ok;
   } catch (error) {
     console.error("deleteProjectLocationImage threw", error);
     return false;
   }
+}
+
+export type DeletedProjectLocationImage = {
+  id: string;
+  projectLocationId: string;
+  projectName: string;
+  locationName: string;
+  fileName: string;
+  storagePath: string;
+  imageType: "photo" | "drawing";
+  deletedByEmail: string;
+  deletedAt: string;
+};
+
+type DeletedProjectLocationImageRow = {
+  id: string;
+  project_location_id: string;
+  file_name: string | null;
+  storage_path: string;
+  image_type: string;
+  deleted_by_email: string | null;
+  deleted_at: string;
+  project_locations: { name: string; projects: { project_name: string } | { project_name: string }[] | null } | { name: string; projects: { project_name: string } | { project_name: string }[] | null }[] | null;
+};
+
+export async function loadDeletedProjectLocationImages(accessToken?: string): Promise<DeletedProjectLocationImage[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(
+      "project_location_images?select=id,project_location_id,file_name,storage_path,image_type,deleted_by_email,deleted_at,project_locations(name,projects(project_name))&deleted_at=not.is.null&order=deleted_at.desc",
+    ),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as DeletedProjectLocationImageRow[];
+  return rows.map((row) => {
+    const location = Array.isArray(row.project_locations) ? row.project_locations[0] : row.project_locations;
+    const project = location ? (Array.isArray(location.projects) ? location.projects[0] : location.projects) : null;
+    return {
+      id: row.id,
+      projectLocationId: row.project_location_id,
+      projectName: project?.project_name ?? "Unknown project",
+      locationName: location?.name ?? "Unknown location",
+      fileName: row.file_name ?? "Untitled",
+      storagePath: row.storage_path,
+      imageType: row.image_type === "drawing" ? "drawing" : "photo",
+      deletedByEmail: row.deleted_by_email ?? "",
+      deletedAt: row.deleted_at,
+    };
+  });
+}
+
+export async function restoreProjectLocationImage(imageId: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`project_location_images?id=eq.${imageId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: null, deleted_at: null }),
+  });
+  if (response.ok) {
+    await logDeletionEvent("project_location_image", imageId, label, "restored", actorEmail, accessToken);
+  }
+  return response.ok;
 }
 
 export async function addProjectShippingAddress(
@@ -7866,16 +8032,23 @@ export async function addProjectShipmentPhoto(
   }
 }
 
-export async function deleteProjectShipmentPhoto(photoId: string, storagePath: string, accessToken?: string): Promise<boolean> {
+// Migration 088: soft delete only -- Storage object left in place. No
+// restore UI yet (lower priority than location photos per the audit), but
+// the row and file both survive and every delete is logged, so nothing is
+// actually lost even without a button for it today.
+export async function deleteProjectShipmentPhoto(photoId: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return false;
   }
   try {
-    await deleteStorageObject(PROJECT_SHIPMENT_PHOTO_BUCKET, storagePath, accessToken);
     const response = await fetch(supabaseUrl(`project_shipment_photos?id=eq.${photoId}`), {
-      method: "DELETE",
+      method: "PATCH",
       headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
     });
+    if (response.ok) {
+      await logDeletionEvent("project_shipment_photo", photoId, label, "deleted", actorEmail, accessToken);
+    }
     return response.ok;
   } catch (error) {
     console.error("deleteProjectShipmentPhoto threw", error);

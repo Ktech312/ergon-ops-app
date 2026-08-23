@@ -60,6 +60,8 @@ import {
   addProjectLocation,
   updateProjectLocation,
   deleteProjectLocation,
+  restoreProjectLocation,
+  loadDeletedProjectLocations,
   addProjectLocationItem,
   updateProjectLocationItem,
   deleteProjectLocationItem,
@@ -68,6 +70,8 @@ import {
   updateProjectLocationImageMeta,
   moveProjectLocationImage,
   deleteProjectLocationImage,
+  restoreProjectLocationImage,
+  loadDeletedProjectLocationImages,
   getProjectLocationImageDownloadUrl,
   addProjectShippingAddress,
   addProjectShipment,
@@ -262,6 +266,8 @@ import {
   type ProjectHandover,
   type ProjectSite,
   type ProjectLocation,
+  type DeletedProjectLocation,
+  type DeletedProjectLocationImage,
   type ProjectLocationImage,
   type ProjectLocationItem,
   type ProjectShippingAddress,
@@ -1068,6 +1074,8 @@ function App() {
   // Phase 10f: Projects no longer lives in the local/blob state -- it's
   // always loaded fresh from the real table (see the effect below).
   const [projectSites, setProjectSites] = useState<ProjectSite[]>([]);
+  const [deletedProjectLocations, setDeletedProjectLocations] = useState<DeletedProjectLocation[]>([]);
+  const [deletedProjectLocationImages, setDeletedProjectLocationImages] = useState<DeletedProjectLocationImage[]>([]);
   // Phase 10d: Equipment Recipes no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [deviceRecipes, setDeviceRecipes] = useState<BuildRecipe[]>([]);
@@ -1305,6 +1313,8 @@ function App() {
       return;
     }
     loadProjectSites(authSession.accessToken).then(setProjectSites).catch(() => {});
+    loadDeletedProjectLocations(authSession.accessToken).then(setDeletedProjectLocations).catch(() => {});
+    loadDeletedProjectLocationImages(authSession.accessToken).then(setDeletedProjectLocationImages).catch(() => {});
   }, [authSession]);
 
   // Uploads Site Builder photos that got stuck in the offline queue (see
@@ -2961,14 +2971,34 @@ function App() {
   }
 
   async function handleDeleteProjectLocation(projectRef: string, locationId: string) {
+    const project = projectSites.find((entry) => entry.ref === projectRef);
+    const location = project?.locations?.find((existing) => existing.id === locationId);
+    const label = location?.name || (location?.locationType === "lot" ? "Lot" : "Garage");
     setProjectSites((current) =>
       current.map((entry) =>
         entry.ref === projectRef ? { ...entry, locations: (entry.locations ?? []).filter((location) => location.id !== locationId) } : entry,
       ),
     );
     if (authSession) {
-      await deleteProjectLocation(locationId, authSession.accessToken);
+      await deleteProjectLocation(locationId, label, authSession.email, authSession.accessToken);
+      setDeletedProjectLocations((current) => [
+        { id: locationId, projectId: "", projectName: project?.name ?? "Unknown project", locationName: label, locationType: location?.locationType ?? "garage", deletedByEmail: authSession.email, deletedAt: new Date().toISOString() },
+        ...current,
+      ]);
     }
+  }
+
+  async function handleRestoreProjectLocation(id: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const target = deletedProjectLocations.find((existing) => existing.id === id);
+    const ok = await restoreProjectLocation(id, target?.locationName ?? "Location", authSession.email, authSession.accessToken);
+    if (ok) {
+      setDeletedProjectLocations((current) => current.filter((existing) => existing.id !== id));
+      setProjectSites(await loadProjectSites(authSession.accessToken));
+    }
+    return ok;
   }
 
   async function handleAddProjectLocationItem(
@@ -3045,6 +3075,10 @@ function App() {
     if (!authSession) {
       return;
     }
+    const location = projectSites.find((entry) => entry.ref === projectRef)?.locations?.find((entry) => entry.id === locationId);
+    const allItems = [...(location?.signLines ?? []), ...(location?.sensorLines ?? []), ...(location?.miscLines ?? []), ...(location?.cameraLines ?? []), ...(location?.vpuLines ?? [])];
+    const item = allItems.find((line) => line.id === itemId);
+    const label = catalogItems.find((catalogItem) => catalogItem.id === item?.catalogItemId)?.productName ?? "Location hardware line";
     setProjectSites((current) =>
       current.map((entryProject) =>
         entryProject.ref === projectRef
@@ -3066,7 +3100,7 @@ function App() {
           : entryProject,
       ),
     );
-    await deleteProjectLocationItem(itemId, authSession.accessToken);
+    await deleteProjectLocationItem(itemId, label, authSession.email, authSession.accessToken);
   }
 
   async function handleUploadProjectLocationImage(
@@ -3188,7 +3222,11 @@ function App() {
     if (!authSession) {
       return false;
     }
-    const ok = await deleteProjectLocationImage(imageId, storagePath, authSession.accessToken);
+    const project = projectSites.find((entry) => entry.ref === projectRef);
+    const location = project?.locations?.find((entry) => entry.id === locationId);
+    const image = location?.images.find((entry) => entry.id === imageId);
+    const label = image?.fileName || "Untitled";
+    const ok = await deleteProjectLocationImage(imageId, storagePath, label, authSession.email, authSession.accessToken);
     if (ok) {
       setProjectSites((current) =>
         current.map((entry) =>
@@ -3202,6 +3240,33 @@ function App() {
             : entry,
         ),
       );
+      setDeletedProjectLocationImages((current) => [
+        {
+          id: imageId,
+          projectLocationId: locationId,
+          projectName: project?.name ?? "Unknown project",
+          locationName: location?.name || "Location",
+          fileName: label,
+          storagePath,
+          imageType: image?.imageType ?? "photo",
+          deletedByEmail: authSession.email,
+          deletedAt: new Date().toISOString(),
+        },
+        ...current,
+      ]);
+    }
+    return ok;
+  }
+
+  async function handleRestoreProjectLocationImage(imageId: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const target = deletedProjectLocationImages.find((existing) => existing.id === imageId);
+    const ok = await restoreProjectLocationImage(imageId, target?.fileName ?? "Photo", authSession.email, authSession.accessToken);
+    if (ok) {
+      setDeletedProjectLocationImages((current) => current.filter((existing) => existing.id !== imageId));
+      setProjectSites(await loadProjectSites(authSession.accessToken));
     }
     return ok;
   }
@@ -3381,7 +3446,8 @@ function App() {
     if (!authSession) {
       return false;
     }
-    const ok = await deleteProjectShipmentPhoto(photoId, storagePath, authSession.accessToken);
+    const photo = projectSites.find((entry) => entry.ref === projectRef)?.shipments?.find((entry) => entry.id === shipmentId)?.photos.find((entry) => entry.id === photoId);
+    const ok = await deleteProjectShipmentPhoto(photoId, photo?.fileName || "Shipment photo", authSession.email, authSession.accessToken);
     if (ok) {
       setProjectSites((current) =>
         current.map((entry) =>
@@ -6001,7 +6067,7 @@ function App() {
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -9502,12 +9568,22 @@ function Projects({
   onGetProjectShipmentPhotoUrl,
   onDetailContextChange,
   purchaseOrders,
+  deletedProjectLocations,
+  onRestoreProjectLocation,
+  deletedProjectLocationImages,
+  onRestoreProjectLocationImage,
+  canReviewDeleted,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
   inventoryItems: Part[];
   projectDocuments: UploadedDoc[];
   purchaseOrders: PurchaseOrder[];
+  deletedProjectLocations?: DeletedProjectLocation[];
+  onRestoreProjectLocation?: (id: string) => Promise<boolean>;
+  deletedProjectLocationImages?: DeletedProjectLocationImage[];
+  onRestoreProjectLocationImage?: (id: string) => Promise<boolean>;
+  canReviewDeleted?: boolean;
   onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
   onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
   onDownloadDocument: (doc: UploadedDoc) => void;
@@ -9570,6 +9646,7 @@ function Projects({
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
   const [selectedProjectName, setSelectedProjectName] = useState(initialProject?.name ?? projects[0].name);
   const [projectMode, setProjectMode] = useState<"list" | "detail">(initialProject ? "detail" : "list");
+  const [showDeletedProjectItems, setShowDeletedProjectItems] = useState(false);
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
   const [galleryProjectName, setGalleryProjectName] = useState<string | null>(null);
   const galleryProject = galleryProjectName ? projectSites.find((project) => project.name === galleryProjectName) ?? null : null;
@@ -10235,6 +10312,69 @@ function Projects({
         />
 
         <ProjectPortfolioHealth projectSites={projectSites} purchaseOrders={purchaseOrders} />
+
+        {canReviewDeleted && ((deletedProjectLocations ?? []).length > 0 || (deletedProjectLocationImages ?? []).length > 0) && (
+          <section className="panel wide">
+            <div className="panel-title-row">
+              <div>
+                <h2>Deleted Locations &amp; Photos</h2>
+                <p>Garages/lots and photos removed from projects, but kept on record. Restore brings them back.</p>
+              </div>
+              <button className="secondary-action mini-action" type="button" onClick={() => setShowDeletedProjectItems((current) => !current)}>
+                {showDeletedProjectItems ? "Hide" : "Show"} ({(deletedProjectLocations ?? []).length + (deletedProjectLocationImages ?? []).length})
+              </button>
+            </div>
+            {showDeletedProjectItems && (
+              <div className="deleted-tasks-panel">
+                {(deletedProjectLocations ?? []).length > 0 && (
+                  <table className="stack-table-mobile">
+                    <thead>
+                      <tr><th>Location</th><th>Project</th><th>Deleted by</th><th>Deleted at</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {(deletedProjectLocations ?? []).map((location) => (
+                        <tr key={location.id}>
+                          <td>{location.locationName || (location.locationType === "lot" ? "Lot" : "Garage")}</td>
+                          <td data-label="Project">{location.projectName}</td>
+                          <td data-label="Deleted by">{location.deletedByEmail || "Unknown"}</td>
+                          <td data-label="Deleted at">{new Date(location.deletedAt).toLocaleString()}</td>
+                          <td>
+                            {onRestoreProjectLocation && (
+                              <button className="secondary-action mini-action" type="button" onClick={() => onRestoreProjectLocation(location.id)}>Restore</button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {(deletedProjectLocationImages ?? []).length > 0 && (
+                  <table className="stack-table-mobile">
+                    <thead>
+                      <tr><th>File</th><th>Location</th><th>Project</th><th>Deleted by</th><th>Deleted at</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {(deletedProjectLocationImages ?? []).map((image) => (
+                        <tr key={image.id}>
+                          <td>{image.fileName}</td>
+                          <td data-label="Location">{image.locationName}</td>
+                          <td data-label="Project">{image.projectName}</td>
+                          <td data-label="Deleted by">{image.deletedByEmail || "Unknown"}</td>
+                          <td data-label="Deleted at">{new Date(image.deletedAt).toLocaleString()}</td>
+                          <td>
+                            {onRestoreProjectLocationImage && (
+                              <button className="secondary-action mini-action" type="button" onClick={() => onRestoreProjectLocationImage(image.id)}>Restore</button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </section>
+        )}
 
         <section className="panel full">
           <div className="action-header">
