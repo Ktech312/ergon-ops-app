@@ -3942,6 +3942,15 @@ export type Part = {
   category: "Base" | "Communications" | "Power" | "Lighting" | "Display" | "Build";
   cost: number;
   stock: number;
+  // Migration 091: earmarked for a project via BOM/task auto-allocation,
+  // still physically on hand (not yet shipped) -- see allocateFromInventory.
+  // `stock` above stays "physically in the building" regardless of this;
+  // "available to promise" is stock - allocated, computed where needed,
+  // not stored. Optional (not undefined once loaded -- mapInventoryItemRow
+  // always sets a real number) only so the many hardcoded/demo Part
+  // literals sprinkled around main.tsx that predate the real backend
+  // cutover don't all need updating; read as `part.allocated ?? 0`.
+  allocated?: number;
   reorderPoint: number;
   vendorUrl?: string;
   imageUrl?: string;
@@ -3968,14 +3977,19 @@ type InventoryItemRow = {
   price_history: PriceHistoryEntry[] | null;
   inventory_tags: string[] | null;
   is_active: boolean;
-  inventory_balances: Array<{ quantity_on_hand: number | string }> | null;
+  inventory_balances: Array<{ quantity_on_hand: number | string; quantity_allocated: number | string | null }> | null;
 };
 
 const INVENTORY_ITEM_SELECT =
+  "id,sku,item_name,description,manufacturer,category,default_unit_cost,reorder_point,vendor_url,image_url,barcode_value,purchase_sources,price_history,inventory_tags,is_active,inventory_balances(quantity_on_hand,quantity_allocated)";
+// Migration 091 safety: same shape minus quantity_allocated, in case that
+// column hasn't landed yet -- without this, the whole Inventory load 400s.
+const INVENTORY_ITEM_SELECT_PRE_091 =
   "id,sku,item_name,description,manufacturer,category,default_unit_cost,reorder_point,vendor_url,image_url,barcode_value,purchase_sources,price_history,inventory_tags,is_active,inventory_balances(quantity_on_hand)";
 
 function mapInventoryItemRow(row: InventoryItemRow): Part {
   const stock = (row.inventory_balances ?? []).reduce((sum, balance) => sum + (Number(balance.quantity_on_hand) || 0), 0);
+  const allocated = (row.inventory_balances ?? []).reduce((sum, balance) => sum + (Number(balance.quantity_allocated) || 0), 0);
   return {
     ref: row.sku,
     name: row.item_name,
@@ -3984,6 +3998,7 @@ function mapInventoryItemRow(row: InventoryItemRow): Part {
     category: (row.category as Part["category"]) ?? "Base",
     cost: Number(row.default_unit_cost) || 0,
     stock,
+    allocated,
     reorderPoint: Number(row.reorder_point) || 0,
     vendorUrl: row.vendor_url ?? undefined,
     imageUrl: row.image_url ?? undefined,
@@ -4002,6 +4017,16 @@ export async function loadInventoryItems(accessToken?: string): Promise<Part[]> 
   const response = await fetch(supabaseUrl(`inventory_items?select=${INVENTORY_ITEM_SELECT}&order=item_name.asc`), {
     headers: supabaseHeaders(accessToken),
   });
+  if (!response.ok && response.status === 400) {
+    const fallbackResponse = await fetch(supabaseUrl(`inventory_items?select=${INVENTORY_ITEM_SELECT_PRE_091}&order=item_name.asc`), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (!fallbackResponse.ok) {
+      return [];
+    }
+    const fallbackRows = (await fallbackResponse.json()) as InventoryItemRow[];
+    return fallbackRows.map(mapInventoryItemRow);
+  }
   if (!response.ok) {
     return [];
   }
@@ -4065,18 +4090,28 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
   const balancePayload = items
     .map((item) => {
       const inventoryItemId = idBySku.get(item.ref);
-      return inventoryItemId ? { inventory_item_id: inventoryItemId, location_id: locationId, quantity_on_hand: item.stock } : null;
+      return inventoryItemId ? { inventory_item_id: inventoryItemId, location_id: locationId, quantity_on_hand: item.stock, quantity_allocated: item.allocated ?? 0 } : null;
     })
-    .filter((row): row is { inventory_item_id: string; location_id: string; quantity_on_hand: number } => row !== null);
+    .filter((row): row is { inventory_item_id: string; location_id: string; quantity_on_hand: number; quantity_allocated: number } => row !== null);
 
   if (balancePayload.length === 0) {
     return;
   }
-  await fetch(supabaseUrl("inventory_balances?on_conflict=inventory_item_id,location_id"), {
+  const balanceResponse = await fetch(supabaseUrl("inventory_balances?on_conflict=inventory_item_id,location_id"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
     body: JSON.stringify(balancePayload),
   });
+  // Migration 091 safety: retry without quantity_allocated if it hasn't
+  // landed yet, so stock itself still saves.
+  if (!balanceResponse.ok && balanceResponse.status === 400) {
+    const fallbackPayload = balancePayload.map(({ quantity_allocated: _quantityAllocated, ...rest }) => rest);
+    await fetch(supabaseUrl("inventory_balances?on_conflict=inventory_item_id,location_id"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(fallbackPayload),
+    });
+  }
 }
 
 // --- Phase 10d: Equipment Recipes (cut over from the app_records blob to the

@@ -1,0 +1,23 @@
+-- Migration 091: split "on hand" from "allocated for a project, still
+-- physically in the shop" -- E, looking at the Dashboard's Inventory Value
+-- tile: "this should also have Allocated for Projects (this would be in
+-- house inventory that has not shipped yet)... how much we have in shop,
+-- how much we are waiting to ship..."
+--
+-- Investigated first: today, pulling for a project (BOM/task
+-- auto-allocation) and an actual shipment both decrement quantity_on_hand
+-- through the same function, immediately -- there's no way to tell
+-- "earmarked but still here" apart from "physically gone." Worse, if the
+-- same goods get auto-allocated AND later shipped, quantity_on_hand gets
+-- decremented twice for one physical departure (a real pre-existing bug,
+-- fixed alongside this).
+--
+-- quantity_on_hand keeps meaning "physically in the building" -- it now
+-- only decreases on an actual build-consume or a real departure (shipment
+-- marked Shipped, or manual Transfer to Project, which was already
+-- documented in the code as "a real stock movement, same as shipping").
+-- quantity_allocated is new -- BOM/task auto-allocation increases this
+-- instead of touching quantity_on_hand, since that material hasn't left
+-- yet. "Available" (what's actually free to promise) = on_hand - allocated,
+-- computed in the app, not stored.
+alter table inventory_balances add column if not exists quantity_allocated numeric not null default 0;

@@ -353,6 +353,17 @@ const inventoryTags = ["VPU Part", "Edge Box Part", "Solar Part", "Server Part",
 // has -- flag it if that's wanted.
 const BOM_ITEM_GROUPS = ["VPUs", "Cameras", "Sign Controllers", "Misc Parts"] as const;
 
+// Migration 091: `part.stock` is what's physically in the building --
+// `part.allocated` is how much of that is already earmarked for a project
+// (BOM/task auto-allocation) but hasn't shipped yet. Every "can we use/
+// promise/build this" decision should check `availableOf(part)`, not raw
+// `.stock` -- otherwise the same physical units could get promised twice.
+// Reporting/ledger code that genuinely wants the physical count (receiving,
+// cycle counts, the Stock column itself) keeps reading `.stock` directly.
+function availableOf(part: Part): number {
+  return part.stock - (part.allocated ?? 0);
+}
+
 function categorizeInventoryItemForBom(part: Part): (typeof BOM_ITEM_GROUPS)[number] {
   const name = part.name.toLowerCase();
   const tags = (part.tags ?? []).map((tag) => tag.toLowerCase());
@@ -1201,8 +1212,9 @@ function App() {
   const [presalesStatus, setPresalesStatus] = useState("");
   const [taskHardwareDependencies, setTaskHardwareDependencies] = useState<TaskHardwareDependency[]>([]);
   const [inventoryItemSkuById, setInventoryItemSkuById] = useState<Record<string, string>>({});
-  const lowStock = inventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint);
+  const lowStock = inventoryItems.filter((part) => !part.retired && availableOf(part) <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
+  const allocatedForProjectsValue = inventoryItems.reduce((sum, part) => sum + (part.allocated ?? 0) * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
 
   useEffect(() => {
@@ -3545,7 +3557,7 @@ function App() {
     // each line's qty out of inventory now, not at request time, since a
     // request can sit for a while before it actually goes out the door.
     for (const line of shipment.lines) {
-      pullFromInventory(line.itemName, line.qty, project.name, `Shipped via ${shipment.shipmentNumber}${carrier ? ` (${carrier})` : ""}${trackingNumber ? ` -- ${trackingNumber}` : ""}`);
+      shipFromInventory(line.itemName, line.qty, project.name, `Shipped via ${shipment.shipmentNumber}${carrier ? ` (${carrier})` : ""}${trackingNumber ? ` -- ${trackingNumber}` : ""}`);
     }
   }
 
@@ -4791,9 +4803,9 @@ function App() {
       if (!part) {
         continue;
       }
-      const note = `Auto-${part.stock >= dep.quantityRequired ? "reserved" : "queued"} for task ${task.taskNumber}.`;
-      if (part.stock >= dep.quantityRequired) {
-        pullFromInventory(part.name, dep.quantityRequired, project?.name, note);
+      const note = `Auto-${availableOf(part) >= dep.quantityRequired ? "reserved" : "queued"} for task ${task.taskNumber}.`;
+      if (availableOf(part) >= dep.quantityRequired) {
+        allocateFromInventory(part.name, dep.quantityRequired, project?.name, note);
         await updateTaskHardwareDependencyStatus(dep.id, "allocated", authSession.accessToken);
         setTaskHardwareDependencies((current) => current.map((entry) => (entry.id === dep.id ? { ...entry, fulfillmentStatus: "allocated" } : entry)));
       } else {
@@ -4896,32 +4908,42 @@ function App() {
     closeGlobalSearch();
   }
 
-  function pullFromInventory(itemName: string, qty: number, projectName?: string, notes?: string) {
+  // Migration 091: earmarks stock for a project without it leaving the
+  // building yet -- BOM pulls (Projects' onInventoryPull) and task
+  // hardware auto-allocation both go through this. Increases `allocated`,
+  // never touches `stock` -- the material is still physically on the
+  // shelf, just spoken for. Feasibility is checked against `available`
+  // (stock - allocated), not raw stock, so the same physical units can't
+  // get promised to two different things.
+  function allocateFromInventory(itemName: string, qty: number, projectName?: string, notes?: string) {
     const part = inventoryItems.find((item) => item.name === itemName);
-    const pullQty = Math.max(1, Math.round(Number(qty) || 1));
-    if (!part || part.retired || part.stock < pullQty) {
+    const allocateQty = Math.max(1, Math.round(Number(qty) || 1));
+    if (!part || part.retired || availableOf(part) < allocateQty) {
       return;
     }
 
-    const pulledAt = new Date().toISOString();
+    const allocatedBefore = part.allocated ?? 0;
+    const allocatedAfter = allocatedBefore + allocateQty;
+    const allocatedAt = new Date().toISOString();
     const movement: InventoryMovement = {
       id: makeId("txn"),
       type: "transfer",
       sku: part.ref,
       itemName: part.name,
-      quantity: pullQty,
-      quantityBefore: part.stock,
-      quantityAfter: part.stock - pullQty,
+      quantity: allocateQty,
+      quantityBefore: allocatedBefore,
+      quantityAfter: allocatedAfter,
       projectName,
       source: "project",
-      notes: notes || `Pulled from inventory for ${projectName ?? "project BOM"}.`,
-      createdAt: pulledAt,
+      notes: notes || `Allocated for ${projectName ?? "project BOM"} -- still in the shop, not yet shipped.`,
+      createdAt: allocatedAt,
     };
 
-    setInventoryItems((current) => current.map((item) => (item.ref === part.ref ? { ...item, stock: item.stock - pullQty } : item)));
+    setInventoryItems((current) => current.map((item) => (item.ref === part.ref ? { ...item, allocated: allocatedAfter } : item)));
     recordMovements([movement]);
-    if (movement.quantityAfter <= part.reorderPoint) {
-      notifyLowStockReached({ ...part, stock: movement.quantityAfter });
+    const availableAfter = part.stock - allocatedAfter;
+    if (availableAfter <= part.reorderPoint) {
+      notifyLowStockReached({ ...part, stock: availableAfter });
     }
 
     if (projectName) {
@@ -4932,14 +4954,51 @@ function App() {
           projectRef: projectSites.find((project) => project.name === projectName)?.ref,
           sku: part.ref,
           itemName: part.name,
-          quantity: pullQty,
+          quantity: allocateQty,
           movementId: movement.id,
           action: "allocated",
-          notes: notes || "Pulled from inventory through project BOM.",
-          createdAt: pulledAt,
+          notes: notes || "Allocated from inventory for a project.",
+          createdAt: allocatedAt,
         },
         ...current,
       ]);
+    }
+  }
+
+  // Migration 091: a real physical departure -- decrements both `stock`
+  // (it's leaving the building) and `allocated` (floored at 0, since a
+  // shipment for material that was never formally allocated first
+  // shouldn't push allocated negative). Used by "mark Shipped" and the
+  // manual "Transfer to Project" action, both of which are immediate,
+  // real stock movements, not earmarks.
+  function shipFromInventory(itemName: string, qty: number, projectName?: string, notes?: string) {
+    const part = inventoryItems.find((item) => item.name === itemName);
+    const shipQty = Math.max(1, Math.round(Number(qty) || 1));
+    if (!part || part.retired || part.stock < shipQty) {
+      return;
+    }
+
+    const shippedAt = new Date().toISOString();
+    const movement: InventoryMovement = {
+      id: makeId("txn"),
+      type: "transfer",
+      sku: part.ref,
+      itemName: part.name,
+      quantity: shipQty,
+      quantityBefore: part.stock,
+      quantityAfter: part.stock - shipQty,
+      projectName,
+      source: "project",
+      notes: notes || `Shipped for ${projectName ?? "project"}.`,
+      createdAt: shippedAt,
+    };
+
+    setInventoryItems((current) =>
+      current.map((item) => (item.ref === part.ref ? { ...item, stock: item.stock - shipQty, allocated: Math.max(0, (item.allocated ?? 0) - shipQty) } : item)),
+    );
+    recordMovements([movement]);
+    if (movement.quantityAfter <= part.reorderPoint) {
+      notifyLowStockReached({ ...part, stock: movement.quantityAfter });
     }
   }
 
@@ -5114,8 +5173,9 @@ function App() {
     };
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: adjustedQty } : item)));
     recordMovements([movement]);
-    if (adjustedQty <= part.reorderPoint) {
-      notifyLowStockReached({ ...part, stock: adjustedQty });
+    const availableAfterAdjust = adjustedQty - (part.allocated ?? 0);
+    if (availableAfterAdjust <= part.reorderPoint) {
+      notifyLowStockReached({ ...part, stock: availableAfterAdjust });
     }
     });
   }
@@ -5123,11 +5183,11 @@ function App() {
   function transferInventoryToProject(partRef: string, projectName: string, qty: number, notes: string) {
     withProductionLock("inventory_item", partRef, () => {
     const part = inventoryItems.find((item) => item.ref === partRef);
-    if (!part || part.stock <= 0) {
+    if (!part || availableOf(part) <= 0) {
       return;
     }
 
-    const transferQty = Math.min(Math.max(1, qty), part.stock);
+    const transferQty = Math.min(Math.max(1, qty), availableOf(part));
     const movement: InventoryMovement = {
       id: makeId("txn"),
       type: "transfer",
@@ -5143,8 +5203,9 @@ function App() {
     };
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: item.stock - transferQty } : item)));
     recordMovements([movement]);
-    if (movement.quantityAfter <= part.reorderPoint) {
-      notifyLowStockReached({ ...part, stock: movement.quantityAfter });
+    const availableAfterTransfer = movement.quantityAfter - (part.allocated ?? 0);
+    if (availableAfterTransfer <= part.reorderPoint) {
+      notifyLowStockReached({ ...part, stock: availableAfterTransfer });
     }
     setProjectAllocations((current) => [
       {
@@ -5209,7 +5270,7 @@ function App() {
     const plannedBuild = plannedBuildId ? buildTransactions.find((build) => build.id === plannedBuildId && build.status === "planned") : undefined;
     const hasShortage = recipe.components.some((component) => {
       const part = inventoryItems.find((item) => item.name === component.itemName);
-      return !part || part.stock < component.qty * buildQty;
+      return !part || availableOf(part) < component.qty * buildQty;
     });
 
     if (hasShortage) {
@@ -5482,8 +5543,10 @@ function App() {
 
   async function queueReorderRequests() {
     for (const part of lowStock) {
-      const qty = Math.max(1, part.reorderPoint - part.stock);
-      await queuePurchaseRequest(part, qty, "Reorder Point", `Stock is ${part.stock}; reorder point is ${part.reorderPoint}.`);
+      const available = availableOf(part);
+      const qty = Math.max(1, part.reorderPoint - available);
+      const allocatedNote = (part.allocated ?? 0) > 0 ? ` (${part.stock} on hand, ${part.allocated} allocated)` : "";
+      await queuePurchaseRequest(part, qty, "Reorder Point", `Available is ${available}${allocatedNote}; reorder point is ${part.reorderPoint}.`);
     }
   }
 
@@ -5509,9 +5572,10 @@ function App() {
         continue;
       }
       const required = component.qty * build.quantityBuilt;
-      const shortage = Math.max(0, required - part.stock);
+      const available = availableOf(part);
+      const shortage = Math.max(0, required - available);
       if (shortage > 0) {
-        await queuePurchaseRequest(part, shortage, "Planned Build Shortage", `${build.buildNumber} needs ${required}; inventory has ${part.stock}.`, build.buildNumber);
+        await queuePurchaseRequest(part, shortage, "Planned Build Shortage", `${build.buildNumber} needs ${required}; ${available} available.`, build.buildNumber);
       }
     }
   }
@@ -6229,7 +6293,7 @@ function App() {
           <p>{view === "projects" && projectDetailContext ? `Ref ${projectDetailContext.ref}` : pageSubtitle(view)}</p>
         </div>
 
-        {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
+        {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} allocatedForProjectsValue={allocatedForProjectsValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {(view === "purchasing" || view === "inventory" || view === "vendors") && (
           <>
             <div className="segmented-tabs operations-subtabs">
@@ -6242,7 +6306,7 @@ function App() {
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={pullFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -6716,6 +6780,7 @@ function Dashboard({
   projectSites,
   lowStock,
   inventoryValue,
+  allocatedForProjectsValue,
   openPoValue,
   buildTransactions,
   inventoryMovements,
@@ -6727,6 +6792,7 @@ function Dashboard({
   projectSites: ProjectSite[];
   lowStock: Part[];
   inventoryValue: number;
+  allocatedForProjectsValue: number;
   openPoValue: number;
   buildTransactions: BuildTransaction[];
   inventoryMovements: InventoryMovement[];
@@ -6869,6 +6935,7 @@ function Dashboard({
     <div className="content-grid">
       <section className="metric-grid">
         <Metric icon={<Boxes size={20} />} label="Inventory Value" value={money(inventoryValue)} />
+        <Metric icon={<ClipboardList size={20} />} label="Allocated for Projects" value={money(allocatedForProjectsValue)} />
         <Metric icon={<ShoppingCart size={20} />} label="Recent Order Spend" value={money(openPoValue)} />
         <Metric icon={<FileText size={20} />} label="Imported Line Items" value={String(importedLines)} />
         <Metric icon={<Truck size={20} />} label="Active Projects" value={String(projectSites.length)} />
@@ -6936,7 +7003,7 @@ function Dashboard({
                 <strong>{part.name}</strong>
                 <span>{part.category} reorder watch</span>
               </div>
-              <b>{part.stock} left</b>
+              <b>{availableOf(part)} left</b>
             </div>
           ))}
           {activePurchaseRequests.slice(0, 3).map((request) => (
@@ -8342,7 +8409,7 @@ function Inventory({
   const buildComponentRows = selectedBuildRecipe.components.map((component) => {
     const part = inventoryItems.find((item) => item.name === component.itemName);
     const required = component.qty * Math.max(1, Math.round(Number(buildDraft.qty) || 1));
-    const available = part?.retired ? 0 : part?.stock ?? 0;
+    const available = part?.retired || !part ? 0 : availableOf(part);
     return { ...component, part, required, available, shortage: Math.max(0, required - available) };
   });
   const buildHasShortage = buildComponentRows.some((component) => component.shortage > 0);
@@ -8352,7 +8419,7 @@ function Inventory({
     ? workOrderRecipe.components.map((component) => {
         const part = inventoryItems.find((item) => item.name === component.itemName);
         const required = component.qty * workOrderBuild.quantityBuilt;
-        const available = part && !part.retired ? part.stock : 0;
+        const available = part && !part.retired ? availableOf(part) : 0;
         return { component, part, required, available, shortage: Math.max(0, required - available) };
       })
     : [];
@@ -8365,7 +8432,7 @@ function Inventory({
       ? Math.min(
           ...recipe.components.map((component) => {
             const part = inventoryItems.find((item) => item.name === component.itemName);
-            return part && !part.retired ? Math.floor(part.stock / component.qty) : 0;
+            return part && !part.retired ? Math.floor(availableOf(part) / component.qty) : 0;
           }),
         )
       : 0;
@@ -8396,7 +8463,7 @@ function Inventory({
     marketing: ["View only"],
   };
   const filteredInventoryItems = inventoryItems.filter((part) => {
-    const status = part.retired ? "Retired" : part.stock <= part.reorderPoint ? "Reorder" : "Healthy";
+    const status = part.retired ? "Retired" : availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy";
     const tabMatch = inventoryTab === "finished" ? part.category === "Build" : part.category !== "Build";
     return (
       tabMatch &&
@@ -8601,9 +8668,11 @@ function Inventory({
         category: part.category,
         manufacturer: part.manufacturer,
         stock: part.stock,
+        allocated: part.allocated ?? 0,
+        available: availableOf(part),
         reorder_point: part.reorderPoint,
         unit_cost: part.cost,
-        status: part.retired ? "Retired" : part.stock <= part.reorderPoint ? "Reorder" : "Healthy",
+        status: part.retired ? "Retired" : availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy",
         tags: (part.tags ?? []).join("; "),
         barcode: part.barcode ?? "",
       })),
@@ -8722,7 +8791,7 @@ function Inventory({
 
     const hasShortage = recipe.components.some((component) => {
       const part = inventoryItems.find((item) => item.name === component.itemName);
-      return !part || part.retired || part.stock < component.qty * build.quantityBuilt;
+      return !part || part.retired || availableOf(part) < component.qty * build.quantityBuilt;
     });
     return {
       recipe,
@@ -8869,14 +8938,46 @@ function Inventory({
   }
 
   const plannedBuildCount = buildTransactions.filter((build) => build.status === "planned").length;
+  // Migration 091: stock (physically on hand) vs. allocated (earmarked for
+  // a project, still in the shop) vs. available (stock - allocated, truly
+  // free to promise) -- E: "how much we have in shop, how much we are
+  // waiting to ship... this info should be more detailed in the Inventory
+  // tab."
   const inventoryValueTotal = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
+  const inventoryAllocatedValue = inventoryItems.reduce((sum, part) => sum + (part.allocated ?? 0) * part.cost, 0);
+  const inventoryAvailableValue = inventoryValueTotal - inventoryAllocatedValue;
+  // "How long it's been in the office" / dead stock: no per-unit or per-lot
+  // receiving date exists anywhere in the app today (stock is one running
+  // total, not batches with their own dates) -- flagged as a real gap, not
+  // built here. What IS derivable from existing data: the most recent
+  // movement per SKU. An item sitting on the shelf with stock but no
+  // movement in 90+ days is a reasonable, real "dead stock" signal even
+  // without true per-unit aging.
+  const lastMovementBySku = new Map<string, string>();
+  inventoryMovements.forEach((movement) => {
+    const current = lastMovementBySku.get(movement.sku);
+    if (!current || movement.createdAt > current) {
+      lastMovementBySku.set(movement.sku, movement.createdAt);
+    }
+  });
+  const deadStockCutoff = new Date();
+  deadStockCutoff.setDate(deadStockCutoff.getDate() - 90);
+  const deadStockCutoffIso = deadStockCutoff.toISOString();
+  const deadStockItems = inventoryItems
+    .filter((part) => !part.retired && part.stock > 0)
+    .map((part) => ({ part, lastMovementAt: lastMovementBySku.get(part.ref) ?? null }))
+    .filter(({ lastMovementAt }) => !lastMovementAt || lastMovementAt < deadStockCutoffIso)
+    .sort((a, b) => (a.lastMovementAt ?? "").localeCompare(b.lastMovementAt ?? ""));
 
   return (
     <div className="content-grid">
       <section className="metric-grid">
         <Metric icon={<Boxes size={20} />} label="Total SKUs" value={String(inventoryItems.length)} />
         <Metric icon={<Bell size={20} />} label="Low Stock" value={String(lowStock.length)} />
-        <Metric icon={<DollarSign size={20} />} label="Inventory Value" value={money(inventoryValueTotal)} />
+        <Metric icon={<DollarSign size={20} />} label="Inventory Value (on hand)" value={money(inventoryValueTotal)} />
+        <Metric icon={<ClipboardList size={20} />} label="Allocated for Projects" value={money(inventoryAllocatedValue)} />
+        <Metric icon={<DollarSign size={20} />} label="Available Value" value={money(inventoryAvailableValue)} />
+        <Metric icon={<Bell size={20} />} label="Dead Stock (90+ days)" value={String(deadStockItems.length)} />
         <Metric icon={<Truck size={20} />} label="Planned Builds" value={String(plannedBuildCount)} />
       </section>
 
@@ -8929,7 +9030,7 @@ function Inventory({
         <div className="inventory-table-scroll">
           <table className="inventory-table tight-table">
             <thead>
-              <tr><th>Image</th><th>SKU</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Unit Cost</th><th>Status</th><th></th></tr>
+              <tr><th>Image</th><th>SKU</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Allocated</th><th>Available</th><th>Unit Cost</th><th>Status</th><th></th></tr>
               <tr className="filter-row">
                 <th></th>
                 <th><input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter SKU" /></th>
@@ -8946,6 +9047,8 @@ function Inventory({
                   </select>
                 </th>
                 <th><input value={filters.manufacturer} onChange={(event) => setFilters((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Filter vendor" /></th>
+                <th></th>
+                <th></th>
                 <th></th>
                 <th></th>
                 <th>
@@ -8980,8 +9083,10 @@ function Inventory({
                   <td>{part.category}</td>
                   <td>{part.manufacturer}</td>
                   <td>{part.stock}</td>
+                  <td>{part.allocated ?? 0}</td>
+                  <td>{availableOf(part)}</td>
                   <td>{money(part.cost)}</td>
-                  <td>{part.retired ? <span className="status retired">Retired</span> : part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
+                  <td>{part.retired ? <span className="status retired">Retired</span> : availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
                   <td onClick={(event) => event.stopPropagation()}>
                     <div className="table-actions">
                       <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
@@ -9034,8 +9139,9 @@ function Inventory({
               </span>
               <span className="mobile-card-pills">
                 <span className="status">Stock: {part.stock}</span>
+                {(part.allocated ?? 0) > 0 && <span className="status">Allocated: {part.allocated}</span>}
                 <span className="status">{money(part.cost)}</span>
-                {part.retired ? <span className="status retired">Retired</span> : part.stock <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
+                {part.retired ? <span className="status retired">Retired</span> : availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
               </span>
               <span className="table-actions" onClick={(event) => event.stopPropagation()}>
                 <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
@@ -9086,7 +9192,22 @@ function Inventory({
       <section className="panel">
         <PanelHeader title="Reorder List" label="At or below point" />
         <div className="stack">
-          {lowStock.map((part) => <div className="row-card" key={part.name}><strong>{part.name}</strong><b>{part.stock}/{part.reorderPoint}</b></div>)}
+          {lowStock.map((part) => <div className="row-card" key={part.name}><strong>{part.name}</strong><b>{availableOf(part)}/{part.reorderPoint}</b></div>)}
+        </div>
+      </section>
+      <section className="panel">
+        <PanelHeader title="Dead Stock" label="On hand, no movement in 90+ days -- no per-unit receiving date exists yet, so this is by SKU, not by batch" />
+        <div className="stack">
+          {deadStockItems.map(({ part, lastMovementAt }) => {
+            const daysSince = lastMovementAt ? Math.floor((Date.now() - new Date(lastMovementAt).getTime()) / (1000 * 60 * 60 * 24)) : null;
+            return (
+              <div className="row-card" key={part.ref}>
+                <strong>{part.name}</strong>
+                <b>{daysSince === null ? "No recorded activity" : `${daysSince}d idle`}</b>
+              </div>
+            );
+          })}
+          {deadStockItems.length === 0 && <div className="empty-compact-state">Nothing idle 90+ days right now.</div>}
         </div>
       </section>
       <section className="panel">
@@ -9496,7 +9617,7 @@ function Inventory({
               ) : (
                 <>
                   <label>Project<select value={transferDraft.projectName} onChange={(event) => setTransferDraft((current) => ({ ...current, projectName: event.target.value }))}>{projectSites.map((project) => <option key={project.name} value={project.name}>{project.ref} - {project.name}</option>)}</select></label>
-                  <label>Quantity<input type="number" min="1" max={adjustItem.stock} value={transferDraft.qty} onChange={(event) => setTransferDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
+                  <label>Quantity<input type="number" min="1" max={availableOf(adjustItem)} value={transferDraft.qty} onChange={(event) => setTransferDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
                   <label className="span-2">Notes<textarea value={transferDraft.notes} onChange={(event) => setTransferDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Install phase, location, reason, or approval note." /></label>
                 </>
               )}
@@ -9504,14 +9625,14 @@ function Inventory({
             {adjustModalMode === "count" ? (
               <div className="source-file"><ClipboardList size={16} /><span>{adjustItem.ref} will move from {adjustItem.stock} to {Math.max(0, Math.round(Number(adjustDraft.nextQty) || 0))}.</span></div>
             ) : (
-              <div className="source-file"><Boxes size={16} /><span>{adjustItem.stock} available. Transfer will leave {Math.max(0, adjustItem.stock - Math.max(1, Math.round(Number(transferDraft.qty) || 1)))} in inventory.</span></div>
+              <div className="source-file"><Boxes size={16} /><span>{availableOf(adjustItem)} available ({adjustItem.stock} on hand{(adjustItem.allocated ?? 0) > 0 ? `, ${adjustItem.allocated} already allocated` : ""}). Transfer will leave {Math.max(0, availableOf(adjustItem) - Math.max(1, Math.round(Number(transferDraft.qty) || 1)))} available.</span></div>
             )}
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowAdjustModal(false)}>Cancel</button>
               {adjustModalMode === "count" ? (
                 <button className="primary-action" type="button" onClick={saveAdjust} disabled={!adjustDraft.notes.trim()}>Save Adjustment</button>
               ) : (
-                <button className="primary-action" type="button" onClick={saveTransfer} disabled={adjustItem.stock <= 0}>Transfer To Project</button>
+                <button className="primary-action" type="button" onClick={saveTransfer} disabled={availableOf(adjustItem) <= 0}>Transfer To Project</button>
               )}
             </div>
           </section>
@@ -10235,7 +10356,7 @@ function Projects({
     const procurementTrack: BomLine["procurementTrack"] = bomDraft.action === "direct" ? "direct_to_project" : bomDraft.action === "pull" ? "pull" : "warehouse_stock";
     const trackNote =
       procurementTrack === "pull"
-        ? `Will pull from inventory once approved.${selectedInventoryItem ? ` ${selectedInventoryItem.stock} available now.` : " Not in inventory yet."}`
+        ? `Will pull from inventory once approved.${selectedInventoryItem ? ` ${availableOf(selectedInventoryItem)} available now.` : " Not in inventory yet."}`
         : procurementTrack === "direct_to_project"
           ? "Will be requested as a direct-to-project purchase once approved."
           : "Will be requested for Procurement to order into warehouse stock once approved.";
@@ -10301,7 +10422,7 @@ function Projects({
       }
       const track = line.procurementTrack ?? "warehouse_stock";
       const inventoryPart = inventoryItems.find((part) => part.name === line.item);
-      if (track === "pull" && inventoryPart && !inventoryPart.retired && inventoryPart.stock >= line.qty) {
+      if (track === "pull" && inventoryPart && !inventoryPart.retired && availableOf(inventoryPart) >= line.qty) {
         onInventoryPull(line.item, line.qty, selectedProject.name, line.notes || `Pulled from inventory for ${selectedProject.ref} BOM.`);
         updatedLines[index] = { ...line, status: "From Inventory", sentToPurchasingAt: sentAt };
         pulledCount += 1;
@@ -11594,7 +11715,7 @@ function Projects({
                 <legend>Material action</legend>
                 <label>
                   <input type="radio" name="bom-action" checked={bomDraft.action === "pull"} onChange={() => updateBomDraft("action", "pull")} />
-                  <span><strong>Pull from inventory</strong><small>{selectedInventoryItem ? `${selectedInventoryItem.stock} available now` : "Not in inventory yet"}</small></span>
+                  <span><strong>Pull from inventory</strong><small>{selectedInventoryItem ? `${availableOf(selectedInventoryItem)} available now` : "Not in inventory yet"}</small></span>
                 </label>
                 <label>
                   <input type="radio" name="bom-action" checked={bomDraft.action === "order"} onChange={() => updateBomDraft("action", "order")} />
@@ -12405,7 +12526,7 @@ function Reports({
     .sort((a, b) => Math.abs(b.trend.change) - Math.abs(a.trend.change))
     .slice(0, 8);
   const sourceRows = filteredInventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
-  const reorderRows = filteredInventoryItems.filter((part) => !part.retired && part.stock <= part.reorderPoint).sort((a, b) => a.stock - b.stock).slice(0, 12);
+  const reorderRows = filteredInventoryItems.filter((part) => !part.retired && availableOf(part) <= part.reorderPoint).sort((a, b) => availableOf(a) - availableOf(b)).slice(0, 12);
   const openPurchaseRequests = filteredPurchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const purchaseRequestExposure = openPurchaseRequests.reduce((sum, request) => sum + Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost, 0);
   const plannedBuildShortages = filteredBuildTransactions
@@ -12427,7 +12548,7 @@ function Reports({
         .map((component) => {
           const part = inventoryItems.find((item) => item.name === component.itemName);
           const required = component.qty * build.quantityBuilt;
-          const available = part && !part.retired ? part.stock : 0;
+          const available = part && !part.retired ? availableOf(part) : 0;
           return {
             build,
             sku: part?.ref ?? "No SKU",
@@ -12471,6 +12592,8 @@ function Reports({
           sku: part.ref,
           item: part.name,
           stock: part.stock,
+          allocated: part.allocated ?? 0,
+          available: availableOf(part),
           reorder_point: part.reorderPoint,
           category: part.category,
           manufacturer: part.manufacturer,
@@ -12648,11 +12771,11 @@ function Reports({
         <section className="panel wide">
           <PanelHeader title="Reorder Watch" label="Parts at or below reorder point" />
           <div className="report-table compact-report-table">
-            <div className="report-table-head"><span>SKU</span><span>Stock</span><span>Reorder</span><span>Status</span><span>Vendor</span></div>
+            <div className="report-table-head"><span>SKU</span><span>Available</span><span>Reorder</span><span>Status</span><span>Vendor</span></div>
             {reorderRows.map((part) => (
               <div className="report-table-row" key={part.ref}>
                 <span><strong>{part.name}</strong><small>{part.ref}</small></span>
-                <span data-label="Stock">{part.stock}</span>
+                <span data-label="Available">{availableOf(part)}{(part.allocated ?? 0) > 0 ? <small> ({part.stock} on hand, {part.allocated} allocated)</small> : null}</span>
                 <span data-label="Reorder">{part.reorderPoint}</span>
                 <span data-label="Status" className="status warn">Reorder</span>
                 <span data-label="Vendor">{part.manufacturer}<small>{part.category}</small></span>
