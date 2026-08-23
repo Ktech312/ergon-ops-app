@@ -9768,7 +9768,7 @@ function Projects({
   const [showSowModal, setShowSowModal] = useState(false);
   const [showBomSectionModal, setShowBomSectionModal] = useState(false);
   const [showShippingModal, setShowShippingModal] = useState(false);
-  const [showLocationsModal, setShowLocationsModal] = useState(false);
+  const [showImagesModal, setShowImagesModal] = useState(false);
   const [showSubmittalsModal, setShowSubmittalsModal] = useState(false);
   const [showHandoverModal, setShowHandoverModal] = useState(false);
   const [showSaasModal, setShowSaasModal] = useState(false);
@@ -9823,6 +9823,9 @@ function Projects({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject.name]);
   const openBomLines = selectedProject.bom.filter((item) => item.status === "Need Quote" || item.status === "Not started").length;
+  const allProjectPhotos = (selectedProject.locations ?? []).flatMap((location) => location.images.filter((image) => image.imageType === "photo").map((image) => ({ image, location })));
+  const projectPmPhotoCount = allProjectPhotos.filter(({ image }) => image.origin !== "sales").length;
+  const projectSalesPhotoCount = allProjectPhotos.filter(({ image }) => image.origin === "sales").length;
   // BOM Snapshot's hardware breakdown sums the real per-location item
   // lines (Locations rework, migration 071/076) so this stays consistent
   // with what's actually tracked in Locations instead of drifting from a
@@ -10760,31 +10763,13 @@ function Projects({
         onOpenFull={onOpenTasksView}
       />
 
-      {showLocationsModal && (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal-panel modal-panel-wide">
-            <div className="modal-tile-close-row">
-              <button className="icon-button" type="button" onClick={() => setShowLocationsModal(false)} aria-label="Close">x</button>
-            </div>
-            <ProjectLocationsSection
-              project={selectedProject}
-              catalogItems={catalogItems}
-              onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
-              onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
-              onDeleteLocation={(locationId) => onDeleteProjectLocation(selectedProject.ref, locationId)}
-              onAddLocationItem={(locationId, lineType, catalogItemId, qty, extra) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty, extra)}
-              onUpdateLocationItem={(locationId, itemId, updates) => onUpdateProjectLocationItem(selectedProject.ref, locationId, itemId, updates)}
-              onDeleteLocationItem={(locationId, itemId) => onDeleteProjectLocationItem(selectedProject.ref, locationId, itemId)}
-              onUploadImage={(locationId, imageType, file, description, coords) => onUploadProjectLocationImage(selectedProject.ref, locationId, imageType, file, description, coords)}
-              onDownloadImage={onDownloadProjectLocationImage}
-              onDeleteImage={(locationId, imageId, storagePath) => onDeleteProjectLocationImage(selectedProject.ref, locationId, imageId, storagePath)}
-              onGetImageUrl={onGetProjectLocationImageUrl}
-              onUpdateImageDescription={(locationId, imageId, description) => onUpdateProjectLocationImageDescription(selectedProject.ref, locationId, imageId, description)}
-              onUpdateImageMeta={(locationId, imageId, updates) => onUpdateProjectLocationImageMeta(selectedProject.ref, locationId, imageId, updates)}
-              onMoveImage={(locationId, imageId, targetLocationId) => onMoveProjectLocationImage(selectedProject.ref, locationId, imageId, targetLocationId)}
-            />
-          </div>
-        </div>
+      {showImagesModal && (
+        <ProjectImagesModal
+          projectName={selectedProject.name}
+          photos={allProjectPhotos}
+          onGetImageUrl={onGetProjectLocationImageUrl}
+          onClose={() => setShowImagesModal(false)}
+        />
       )}
 
       {showSubmittalsModal && (
@@ -11112,6 +11097,24 @@ function Projects({
         </div>
       )}
 
+      <ProjectLocationsSection
+        project={selectedProject}
+        catalogItems={catalogItems}
+        onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
+        onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
+        onDeleteLocation={(locationId) => onDeleteProjectLocation(selectedProject.ref, locationId)}
+        onAddLocationItem={(locationId, lineType, catalogItemId, qty, extra) => onAddProjectLocationItem(selectedProject.ref, locationId, lineType, catalogItemId, qty, extra)}
+        onUpdateLocationItem={(locationId, itemId, updates) => onUpdateProjectLocationItem(selectedProject.ref, locationId, itemId, updates)}
+        onDeleteLocationItem={(locationId, itemId) => onDeleteProjectLocationItem(selectedProject.ref, locationId, itemId)}
+        onUploadImage={(locationId, imageType, file, description, coords) => onUploadProjectLocationImage(selectedProject.ref, locationId, imageType, file, description, coords)}
+        onDownloadImage={onDownloadProjectLocationImage}
+        onDeleteImage={(locationId, imageId, storagePath) => onDeleteProjectLocationImage(selectedProject.ref, locationId, imageId, storagePath)}
+        onGetImageUrl={onGetProjectLocationImageUrl}
+        onUpdateImageDescription={(locationId, imageId, description) => onUpdateProjectLocationImageDescription(selectedProject.ref, locationId, imageId, description)}
+        onUpdateImageMeta={(locationId, imageId, updates) => onUpdateProjectLocationImageMeta(selectedProject.ref, locationId, imageId, updates)}
+        onMoveImage={(locationId, imageId, targetLocationId) => onMoveProjectLocationImage(selectedProject.ref, locationId, imageId, targetLocationId)}
+      />
+
       <div className="project-tile-grid">
         <ProjectTile
           icon={<Upload size={18} />}
@@ -11160,11 +11163,14 @@ function Projects({
           onClick={() => setShowShippingModal(true)}
         />
         <ProjectTile
-          icon={<MapPin size={18} />}
-          title="Locations"
-          hint="Garage/lot breakdown"
-          stats={[{ label: "Garages/Lots", value: (selectedProject.locations ?? []).length }]}
-          onClick={() => setShowLocationsModal(true)}
+          icon={<Image size={18} />}
+          title="Images"
+          hint="Every photo across every garage/lot, PM and Sales"
+          stats={[
+            { label: "PM", value: projectPmPhotoCount },
+            { label: "Sales", value: projectSalesPhotoCount },
+          ]}
+          onClick={() => setShowImagesModal(true)}
         />
         <ProjectTile
           icon={<FileText size={18} />}
@@ -16762,6 +16768,202 @@ function Marketing({
         </div>
       )}
     </section>
+  );
+}
+
+// E's request: with Locations promoted back to a full, always-visible
+// section (matching Sales -- see ProjectLocationsSection below), the tile
+// slot it used to occupy on the Project detail page becomes "Images"
+// instead: every photo across every garage/lot on this one project, split
+// into PM (added during the project) and Sales (carried over from the
+// closed-won quote, see migration 087/088) folders. Both folders always
+// show, even at 0, PM listed first -- E was explicit about that order.
+function ProjectImagesModal({
+  projectName,
+  photos,
+  onGetImageUrl,
+  onClose,
+}: {
+  projectName: string;
+  photos: Array<{ image: ProjectLocationImage; location: ProjectLocation }>;
+  onGetImageUrl: (image: ProjectLocationImage) => Promise<string | null>;
+  onClose: () => void;
+}) {
+  const [expandedFolder, setExpandedFolder] = useState<"pm" | "sales" | null>(null);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [previewId, setPreviewId] = useState<string | null>(null);
+
+  const folders = [
+    { key: "pm" as const, label: "PM", photos: photos.filter(({ image }) => image.origin !== "sales") },
+    { key: "sales" as const, label: "Sales", photos: photos.filter(({ image }) => image.origin === "sales") },
+  ];
+  const activeFolder = folders.find((folder) => folder.key === expandedFolder) ?? null;
+
+  useEffect(() => {
+    if (!activeFolder) {
+      return;
+    }
+    let cancelled = false;
+    activeFolder.photos.forEach(({ image }) => {
+      if (photoUrls[image.id]) {
+        return;
+      }
+      onGetImageUrl(image).then((url) => {
+        if (!cancelled && url) {
+          setPhotoUrls((current) => ({ ...current, [image.id]: url }));
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFolder?.key, activeFolder?.photos.length]);
+
+  function toggleFolder(key: "pm" | "sales") {
+    setExpandedFolder((current) => (current === key ? null : key));
+    setSelectedIds(new Set());
+    setPreviewId(null);
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  async function downloadSelected() {
+    if (!activeFolder) {
+      return;
+    }
+    for (const { image } of activeFolder.photos) {
+      if (selectedIds.has(image.id)) {
+        const url = photoUrls[image.id];
+        if (url) {
+          await triggerBrowserDownload(url, image.fileName || "photo");
+        }
+      }
+    }
+  }
+
+  const previewEntry = activeFolder?.photos.find(({ image }) => image.id === previewId) ?? null;
+  const previewIndex = activeFolder && previewEntry ? activeFolder.photos.findIndex(({ image }) => image.id === previewId) : -1;
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel modal-panel-wide" role="dialog" aria-modal="true" aria-labelledby="project-images-title">
+        <div className="modal-header">
+          <div>
+            <h2 id="project-images-title">Images: {projectName}</h2>
+            <p>Every photo across every garage/lot on this project, split by where it came from.</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close">x</button>
+        </div>
+
+        {folders.map((folder) => {
+          const isExpanded = expandedFolder === folder.key;
+          return (
+            <div className="compact-edit-section" key={folder.key}>
+              <div className="compact-section-header clickable-row" onClick={() => toggleFolder(folder.key)}>
+                <div>
+                  <h3>{folder.label} ({folder.photos.length})</h3>
+                </div>
+                <button className="icon-button" type="button" aria-label={isExpanded ? `Collapse ${folder.label}` : `Expand ${folder.label}`}>
+                  {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </button>
+              </div>
+              {isExpanded && (
+                <>
+                  {folder.photos.length === 0 ? (
+                    <p className="empty-compact-state">No {folder.label} photos yet.</p>
+                  ) : (
+                    <>
+                      <div className="quote-header-pill-row">
+                        <button className="secondary-action mini-action" type="button" onClick={() => setSelectedIds(new Set(folder.photos.map(({ image }) => image.id)))}>
+                          Select all
+                        </button>
+                        <button className="secondary-action mini-action" type="button" onClick={() => setSelectedIds(new Set())} disabled={selectedIds.size === 0}>
+                          Clear
+                        </button>
+                        <button className="secondary-action mini-action" type="button" onClick={downloadSelected} disabled={selectedIds.size === 0}>
+                          <Download size={14} /> Download ({selectedIds.size})
+                        </button>
+                      </div>
+                      <div className="site-gallery-grid">
+                        {folder.photos.map(({ image, location }) => (
+                          <div className={`site-gallery-item ${selectedIds.has(image.id) ? "selected" : ""}`} key={image.id}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(image.id)}
+                              onChange={() => toggleSelected(image.id)}
+                              onClick={(event) => event.stopPropagation()}
+                            />
+                            {photoUrls[image.id] ? (
+                              <button className="site-gallery-preview-button" type="button" onClick={() => setPreviewId(image.id)}>
+                                <img src={photoUrls[image.id]} alt={image.fileName} />
+                              </button>
+                            ) : (
+                              <div className="site-gallery-item-fallback">Loading...</div>
+                            )}
+                            <small>{location.name}</small>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })}
+
+        {previewEntry && (
+          <div className="modal-backdrop" role="presentation" onClick={() => setPreviewId(null)}>
+            <section className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="project-images-preview-title" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-header">
+                <div>
+                  <h2 id="project-images-preview-title">{previewEntry.image.fileName || previewEntry.location.name}</h2>
+                  <p>{previewEntry.location.name}</p>
+                </div>
+                <button className="icon-button" type="button" onClick={() => setPreviewId(null)} aria-label="Close preview">x</button>
+              </div>
+              <div className="media-provenance-strip">
+                <span>{previewEntry.image.uploadedAt ? new Date(previewEntry.image.uploadedAt).toLocaleString() : "No timestamp saved"}</span>
+                {previewEntry.image.uploadedByEmail && <span>{previewEntry.image.uploadedByEmail}</span>}
+              </div>
+              {photoUrls[previewEntry.image.id] ? (
+                <ZoomablePreviewImage src={photoUrls[previewEntry.image.id]} alt={previewEntry.image.fileName} />
+              ) : (
+                <p className="muted">Loading preview...</p>
+              )}
+              <div className="modal-actions">
+                {activeFolder && previewIndex > 0 && (
+                  <button className="secondary-action" type="button" onClick={() => setPreviewId(activeFolder.photos[previewIndex - 1].image.id)}>Previous</button>
+                )}
+                {activeFolder && previewIndex >= 0 && previewIndex < activeFolder.photos.length - 1 && (
+                  <button className="secondary-action" type="button" onClick={() => setPreviewId(activeFolder.photos[previewIndex + 1].image.id)}>Next</button>
+                )}
+                <button
+                  className="primary-action"
+                  type="button"
+                  disabled={!photoUrls[previewEntry.image.id]}
+                  onClick={() => triggerBrowserDownload(photoUrls[previewEntry.image.id], previewEntry.image.fileName || "photo")}
+                >
+                  <Download size={14} /> Download
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
