@@ -1347,13 +1347,23 @@ function App() {
     loadProjectLedgerInfo(authSession.accessToken).then(setProjectLedgerInfo).catch(() => {});
   }, [authSession]);
 
-  async function handleUpdateProjectLedgerInfo(projectId: string, updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string }>) {
+  async function handleUpdateProjectLedgerInfo(
+    projectId: string,
+    updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string; addedToLedger: boolean; ledgerBucket: "active" | "archived" | null }>,
+  ) {
     if (!authSession) {
       return;
     }
     setProjectLedgerInfo((current) => {
       const existing = current.find((entry) => entry.projectId === projectId);
-      const next = { projectId, kickoffDate: existing?.kickoffDate ?? "", warrantyExpirationDate: existing?.warrantyExpirationDate ?? "", ...updates };
+      const next = {
+        projectId,
+        kickoffDate: existing?.kickoffDate ?? "",
+        warrantyExpirationDate: existing?.warrantyExpirationDate ?? "",
+        addedToLedger: existing?.addedToLedger ?? false,
+        ledgerBucket: existing?.ledgerBucket ?? null,
+        ...updates,
+      };
       return existing ? current.map((entry) => (entry.projectId === projectId ? next : entry)) : [...current, next];
     });
     await updateProjectLedgerInfo(projectId, updates, authSession.accessToken);
@@ -11712,7 +11722,7 @@ function ClientLedger({
   projectSites: ProjectSite[];
   catalogItems: CatalogItem[];
   ledgerInfo: ProjectLedgerInfo[];
-  onUpdateLedgerInfo: (projectId: string, updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string }>) => void;
+  onUpdateLedgerInfo: (projectId: string, updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string; addedToLedger: boolean; ledgerBucket: "active" | "archived" | null }>) => void;
   installedAssets: InstalledAsset[];
   onLoadInstalledAssets: (projectId: string) => void;
   onAddInstalledAssets: (
@@ -11736,11 +11746,35 @@ function ClientLedger({
   const [assetDraft, setAssetDraft] = useState({ catalogItemId: "", locationId: "", installDate: "", serials: "", notes: "" });
   const [assetStatus, setAssetStatus] = useState("");
   const [closeoutUploadType, setCloseoutUploadType] = useState<NonNullable<UploadedDoc["type"]>>("As-Built Diagram");
+  // Primary List (migration 090): a project only shows up here once
+  // someone deliberately moves it out of the Closed Projects queue --
+  // closing it (PM sets status to Closed) just makes it eligible.
+  const [showAddToLedger, setShowAddToLedger] = useState(false);
+  const [addDraft, setAddDraft] = useState<{ projectId: string; bucket: "active" | "archived" }>({ projectId: "", bucket: "active" });
 
-  const activeSites = projectSites.filter((project) => project.status !== "Closed");
-  const archivedSites = projectSites.filter((project) => project.status === "Closed");
+  function ledgerInfoFor(projectId: string | undefined) {
+    return projectId ? ledgerInfo.find((entry) => entry.projectId === projectId) : undefined;
+  }
+
+  const closedProjects = projectSites.filter((project) => project.status === "Closed" && !ledgerInfoFor(project.id)?.addedToLedger);
+  const primaryListSites = projectSites.filter((project) => ledgerInfoFor(project.id)?.addedToLedger);
+  const activeSites = primaryListSites.filter((project) => ledgerInfoFor(project.id)?.ledgerBucket !== "archived");
+  const archivedSites = primaryListSites.filter((project) => ledgerInfoFor(project.id)?.ledgerBucket === "archived");
   const selectedProject = projectSites.find((project) => project.id === selectedProjectId) ?? null;
-  const selectedLedgerInfo = ledgerInfo.find((entry) => entry.projectId === selectedProjectId);
+  const selectedLedgerInfo = ledgerInfoFor(selectedProjectId ?? undefined);
+
+  function openAddToLedger(preselectProjectId?: string) {
+    setAddDraft({ projectId: preselectProjectId ?? "", bucket: "active" });
+    setShowAddToLedger(true);
+  }
+
+  function submitAddToLedger() {
+    if (!addDraft.projectId) {
+      return;
+    }
+    onUpdateLedgerInfo(addDraft.projectId, { addedToLedger: true, ledgerBucket: addDraft.bucket });
+    setShowAddToLedger(false);
+  }
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -11802,13 +11836,15 @@ function ClientLedger({
     event.target.value = "";
   }
 
-  // ---- List view (Active Sites / Archived Footprint / Financial Summary) ----
+  // ---- List view: Primary List (master ledger) above, Closed Projects
+  // (staging queue) below ----
   if (!selectedProject) {
     const listSites = (tab === "archived" ? archivedSites : activeSites).filter((site) => {
       const haystack = `${site.name} ${site.ref} ${site.client}`.toLowerCase();
       return haystack.includes(search.trim().toLowerCase());
     });
-    const financialRows = projectSites.filter((site) => site.saleAmount || site.saasContractAmount || site.allocated);
+    const financialRows = primaryListSites.filter((site) => site.saleAmount || site.saasContractAmount || site.allocated);
+    const addCandidate = projectSites.find((project) => project.id === addDraft.projectId) ?? null;
 
     return (
       <div className="content-grid">
@@ -11816,69 +11852,144 @@ function ClientLedger({
           <PanelHeader title="Client Ledger" label="The permanent record for a site once it closes out -- lifecycle, financials, hardware, and final documents." />
         </section>
 
-        <div className="view-mode-tabs">
-          <button className={`view-mode-tab ${tab === "active" ? "active" : ""}`} type="button" onClick={() => setTab("active")}>Active Sites ({activeSites.length})</button>
-          <button className={`view-mode-tab ${tab === "archived" ? "active" : ""}`} type="button" onClick={() => setTab("archived")}>Archived Footprint ({archivedSites.length})</button>
-          <button className={`view-mode-tab ${tab === "financial" ? "active" : ""}`} type="button" onClick={() => setTab("financial")}>Financial Summary</button>
-        </div>
-
-        {tab !== "financial" && (
-          <section className="panel full">
-            <div className="bom-modal-grid">
-              <label className="span-2">Search
-                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by site name, ref, or client" />
-              </label>
+        <section className="panel full">
+          <div className="panel-title-row">
+            <div>
+              <h2>Primary List</h2>
+              <p>The master site ledger. A closed project only lives here once someone moves it in.</p>
             </div>
-            <table className="stack-table-mobile">
-              <thead>
-                <tr><th>Site</th><th>Client</th><th>Status</th><th>SaaS</th><th>Sale Amount</th></tr>
-              </thead>
-              <tbody>
-                {listSites.map((site) => (
-                  <tr key={site.id ?? site.ref} className="clickable-row" onClick={() => openLedger(site)}>
-                    <td><strong>{site.name}</strong><small className="muted"> {site.ref}</small></td>
-                    <td data-label="Client">{site.client || "-"}</td>
-                    <td data-label="Status"><span className={`status ${site.status === "Closed" ? "retired" : "ok"}`}>{site.status}</span></td>
-                    <td data-label="SaaS">{site.saasType || "-"}</td>
-                    <td data-label="Sale Amount">{site.saleAmount ? money(site.saleAmount) : "-"}</td>
-                  </tr>
-                ))}
-                {listSites.length === 0 && (
-                  <tr><td colSpan={5} className="empty-compact-state">No {tab === "archived" ? "archived" : "active"} sites match yet.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </section>
-        )}
+            <button className="primary-action mini-action" type="button" onClick={() => openAddToLedger()} disabled={closedProjects.length === 0 && !primaryListSites.length}>
+              <Plus size={14} /> Add
+            </button>
+          </div>
 
-        {tab === "financial" && (
-          <section className="panel full">
-            <PanelHeader title="Financial Summary" label="Contract values and recurring revenue per site. SaaS math matches the SaaS Calendar; lifetime Purchase Order billings aren't included here -- POs link to a project by name match, not a real database link, so that number wouldn't be reliable enough to show as fact." />
-            <div className="metric-grid">
-              <Metric icon={<DollarSign size={20} />} label="Total Sale Amount" value={money(financialRows.reduce((sum, site) => sum + (site.saleAmount ?? 0), 0))} />
-              <Metric icon={<CalendarDays size={20} />} label="SaaS MRR" value={money(financialRows.reduce((sum, site) => sum + saasMonthlyAmount(site), 0))} />
-              <Metric icon={<CalendarDays size={20} />} label="SaaS ARR" value={money(financialRows.reduce((sum, site) => sum + saasMonthlyAmount(site) * 12, 0))} />
-              <Metric icon={<Boxes size={20} />} label="Total Allocated Budget" value={money(financialRows.reduce((sum, site) => sum + (site.allocated ?? 0), 0))} />
+          <div className="view-mode-tabs">
+            <button className={`view-mode-tab ${tab === "active" ? "active" : ""}`} type="button" onClick={() => setTab("active")}>Active Sites ({activeSites.length})</button>
+            <button className={`view-mode-tab ${tab === "archived" ? "active" : ""}`} type="button" onClick={() => setTab("archived")}>Archived Footprint ({archivedSites.length})</button>
+            <button className={`view-mode-tab ${tab === "financial" ? "active" : ""}`} type="button" onClick={() => setTab("financial")}>Financial Summary</button>
+          </div>
+
+          {tab !== "financial" && (
+            <>
+              <div className="bom-modal-grid">
+                <label className="span-2">Search
+                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by site name, ref, or client" />
+                </label>
+              </div>
+              <table className="stack-table-mobile">
+                <thead>
+                  <tr><th>Site</th><th>Client</th><th>SaaS</th><th>Sale Amount</th></tr>
+                </thead>
+                <tbody>
+                  {listSites.map((site) => (
+                    <tr key={site.id ?? site.ref} className="clickable-row" onClick={() => openLedger(site)}>
+                      <td><strong>{site.name}</strong><small className="muted"> {site.ref}</small></td>
+                      <td data-label="Client">{site.client || "-"}</td>
+                      <td data-label="SaaS">{site.saasType || "-"}</td>
+                      <td data-label="Sale Amount">{site.saleAmount ? money(site.saleAmount) : "-"}</td>
+                    </tr>
+                  ))}
+                  {listSites.length === 0 && (
+                    <tr><td colSpan={4} className="empty-compact-state">No {tab === "archived" ? "archived" : "active"} sites in the Primary List yet -- add one from a Closed Project below.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          {tab === "financial" && (
+            <>
+              <p className="muted">Contract values and recurring revenue for sites in the Primary List. SaaS math matches the SaaS Calendar; lifetime Purchase Order billings aren't included here -- POs link to a project by name match, not a real database link, so that number wouldn't be reliable enough to show as fact.</p>
+              <div className="metric-grid">
+                <Metric icon={<DollarSign size={20} />} label="Total Sale Amount" value={money(financialRows.reduce((sum, site) => sum + (site.saleAmount ?? 0), 0))} />
+                <Metric icon={<CalendarDays size={20} />} label="SaaS MRR" value={money(financialRows.reduce((sum, site) => sum + saasMonthlyAmount(site), 0))} />
+                <Metric icon={<CalendarDays size={20} />} label="SaaS ARR" value={money(financialRows.reduce((sum, site) => sum + saasMonthlyAmount(site) * 12, 0))} />
+                <Metric icon={<Boxes size={20} />} label="Total Allocated Budget" value={money(financialRows.reduce((sum, site) => sum + (site.allocated ?? 0), 0))} />
+              </div>
+              <table className="stack-table-mobile">
+                <thead>
+                  <tr><th>Site</th><th>Bucket</th><th>Sale Amount</th><th>SaaS Contract</th><th>SaaS MRR</th><th>Allocated</th></tr>
+                </thead>
+                <tbody>
+                  {financialRows.map((site) => (
+                    <tr key={site.id ?? site.ref} className="clickable-row" onClick={() => openLedger(site)}>
+                      <td><strong>{site.name}</strong><small className="muted"> {site.ref}</small></td>
+                      <td data-label="Bucket"><span className={`status ${ledgerInfoFor(site.id)?.ledgerBucket === "archived" ? "retired" : "ok"}`}>{ledgerInfoFor(site.id)?.ledgerBucket === "archived" ? "Archived" : "Active"}</span></td>
+                      <td data-label="Sale Amount">{site.saleAmount ? money(site.saleAmount) : "-"}</td>
+                      <td data-label="SaaS Contract">{site.saasContractAmount ? `${money(site.saasContractAmount)} / ${site.saasBillingFrequency || "Monthly"}` : "-"}</td>
+                      <td data-label="SaaS MRR">{saasMonthlyAmount(site) ? money(saasMonthlyAmount(site)) : "-"}</td>
+                      <td data-label="Allocated">{site.allocated ? money(site.allocated) : "-"}</td>
+                    </tr>
+                  ))}
+                  {financialRows.length === 0 && <tr><td colSpan={6} className="empty-compact-state">No financial data set on any Primary List site yet.</td></tr>}
+                </tbody>
+              </table>
+            </>
+          )}
+        </section>
+
+        <section className="panel full">
+          <div className="panel-title-row">
+            <div>
+              <h2>Closed Projects</h2>
+              <p>Closed by a PM, waiting to be moved into the Primary List.</p>
             </div>
-            <table className="stack-table-mobile">
-              <thead>
-                <tr><th>Site</th><th>Status</th><th>Sale Amount</th><th>SaaS Contract</th><th>SaaS MRR</th><th>Allocated</th></tr>
-              </thead>
-              <tbody>
-                {financialRows.map((site) => (
-                  <tr key={site.id ?? site.ref} className="clickable-row" onClick={() => openLedger(site)}>
-                    <td><strong>{site.name}</strong><small className="muted"> {site.ref}</small></td>
-                    <td data-label="Status"><span className={`status ${site.status === "Closed" ? "retired" : "ok"}`}>{site.status}</span></td>
-                    <td data-label="Sale Amount">{site.saleAmount ? money(site.saleAmount) : "-"}</td>
-                    <td data-label="SaaS Contract">{site.saasContractAmount ? `${money(site.saasContractAmount)} / ${site.saasBillingFrequency || "Monthly"}` : "-"}</td>
-                    <td data-label="SaaS MRR">{saasMonthlyAmount(site) ? money(saasMonthlyAmount(site)) : "-"}</td>
-                    <td data-label="Allocated">{site.allocated ? money(site.allocated) : "-"}</td>
-                  </tr>
-                ))}
-                {financialRows.length === 0 && <tr><td colSpan={6} className="empty-compact-state">No financial data set on any site yet.</td></tr>}
-              </tbody>
-            </table>
-          </section>
+          </div>
+          <table className="stack-table-mobile">
+            <thead>
+              <tr><th>Site</th><th>Client</th><th>Closed</th><th></th></tr>
+            </thead>
+            <tbody>
+              {closedProjects.map((site) => (
+                <tr key={site.id ?? site.ref}>
+                  <td><strong>{site.name}</strong><small className="muted"> {site.ref}</small></td>
+                  <td data-label="Client">{site.client || "-"}</td>
+                  <td data-label="Closed">{site.saasStartDate || "-"}</td>
+                  <td>
+                    <button className="secondary-action mini-action" type="button" onClick={() => openAddToLedger(site.id)}>Move to Primary List</button>
+                  </td>
+                </tr>
+              ))}
+              {closedProjects.length === 0 && <tr><td colSpan={4} className="empty-compact-state">No closed projects waiting -- this fills in once a PM sets a project's status to Closed.</td></tr>}
+            </tbody>
+          </table>
+        </section>
+
+        {showAddToLedger && (
+          <div className="modal-backdrop" role="presentation">
+            <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-to-ledger-title">
+              <div className="modal-header">
+                <div>
+                  <h2 id="add-to-ledger-title">Add to Primary List</h2>
+                  <p>Only Closed projects not already in the Primary List can be added.</p>
+                </div>
+                <button className="icon-button" type="button" onClick={() => setShowAddToLedger(false)} aria-label="Close">x</button>
+              </div>
+              <div className="bom-modal-grid">
+                <label className="span-2">Closed project
+                  <select value={addDraft.projectId} onChange={(event) => setAddDraft((current) => ({ ...current, projectId: event.target.value }))}>
+                    <option value="">Select a closed project...</option>
+                    {closedProjects.map((project) => (
+                      <option key={project.id} value={project.id}>{project.name} ({project.ref})</option>
+                    ))}
+                    {addCandidate && !closedProjects.includes(addCandidate) && (
+                      <option value={addCandidate.id}>{addCandidate.name} ({addCandidate.ref})</option>
+                    )}
+                  </select>
+                </label>
+                <label className="span-2">List
+                  <select value={addDraft.bucket} onChange={(event) => setAddDraft((current) => ({ ...current, bucket: event.target.value as "active" | "archived" }))}>
+                    <option value="active">Active Sites -- ongoing SaaS/support relationship</option>
+                    <option value="archived">Archived Footprint -- fully wrapped up</option>
+                  </select>
+                </label>
+              </div>
+              <div className="modal-actions">
+                <button className="secondary-action" type="button" onClick={() => setShowAddToLedger(false)}>Cancel</button>
+                <button className="primary-action" type="button" disabled={!addDraft.projectId} onClick={submitAddToLedger}>Add</button>
+              </div>
+            </section>
+          </div>
         )}
       </div>
     );
@@ -11912,7 +12023,16 @@ function ClientLedger({
           <div><small className="muted">Physical Address</small><p>{selectedProject.address || "Not set"}</p></div>
           <div><small className="muted">Owner / Primary Contact</small><p>{selectedProject.owner || "Not set"}</p></div>
           <div><small className="muted">Site Type</small><p>{selectedProject.type}</p></div>
-          <div><small className="muted">Status</small><p><span className={`status ${selectedProject.status === "Closed" ? "retired" : "ok"}`}>{selectedProject.status}</span></p></div>
+          <div><small className="muted">Project Status</small><p><span className={`status ${selectedProject.status === "Closed" ? "retired" : "ok"}`}>{selectedProject.status}</span></p></div>
+          <label>Primary List
+            <select
+              value={selectedLedgerInfo?.ledgerBucket ?? "active"}
+              onChange={(event) => onUpdateLedgerInfo(selectedProject.id!, { ledgerBucket: event.target.value as "active" | "archived" })}
+            >
+              <option value="active">Active Sites</option>
+              <option value="archived">Archived Footprint</option>
+            </select>
+          </label>
         </div>
       </section>
 

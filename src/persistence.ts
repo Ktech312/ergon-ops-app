@@ -5482,19 +5482,30 @@ export type ProjectLedgerInfo = {
   projectId: string;
   kickoffDate: string;
   warrantyExpirationDate: string;
+  // Migration 090: closing a project (PM sets status to Closed) does NOT
+  // by itself put it in the Client Ledger's Primary List -- it just makes
+  // it eligible, sitting in the "Closed Projects" queue until someone
+  // deliberately moves it. addedToLedger flips true only at that point.
+  // ledgerBucket ("active" = ongoing SaaS/support relationship, "archived"
+  // = fully wrapped up) is a manual choice made at that same moment,
+  // independent of the project's own status field.
+  addedToLedger: boolean;
+  ledgerBucket: "active" | "archived" | null;
 };
 
 type ProjectLedgerInfoRow = {
   id: string;
   kickoff_date: string | null;
   warranty_expiration_date: string | null;
+  added_to_ledger: boolean | null;
+  ledger_bucket: string | null;
 };
 
 export async function loadProjectLedgerInfo(accessToken?: string): Promise<ProjectLedgerInfo[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("projects?select=id,kickoff_date,warranty_expiration_date"), {
+  const response = await fetch(supabaseUrl("projects?select=id,kickoff_date,warranty_expiration_date,added_to_ledger,ledger_bucket"), {
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok) {
@@ -5505,12 +5516,14 @@ export async function loadProjectLedgerInfo(accessToken?: string): Promise<Proje
     projectId: row.id,
     kickoffDate: row.kickoff_date ?? "",
     warrantyExpirationDate: row.warranty_expiration_date ?? "",
+    addedToLedger: Boolean(row.added_to_ledger),
+    ledgerBucket: row.ledger_bucket === "active" || row.ledger_bucket === "archived" ? row.ledger_bucket : null,
   }));
 }
 
 export async function updateProjectLedgerInfo(
   projectId: string,
-  updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string }>,
+  updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string; addedToLedger: boolean; ledgerBucket: "active" | "archived" | null }>,
   accessToken?: string,
 ): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -5519,6 +5532,8 @@ export async function updateProjectLedgerInfo(
   const payload: Record<string, unknown> = {};
   if (updates.kickoffDate !== undefined) payload.kickoff_date = updates.kickoffDate || null;
   if (updates.warrantyExpirationDate !== undefined) payload.warranty_expiration_date = updates.warrantyExpirationDate || null;
+  if (updates.addedToLedger !== undefined) payload.added_to_ledger = updates.addedToLedger;
+  if (updates.ledgerBucket !== undefined) payload.ledger_bucket = updates.ledgerBucket;
   if (Object.keys(payload).length === 0) {
     return;
   }
