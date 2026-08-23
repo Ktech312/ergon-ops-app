@@ -98,6 +98,8 @@ import {
   type Vendor,
   updateSalesQuoteStatus,
   deleteSalesQuote,
+  restoreSalesQuote,
+  loadDeletedSalesQuotes,
   updateSalesQuoteProposalFields,
   addSalesQuoteBomLines,
   deleteSalesQuoteBomLine,
@@ -177,6 +179,7 @@ import {
   loadRemoteAppState,
   loadAllTaskActivity,
   loadDeletedTasks,
+  loadDeletionLog,
   loadScheduleTemplates,
   loadStandardInstallTimes,
   loadSubmittalsForProject,
@@ -228,6 +231,8 @@ import {
   updateSalesQuoteLocationImageMeta,
   moveSalesQuoteLocationImage,
   deleteSalesQuoteLocationImage,
+  restoreSalesQuoteLocationImage,
+  loadDeletedSalesQuoteImages,
   updateTask,
   updateTaskHardwareDependencyStatus,
   updateTeamMember,
@@ -290,11 +295,14 @@ import {
   type PurchaseRequest,
   type PurchaseUrl,
   type SalesQuote,
+  type DeletedSalesQuote,
+  type DeletedSalesQuoteImage,
   type SalesQuoteBomLine,
   type SalesQuoteLocation,
   type SalesQuoteLocationImage,
   type SalesQuoteLocationItem,
   type TaskActivityEntry,
+  type DeletionLogEntry,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
   type ScopeOfWork,
@@ -1127,6 +1135,8 @@ function App() {
   const [catalogPriceChangeStatus, setCatalogPriceChangeStatus] = useState("");
   const [catalogStatus, setCatalogStatus] = useState("");
   const [salesQuotes, setSalesQuotes] = useState<SalesQuote[]>([]);
+  const [deletedSalesQuotes, setDeletedSalesQuotes] = useState<DeletedSalesQuote[]>([]);
+  const [deletedSalesQuoteImages, setDeletedSalesQuoteImages] = useState<DeletedSalesQuoteImage[]>([]);
   const [salesQuoteStatus, setSalesQuoteStatus] = useState("");
   const [authChecksReady, setAuthChecksReady] = useState(false);
   const [userApprovalStatus, setUserApprovalStatus] = useState<UserStatus | null>(null);
@@ -1136,6 +1146,7 @@ function App() {
   const [approvalReviewStatus, setApprovalReviewStatus] = useState("");
   const [tasks, setTasks] = useState<EOTask[]>([]);
   const [deletedTasks, setDeletedTasks] = useState<EOTask[]>([]);
+  const [deletionLog, setDeletionLog] = useState<DeletionLogEntry[]>([]);
   const [taskStatusMessage, setTaskStatusMessage] = useState("");
   const [taskActivity, setTaskActivity] = useState<TaskActivityEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -2371,6 +2382,8 @@ function App() {
       return;
     }
     reloadSalesQuotes(authSession.accessToken);
+    loadDeletedSalesQuotes(authSession.accessToken).then(setDeletedSalesQuotes).catch(() => {});
+    loadDeletedSalesQuoteImages(authSession.accessToken).then(setDeletedSalesQuoteImages).catch(() => {});
   }, [authSession]);
 
   async function handleCreateSalesQuote(input: NewSiteInput) {
@@ -2422,11 +2435,13 @@ function App() {
   }
 
   async function handleDeleteSalesQuoteLocation(quoteId: string, locationId: string) {
+    const location = salesQuotes.find((entry) => entry.id === quoteId)?.locations.find((entry) => entry.id === locationId);
+    const label = location?.name || (location?.locationType === "lot" ? "Lot" : "Garage");
     setSalesQuotes((current) =>
       current.map((entry) => (entry.id === quoteId ? { ...entry, locations: entry.locations.filter((location) => location.id !== locationId) } : entry)),
     );
     if (authSession) {
-      await deleteSalesQuoteLocation(locationId, authSession.accessToken);
+      await deleteSalesQuoteLocation(locationId, label, authSession.email, authSession.accessToken);
     }
   }
 
@@ -2507,6 +2522,10 @@ function App() {
     if (!authSession) {
       return;
     }
+    const location = salesQuotes.find((entry) => entry.id === quoteId)?.locations.find((entry) => entry.id === locationId);
+    const allItems = [...(location?.signLines ?? []), ...(location?.sensorLines ?? []), ...(location?.miscLines ?? []), ...(location?.cameraLines ?? []), ...(location?.vpuLines ?? [])];
+    const item = allItems.find((line) => line.id === itemId);
+    const label = catalogItems.find((catalogItem) => catalogItem.id === item?.catalogItemId)?.productName ?? "Location hardware line";
     setSalesQuotes((current) =>
       current.map((entryQuote) =>
         entryQuote.id === quoteId
@@ -2528,7 +2547,7 @@ function App() {
           : entryQuote,
       ),
     );
-    await deleteSalesQuoteLocationItem(itemId, authSession.accessToken);
+    await deleteSalesQuoteLocationItem(itemId, label, authSession.email, authSession.accessToken);
   }
 
   // "Pull Location Hardware into Quote BOM" -- rolls every location's real
@@ -2637,10 +2656,28 @@ function App() {
   }
 
   async function handleDeleteSalesQuote(quoteId: string) {
+    const quote = salesQuotes.find((entry) => entry.id === quoteId);
     setSalesQuotes((current) => current.filter((entry) => entry.id !== quoteId));
-    if (authSession) {
-      await deleteSalesQuote(quoteId, authSession.accessToken);
+    if (authSession && quote) {
+      await deleteSalesQuote(quoteId, quote.siteName, authSession.email, authSession.accessToken);
+      setDeletedSalesQuotes((current) => [
+        { id: quoteId, siteName: quote.siteName, clientName: quote.clientName, deletedByEmail: authSession.email, deletedAt: new Date().toISOString() },
+        ...current,
+      ]);
     }
+  }
+
+  async function handleRestoreSalesQuote(quoteId: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const target = deletedSalesQuotes.find((existing) => existing.id === quoteId);
+    const ok = await restoreSalesQuote(quoteId, target?.siteName ?? "Sales quote", authSession.email, authSession.accessToken);
+    if (ok) {
+      setDeletedSalesQuotes((current) => current.filter((existing) => existing.id !== quoteId));
+      setSalesQuotes(await loadSalesQuotes(authSession.accessToken));
+    }
+    return ok;
   }
 
   // Shared by the manual "add line" form and the Pre-Sales Quick Estimate
@@ -2750,8 +2787,9 @@ function App() {
     if (!authSession) {
       return;
     }
+    const label = salesQuotes.find((entry) => entry.id === quoteId)?.bomLines.find((line) => line.id === lineId)?.item ?? "BOM line";
     setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, bomLines: entry.bomLines.filter((line) => line.id !== lineId) } : entry)));
-    await deleteSalesQuoteBomLine(lineId, authSession.accessToken);
+    await deleteSalesQuoteBomLine(lineId, label, authSession.email, authSession.accessToken);
   }
 
   async function handleUploadSalesQuoteImage(
@@ -2907,7 +2945,11 @@ function App() {
     if (!authSession) {
       return false;
     }
-    const ok = await deleteSalesQuoteLocationImage(imageId, storagePath, authSession.accessToken);
+    const quote = salesQuotes.find((entry) => entry.id === quoteId);
+    const location = quote?.locations.find((entry) => entry.id === locationId);
+    const image = location?.images.find((entry) => entry.id === imageId);
+    const label = image?.fileName || "Untitled";
+    const ok = await deleteSalesQuoteLocationImage(imageId, storagePath, label, authSession.email, authSession.accessToken);
     if (ok) {
       setSalesQuotes((current) =>
         current.map((entry) =>
@@ -2921,6 +2963,33 @@ function App() {
             : entry,
         ),
       );
+      setDeletedSalesQuoteImages((current) => [
+        {
+          id: imageId,
+          quoteLocationId: locationId,
+          siteName: quote?.siteName ?? "Unknown quote",
+          locationName: location?.name || "Location",
+          fileName: label,
+          storagePath,
+          imageType: image?.imageType ?? "photo",
+          deletedByEmail: authSession.email,
+          deletedAt: new Date().toISOString(),
+        },
+        ...current,
+      ]);
+    }
+    return ok;
+  }
+
+  async function handleRestoreSalesQuoteImage(imageId: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const target = deletedSalesQuoteImages.find((existing) => existing.id === imageId);
+    const ok = await restoreSalesQuoteLocationImage(imageId, target?.fileName ?? "Photo", authSession.email, authSession.accessToken);
+    if (ok) {
+      setDeletedSalesQuoteImages((current) => current.filter((existing) => existing.id !== imageId));
+      setSalesQuotes(await loadSalesQuotes(authSession.accessToken));
     }
     return ok;
   }
@@ -3525,6 +3594,9 @@ function App() {
       .catch(() => undefined);
     loadAllTaskActivity(accessToken)
       .then(setTaskActivity)
+      .catch(() => undefined);
+    loadDeletionLog(accessToken)
+      .then(setDeletionLog)
       .catch(() => undefined);
   }
 
@@ -6131,6 +6203,11 @@ function App() {
             onUpdateTask={handleUpdateTask}
             onDeleteTask={handleDeleteTask}
             onOpenTasksView={() => navigateToView("tasks")}
+            deletedSalesQuotes={deletedSalesQuotes}
+            onRestoreSalesQuote={handleRestoreSalesQuote}
+            deletedSalesQuoteImages={deletedSalesQuoteImages}
+            onRestoreSalesQuoteImage={handleRestoreSalesQuoteImage}
+            canReviewDeleted={isAdmin || roleMode === "manager"}
           />
         )}
         {view === "marketing" && allowedTabs.includes("marketing") && (
@@ -6228,6 +6305,7 @@ function App() {
             onSendPasswordReset={(email) => handleRequestPasswordReset(email)}
             proposalTemplateSections={proposalTemplateSections}
             onUpdateProposalTemplateSection={handleUpdateProposalTemplateSection}
+            deletionLog={deletionLog}
             onRefresh={() => {
               if (!authSession) {
                 return;
@@ -12413,6 +12491,7 @@ function AdminPage({
   onSendPasswordReset,
   proposalTemplateSections,
   onUpdateProposalTemplateSection,
+  deletionLog,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -12481,11 +12560,13 @@ function AdminPage({
   onSendPasswordReset: (email: string) => Promise<boolean>;
   proposalTemplateSections: ProposalTemplateSection[];
   onUpdateProposalTemplateSection: (id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) => void;
+  deletionLog?: DeletionLogEntry[];
 }) {
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
   const [editingRosterId, setEditingRosterId] = useState<string | null>(null);
   const [copiedInviteId, setCopiedInviteId] = useState("");
   const [passwordResetFeedback, setPasswordResetFeedback] = useState<{ email: string; ok: boolean } | null>(null);
+  const [showDeletionLog, setShowDeletionLog] = useState(false);
   const knownUserByEmail = new Map(knownUsers.map((user) => [user.email.toLowerCase(), user]));
 
   async function triggerPasswordReset(email: string) {
@@ -12565,6 +12646,40 @@ function AdminPage({
 
   return (
     <div className="content-grid">
+      {(isAdmin || isManagerRole) && (deletionLog ?? []).length > 0 && (
+        <section className="panel wide">
+          <div className="panel-title-row">
+            <div>
+              <h2>Deletion Log</h2>
+              <p>Every delete and restore across the app -- who, what, and when. Restoring itself still happens from each section (Tasks, Purchasing, Projects, Site Builder).</p>
+            </div>
+            <button className="secondary-action mini-action" type="button" onClick={() => setShowDeletionLog((current) => !current)}>
+              {showDeletionLog ? "Hide" : "Show"} ({(deletionLog ?? []).length})
+            </button>
+          </div>
+          {showDeletionLog && (
+            <div className="deleted-tasks-panel">
+              <table className="stack-table-mobile">
+                <thead>
+                  <tr><th>What</th><th>Type</th><th>Action</th><th>By</th><th>When</th></tr>
+                </thead>
+                <tbody>
+                  {(deletionLog ?? []).map((entry) => (
+                    <tr key={entry.id}>
+                      <td>{entry.entityLabel}</td>
+                      <td data-label="Type">{entry.entityType.replace(/_/g, " ")}</td>
+                      <td data-label="Action"><span className={`status ${entry.action === "restored" ? "ok" : "warn"}`}>{entry.action}</span></td>
+                      <td data-label="By">{entry.actorEmail || "Unknown"}</td>
+                      <td data-label="When">{new Date(entry.createdAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
       {isAdmin && (
         <section className="panel wide">
           <PanelHeader title="Company Branding" label="Shown in the top nav -- change these to reuse this app for a different company" />
@@ -13391,6 +13506,11 @@ function SalesHome({
   onUpdateTask,
   onDeleteTask,
   onOpenTasksView,
+  deletedSalesQuotes,
+  onRestoreSalesQuote,
+  deletedSalesQuoteImages,
+  onRestoreSalesQuoteImage,
+  canReviewDeleted,
 }: {
   catalogItems: CatalogItem[];
   catalogStatus: string;
@@ -13478,6 +13598,11 @@ function SalesHome({
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
   onOpenTasksView: () => void;
+  deletedSalesQuotes?: DeletedSalesQuote[];
+  onRestoreSalesQuote?: (id: string) => Promise<boolean>;
+  deletedSalesQuoteImages?: DeletedSalesQuoteImage[];
+  onRestoreSalesQuoteImage?: (id: string) => Promise<boolean>;
+  canReviewDeleted?: boolean;
 }) {
   // One combined review panel for both Catalog and Quote Builder tasks --
   // no Add here (that lives inside each area below, see RequestTaskButton),
@@ -13618,6 +13743,11 @@ function SalesHome({
         tasks={tasks}
         teamMembers={teamMembers}
         onCreateTask={onCreateTask}
+        deletedSalesQuotes={deletedSalesQuotes}
+        onRestoreQuote={onRestoreSalesQuote}
+        deletedSalesQuoteImages={deletedSalesQuoteImages}
+        onRestoreImage={onRestoreSalesQuoteImage}
+        canReviewDeleted={canReviewDeleted}
       />
     </div>
   );
@@ -17159,6 +17289,11 @@ function SalesQuoteBuilder({
   tasks,
   teamMembers,
   onCreateTask,
+  deletedSalesQuotes,
+  onRestoreQuote,
+  deletedSalesQuoteImages,
+  onRestoreImage,
+  canReviewDeleted,
 }: {
   salesQuotes: SalesQuote[];
   status: string;
@@ -17242,8 +17377,14 @@ function SalesQuoteBuilder({
   tasks: EOTask[];
   teamMembers: TeamMember[];
   onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
+  deletedSalesQuotes?: DeletedSalesQuote[];
+  onRestoreQuote?: (id: string) => Promise<boolean>;
+  deletedSalesQuoteImages?: DeletedSalesQuoteImage[];
+  onRestoreImage?: (id: string) => Promise<boolean>;
+  canReviewDeleted?: boolean;
 }) {
   const [mode, setMode] = useState<"list" | "detail">("list");
+  const [showDeletedQuoteItems, setShowDeletedQuoteItems] = useState(false);
   const [cameraLocationId, setCameraLocationId] = useState<string | null>(null);
   const [filesLocationId, setFilesLocationId] = useState<string | null>(null);
   const [showSiteGallery, setShowSiteGallery] = useState(false);
@@ -17439,6 +17580,69 @@ function SalesQuoteBuilder({
 
   return (
     <>
+      {mode === "list" && canReviewDeleted && ((deletedSalesQuotes ?? []).length > 0 || (deletedSalesQuoteImages ?? []).length > 0) && (
+        <section className="panel wide">
+          <div className="panel-title-row">
+            <div>
+              <h2>Deleted Quotes &amp; Photos</h2>
+              <p>Sites and photos removed from Site Builder, but kept on record. Restore brings them back.</p>
+            </div>
+            <button className="secondary-action mini-action" type="button" onClick={() => setShowDeletedQuoteItems((current) => !current)}>
+              {showDeletedQuoteItems ? "Hide" : "Show"} ({(deletedSalesQuotes ?? []).length + (deletedSalesQuoteImages ?? []).length})
+            </button>
+          </div>
+          {showDeletedQuoteItems && (
+            <div className="deleted-tasks-panel">
+              {(deletedSalesQuotes ?? []).length > 0 && (
+                <table className="stack-table-mobile">
+                  <thead>
+                    <tr><th>Site</th><th>Client</th><th>Deleted by</th><th>Deleted at</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {(deletedSalesQuotes ?? []).map((quote) => (
+                      <tr key={quote.id}>
+                        <td>{quote.siteName}</td>
+                        <td data-label="Client">{quote.clientName}</td>
+                        <td data-label="Deleted by">{quote.deletedByEmail || "Unknown"}</td>
+                        <td data-label="Deleted at">{new Date(quote.deletedAt).toLocaleString()}</td>
+                        <td>
+                          {onRestoreQuote && (
+                            <button className="secondary-action mini-action" type="button" onClick={() => onRestoreQuote(quote.id)}>Restore</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {(deletedSalesQuoteImages ?? []).length > 0 && (
+                <table className="stack-table-mobile">
+                  <thead>
+                    <tr><th>File</th><th>Location</th><th>Site</th><th>Deleted by</th><th>Deleted at</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {(deletedSalesQuoteImages ?? []).map((image) => (
+                      <tr key={image.id}>
+                        <td>{image.fileName}</td>
+                        <td data-label="Location">{image.locationName}</td>
+                        <td data-label="Site">{image.siteName}</td>
+                        <td data-label="Deleted by">{image.deletedByEmail || "Unknown"}</td>
+                        <td data-label="Deleted at">{new Date(image.deletedAt).toLocaleString()}</td>
+                        <td>
+                          {onRestoreImage && (
+                            <button className="secondary-action mini-action" type="button" onClick={() => onRestoreImage(image.id)}>Restore</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       {mode === "list" && (
         <section className="panel wide">
           <div className="panel-title-row">

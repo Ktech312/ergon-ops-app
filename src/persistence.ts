@@ -6731,13 +6731,21 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
 const SALES_QUOTE_SELECT =
   "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,saas_type,saas_contract_amount,saas_billing_frequency,sale_amount,sales_quote_locations(id,quote_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
 
+// Migration 088: soft-deleted quotes/locations/items/images/bom-lines
+// filtered out here rather than dropped from the select, so
+// fetchWithDeletedAtFallback can strip just these params if 088 hasn't
+// run yet.
+const SALES_QUOTE_DELETED_AT_FILTERS =
+  "&deleted_at=is.null&sales_quote_locations.deleted_at=is.null&sales_quote_locations.sales_quote_location_images.deleted_at=is.null&sales_quote_locations.sales_quote_location_items.deleted_at=is.null&sales_quote_bom_lines.deleted_at=is.null";
+
 export async function loadSalesQuotes(accessToken?: string): Promise<SalesQuote[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl(`sales_quotes?select=${SALES_QUOTE_SELECT}&order=created_at.desc`), {
-    headers: supabaseHeaders(accessToken),
-  });
+  const response = await fetchWithDeletedAtFallback(
+    supabaseUrl(`sales_quotes?select=${SALES_QUOTE_SELECT}&order=created_at.desc${SALES_QUOTE_DELETED_AT_FILTERS}`),
+    supabaseHeaders(accessToken),
+  );
   if (!response.ok) {
     // Throw rather than silently returning [] -- this previously masked a
     // real failure (e.g. querying columns from a migration that hasn't
@@ -6876,14 +6884,68 @@ export async function updateSalesQuoteStatus(id: string, status: SalesQuote["sta
 // link (on delete set null) -- their history is kept. If this quote was
 // already converted to a Project, the Project keeps existing as its own
 // record (projects.source_sales_quote_id also on delete set null).
-export async function deleteSalesQuote(id: string, accessToken?: string): Promise<void> {
+export async function deleteSalesQuote(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("sales_quote", id, label, "deleted", actorEmail, accessToken);
+}
+
+export type DeletedSalesQuote = {
+  id: string;
+  siteName: string;
+  clientName: string;
+  deletedByEmail: string;
+  deletedAt: string;
+};
+
+type DeletedSalesQuoteRow = {
+  id: string;
+  site_name: string;
+  client_name: string | null;
+  deleted_by_email: string | null;
+  deleted_at: string;
+};
+
+export async function loadDeletedSalesQuotes(accessToken?: string): Promise<DeletedSalesQuote[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl("sales_quotes?select=id,site_name,client_name,deleted_by_email,deleted_at&deleted_at=not.is.null&order=deleted_at.desc"),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as DeletedSalesQuoteRow[];
+  return rows.map((row) => ({
+    id: row.id,
+    siteName: row.site_name,
+    clientName: row.client_name ?? "",
+    deletedByEmail: row.deleted_by_email ?? "",
+    deletedAt: row.deleted_at,
+  }));
+}
+
+export async function restoreSalesQuote(id: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: null, deleted_at: null }),
+  });
+  if (response.ok) {
+    await logDeletionEvent("sales_quote", id, label, "restored", actorEmail, accessToken);
+  }
+  return response.ok;
 }
 
 // Migration 053: client email + proposal summary, edited from the Quote
@@ -6968,14 +7030,16 @@ export async function updateSalesQuoteBomLineCatalogLink(id: string, catalogItem
   });
 }
 
-export async function deleteSalesQuoteBomLine(id: string, accessToken?: string): Promise<void> {
+export async function deleteSalesQuoteBomLine(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("sales_quote_bom_line", id, label, "deleted", actorEmail, accessToken);
 }
 
 export async function addSalesQuoteLocation(
@@ -7039,14 +7103,16 @@ export async function updateSalesQuoteLocation(
   });
 }
 
-export async function deleteSalesQuoteLocation(id: string, accessToken?: string): Promise<void> {
+export async function deleteSalesQuoteLocation(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`sales_quote_locations?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("sales_quote_location", id, label, "deleted", actorEmail, accessToken);
 }
 
 // Migration 056: addable Sign/Space Sensor/Misc lines at a location.
@@ -7103,14 +7169,16 @@ export async function updateSalesQuoteLocationItem(
   });
 }
 
-export async function deleteSalesQuoteLocationItem(id: string, accessToken?: string): Promise<void> {
+export async function deleteSalesQuoteLocationItem(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`sales_quote_location_items?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("sales_quote_location_item", id, label, "deleted", actorEmail, accessToken);
 }
 
 const SALES_QUOTE_IMAGE_BUCKET = "sales-quote-images";
@@ -7445,21 +7513,95 @@ async function deleteStorageObject(bucket: string, storagePath: string, accessTo
   }).catch(() => undefined);
 }
 
-export async function deleteSalesQuoteLocationImage(imageId: string, storagePath: string, accessToken?: string): Promise<boolean> {
+// Migration 088: soft delete only, Storage object left in place -- same
+// reasoning as deleteProjectLocationImage below.
+export async function deleteSalesQuoteLocationImage(imageId: string, _storagePath: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return false;
   }
   try {
-    await deleteStorageObject(SALES_QUOTE_IMAGE_BUCKET, storagePath, accessToken);
     const response = await fetch(supabaseUrl(`sales_quote_location_images?id=eq.${imageId}`), {
-      method: "DELETE",
+      method: "PATCH",
       headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
     });
+    if (response.ok) {
+      await logDeletionEvent("sales_quote_location_image", imageId, label, "deleted", actorEmail, accessToken);
+    }
     return response.ok;
   } catch (error) {
     console.error("deleteSalesQuoteLocationImage threw", error);
     return false;
   }
+}
+
+export type DeletedSalesQuoteImage = {
+  id: string;
+  quoteLocationId: string;
+  siteName: string;
+  locationName: string;
+  fileName: string;
+  storagePath: string;
+  imageType: "photo" | "drawing";
+  deletedByEmail: string;
+  deletedAt: string;
+};
+
+type DeletedSalesQuoteImageRow = {
+  id: string;
+  quote_location_id: string;
+  file_name: string | null;
+  storage_path: string;
+  image_type: string;
+  deleted_by_email: string | null;
+  deleted_at: string;
+  sales_quote_locations: { name: string; sales_quotes: { site_name: string } | { site_name: string }[] | null } | { name: string; sales_quotes: { site_name: string } | { site_name: string }[] | null }[] | null;
+};
+
+export async function loadDeletedSalesQuoteImages(accessToken?: string): Promise<DeletedSalesQuoteImage[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(
+      "sales_quote_location_images?select=id,quote_location_id,file_name,storage_path,image_type,deleted_by_email,deleted_at,sales_quote_locations(name,sales_quotes(site_name))&deleted_at=not.is.null&order=deleted_at.desc",
+    ),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as DeletedSalesQuoteImageRow[];
+  return rows.map((row) => {
+    const location = Array.isArray(row.sales_quote_locations) ? row.sales_quote_locations[0] : row.sales_quote_locations;
+    const quote = location ? (Array.isArray(location.sales_quotes) ? location.sales_quotes[0] : location.sales_quotes) : null;
+    return {
+      id: row.id,
+      quoteLocationId: row.quote_location_id,
+      siteName: quote?.site_name ?? "Unknown quote",
+      locationName: location?.name ?? "Unknown location",
+      fileName: row.file_name ?? "Untitled",
+      storagePath: row.storage_path,
+      imageType: row.image_type === "drawing" ? "drawing" : "photo",
+      deletedByEmail: row.deleted_by_email ?? "",
+      deletedAt: row.deleted_at,
+    };
+  });
+}
+
+export async function restoreSalesQuoteLocationImage(imageId: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`sales_quote_location_images?id=eq.${imageId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: null, deleted_at: null }),
+  });
+  if (response.ok) {
+    await logDeletionEvent("sales_quote_location_image", imageId, label, "restored", actorEmail, accessToken);
+  }
+  return response.ok;
 }
 
 // --- Project Locations -------------------------------------------------
