@@ -140,10 +140,16 @@ button {
   background: white;
   border: 1px solid #e8e1d5;
   border-radius: 8px;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 10px;
+  text-align: left;
+}
+
+.task-card:hover {
+  background: #faf6ee;
 }
 
 .task-card-top {

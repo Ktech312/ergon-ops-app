@@ -7276,7 +7276,11 @@ function Purchasing({
                   <input type="number" min={1} value={line.qty} onChange={(event) => updatePurchaseLine(index, { qty: Number(event.target.value) || 0 })} aria-label="Quantity" />
                   <input type="number" min={0} step="0.01" value={line.unitCost} onChange={(event) => updatePurchaseLine(index, { unitCost: Number(event.target.value) || 0 })} aria-label="Unit cost" />
                   <b>{moneyExact(line.qty * line.unitCost)}</b>
-                  {purchaseDraft.lines.length > 1 && <button className="secondary-action mini-action" type="button" onClick={() => removePurchaseLine(index)}>Remove</button>}
+                  {purchaseDraft.lines.length > 1 && (
+                    <button className="icon-button compact-remove" type="button" onClick={() => removePurchaseLine(index)} aria-label="Remove line">
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
               ))}
               <button className="secondary-action mini-action" type="button" onClick={addPurchaseLine}>Add Line</button>
@@ -7657,7 +7661,9 @@ function PurchaseOrderDetailPanel({
                   <small>{file.description}{file.uploadedByEmail ? ` -- ${file.uploadedByEmail}` : ""}{file.uploadedAt ? ` -- ${new Date(file.uploadedAt).toLocaleDateString()}` : ""}</small>
                 </div>
                 <button className="secondary-action mini-action" type="button" onClick={async () => { const url = await onGetFileUrl(file.storagePath); if (url) window.open(url, "_blank", "noopener"); }}>View</button>
-                <button className="secondary-action mini-action" type="button" onClick={() => onDeleteFile(po.id, file.id, file.storagePath)}>Remove</button>
+                <button className="icon-button compact-remove" type="button" onClick={() => onDeleteFile(po.id, file.id, file.storagePath)} aria-label="Remove file">
+                  <Trash2 size={15} />
+                </button>
               </div>
             ))}
           </div>
@@ -11072,18 +11078,17 @@ function Projects({
               )}
               <table className="stack-table-mobile">
                 <thead>
-                  <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th><th></th></tr>
+                  <tr><th>Hardware</th><th>Qty</th><th>Status</th><th>Request Speed</th><th>PO</th><th>Notes</th></tr>
                 </thead>
                 <tbody>
                   {selectedProject.bom.map((line, index) => (
-                    <tr key={`${selectedProject.name}-${line.item}-${index}`}>
+                    <tr key={`${selectedProject.name}-${line.item}-${index}`} className="clickable-row" onClick={() => openEditBomModal(line, index)}>
                       <td><strong>{line.item}</strong></td>
                       <td data-label="Qty">{line.qty}</td>
                       <td data-label="Status"><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span>{!line.sentToPurchasingAt && <small className="muted"> (draft)</small>}</td>
                       <td data-label="Request Speed">{line.requestSpeed}</td>
                       <td data-label="PO">{line.po ?? "TBD"}</td>
                       <td data-label="Notes">{line.notes ?? "Ready for PM details"}</td>
-                      <td><button className="table-action secondary-table-action" type="button" onClick={() => openEditBomModal(line, index)}>Edit</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -11972,7 +11977,9 @@ function FormBuilderPanel({
                   <td>
                     <button className="secondary-action mini-action" type="button" disabled={index === 0} onClick={() => onReorderField(field.id, "up")}>&uarr;</button>{" "}
                     <button className="secondary-action mini-action" type="button" disabled={index === sorted.length - 1} onClick={() => onReorderField(field.id, "down")}>&darr;</button>{" "}
-                    <button className="secondary-action mini-action" type="button" onClick={() => onDeleteField(field.id)}>Remove</button>
+                    <button className="icon-button compact-remove" type="button" onClick={() => onDeleteField(field.id)} aria-label="Remove field">
+                      <Trash2 size={15} />
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -12680,7 +12687,11 @@ function AdminPage({
                         <td>{phase.phaseName}</td>
                         <td data-label="Duration">{phase.durationMode === "fixed_hours" ? `${phase.fixedHours ?? 0}h fixed` : `per BOM unit (${phase.bomCategoryFilter})`}</td>
                         <td data-label="Role">{phase.defaultRole || "-"}</td>
-                        <td><button className="secondary-action mini-action" type="button" onClick={() => onDeleteSchedulePhase(template.id, phase.id)}>Remove</button></td>
+                        <td>
+                          <button className="icon-button compact-remove" type="button" onClick={() => onDeleteSchedulePhase(template.id, phase.id)} aria-label="Remove phase">
+                            <Trash2 size={15} />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {template.phases.length === 0 && <tr><td colSpan={5} className="empty-compact-state">No phases yet.</td></tr>}
@@ -12767,7 +12778,11 @@ function AdminPage({
                   <td>{rule.baseItemName}</td>
                   <td data-label="Quantity">{rule.quantityMode === "per_node_ceil" ? `ceil(nodes / ${rule.perNodeDivisor})` : `${rule.fixedQty} fixed`}</td>
                   <td data-label="Cloud Sync">{rule.requiresCloudSync === null ? "Any" : rule.requiresCloudSync ? "Required" : "No"}</td>
-                  <td><button className="secondary-action mini-action" type="button" onClick={() => onDeletePresalesRule(rule.id)}>Remove</button></td>
+                  <td>
+                    <button className="icon-button compact-remove" type="button" onClick={() => onDeletePresalesRule(rule.id)} aria-label="Remove rule">
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
                 </tr>
               ))}
               {presalesRules.length === 0 && <tr><td colSpan={5} className="empty-compact-state">No rules yet.</td></tr>}
@@ -12839,7 +12854,11 @@ function AdminPage({
                   </td>
                   <td data-label="Notes">{rule.notes || "-"}</td>
                   <td data-label="Active"><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateSiteHardwareRule(rule.id, { isActive: event.target.checked })} /></td>
-                  <td><button className="secondary-action mini-action" type="button" onClick={() => onDeleteSiteHardwareRule(rule.id)}>Remove</button></td>
+                  <td>
+                    <button className="icon-button compact-remove" type="button" onClick={() => onDeleteSiteHardwareRule(rule.id)} aria-label="Remove rule">
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
                 </tr>
               ))}
               {siteHardwareRules.length === 0 && <tr><td colSpan={6} className="empty-compact-state">No rules yet.</td></tr>}
@@ -15572,10 +15591,10 @@ function SiteGalleryModal({
           <button className="secondary-action mini-action" type="button" onClick={selectAll} disabled={groups.length === 0}>Select all</button>
           <button className="secondary-action mini-action" type="button" onClick={clearSelection} disabled={selectedIds.size === 0}>Clear</button>
           <button className="secondary-action mini-action" type="button" onClick={downloadSelected} disabled={selectedIds.size === 0}>
-            Download ({selectedIds.size})
+            <Download size={14} /> Download ({selectedIds.size})
           </button>
           <button className="secondary-action mini-action" type="button" onClick={deleteSelected} disabled={selectedIds.size === 0 || isWorking}>
-            {isWorking ? "Deleting..." : `Delete (${selectedIds.size})`}
+            <Trash2 size={14} /> {isWorking ? "Deleting..." : `Delete (${selectedIds.size})`}
           </button>
         </div>
         <div className="upload-rule-note">
@@ -18299,6 +18318,7 @@ function TaskEditorModal({
   teamMembers,
   onSubmit,
   onClose,
+  onDelete,
   lockSection,
   lockProjectRef,
   taskDependencies,
@@ -18316,6 +18336,7 @@ function TaskEditorModal({
   teamMembers: TeamMember[];
   onSubmit: () => Promise<boolean>;
   onClose: () => void;
+  onDelete?: () => void;
   lockSection?: boolean;
   lockProjectRef?: boolean;
   taskDependencies?: TaskHardwareDependency[];
@@ -18491,7 +18512,9 @@ function TaskEditorModal({
                     </span>
                   </div>
                   {onDeleteDependency && (
-                    <button className="secondary-action mini-action" type="button" onClick={() => onDeleteDependency(dep.id)}>Remove</button>
+                    <button className="icon-button compact-remove" type="button" onClick={() => onDeleteDependency(dep.id)} aria-label="Remove linked hardware">
+                      <Trash2 size={15} />
+                    </button>
                   )}
                 </div>
               ))}
@@ -18534,15 +18557,22 @@ function TaskEditorModal({
           )}
           {submitError && <div className="modal-error-text">{submitError}</div>}
           <div className="modal-actions">
-            {editingId && onQuickStatusChange && (
+            {editingId && (
               <div className="task-modal-footer-left">
-                {isClosed ? (
-                  <button className="secondary-action mini-action" type="button" disabled={isSubmitting} onClick={() => handleQuickStatus("to_do")}>Reopen Task</button>
-                ) : (
-                  <button className="secondary-action mini-action" type="button" disabled={isSubmitting} onClick={() => handleQuickStatus("done")}>Close Task</button>
+                {onQuickStatusChange && (
+                  isClosed ? (
+                    <button className="secondary-action mini-action" type="button" disabled={isSubmitting} onClick={() => handleQuickStatus("to_do")}>Reopen Task</button>
+                  ) : (
+                    <button className="secondary-action mini-action" type="button" disabled={isSubmitting} onClick={() => handleQuickStatus("done")}>Close Task</button>
+                  )
                 )}
                 {isClosed && editingTask && (
                   <span className="muted">Closed by {editingTask.closedByEmail || "Unknown"} on {new Date(editingTask.closedAt).toLocaleString()}</span>
+                )}
+                {onDelete && (
+                  <button className="icon-button" type="button" onClick={onDelete} aria-label="Delete task" title="Delete task">
+                    <Trash2 size={16} />
+                  </button>
                 )}
               </div>
             )}
@@ -18557,9 +18587,15 @@ function TaskEditorModal({
   );
 }
 
-function TaskCard({ task, teamMembers, onUpdate, onEdit, onDelete, showStatusMove }: { task: EOTask; teamMembers: TeamMember[]; onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>; onEdit: () => void; onDelete: () => void; showStatusMove?: boolean }) {
+function TaskCard({ task, teamMembers, onUpdate, onEdit, showStatusMove }: { task: EOTask; teamMembers: TeamMember[]; onUpdate: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>; onEdit: () => void; showStatusMove?: boolean }) {
   return (
-    <div className="task-card">
+    <div
+      className="task-card"
+      role="button"
+      tabIndex={0}
+      onClick={onEdit}
+      onKeyDown={(event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), onEdit())}
+    >
       <div className="task-card-top">
         <span className={priorityBadgeClass(task.priority)}>{task.priority}</span>
         {task.dueDate && <span className="task-card-due">{task.dueDate}</span>}
@@ -18572,17 +18608,19 @@ function TaskCard({ task, teamMembers, onUpdate, onEdit, onDelete, showStatusMov
       {task.impactAreas.length > 0 && (
         <div className="tag-chip-row">{task.impactAreas.map((tag) => <span key={tag}>{tag}</span>)}</div>
       )}
-      <div className="task-card-actions">
-        {showStatusMove && (
-          <select value={task.status} onChange={(event) => onUpdate(task.id, { status: event.target.value as TaskStatus })}>
+      {showStatusMove && (
+        <div className="task-card-actions">
+          <select
+            value={task.status}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => onUpdate(task.id, { status: event.target.value as TaskStatus })}
+          >
             {TASK_STATUS_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
-        )}
-        <button className="secondary-action mini-action" type="button" onClick={onEdit}>Edit</button>
-        <button className="secondary-action mini-action" type="button" onClick={onDelete}>Delete</button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -19018,12 +19056,12 @@ function TasksBoard({
                       <th>Assignee</th>
                       <th>Due</th>
                       <th>Source</th>
-                      <th></th>
+                      <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {groupTasks.map((task) => (
-                      <tr key={task.id}>
+                      <tr key={task.id} className="clickable-row" onClick={() => openEditModal(task)}>
                         <td>{task.title}</td>
                         <td>{TASK_SECTION_OPTIONS.find((option) => option.value === task.section)?.label ?? task.section}</td>
                         <td><span className={priorityBadgeClass(task.priority)}>{task.priority}</span></td>
@@ -19041,14 +19079,13 @@ function TasksBoard({
                         <td>
                           <select
                             value={task.status}
+                            onClick={(event) => event.stopPropagation()}
                             onChange={(event) => onUpdate(task.id, { status: event.target.value as TaskStatus })}
                           >
                             {TASK_STATUS_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>{option.label}</option>
                             ))}
                           </select>
-                          <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(task)}>Edit</button>
-                          <button className="secondary-action mini-action" type="button" onClick={() => onDelete(task.id)}>Delete</button>
                         </td>
                       </tr>
                     ))}
@@ -19063,7 +19100,14 @@ function TasksBoard({
 
                 <div className="mobile-card-list">
                   {groupTasks.map((task) => (
-                    <div key={task.id} className="mobile-card">
+                    <div
+                      key={task.id}
+                      className="mobile-card"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openEditModal(task)}
+                      onKeyDown={(event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), openEditModal(task))}
+                    >
                       <span className="mobile-card-row">
                         <span className="mobile-card-title">
                           <strong>{task.title}</strong>
@@ -19077,16 +19121,13 @@ function TasksBoard({
                       {task.impactAreas.length > 0 && <span className="tag-chip-row">{task.impactAreas.map((tag) => <span key={tag}>{tag}</span>)}</span>}
                       <select
                         value={task.status}
+                        onClick={(event) => event.stopPropagation()}
                         onChange={(event) => onUpdate(task.id, { status: event.target.value as TaskStatus })}
                       >
                         {TASK_STATUS_OPTIONS.map((option) => (
                           <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
-                      <span className="mobile-card-pills">
-                        <button className="secondary-action mini-action" type="button" onClick={() => openEditModal(task)}>Edit</button>
-                        <button className="secondary-action mini-action" type="button" onClick={() => onDelete(task.id)}>Delete</button>
-                      </span>
                     </div>
                   ))}
                   {groupTasks.length === 0 && <div className="empty-compact-state">No tasks in this group.</div>}
@@ -19109,7 +19150,7 @@ function TasksBoard({
                   </div>
                   <div className="task-board-column-body">
                     {groupTasks.map((task) => (
-                      <TaskCard key={task.id} task={task} teamMembers={teamMembers} onUpdate={onUpdate} onEdit={() => openEditModal(task)} onDelete={() => onDelete(task.id)} showStatusMove={groupBy === "status"} />
+                      <TaskCard key={task.id} task={task} teamMembers={teamMembers} onUpdate={onUpdate} onEdit={() => openEditModal(task)} showStatusMove={groupBy === "status"} />
                     ))}
                     {groupTasks.length === 0 && <div className="empty-compact-state">No tasks.</div>}
                   </div>
@@ -19132,6 +19173,7 @@ function TasksBoard({
           teamMembers={teamMembers}
           onSubmit={submitDraft}
           onClose={() => setModalOpen(false)}
+          onDelete={editingId ? () => { onDelete(editingId); setModalOpen(false); } : undefined}
           taskDependencies={(taskHardwareDependencies ?? []).filter((dep) => dep.taskId === editingId)}
           inventoryItems={inventoryItems}
           onAddDependency={editingId && onAddTaskDependency ? (sku, qty) => onAddTaskDependency(editingId, sku, qty) : undefined}
@@ -19272,6 +19314,7 @@ function TaskMiniPanel({
           teamMembers={teamMembers}
           onSubmit={submitDraft}
           onClose={() => setModalOpen(false)}
+          onDelete={editingId ? () => { onDelete(editingId); setModalOpen(false); } : undefined}
           lockSection
           lockProjectRef={projectRef !== undefined}
         />
