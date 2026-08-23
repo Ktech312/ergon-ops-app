@@ -77,6 +77,8 @@ import {
   getShipmentPhotoDownloadUrl,
   addPurchaseOrderFile,
   deletePurchaseOrderFile,
+  restorePurchaseOrderFile,
+  loadDeletedPurchaseOrderFiles,
   getPurchaseOrderFileDownloadUrl,
   updatePurchaseOrderLineReceivedQty,
   createPurchaseOrderReceipt,
@@ -276,6 +278,7 @@ import {
   type PurchaseOrder,
   type PurchaseOrderLine,
   type PurchaseOrderFile,
+  type DeletedPurchaseOrderFile,
   type PurchaseOrderReceipt,
   type PurchaseOrderHold,
   type PurchaseRequest,
@@ -1090,6 +1093,7 @@ function App() {
   // array of 7 historical orders. Now loaded from the real table and
   // extended by createPurchaseOrder/updatePurchaseOrderStatus below.
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [deletedPurchaseOrderFiles, setDeletedPurchaseOrderFiles] = useState<DeletedPurchaseOrderFile[]>([]);
   const [roleMode, setRoleMode] = useState<RoleMode>(() => ((localState?.roleMode as RoleMode | undefined) ?? "manager"));
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
   const [authEmail, setAuthEmail] = useState("");
@@ -1450,6 +1454,7 @@ function App() {
       return;
     }
     loadPurchaseOrders(authSession.accessToken).then(setPurchaseOrders).catch(() => {});
+    loadDeletedPurchaseOrderFiles(authSession.accessToken).then(setDeletedPurchaseOrderFiles).catch(() => {});
   }, [authSession]);
 
   // Unified "Create Purchase" (2026-08-20). Replaces the old separate
@@ -1531,9 +1536,25 @@ function App() {
     if (!authSession) {
       return false;
     }
-    const ok = await deletePurchaseOrderFile(fileId, storagePath, authSession.accessToken);
+    const order = purchaseOrders.find((existing) => existing.id === purchaseOrderId);
+    const label = order?.files.find((file) => file.id === fileId)?.fileName ?? "Purchase order file";
+    const ok = await deletePurchaseOrderFile(fileId, storagePath, label, authSession.email, authSession.accessToken);
     if (ok) {
       setPurchaseOrders((current) => current.map((order) => (order.id === purchaseOrderId ? { ...order, files: order.files.filter((file) => file.id !== fileId) } : order)));
+      setDeletedPurchaseOrderFiles((current) => [{ id: fileId, purchaseOrderId, poNumber: order?.number ?? "Unknown PO", fileName: label, deletedByEmail: authSession.email, deletedAt: new Date().toISOString() }, ...current]);
+    }
+    return ok;
+  }
+
+  async function handleRestorePurchaseOrderFile(fileId: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const target = deletedPurchaseOrderFiles.find((existing) => existing.id === fileId);
+    const ok = await restorePurchaseOrderFile(fileId, target?.fileName ?? "Purchase order file", authSession.email, authSession.accessToken);
+    if (ok) {
+      setDeletedPurchaseOrderFiles((current) => current.filter((existing) => existing.id !== fileId));
+      setPurchaseOrders(await loadPurchaseOrders(authSession.accessToken));
     }
     return ok;
   }
@@ -3963,7 +3984,9 @@ function App() {
     if (!authSession) {
       return;
     }
-    await deleteScheduleTemplatePhase(phaseId, authSession.accessToken);
+    const template = scheduleTemplates.find((existing) => existing.id === templateId);
+    const phase = template?.phases.find((existing) => existing.id === phaseId);
+    await deleteScheduleTemplatePhase(phaseId, phase?.phaseName ?? "Schedule phase", authSession.email, authSession.accessToken);
     setScheduleTemplates((current) => current.map((template) => (template.id === templateId ? { ...template, phases: template.phases.filter((phase) => phase.id !== phaseId) } : template)));
   }
 
@@ -4247,7 +4270,8 @@ function App() {
     if (!authSession) {
       return;
     }
-    await deleteFormSchemaField(id, authSession.accessToken);
+    const label = handoverSchema?.fields.find((field) => field.id === id)?.label ?? "Form field";
+    await deleteFormSchemaField(id, label, authSession.email, authSession.accessToken);
     setHandoverSchema((current) => (current ? { ...current, fields: current.fields.filter((field) => field.id !== id) } : current));
   }
 
@@ -4293,7 +4317,8 @@ function App() {
     if (!authSession) {
       return;
     }
-    await deleteFormSchemaField(id, authSession.accessToken);
+    const label = siteIntakeSchema?.fields.find((field) => field.id === id)?.label ?? "Form field";
+    await deleteFormSchemaField(id, label, authSession.email, authSession.accessToken);
     setSiteIntakeSchema((current) => (current ? { ...current, fields: current.fields.filter((field) => field.id !== id) } : current));
   }
 
@@ -4409,7 +4434,8 @@ function App() {
     if (!authSession) {
       return;
     }
-    await deletePresalesRule(id, authSession.accessToken);
+    const target = presalesRules.find((rule) => rule.id === id);
+    await deletePresalesRule(id, target?.baseItemName ?? "Pre-sales rule", authSession.email, authSession.accessToken);
     setPresalesRules((current) => current.filter((rule) => rule.id !== id));
   }
 
@@ -4475,7 +4501,8 @@ function App() {
     if (!authSession) {
       return;
     }
-    await deleteSiteHardwareRule(id, authSession.accessToken);
+    const target = siteHardwareRules.find((rule) => rule.id === id);
+    await deleteSiteHardwareRule(id, target?.itemName ?? "Site hardware rule", authSession.email, authSession.accessToken);
     setSiteHardwareRules((current) => current.filter((rule) => rule.id !== id));
   }
 
@@ -4506,7 +4533,9 @@ function App() {
     if (!authSession) {
       return;
     }
-    await deleteTaskHardwareDependency(id, authSession.accessToken);
+    const target = taskHardwareDependencies.find((dep) => dep.id === id);
+    const label = inventoryItems.find((item) => item.ref === target?.inventoryItemId)?.name ?? "Task hardware dependency";
+    await deleteTaskHardwareDependency(id, label, authSession.email, authSession.accessToken);
     setTaskHardwareDependencies((current) => current.filter((dep) => dep.id !== id));
   }
 
@@ -5967,7 +5996,7 @@ function App() {
               {allowedTabs.includes("purchasing") && <button className={view === "purchasing" ? "active" : ""} type="button" onClick={() => navigateToView("purchasing")}>Purchasing</button>}
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
-            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
+            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
             {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
@@ -6683,6 +6712,9 @@ function Purchasing({
   onCreatePurchase,
   onUploadPurchaseOrderFile,
   onDeletePurchaseOrderFile,
+  deletedPurchaseOrderFiles,
+  onRestorePurchaseOrderFile,
+  canReviewDeleted,
   onGetPurchaseOrderFileUrl,
   onReceivePurchaseOrderLine,
   onReceiveAllPurchaseOrderLines,
@@ -6729,6 +6761,9 @@ function Purchasing({
   ) => Promise<{ ok: boolean; error?: string }>;
   onUploadPurchaseOrderFile: (purchaseOrderId: string, file: File, description?: string) => Promise<boolean>;
   onDeletePurchaseOrderFile: (purchaseOrderId: string, fileId: string, storagePath: string) => Promise<boolean>;
+  deletedPurchaseOrderFiles?: DeletedPurchaseOrderFile[];
+  onRestorePurchaseOrderFile?: (fileId: string) => Promise<boolean>;
+  canReviewDeleted?: boolean;
   onGetPurchaseOrderFileUrl: (storagePath: string) => Promise<string | null>;
   onReceivePurchaseOrderLine: (purchaseOrderId: string, lineId: string, itemName: string, qty: number, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
   onReceiveAllPurchaseOrderLines: (purchaseOrderId: string, destination?: "warehouse_stock" | "direct_to_project") => Promise<boolean>;
@@ -6793,6 +6828,7 @@ function Purchasing({
   const openOrders = purchaseOrders.filter((order) => order.status !== "Received").length;
   const projectSpend = Object.entries(sumBy(purchaseOrders, (order) => order.projectRef)).sort((a, b) => b[1] - a[1]);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [showDeletedFiles, setShowDeletedFiles] = useState(false);
   const [poFilters, setPoFilters] = useState({ text: "", dateFrom: "", dateTo: "" });
   const filteredPurchaseOrders = purchaseOrders.filter((po) => {
     const haystack = `${po.number} ${po.vendor} ${po.projectRef} ${po.createdByEmail ?? ""} ${po.lines.map((line) => line.name).join(" ")}`.toLowerCase();
@@ -7049,6 +7085,44 @@ function Purchasing({
         onDelete={onDeleteTask}
         onOpenFull={onOpenTasksView}
       />
+
+      {canReviewDeleted && (deletedPurchaseOrderFiles ?? []).length > 0 && (
+        <section className="panel wide">
+          <div className="panel-title-row">
+            <div>
+              <h2>Deleted Files</h2>
+              <p>Purchase order attachments removed from their orders, but kept on record.</p>
+            </div>
+            <button className="secondary-action mini-action" type="button" onClick={() => setShowDeletedFiles((current) => !current)}>
+              {showDeletedFiles ? "Hide" : "Show"} ({(deletedPurchaseOrderFiles ?? []).length})
+            </button>
+          </div>
+          {showDeletedFiles && (
+            <div className="deleted-tasks-panel">
+              <table className="stack-table-mobile">
+                <thead>
+                  <tr><th>File</th><th>PO</th><th>Deleted by</th><th>Deleted at</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {(deletedPurchaseOrderFiles ?? []).map((file) => (
+                    <tr key={file.id}>
+                      <td>{file.fileName}</td>
+                      <td data-label="PO">{file.poNumber}</td>
+                      <td data-label="Deleted by">{file.deletedByEmail || "Unknown"}</td>
+                      <td data-label="Deleted at">{new Date(file.deletedAt).toLocaleString()}</td>
+                      <td>
+                        {onRestorePurchaseOrderFile && (
+                          <button className="secondary-action mini-action" type="button" onClick={() => onRestorePurchaseOrderFile(file.id)}>Restore</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="panel wide">
         <div className="panel-title-row">

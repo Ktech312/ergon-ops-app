@@ -68,6 +68,79 @@ async function readSupabaseError(response: Response, fallback: string) {
   }
 }
 
+// Migration 088: a single shared audit trail for every soft-delete/restore
+// across the app, instead of a bespoke activity log per entity (Tasks has
+// its own richer per-task activity log already -- this is for everything
+// else). Fire-and-forget: a failed log write should never block or roll
+// back the delete/restore itself.
+export type DeletionLogEntry = {
+  id: string;
+  entityType: string;
+  entityId: string;
+  entityLabel: string;
+  action: "deleted" | "restored";
+  actorEmail: string;
+  createdAt: string;
+};
+
+type DeletionLogRow = {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  entity_label: string;
+  action: string;
+  actor_email: string | null;
+  created_at: string;
+};
+
+function mapDeletionLogRow(row: DeletionLogRow): DeletionLogEntry {
+  return {
+    id: row.id,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    entityLabel: row.entity_label,
+    action: row.action === "restored" ? "restored" : "deleted",
+    actorEmail: row.actor_email ?? "",
+    createdAt: row.created_at,
+  };
+}
+
+async function logDeletionEvent(
+  entityType: string,
+  entityId: string,
+  entityLabel: string,
+  action: "deleted" | "restored",
+  actorEmail: string,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  try {
+    await fetch(supabaseUrl("deletion_log"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
+      body: JSON.stringify({ entity_type: entityType, entity_id: entityId, entity_label: entityLabel, action, actor_email: actorEmail || null }),
+    });
+  } catch {
+    // Never let a logging failure block the actual delete/restore.
+  }
+}
+
+export async function loadDeletionLog(accessToken?: string): Promise<DeletionLogEntry[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("deletion_log?select=*&order=created_at.desc&limit=500"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as DeletionLogRow[];
+  return rows.map(mapDeletionLogRow);
+}
+
 function asPersistedState(records: Array<{ record_key: string; data: unknown }>): PersistedAppState | null {
   if (records.length === 0) {
     return null;
@@ -2366,7 +2439,7 @@ export async function loadScheduleTemplates(accessToken?: string): Promise<Sched
   }
   const [templatesRes, phasesRes] = await Promise.all([
     fetch(supabaseUrl("project_schedule_templates?select=*&order=name.asc"), { headers: supabaseHeaders(accessToken) }),
-    fetch(supabaseUrl("project_schedule_template_phases?select=*&order=sequence_order.asc"), { headers: supabaseHeaders(accessToken) }),
+    fetch(supabaseUrl("project_schedule_template_phases?select=*&deleted_at=is.null&order=sequence_order.asc"), { headers: supabaseHeaders(accessToken) }),
   ]);
   if (!templatesRes.ok || !phasesRes.ok) {
     return [];
@@ -2426,14 +2499,16 @@ export async function addScheduleTemplatePhase(
   return mapPhaseRow(rows[0]);
 }
 
-export async function deleteScheduleTemplatePhase(id: string, accessToken?: string) {
+export async function deleteScheduleTemplatePhase(id: string, label: string, actorEmail: string, accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`project_schedule_template_phases?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("schedule_template_phase", id, label, "deleted", actorEmail, accessToken);
 }
 
 // --- Phase 11: Submittals -------------------------------------------------
@@ -2775,7 +2850,7 @@ export async function loadFormSchema(formKey: string, accessToken?: string): Pro
   const schema = schemaRows[0];
 
   const fieldsRes = await fetch(
-    supabaseUrl(`form_schema_fields?form_schema_id=eq.${schema.id}&select=*&order=sequence_order.asc`),
+    supabaseUrl(`form_schema_fields?form_schema_id=eq.${schema.id}&select=*&deleted_at=is.null&order=sequence_order.asc`),
     { headers: supabaseHeaders(accessToken) },
   );
   const fieldRows = fieldsRes.ok ? ((await fieldsRes.json()) as FormSchemaFieldRow[]) : [];
@@ -2845,14 +2920,16 @@ export async function updateFormSchemaField(
   });
 }
 
-export async function deleteFormSchemaField(id: string, accessToken?: string): Promise<void> {
+export async function deleteFormSchemaField(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`form_schema_fields?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("form_schema_field", id, label, "deleted", actorEmail, accessToken);
 }
 
 export type ProjectHandover = {
@@ -2987,7 +3064,7 @@ export async function loadPresalesRules(accessToken?: string): Promise<PresalesH
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("presales_hardware_rules?select=*&order=tier.asc,sequence_order.asc"), {
+  const response = await fetch(supabaseUrl("presales_hardware_rules?select=*&deleted_at=is.null&order=tier.asc,sequence_order.asc"), {
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok) {
@@ -3022,14 +3099,16 @@ export async function createPresalesRule(rule: Omit<PresalesHardwareRule, "id">,
   return mapPresalesRuleRow(rows[0]);
 }
 
-export async function deletePresalesRule(id: string, accessToken?: string): Promise<void> {
+export async function deletePresalesRule(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`presales_hardware_rules?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("presales_hardware_rule", id, label, "deleted", actorEmail, accessToken);
 }
 
 // --- Site Builder hardware recommendation engine (v1, migration 045) ------
@@ -3077,7 +3156,7 @@ export async function loadSiteHardwareRules(accessToken?: string): Promise<SiteH
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("site_hardware_rules?select=*&order=metric.asc,sequence_order.asc"), {
+  const response = await fetch(supabaseUrl("site_hardware_rules?select=*&deleted_at=is.null&order=metric.asc,sequence_order.asc"), {
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok) {
@@ -3129,14 +3208,16 @@ export async function updateSiteHardwareRule(id: string, patch: Partial<Omit<Sit
   });
 }
 
-export async function deleteSiteHardwareRule(id: string, accessToken?: string): Promise<void> {
+export async function deleteSiteHardwareRule(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`site_hardware_rules?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("site_hardware_rule", id, label, "deleted", actorEmail, accessToken);
 }
 
 // --- Phase 21: Task-Linked Inventory Automation ----------------------------
@@ -3257,14 +3338,16 @@ export async function loadInventoryItemSkusByIds(ids: string[], accessToken?: st
   return Object.fromEntries(rows.map((row) => [row.id, row.sku]));
 }
 
-export async function deleteTaskHardwareDependency(id: string, accessToken?: string): Promise<void> {
+export async function deleteTaskHardwareDependency(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
   await fetch(supabaseUrl(`task_hardware_dependencies?id=eq.${id}`), {
-    method: "DELETE",
+    method: "PATCH",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  await logDeletionEvent("task_hardware_dependency", id, label, "deleted", actorEmail, accessToken);
 }
 
 // --- Phase 10b: Project Documents cutover ----------------------------------
@@ -5777,7 +5860,7 @@ export async function loadPurchaseOrders(accessToken?: string): Promise<Purchase
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT}&order=requested_date.desc`), {
+  const response = await fetch(supabaseUrl(`purchase_orders?select=${PURCHASE_ORDER_SELECT}&purchase_order_files.deleted_at=is.null&order=requested_date.desc`), {
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok && response.status === 400) {
@@ -6207,21 +6290,86 @@ export async function addPurchaseOrderFile(
   }
 }
 
-export async function deletePurchaseOrderFile(fileId: string, storagePath: string, accessToken?: string): Promise<boolean> {
+// Migration 088: soft delete only -- the Storage object is deliberately left
+// in place (not physically removed) so a restored file still has something
+// to point at. `storagePath` stays in the signature for callers/back-compat
+// but is no longer used to delete anything here.
+export async function deletePurchaseOrderFile(fileId: string, _storagePath: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return false;
   }
   try {
-    await deleteStorageObject(PURCHASE_ORDER_FILE_BUCKET, storagePath, accessToken);
     const response = await fetch(supabaseUrl(`purchase_order_files?id=eq.${fileId}`), {
-      method: "DELETE",
+      method: "PATCH",
       headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
     });
+    if (response.ok) {
+      await logDeletionEvent("purchase_order_file", fileId, label, "deleted", actorEmail, accessToken);
+    }
     return response.ok;
   } catch (error) {
     console.error("deletePurchaseOrderFile threw", error);
     return false;
   }
+}
+
+export type DeletedPurchaseOrderFile = {
+  id: string;
+  purchaseOrderId: string;
+  poNumber: string;
+  fileName: string;
+  deletedByEmail: string;
+  deletedAt: string;
+};
+
+type DeletedPurchaseOrderFileRow = {
+  id: string;
+  purchase_order_id: string;
+  file_name: string | null;
+  deleted_by_email: string | null;
+  deleted_at: string;
+  purchase_orders: { po_number: string } | { po_number: string }[] | null;
+};
+
+export async function loadDeletedPurchaseOrderFiles(accessToken?: string): Promise<DeletedPurchaseOrderFile[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl("purchase_order_files?select=id,purchase_order_id,file_name,deleted_by_email,deleted_at,purchase_orders(po_number)&deleted_at=not.is.null&order=deleted_at.desc"),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as DeletedPurchaseOrderFileRow[];
+  return rows.map((row) => {
+    const po = Array.isArray(row.purchase_orders) ? row.purchase_orders[0] : row.purchase_orders;
+    return {
+      id: row.id,
+      purchaseOrderId: row.purchase_order_id,
+      poNumber: po?.po_number ?? "Unknown PO",
+      fileName: row.file_name ?? "Untitled file",
+      deletedByEmail: row.deleted_by_email ?? "",
+      deletedAt: row.deleted_at,
+    };
+  });
+}
+
+export async function restorePurchaseOrderFile(fileId: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`purchase_order_files?id=eq.${fileId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ deleted_by_email: null, deleted_at: null }),
+  });
+  if (response.ok) {
+    await logDeletionEvent("purchase_order_file", fileId, label, "restored", actorEmail, accessToken);
+  }
+  return response.ok;
 }
 
 // Sales Quote Builder (migration 033). A quote starts with a client/site and
