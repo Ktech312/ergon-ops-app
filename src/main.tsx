@@ -1212,7 +1212,10 @@ function App() {
   const [presalesStatus, setPresalesStatus] = useState("");
   const [taskHardwareDependencies, setTaskHardwareDependencies] = useState<TaskHardwareDependency[]>([]);
   const [inventoryItemSkuById, setInventoryItemSkuById] = useState<Record<string, string>>({});
-  const lowStock = inventoryItems.filter((part) => !part.retired && availableOf(part) <= part.reorderPoint);
+  // A reorder point of 0 means "don't track reordering for this item" (most
+  // one-off/never-reordered parts default here), not "flag the instant it
+  // hits exactly zero" -- E: "most item are still one-offs."
+  const lowStock = inventoryItems.filter((part) => !part.retired && part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const allocatedForProjectsValue = inventoryItems.reduce((sum, part) => sum + (part.allocated ?? 0) * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -4942,7 +4945,7 @@ function App() {
     setInventoryItems((current) => current.map((item) => (item.ref === part.ref ? { ...item, allocated: allocatedAfter } : item)));
     recordMovements([movement]);
     const availableAfter = part.stock - allocatedAfter;
-    if (availableAfter <= part.reorderPoint) {
+    if (part.reorderPoint > 0 && availableAfter <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: availableAfter });
     }
 
@@ -4997,7 +5000,7 @@ function App() {
       current.map((item) => (item.ref === part.ref ? { ...item, stock: item.stock - shipQty, allocated: Math.max(0, (item.allocated ?? 0) - shipQty) } : item)),
     );
     recordMovements([movement]);
-    if (movement.quantityAfter <= part.reorderPoint) {
+    if (part.reorderPoint > 0 && movement.quantityAfter <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: movement.quantityAfter });
     }
   }
@@ -5174,7 +5177,7 @@ function App() {
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: adjustedQty } : item)));
     recordMovements([movement]);
     const availableAfterAdjust = adjustedQty - (part.allocated ?? 0);
-    if (availableAfterAdjust <= part.reorderPoint) {
+    if (part.reorderPoint > 0 && availableAfterAdjust <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: availableAfterAdjust });
     }
     });
@@ -5204,7 +5207,7 @@ function App() {
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: item.stock - transferQty } : item)));
     recordMovements([movement]);
     const availableAfterTransfer = movement.quantityAfter - (part.allocated ?? 0);
-    if (availableAfterTransfer <= part.reorderPoint) {
+    if (part.reorderPoint > 0 && availableAfterTransfer <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: availableAfterTransfer });
     }
     setProjectAllocations((current) => [
@@ -5300,7 +5303,7 @@ function App() {
 
     for (const movement of componentMovements) {
       const part = inventoryItems.find((item) => item.ref === movement.sku);
-      if (part && movement.quantityAfter <= part.reorderPoint) {
+      if (part && part.reorderPoint > 0 && movement.quantityAfter <= part.reorderPoint) {
         notifyLowStockReached({ ...part, stock: movement.quantityAfter });
       }
     }
@@ -8463,7 +8466,7 @@ function Inventory({
     marketing: ["View only"],
   };
   const filteredInventoryItems = inventoryItems.filter((part) => {
-    const status = part.retired ? "Retired" : availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy";
+    const status = part.retired ? "Retired" : part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy";
     const tabMatch = inventoryTab === "finished" ? part.category === "Build" : part.category !== "Build";
     return (
       tabMatch &&
@@ -8672,7 +8675,7 @@ function Inventory({
         available: availableOf(part),
         reorder_point: part.reorderPoint,
         unit_cost: part.cost,
-        status: part.retired ? "Retired" : availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy",
+        status: part.retired ? "Retired" : part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy",
         tags: (part.tags ?? []).join("; "),
         barcode: part.barcode ?? "",
       })),
@@ -9086,7 +9089,7 @@ function Inventory({
                   <td>{part.allocated ?? 0}</td>
                   <td>{availableOf(part)}</td>
                   <td>{money(part.cost)}</td>
-                  <td>{part.retired ? <span className="status retired">Retired</span> : availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
+                  <td>{part.retired ? <span className="status retired">Retired</span> : part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
                   <td onClick={(event) => event.stopPropagation()}>
                     <div className="table-actions">
                       <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
@@ -9141,7 +9144,7 @@ function Inventory({
                 <span className="status">Stock: {part.stock}</span>
                 {(part.allocated ?? 0) > 0 && <span className="status">Allocated: {part.allocated}</span>}
                 <span className="status">{money(part.cost)}</span>
-                {part.retired ? <span className="status retired">Retired</span> : availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
+                {part.retired ? <span className="status retired">Retired</span> : part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
               </span>
               <span className="table-actions" onClick={(event) => event.stopPropagation()}>
                 <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
@@ -12526,7 +12529,7 @@ function Reports({
     .sort((a, b) => Math.abs(b.trend.change) - Math.abs(a.trend.change))
     .slice(0, 8);
   const sourceRows = filteredInventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
-  const reorderRows = filteredInventoryItems.filter((part) => !part.retired && availableOf(part) <= part.reorderPoint).sort((a, b) => availableOf(a) - availableOf(b)).slice(0, 12);
+  const reorderRows = filteredInventoryItems.filter((part) => !part.retired && part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint).sort((a, b) => availableOf(a) - availableOf(b)).slice(0, 12);
   const openPurchaseRequests = filteredPurchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const purchaseRequestExposure = openPurchaseRequests.reduce((sum, request) => sum + Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost, 0);
   const plannedBuildShortages = filteredBuildTransactions
