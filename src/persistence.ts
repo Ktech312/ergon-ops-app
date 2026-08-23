@@ -4209,6 +4209,46 @@ export async function saveDeviceRecipes(recipes: BuildRecipe[], accessToken?: st
   }
 }
 
+// Bug found 2026-08-22: "Delete Equipment Type" only ever removed a recipe
+// from local state -- saveDeviceRecipes above is upsert-only (it reconciles
+// each recipe's own BOM component lines, but never notices a whole recipe
+// is now missing from the array), so the equipment_types row survived and
+// the "deleted" recipe silently reappeared on next reload. Real delete,
+// called directly from the delete action instead of relying on the
+// debounced whole-array sync. Retire (is_retired) already exists as the
+// "hide but keep for history" path -- this is for recipes the user
+// actually wants gone, so a real DB delete (not soft) is correct here;
+// still logged to deletion_log for accountability.
+export async function deleteEquipmentType(name: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, error: "Not configured." };
+  }
+  const lookupResponse = await fetch(supabaseUrl(`equipment_types?equipment_name=eq.${encodeURIComponent(name)}&select=id`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  const lookupRows = lookupResponse.ok ? ((await lookupResponse.json()) as Array<{ id: string }>) : [];
+  const equipmentTypeId = lookupRows[0]?.id;
+  if (!equipmentTypeId) {
+    return { ok: false, error: "Could not find that equipment type." };
+  }
+  const response = await fetch(supabaseUrl(`equipment_types?id=eq.${equipmentTypeId}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    // build_transactions.equipment_type_id has no ON DELETE clause (defaults
+    // to RESTRICT), so this fails with a real FK-violation error whenever
+    // the recipe has ever actually been built -- surface that plainly
+    // rather than a raw Postgres error.
+    if (response.status === 409) {
+      return { ok: false, error: "Can't delete -- this equipment type has build history. Use Retire instead to keep it out of the picker without losing that history." };
+    }
+    return { ok: false, error: await readSupabaseError(response, "Could not delete equipment type") };
+  }
+  await logDeletionEvent("equipment_type", equipmentTypeId, name, "deleted", actorEmail, accessToken);
+  return { ok: true };
+}
+
 // --- Phase 10e: Inventory Movements, Build Transactions, Project Allocation
 // History (cut over from the app_records blob to the relational
 // inventory_movements / build_transactions / project_allocation_history

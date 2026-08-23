@@ -202,6 +202,7 @@ import {
   reviewUserApproval,
   revokeAdmin,
   saveDeviceRecipes,
+  deleteEquipmentType,
   saveInventoryItems,
   saveLocalAppState,
   saveMovementsBuildsAllocations,
@@ -1418,6 +1419,22 @@ function App() {
     }, 650);
     return () => window.clearTimeout(syncTimer);
   }, [deviceRecipes, authSession]);
+
+  // Real delete, called directly instead of relying on the debounced
+  // whole-array save above -- see deleteEquipmentType in persistence.ts for
+  // why that save alone could never actually remove a recipe.
+  async function handleDeleteDeviceRecipe(name: string): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    const result = await deleteEquipmentType(name, authSession.email, authSession.accessToken);
+    if (result.ok) {
+      setDeviceRecipes((current) => current.filter((recipe) => recipe.name !== name));
+    } else {
+      setAuthStatus(result.error ?? "Could not delete equipment type.");
+    }
+    return result.ok;
+  }
 
   // Phase 10c: Inventory Items now lives in its own real tables
   // (inventory_items + inventory_balances), loaded once per session and then
@@ -6135,7 +6152,7 @@ function App() {
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
             {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} />}
+            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
@@ -8109,6 +8126,7 @@ function Inventory({
   projectSites,
   deviceRecipes,
   setDeviceRecipes,
+  onDeleteRecipe,
   buildTransactions,
   inventoryMovements,
   onAddItem,
@@ -8137,6 +8155,7 @@ function Inventory({
   projectSites: ProjectSite[];
   deviceRecipes: BuildRecipe[];
   setDeviceRecipes: Dispatch<SetStateAction<BuildRecipe[]>>;
+  onDeleteRecipe: (name: string) => Promise<boolean>;
   buildTransactions: BuildTransaction[];
   inventoryMovements: InventoryMovement[];
   onAddItem: (part: Part) => void;
@@ -8650,14 +8669,17 @@ function Inventory({
     );
   }
 
-  function deleteSelectedRecipe() {
+  async function deleteSelectedRecipe() {
     if (deviceRecipes.length <= 1 || !window.confirm(`Delete ${selectedBuildRecipe.outputName}? Use retire if you need to keep this equipment type for history.`)) {
       return;
     }
 
-    const remaining = deviceRecipes.filter((recipe) => recipe.name !== selectedBuildRecipe.name);
-    setDeviceRecipes(remaining);
-    setBuildDraft((current) => ({ ...current, recipeName: remaining.find((recipe) => !recipe.retired)?.name ?? remaining[0]?.name ?? "" }));
+    const deletedName = selectedBuildRecipe.name;
+    const ok = await onDeleteRecipe(deletedName);
+    if (ok) {
+      const remaining = deviceRecipes.filter((recipe) => recipe.name !== deletedName);
+      setBuildDraft((current) => ({ ...current, recipeName: remaining.find((recipe) => !recipe.retired)?.name ?? remaining[0]?.name ?? "" }));
+    }
   }
 
   function uploadEquipmentImage(file: File | undefined) {
