@@ -1526,18 +1526,19 @@ function App() {
 
   // Real delete, called directly instead of relying on the debounced
   // whole-array save above -- see deleteEquipmentType in persistence.ts for
-  // why that save alone could never actually remove a recipe.
-  async function handleDeleteDeviceRecipe(name: string): Promise<boolean> {
+  // why that save alone could never actually remove a recipe. Returns the
+  // full result (not just ok) so the caller can actually show the user why
+  // a delete failed -- authStatus only renders on the signed-out login
+  // screen, so setting it here was previously a silent no-op once logged in.
+  async function handleDeleteDeviceRecipe(name: string): Promise<{ ok: boolean; error?: string }> {
     if (!authSession) {
-      return false;
+      return { ok: false, error: "You must be signed in to delete an equipment type." };
     }
     const result = await deleteEquipmentType(name, authSession.email, authSession.accessToken);
     if (result.ok) {
       setDeviceRecipes((current) => current.filter((recipe) => recipe.name !== name));
-    } else {
-      setAuthStatus(result.error ?? "Could not delete equipment type.");
     }
-    return result.ok;
+    return result;
   }
 
   // Phase 10c: Inventory Items now lives in its own real tables
@@ -8359,7 +8360,7 @@ function Inventory({
   projectSites: ProjectSite[];
   deviceRecipes: BuildRecipe[];
   setDeviceRecipes: Dispatch<SetStateAction<BuildRecipe[]>>;
-  onDeleteRecipe: (name: string) => Promise<boolean>;
+  onDeleteRecipe: (name: string) => Promise<{ ok: boolean; error?: string }>;
   buildTransactions: BuildTransaction[];
   inventoryMovements: InventoryMovement[];
   onAddItem: (part: Part) => void;
@@ -8920,10 +8921,12 @@ function Inventory({
     }
 
     const deletedName = selectedBuildRecipe.name;
-    const ok = await onDeleteRecipe(deletedName);
-    if (ok) {
+    const result = await onDeleteRecipe(deletedName);
+    if (result.ok) {
       const remaining = deviceRecipes.filter((recipe) => recipe.name !== deletedName);
       setBuildDraft((current) => ({ ...current, recipeName: remaining.find((recipe) => !recipe.retired)?.name ?? remaining[0]?.name ?? "" }));
+    } else {
+      window.alert(result.error ?? "Could not delete equipment type.");
     }
   }
 

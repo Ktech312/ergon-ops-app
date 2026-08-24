@@ -4410,11 +4410,17 @@ export async function deleteEquipmentType(name: string, actorEmail: string, acce
   const lookupRows = lookupResponse.ok ? ((await lookupResponse.json()) as Array<{ id: string }>) : [];
   const equipmentTypeId = lookupRows[0]?.id;
   if (!equipmentTypeId) {
-    return { ok: false, error: "Could not find that equipment type." };
+    // A recipe created this session only exists in local React state until
+    // the debounced whole-array save (saveDeviceRecipes, up to 650ms behind)
+    // writes it to equipment_types -- deleting it right after creating it
+    // used to hit this lookup before that write landed, come back empty,
+    // and fail with an error the caller had no visible way to show. Nothing
+    // real exists yet to delete or log, so this is a success, not a failure.
+    return { ok: true };
   }
   const response = await fetch(supabaseUrl(`equipment_types?id=eq.${equipmentTypeId}`), {
     method: "DELETE",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
   });
   if (!response.ok) {
     // build_transactions.equipment_type_id has no ON DELETE clause (defaults
@@ -4425,6 +4431,15 @@ export async function deleteEquipmentType(name: string, actorEmail: string, acce
       return { ok: false, error: "Can't delete -- this equipment type has build history. Use Retire instead to keep it out of the picker without losing that history." };
     }
     return { ok: false, error: await readSupabaseError(response, "Could not delete equipment type") };
+  }
+  // `return=representation` so a DELETE that matched 0 rows (e.g. blocked by
+  // an RLS policy) can be told apart from a real delete -- PostgREST returns
+  // 200/204 either way, so response.ok alone can't tell a silent no-op from
+  // an actual row removal, and logging the former as "deleted" would be a
+  // false audit entry.
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't remove anything -- you may not have permission to delete equipment types." };
   }
   await logDeletionEvent("equipment_type", equipmentTypeId, name, "deleted", actorEmail, accessToken);
   return { ok: true };
