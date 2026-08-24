@@ -165,6 +165,86 @@ export async function loadDeletionLog(accessToken?: string): Promise<DeletionLog
   return rows.map(mapDeletionLogRow);
 }
 
+// A one-off's aggregate qty is recomputed fresh from purchase-order receipts
+// on every render (see `oneOffItems` in main.tsx) -- merging doesn't rename
+// or delete anything, so without this record the same aggregate would just
+// reappear at full quantity next render. Each row is "qty already merged
+// into targetSku for this exact received-item name," subtracted back out of
+// the live aggregate; if more of the same misnamed item arrives later, only
+// the new unreconciled excess shows up again.
+export type OneOffReconciliation = {
+  id: string;
+  itemKey: string;
+  itemName: string;
+  qty: number;
+  targetSku: string;
+  orderNumbers: string;
+  resolvedByEmail: string;
+  resolvedAt: string;
+};
+
+type OneOffReconciliationRow = {
+  id: string;
+  item_key: string;
+  item_name: string;
+  qty: number | string;
+  target_sku: string;
+  order_numbers: string | null;
+  resolved_by_email: string | null;
+  resolved_at: string;
+};
+
+function mapOneOffReconciliationRow(row: OneOffReconciliationRow): OneOffReconciliation {
+  return {
+    id: row.id,
+    itemKey: row.item_key,
+    itemName: row.item_name,
+    qty: Number(row.qty) || 0,
+    targetSku: row.target_sku,
+    orderNumbers: row.order_numbers ?? "",
+    resolvedByEmail: row.resolved_by_email ?? "",
+    resolvedAt: row.resolved_at,
+  };
+}
+
+export async function loadOneOffReconciliations(accessToken?: string): Promise<OneOffReconciliation[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("one_off_reconciliations?select=*&order=resolved_at.desc&limit=1000"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as OneOffReconciliationRow[];
+  return rows.map(mapOneOffReconciliationRow);
+}
+
+export async function logOneOffReconciliation(entry: OneOffReconciliation, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  try {
+    await fetch(supabaseUrl("one_off_reconciliations"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
+      body: JSON.stringify({
+        id: entry.id,
+        item_key: entry.itemKey,
+        item_name: entry.itemName,
+        qty: entry.qty,
+        target_sku: entry.targetSku,
+        order_numbers: entry.orderNumbers || null,
+        resolved_by_email: entry.resolvedByEmail || null,
+        resolved_at: entry.resolvedAt,
+      }),
+    });
+  } catch {
+    // Never let a logging failure block the stock merge that already happened locally.
+  }
+}
+
 function asPersistedState(records: Array<{ record_key: string; data: unknown }>): PersistedAppState | null {
   if (records.length === 0) {
     return null;

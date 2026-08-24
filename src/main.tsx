@@ -187,6 +187,8 @@ import {
   loadAllTaskActivity,
   loadDeletedTasks,
   loadDeletionLog,
+  loadOneOffReconciliations,
+  logOneOffReconciliation,
   loadScheduleTemplates,
   loadStandardInstallTimes,
   loadSubmittalsForProject,
@@ -313,6 +315,7 @@ import {
   type SalesQuoteLocationItem,
   type TaskActivityEntry,
   type DeletionLogEntry,
+  type OneOffReconciliation,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
   type ScopeOfWork,
@@ -1176,6 +1179,7 @@ function App() {
   const [tasks, setTasks] = useState<EOTask[]>([]);
   const [deletedTasks, setDeletedTasks] = useState<EOTask[]>([]);
   const [deletionLog, setDeletionLog] = useState<DeletionLogEntry[]>([]);
+  const [oneOffReconciliations, setOneOffReconciliations] = useState<OneOffReconciliation[]>([]);
   const [taskStatusMessage, setTaskStatusMessage] = useState("");
   const [taskActivity, setTaskActivity] = useState<TaskActivityEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -3715,6 +3719,9 @@ function App() {
     loadDeletionLog(accessToken)
       .then(setDeletionLog)
       .catch(() => undefined);
+    loadOneOffReconciliations(accessToken)
+      .then(setOneOffReconciliations)
+      .catch(() => undefined);
   }
 
   useEffect(() => {
@@ -5154,6 +5161,27 @@ function App() {
     });
   }
 
+  function mergeOneOffIntoInventory(params: { itemKey: string; itemName: string; totalQty: number; lastUnitCost: number; orderNumbers: string[]; targetSku: string; notes: string }) {
+    const target = inventoryItems.find((item) => item.ref === params.targetSku);
+    if (!target || target.retired) {
+      return;
+    }
+    const notes = params.notes.trim() || `Merged one-off receipt "${params.itemName}" (${params.totalQty} unit(s) from ${params.orderNumbers.join(", ")}) into this SKU.`;
+    receiveInventoryStock(params.targetSku, params.totalQty, params.lastUnitCost, params.orderNumbers.join(", "), notes);
+    const reconciliation: OneOffReconciliation = {
+      id: makeId("oor"),
+      itemKey: params.itemKey,
+      itemName: params.itemName,
+      qty: params.totalQty,
+      targetSku: params.targetSku,
+      orderNumbers: params.orderNumbers.join(", "),
+      resolvedByEmail: authSession?.email ?? "",
+      resolvedAt: new Date().toISOString(),
+    };
+    setOneOffReconciliations((current) => [reconciliation, ...current]);
+    logOneOffReconciliation(reconciliation, authSession?.accessToken).catch(() => {});
+  }
+
   function adjustInventoryStock(partRef: string, nextQty: number, notes: string) {
     withProductionLock("inventory_item", partRef, () => {
     const part = inventoryItems.find((item) => item.ref === partRef);
@@ -6305,7 +6333,7 @@ function App() {
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
             {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} />}
+            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
@@ -8322,6 +8350,8 @@ function Inventory({
   onOpenTasksView,
   searchFocus,
   purchaseOrders,
+  oneOffReconciliations,
+  onMergeOneOff,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
@@ -8351,6 +8381,8 @@ function Inventory({
   onOpenTasksView: () => void;
   searchFocus?: { term: string; token: number } | null;
   purchaseOrders: PurchaseOrder[];
+  oneOffReconciliations: OneOffReconciliation[];
+  onMergeOneOff: (params: { itemKey: string; itemName: string; totalQty: number; lastUnitCost: number; orderNumbers: string[]; targetSku: string; notes: string }) => void;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -8370,6 +8402,8 @@ function Inventory({
     retired: false,
   };
   const [showItemModal, setShowItemModal] = useState(false);
+  const [mergeOneOffTarget, setMergeOneOffTarget] = useState<(typeof oneOffItems)[number] | null>(null);
+  const [mergeOneOffDraft, setMergeOneOffDraft] = useState<{ partRef: string; notes: string }>({ partRef: "", notes: "" });
   const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
   const [itemDraft, setItemDraft] = useState<Part>(emptyItemDraft);
   const [previewItem, setPreviewItem] = useState<Part | null>(null);
@@ -8496,7 +8530,7 @@ function Inventory({
   // list on the next render -- nothing to manually dismiss.
   const oneOffItems = (() => {
     const inventoryNames = new Set(inventoryItems.map((item) => item.name.trim().toLowerCase()));
-    const byName = new Map<string, { name: string; totalQty: number; occurrences: number; lastUnitCost: number; lastVendor: string; firstReceivedAt: string; lastReceivedAt: string; orderNumbers: string[] }>();
+    const byName = new Map<string, { key: string; name: string; totalQty: number; occurrences: number; lastUnitCost: number; lastVendor: string; firstReceivedAt: string; lastReceivedAt: string; orderNumbers: string[] }>();
     for (const po of purchaseOrders) {
       for (const receipt of po.receipts) {
         const key = receipt.itemName.trim().toLowerCase();
@@ -8515,6 +8549,7 @@ function Inventory({
           if (!existing.orderNumbers.includes(po.number)) existing.orderNumbers.push(po.number);
         } else {
           byName.set(key, {
+            key,
             name: receipt.itemName,
             totalQty: receipt.qty,
             occurrences: 1,
@@ -8527,7 +8562,19 @@ function Inventory({
         }
       }
     }
-    return Array.from(byName.values()).sort((a, b) => b.occurrences - a.occurrences || b.totalQty - a.totalQty);
+    // Merging into an existing item doesn't rename anything, so the raw
+    // aggregate above would just reappear at full quantity next render --
+    // subtract whatever's already been reconciled for this exact name, and
+    // drop the row once nothing's left. If more of the same misnamed item
+    // gets received later, only the new unreconciled excess shows back up.
+    const reconciledQtyByKey = new Map<string, number>();
+    for (const entry of oneOffReconciliations) {
+      reconciledQtyByKey.set(entry.itemKey, (reconciledQtyByKey.get(entry.itemKey) ?? 0) + entry.qty);
+    }
+    return Array.from(byName.values())
+      .map((entry) => ({ ...entry, totalQty: entry.totalQty - (reconciledQtyByKey.get(entry.key) ?? 0) }))
+      .filter((entry) => entry.totalQty > 0)
+      .sort((a, b) => b.occurrences - a.occurrences || b.totalQty - a.totalQty);
   })();
 
   function openAddItemModalFromOneOff(oneOff: (typeof oneOffItems)[number]) {
@@ -8541,6 +8588,27 @@ function Inventory({
       description: `Received as a one-off ${oneOff.occurrences} time(s), ${oneOff.totalQty} unit(s) total, across ${oneOff.orderNumbers.join(", ")}.`,
     });
     setShowItemModal(true);
+  }
+
+  function openMergeOneOffModal(oneOff: (typeof oneOffItems)[number]) {
+    setMergeOneOffTarget(oneOff);
+    setMergeOneOffDraft({ partRef: "", notes: "" });
+  }
+
+  function saveMergeOneOff() {
+    if (!mergeOneOffTarget || !mergeOneOffDraft.partRef) {
+      return;
+    }
+    onMergeOneOff({
+      itemKey: mergeOneOffTarget.key,
+      itemName: mergeOneOffTarget.name,
+      totalQty: mergeOneOffTarget.totalQty,
+      lastUnitCost: mergeOneOffTarget.lastUnitCost,
+      orderNumbers: mergeOneOffTarget.orderNumbers,
+      targetSku: mergeOneOffDraft.partRef,
+      notes: mergeOneOffDraft.notes,
+    });
+    setMergeOneOffTarget(null);
   }
 
   function openEditItemModal(part: Part) {
@@ -9299,13 +9367,53 @@ function Inventory({
               <span data-label="Last seen">{new Date(oneOff.lastReceivedAt).toLocaleDateString()}<small>{oneOff.lastVendor}</small></span>
               <span data-label="Est. cost">{moneyExact(oneOff.lastUnitCost)}</span>
               <span className="table-actions">
-                <button className="table-action secondary-table-action" type="button" onClick={() => openAddItemModalFromOneOff(oneOff)}>Add to Inventory</button>
+                <button className="table-action secondary-table-action" type="button" onClick={() => openMergeOneOffModal(oneOff)}>Merge Into Existing Item</button>
+                <button className="table-action secondary-table-action" type="button" onClick={() => openAddItemModalFromOneOff(oneOff)}>Create New Item</button>
               </span>
             </div>
           ))}
           {oneOffItems.length === 0 && <div className="empty-compact-state">Nothing untracked -- every received item so far matches something already in inventory.</div>}
         </div>
       </section>
+      {mergeOneOffTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="merge-one-off-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="merge-one-off-modal-title">Merge Into Existing Item</h2>
+                <p>Add this one-off receipt's quantity onto an item already in inventory. The original PO receipt stays exactly as received -- this just adds a reconciling stock movement referencing it.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setMergeOneOffTarget(null)} aria-label="Close merge modal">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">
+                One-off item
+                <input value={`${mergeOneOffTarget.name} -- ${mergeOneOffTarget.totalQty} unit(s) from ${mergeOneOffTarget.orderNumbers.join(", ")}`} disabled />
+              </label>
+              <label className="span-2">
+                Merge into
+                <select value={mergeOneOffDraft.partRef} onChange={(event) => setMergeOneOffDraft((current) => ({ ...current, partRef: event.target.value }))}>
+                  <option value="">Select inventory item</option>
+                  {inventoryItems.filter((part) => !part.retired).map((part) => <option key={part.ref} value={part.ref}>{part.ref} - {part.name} ({part.stock} on hand)</option>)}
+                </select>
+              </label>
+              <label className="span-2">
+                Notes
+                <textarea
+                  value={mergeOneOffDraft.notes}
+                  onChange={(event) => setMergeOneOffDraft((current) => ({ ...current, notes: event.target.value }))}
+                  placeholder={`Merged one-off receipt "${mergeOneOffTarget.name}" (${mergeOneOffTarget.totalQty} unit(s) from ${mergeOneOffTarget.orderNumbers.join(", ")}) into this SKU.`}
+                />
+              </label>
+            </div>
+            <div className="source-file"><Boxes size={16} /><span>{mergeOneOffTarget.totalQty} unit(s) will be added to the selected item's stock, referencing PO {mergeOneOffTarget.orderNumbers.join(", ")}.</span></div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setMergeOneOffTarget(null)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={saveMergeOneOff} disabled={!mergeOneOffDraft.partRef}>Merge</button>
+            </div>
+          </section>
+        </div>
+      )}
       {showDeviceModal && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-panel device-modal-panel" role="dialog" aria-modal="true" aria-labelledby="device-builder-modal-title">
