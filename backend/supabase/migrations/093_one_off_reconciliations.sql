@@ -25,3 +25,11 @@ create table if not exists one_off_reconciliations (
 );
 
 create index if not exists one_off_reconciliations_item_key_idx on one_off_reconciliations (item_key);
+
+alter table one_off_reconciliations enable row level security;
+
+create policy "authenticated read one_off_reconciliations"
+  on one_off_reconciliations for select to authenticated using (true);
+
+create policy "authenticated write one_off_reconciliations"
+  on one_off_reconciliations for insert to authenticated with check (true);
