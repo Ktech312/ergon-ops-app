@@ -1429,8 +1429,12 @@ function App() {
       return;
     }
     const label = installedAssets.find((asset) => asset.id === id)?.serialNumber ?? "Installed asset";
+    const result = await deleteInstalledAsset(id, label, authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete installed asset.");
+      return;
+    }
     setInstalledAssets((current) => current.filter((asset) => asset.id !== id));
-    await deleteInstalledAsset(id, label, authSession.email, authSession.accessToken);
   }
 
   // Uploads Site Builder photos that got stuck in the offline queue (see
@@ -1647,7 +1651,11 @@ function App() {
         );
         purchaseRequestsRef.current = nextRequests;
         setPurchaseRequests(nextRequests);
-        await updatePurchaseRequestRemote(sourceRequest.id, { status: nextStatus, linkedPurchaseOrderId: created.id, poNumber: order.number }, authSession.accessToken);
+        try {
+          await updatePurchaseRequestRemote(sourceRequest.id, { status: nextStatus, linkedPurchaseOrderId: created.id, poNumber: order.number }, authSession.accessToken);
+        } catch (error) {
+          window.alert(error instanceof Error ? error.message : "Could not link the new purchase order back to its request.");
+        }
         if (sourceRequest.status !== nextStatus) {
           // Reuses the existing purchase-request-status-changed notification
           // (requester + Purchasing team) -- this is exactly "let the PM
@@ -1874,7 +1882,11 @@ function App() {
     if (!authSession || !reason.trim()) {
       return false;
     }
-    await updatePurchaseOrderStatus(purchaseOrderId, "On Hold", authSession.accessToken);
+    const result = await updatePurchaseOrderStatus(purchaseOrderId, "On Hold", authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not put purchase order on hold.");
+      return false;
+    }
     const hold = await createPurchaseOrderHold({ purchaseOrderId, reason: reason.trim(), placedByEmail: authSession.email }, authSession.accessToken);
     setPurchaseOrders((current) =>
       current.map((order) =>
@@ -1888,7 +1900,11 @@ function App() {
     if (!authSession) {
       return false;
     }
-    await updatePurchaseOrderStatus(purchaseOrderId, "Ordered", authSession.accessToken);
+    const result = await updatePurchaseOrderStatus(purchaseOrderId, "Ordered", authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not resume purchase order.");
+      return false;
+    }
     setPurchaseOrders((current) => current.map((order) => (order.id === purchaseOrderId ? { ...order, status: "Ordered" } : order)));
     return true;
   }
@@ -1958,21 +1974,32 @@ function App() {
 
   async function handleDownloadDocument(doc: UploadedDoc) {
     if (!authSession || !doc.storagePath) {
-      setAuthStatus("This document doesn't have a stored file to download (it may predate real file storage).");
+      // setAuthStatus only renders on the signed-out login screen -- this
+      // handler runs while logged in, so that message was previously
+      // invisible. window.alert actually shows it.
+      window.alert("This document doesn't have a stored file to download (it may predate real file storage).");
       return;
     }
     const url = await getDocumentDownloadUrl(doc.storagePath, authSession.accessToken);
     if (!url) {
-      setAuthStatus("Could not generate a download link for this file.");
+      window.alert("Could not generate a download link for this file.");
       return;
     }
     await triggerBrowserDownload(url, doc.name || "document");
   }
 
   async function handleUpdateProjectDocumentStatus(id: UploadedDoc["id"], status: UploadedDoc["status"]) {
+    const previous = projectDocuments.find((doc) => doc.id === id);
     setProjectDocuments((current) => current.map((doc) => (doc.id === id ? { ...doc, status } : doc)));
     if (authSession) {
-      await updateProjectDocumentStatusRemote(id, status, authSession.accessToken);
+      try {
+        await updateProjectDocumentStatusRemote(id, status, authSession.accessToken);
+      } catch (error) {
+        if (previous) {
+          setProjectDocuments((current) => current.map((doc) => (doc.id === id ? previous : doc)));
+        }
+        window.alert(error instanceof Error ? error.message : "Could not update document status.");
+      }
     }
   }
 
@@ -2351,8 +2378,12 @@ function App() {
     if (!authSession) {
       return;
     }
-    await setCatalogItemRetired(id, retired, authSession.accessToken);
-    setCatalogItems((current) => current.map((item) => (item.id === id ? { ...item, isRetired: retired } : item)));
+    try {
+      await setCatalogItemRetired(id, retired, authSession.accessToken);
+      setCatalogItems((current) => current.map((item) => (item.id === id ? { ...item, isRetired: retired } : item)));
+    } catch (error) {
+      setCatalogStatus(error instanceof Error ? error.message : "Could not update catalog item.");
+    }
   }
 
   async function handleBulkCreateCatalogItems(items: Array<Omit<CatalogItem, "id" | "catalogNumber">>): Promise<number> {
@@ -2559,12 +2590,16 @@ function App() {
   async function handleDeleteSalesQuoteLocation(quoteId: string, locationId: string) {
     const location = salesQuotes.find((entry) => entry.id === quoteId)?.locations.find((entry) => entry.id === locationId);
     const label = location?.name || (location?.locationType === "lot" ? "Lot" : "Garage");
+    if (authSession) {
+      const result = await deleteSalesQuoteLocation(locationId, label, authSession.email, authSession.accessToken);
+      if (!result.ok) {
+        window.alert(result.error ?? "Could not delete location.");
+        return;
+      }
+    }
     setSalesQuotes((current) =>
       current.map((entry) => (entry.id === quoteId ? { ...entry, locations: entry.locations.filter((location) => location.id !== locationId) } : entry)),
     );
-    if (authSession) {
-      await deleteSalesQuoteLocation(locationId, label, authSession.email, authSession.accessToken);
-    }
   }
 
   // Migration 056: addable Sign/Space Sensor/Misc lines within a location's
@@ -2648,6 +2683,11 @@ function App() {
     const allItems = [...(location?.signLines ?? []), ...(location?.sensorLines ?? []), ...(location?.miscLines ?? []), ...(location?.cameraLines ?? []), ...(location?.vpuLines ?? [])];
     const item = allItems.find((line) => line.id === itemId);
     const label = catalogItems.find((catalogItem) => catalogItem.id === item?.catalogItemId)?.productName ?? "Location hardware line";
+    const result = await deleteSalesQuoteLocationItem(itemId, label, authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete item.");
+      return;
+    }
     setSalesQuotes((current) =>
       current.map((entryQuote) =>
         entryQuote.id === quoteId
@@ -2669,7 +2709,6 @@ function App() {
           : entryQuote,
       ),
     );
-    await deleteSalesQuoteLocationItem(itemId, label, authSession.email, authSession.accessToken);
   }
 
   // "Pull Location Hardware into Quote BOM" -- rolls every location's real
@@ -2769,19 +2808,31 @@ function App() {
     if (!authSession) {
       return;
     }
+    const previous = salesQuotes.find((entry) => entry.id === quoteId);
     // Any move into a closed state (re)stamps closedAt to now; reopening to
     // "open" clears it. This is what the Sales metric row's "Closed This
     // Year" and "Est. Profit (YTD)" filter on.
     const closedAt = status === "open" ? null : new Date().toISOString();
     setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, status, closedAt: closedAt ?? "" } : entry)));
-    await updateSalesQuoteStatus(quoteId, status, closedAt, authSession.accessToken);
+    try {
+      await updateSalesQuoteStatus(quoteId, status, closedAt, authSession.accessToken);
+    } catch (error) {
+      if (previous) {
+        setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? previous : entry)));
+      }
+      setSalesQuoteStatus(error instanceof Error ? error.message : "Could not update quote status.");
+    }
   }
 
   async function handleDeleteSalesQuote(quoteId: string) {
     const quote = salesQuotes.find((entry) => entry.id === quoteId);
-    setSalesQuotes((current) => current.filter((entry) => entry.id !== quoteId));
     if (authSession && quote) {
-      await deleteSalesQuote(quoteId, quote.siteName, authSession.email, authSession.accessToken);
+      const result = await deleteSalesQuote(quoteId, quote.siteName, authSession.email, authSession.accessToken);
+      if (!result.ok) {
+        window.alert(result.error ?? "Could not delete sales quote.");
+        return;
+      }
+      setSalesQuotes((current) => current.filter((entry) => entry.id !== quoteId));
       setDeletedSalesQuotes((current) => [
         { id: quoteId, siteName: quote.siteName, clientName: quote.clientName, deletedByEmail: authSession.email, deletedAt: new Date().toISOString() },
         ...current,
@@ -2910,8 +2961,12 @@ function App() {
       return;
     }
     const label = salesQuotes.find((entry) => entry.id === quoteId)?.bomLines.find((line) => line.id === lineId)?.item ?? "BOM line";
+    const result = await deleteSalesQuoteBomLine(lineId, label, authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete BOM line.");
+      return;
+    }
     setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, bomLines: entry.bomLines.filter((line) => line.id !== lineId) } : entry)));
-    await deleteSalesQuoteBomLine(lineId, label, authSession.email, authSession.accessToken);
   }
 
   async function handleUploadSalesQuoteImage(
@@ -3165,13 +3220,17 @@ function App() {
     const project = projectSites.find((entry) => entry.ref === projectRef);
     const location = project?.locations?.find((existing) => existing.id === locationId);
     const label = location?.name || (location?.locationType === "lot" ? "Lot" : "Garage");
-    setProjectSites((current) =>
-      current.map((entry) =>
-        entry.ref === projectRef ? { ...entry, locations: (entry.locations ?? []).filter((location) => location.id !== locationId) } : entry,
-      ),
-    );
     if (authSession) {
-      await deleteProjectLocation(locationId, label, authSession.email, authSession.accessToken);
+      const result = await deleteProjectLocation(locationId, label, authSession.email, authSession.accessToken);
+      if (!result.ok) {
+        window.alert(result.error ?? "Could not delete location.");
+        return;
+      }
+      setProjectSites((current) =>
+        current.map((entry) =>
+          entry.ref === projectRef ? { ...entry, locations: (entry.locations ?? []).filter((location) => location.id !== locationId) } : entry,
+        ),
+      );
       setDeletedProjectLocations((current) => [
         { id: locationId, projectId: "", projectName: project?.name ?? "Unknown project", locationName: label, locationType: location?.locationType ?? "garage", deletedByEmail: authSession.email, deletedAt: new Date().toISOString() },
         ...current,
@@ -3270,6 +3329,11 @@ function App() {
     const allItems = [...(location?.signLines ?? []), ...(location?.sensorLines ?? []), ...(location?.miscLines ?? []), ...(location?.cameraLines ?? []), ...(location?.vpuLines ?? [])];
     const item = allItems.find((line) => line.id === itemId);
     const label = catalogItems.find((catalogItem) => catalogItem.id === item?.catalogItemId)?.productName ?? "Location hardware line";
+    const result = await deleteProjectLocationItem(itemId, label, authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete item.");
+      return;
+    }
     setProjectSites((current) =>
       current.map((entryProject) =>
         entryProject.ref === projectRef
@@ -3291,7 +3355,6 @@ function App() {
           : entryProject,
       ),
     );
-    await deleteProjectLocationItem(itemId, label, authSession.email, authSession.accessToken);
   }
 
   async function handleUploadProjectLocationImage(
@@ -4249,7 +4312,11 @@ function App() {
     }
     const template = scheduleTemplates.find((existing) => existing.id === templateId);
     const phase = template?.phases.find((existing) => existing.id === phaseId);
-    await deleteScheduleTemplatePhase(phaseId, phase?.phaseName ?? "Schedule phase", authSession.email, authSession.accessToken);
+    const result = await deleteScheduleTemplatePhase(phaseId, phase?.phaseName ?? "Schedule phase", authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete schedule phase.");
+      return;
+    }
     setScheduleTemplates((current) => current.map((template) => (template.id === templateId ? { ...template, phases: template.phases.filter((phase) => phase.id !== phaseId) } : template)));
   }
 
@@ -4534,7 +4601,11 @@ function App() {
       return;
     }
     const label = handoverSchema?.fields.find((field) => field.id === id)?.label ?? "Form field";
-    await deleteFormSchemaField(id, label, authSession.email, authSession.accessToken);
+    const result = await deleteFormSchemaField(id, label, authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete field.");
+      return;
+    }
     setHandoverSchema((current) => (current ? { ...current, fields: current.fields.filter((field) => field.id !== id) } : current));
   }
 
@@ -4581,7 +4652,11 @@ function App() {
       return;
     }
     const label = siteIntakeSchema?.fields.find((field) => field.id === id)?.label ?? "Form field";
-    await deleteFormSchemaField(id, label, authSession.email, authSession.accessToken);
+    const result = await deleteFormSchemaField(id, label, authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete field.");
+      return;
+    }
     setSiteIntakeSchema((current) => (current ? { ...current, fields: current.fields.filter((field) => field.id !== id) } : current));
   }
 
@@ -4698,7 +4773,11 @@ function App() {
       return;
     }
     const target = presalesRules.find((rule) => rule.id === id);
-    await deletePresalesRule(id, target?.baseItemName ?? "Pre-sales rule", authSession.email, authSession.accessToken);
+    const result = await deletePresalesRule(id, target?.baseItemName ?? "Pre-sales rule", authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete rule.");
+      return;
+    }
     setPresalesRules((current) => current.filter((rule) => rule.id !== id));
   }
 
@@ -4765,7 +4844,11 @@ function App() {
       return;
     }
     const target = siteHardwareRules.find((rule) => rule.id === id);
-    await deleteSiteHardwareRule(id, target?.itemName ?? "Site hardware rule", authSession.email, authSession.accessToken);
+    const result = await deleteSiteHardwareRule(id, target?.itemName ?? "Site hardware rule", authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete rule.");
+      return;
+    }
     setSiteHardwareRules((current) => current.filter((rule) => rule.id !== id));
   }
 
@@ -4798,7 +4881,11 @@ function App() {
     }
     const target = taskHardwareDependencies.find((dep) => dep.id === id);
     const label = inventoryItems.find((item) => item.ref === target?.inventoryItemId)?.name ?? "Task hardware dependency";
-    await deleteTaskHardwareDependency(id, label, authSession.email, authSession.accessToken);
+    const result = await deleteTaskHardwareDependency(id, label, authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete dependency.");
+      return;
+    }
     setTaskHardwareDependencies((current) => current.filter((dep) => dep.id !== id));
   }
 
@@ -5667,7 +5754,11 @@ function App() {
     purchaseRequestsRef.current = next;
     setPurchaseRequests(next);
     if (authSession) {
-      await updatePurchaseRequestRemote(requestId, { status }, authSession.accessToken);
+      try {
+        await updatePurchaseRequestRemote(requestId, { status }, authSession.accessToken);
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : "Could not update purchase request status.");
+      }
     }
     if (existing && existing.status !== status) {
       notifyPurchaseRequestStatusChanged({ ...existing, status }, status);
@@ -5709,21 +5800,25 @@ function App() {
     purchaseRequestsRef.current = next;
     setPurchaseRequests(next);
     if (authSession) {
-      await updatePurchaseRequestRemote(
-        requestId,
-        {
-          quantity: nextQuantity,
-          preferredVendor: nextPreferredVendor,
-          poNumber: nextPoNumber ?? null,
-          expectedDate: nextExpectedDate ?? null,
-          estimatedUnitCost: nextEstimatedUnitCost,
-          status: nextStatus,
-          notes: nextNotes,
-          procurementTrack: nextProcurementTrack,
-          projectName: nextProjectName ?? null,
-        },
-        authSession.accessToken,
-      );
+      try {
+        await updatePurchaseRequestRemote(
+          requestId,
+          {
+            quantity: nextQuantity,
+            preferredVendor: nextPreferredVendor,
+            poNumber: nextPoNumber ?? null,
+            expectedDate: nextExpectedDate ?? null,
+            estimatedUnitCost: nextEstimatedUnitCost,
+            status: nextStatus,
+            notes: nextNotes,
+            procurementTrack: nextProcurementTrack,
+            projectName: nextProjectName ?? null,
+          },
+          authSession.accessToken,
+        );
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : "Could not update purchase request.");
+      }
     }
     if (existing.status !== nextStatus) {
       notifyPurchaseRequestStatusChanged({ ...existing, status: nextStatus }, nextStatus);
@@ -5798,11 +5893,15 @@ function App() {
     purchaseRequestsRef.current = nextList;
     setPurchaseRequests(nextList);
     if (authSession) {
-      await updatePurchaseRequestRemote(
-        request.id,
-        { receivedQuantity: nextReceived, estimatedUnitCost: effectiveUnitCost, status: nextStatus },
-        authSession.accessToken,
-      );
+      try {
+        await updatePurchaseRequestRemote(
+          request.id,
+          { receivedQuantity: nextReceived, estimatedUnitCost: effectiveUnitCost, status: nextStatus },
+          authSession.accessToken,
+        );
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : "Could not record the received quantity.");
+      }
     }
     if (request.status !== nextStatus) {
       notifyPurchaseRequestStatusChanged({ ...request, receivedQuantity: nextReceived, status: nextStatus }, nextStatus);

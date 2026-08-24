@@ -810,11 +810,21 @@ export async function revokeInvite(id: string, accessToken?: string) {
     return;
   }
 
-  await fetch(supabaseUrl(`user_invites?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`user_invites?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ status: "revoked" }),
   });
+  if (!response.ok) {
+    throw new Error(`Could not revoke invite: ${response.status}`);
+  }
+  // A permissions-blocked PATCH still returns 200/204 with zero rows changed
+  // -- without checking the row count, "revoked" could show as confirmed
+  // while the invite link stays live.
+  const rows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (rows.length === 0) {
+    throw new Error("Revoke didn't affect anything -- you may not have permission to revoke invites.");
+  }
 }
 
 export type PublicInviteView = {
@@ -1472,14 +1482,22 @@ export async function setCatalogItemRetired(id: string, retired: boolean, access
     return;
   }
 
-  await fetch(supabaseUrl(`product_catalog?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`product_catalog?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({
       is_retired: retired,
       retired_at: retired ? new Date().toISOString() : null,
     }),
   });
+  if (!response.ok) {
+    throw new Error(`Could not update catalog item: ${response.status}`);
+  }
+  // A permissions-blocked PATCH still returns 200/204 with zero rows changed.
+  const rows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (rows.length === 0) {
+    throw new Error("That change didn't affect anything -- you may not have permission to edit the catalog.");
+  }
 }
 
 // --- Catalog price-change approval workflow (migration 046) ---------------
@@ -1593,27 +1611,48 @@ export async function approveCatalogPriceChangeRequest(request: CatalogPriceChan
     markup_percent: "markup_percent",
     default_sell_price: "default_sell_price",
   };
-  await fetch(supabaseUrl(`product_catalog?id=eq.${request.catalogItemId}`), {
+  const applyResponse = await fetch(supabaseUrl(`product_catalog?id=eq.${request.catalogItemId}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ [columnByField[request.fieldChanged]]: request.requestedValue }),
   });
-  await fetch(supabaseUrl(`catalog_price_change_requests?id=eq.${request.id}`), {
+  if (!applyResponse.ok) {
+    throw new Error(`Could not apply the approved price change: ${applyResponse.status}`);
+  }
+  const appliedRows = (await applyResponse.json().catch(() => [])) as Array<{ id: string }>;
+  if (appliedRows.length === 0) {
+    throw new Error("The price change didn't apply -- you may not have permission to edit the catalog.");
+  }
+  const reviewResponse = await fetch(supabaseUrl(`catalog_price_change_requests?id=eq.${request.id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ status: "approved", reviewed_by_email: reviewerEmail, reviewed_at: new Date().toISOString() }),
   });
+  if (!reviewResponse.ok) {
+    throw new Error(`Price applied, but could not mark the request approved: ${reviewResponse.status}`);
+  }
+  const reviewRows = (await reviewResponse.json().catch(() => [])) as Array<{ id: string }>;
+  if (reviewRows.length === 0) {
+    throw new Error("Price applied, but marking the request approved didn't affect anything.");
+  }
 }
 
 export async function rejectCatalogPriceChangeRequest(id: string, reviewerEmail: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(supabaseUrl(`catalog_price_change_requests?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`catalog_price_change_requests?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ status: "rejected", reviewed_by_email: reviewerEmail, reviewed_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    throw new Error(`Could not reject price change request: ${response.status}`);
+  }
+  const rows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (rows.length === 0) {
+    throw new Error("That rejection didn't affect anything -- you may not have permission.");
+  }
 }
 
 export type ApprovalStatus = "pending" | "approved" | "denied";
@@ -1765,7 +1804,7 @@ export async function reviewUserApproval(
 
   const response = await fetch(supabaseUrl(`app_user_status?user_id=eq.${targetUserId}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({
       approval_status: approvalStatus,
       expires_at: expiresAt,
@@ -1776,6 +1815,13 @@ export async function reviewUserApproval(
 
   if (!response.ok) {
     throw new Error(`Could not update approval status: ${response.status}`);
+  }
+  // A permissions-blocked PATCH still returns 200/204 with zero rows changed
+  // -- an admin approving/denying a user needs to know if that actually
+  // took effect, since it directly controls that person's access.
+  const rows = (await response.json().catch(() => [])) as Array<{ user_id: string }>;
+  if (rows.length === 0) {
+    throw new Error("That approval change didn't affect anything -- you may not have permission.");
   }
 }
 
@@ -2613,16 +2659,24 @@ export async function addScheduleTemplatePhase(
   return mapPhaseRow(rows[0]);
 }
 
-export async function deleteScheduleTemplatePhase(id: string, label: string, actorEmail: string, accessToken?: string) {
+export async function deleteScheduleTemplatePhase(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`project_schedule_template_phases?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`project_schedule_template_phases?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete phase") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("schedule_template_phase", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 // --- Phase 11: Submittals -------------------------------------------------
@@ -3034,16 +3088,24 @@ export async function updateFormSchemaField(
   });
 }
 
-export async function deleteFormSchemaField(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteFormSchemaField(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`form_schema_fields?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`form_schema_fields?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete field") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("form_schema_field", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 export type ProjectHandover = {
@@ -3211,16 +3273,24 @@ export async function createPresalesRule(rule: Omit<PresalesHardwareRule, "id">,
   return mapPresalesRuleRow(rows[0]);
 }
 
-export async function deletePresalesRule(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deletePresalesRule(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`presales_hardware_rules?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`presales_hardware_rules?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete rule") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("presales_hardware_rule", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 // --- Site Builder hardware recommendation engine (v1, migration 045) ------
@@ -3318,16 +3388,24 @@ export async function updateSiteHardwareRule(id: string, patch: Partial<Omit<Sit
   });
 }
 
-export async function deleteSiteHardwareRule(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteSiteHardwareRule(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`site_hardware_rules?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`site_hardware_rules?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete rule") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("site_hardware_rule", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 // --- Phase 21: Task-Linked Inventory Automation ----------------------------
@@ -3446,16 +3524,24 @@ export async function loadInventoryItemSkusByIds(ids: string[], accessToken?: st
   return Object.fromEntries(rows.map((row) => [row.id, row.sku]));
 }
 
-export async function deleteTaskHardwareDependency(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteTaskHardwareDependency(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`task_hardware_dependencies?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`task_hardware_dependencies?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete dependency") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("task_hardware_dependency", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 // --- Phase 10b: Project Documents cutover ----------------------------------
@@ -3676,11 +3762,19 @@ export async function updateProjectDocumentStatusRemote(
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(supabaseUrl(`project_documents?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`project_documents?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ status: pgDocumentStatus(status) }),
   });
+  if (!response.ok) {
+    throw new Error(`Could not update document status: ${response.status}`);
+  }
+  // A permissions-blocked PATCH still returns 200/204 with zero rows changed.
+  const rows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (rows.length === 0) {
+    throw new Error("That status change didn't affect anything -- you may not have permission.");
+  }
 }
 
 // Real Storage: "Uploaded" used to only mean "we recorded the name and
@@ -3985,18 +4079,26 @@ export async function updatePurchaseRequestRemote(
   if (Object.keys(payload).length === 0) {
     return;
   }
-  const response = await fetch(supabaseUrl(`purchase_requests?id=eq.${id}`), {
+  let response = await fetch(supabaseUrl(`purchase_requests?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify(payload),
   });
   if (!response.ok && response.status === 400 && "linked_purchase_order_id" in payload) {
     const { linked_purchase_order_id: _linkedPurchaseOrderId, ...fallbackPayload } = payload;
-    await fetch(supabaseUrl(`purchase_requests?id=eq.${id}`), {
+    response = await fetch(supabaseUrl(`purchase_requests?id=eq.${id}`), {
       method: "PATCH",
-      headers: supabaseHeaders(accessToken),
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
       body: JSON.stringify(fallbackPayload),
     });
+  }
+  if (!response.ok) {
+    throw new Error(`Could not update purchase request: ${response.status}`);
+  }
+  // A permissions-blocked PATCH still returns 200/204 with zero rows changed.
+  const rows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (rows.length === 0) {
+    throw new Error("That change didn't affect anything -- you may not have permission.");
   }
 }
 
@@ -5828,16 +5930,24 @@ export async function updateInstalledAsset(
   });
 }
 
-export async function deleteInstalledAsset(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteInstalledAsset(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`installed_assets?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`installed_assets?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete installed asset") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("installed_asset", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 export async function loadRemoteAppState(accessToken?: string): Promise<PersistedAppState | null> {
@@ -6625,15 +6735,23 @@ export async function createPurchaseOrder(
   };
 }
 
-export async function updatePurchaseOrderStatus(id: string, status: PurchaseOrder["status"], accessToken?: string): Promise<void> {
+export async function updatePurchaseOrderStatus(id: string, status: PurchaseOrder["status"], accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`purchase_orders?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`purchase_orders?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ app_status: status, status: pgPoStatus(status) }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not update purchase order status") };
+  }
+  const updatedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (updatedRows.length === 0) {
+    return { ok: false, error: "Status change didn't affect anything -- you may not have permission." };
+  }
+  return { ok: true };
 }
 
 // Per-line receiving + the receiving log (migration 082). Two separate
@@ -6776,13 +6894,18 @@ export async function deletePurchaseOrderFile(fileId: string, _storagePath: stri
   try {
     const response = await fetch(supabaseUrl(`purchase_order_files?id=eq.${fileId}`), {
       method: "PATCH",
-      headers: supabaseHeaders(accessToken),
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
       body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
     });
-    if (response.ok) {
-      await logDeletionEvent("purchase_order_file", fileId, label, "deleted", actorEmail, accessToken);
+    if (!response.ok) {
+      return false;
     }
-    return response.ok;
+    const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+    if (deletedRows.length === 0) {
+      return false;
+    }
+    await logDeletionEvent("purchase_order_file", fileId, label, "deleted", actorEmail, accessToken);
+    return true;
   } catch (error) {
     console.error("deletePurchaseOrderFile threw", error);
     return false;
@@ -6838,13 +6961,18 @@ export async function restorePurchaseOrderFile(fileId: string, label: string, ac
   }
   const response = await fetch(supabaseUrl(`purchase_order_files?id=eq.${fileId}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: null, deleted_at: null }),
   });
-  if (response.ok) {
-    await logDeletionEvent("purchase_order_file", fileId, label, "restored", actorEmail, accessToken);
+  if (!response.ok) {
+    return false;
   }
-  return response.ok;
+  const restoredRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (restoredRows.length === 0) {
+    return false;
+  }
+  await logDeletionEvent("purchase_order_file", fileId, label, "restored", actorEmail, accessToken);
+  return true;
 }
 
 // Sales Quote Builder (migration 033). A quote starts with a client/site and
@@ -7321,11 +7449,21 @@ export async function updateSalesQuoteStatus(id: string, status: SalesQuote["sta
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ status, closed_at: closedAt }),
   });
+  if (!response.ok) {
+    throw new Error(`Could not update quote status: ${response.status}`);
+  }
+  // A permissions-blocked PATCH still returns 200/204 with zero rows changed
+  // -- Won/Lost drives Sales' Closed-This-Year and profit reporting, so a
+  // status change that silently didn't take needs to be caught, not assumed.
+  const rows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (rows.length === 0) {
+    throw new Error("That status change didn't affect anything -- you may not have permission.");
+  }
 }
 
 // Deletes the whole Site/Quote. All of its locations, location
@@ -7334,16 +7472,24 @@ export async function updateSalesQuoteStatus(id: string, status: SalesQuote["sta
 // link (on delete set null) -- their history is kept. If this quote was
 // already converted to a Project, the Project keeps existing as its own
 // record (projects.source_sales_quote_id also on delete set null).
-export async function deleteSalesQuote(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteSalesQuote(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete sales quote") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("sales_quote", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 export type DeletedSalesQuote = {
@@ -7389,13 +7535,18 @@ export async function restoreSalesQuote(id: string, label: string, actorEmail: s
   }
   const response = await fetch(supabaseUrl(`sales_quotes?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: null, deleted_at: null }),
   });
-  if (response.ok) {
-    await logDeletionEvent("sales_quote", id, label, "restored", actorEmail, accessToken);
+  if (!response.ok) {
+    return false;
   }
-  return response.ok;
+  const restoredRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (restoredRows.length === 0) {
+    return false;
+  }
+  await logDeletionEvent("sales_quote", id, label, "restored", actorEmail, accessToken);
+  return true;
 }
 
 // Migration 053: client email + proposal summary, edited from the Quote
@@ -7480,16 +7631,24 @@ export async function updateSalesQuoteBomLineCatalogLink(id: string, catalogItem
   });
 }
 
-export async function deleteSalesQuoteBomLine(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteSalesQuoteBomLine(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete BOM line") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("sales_quote_bom_line", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 export async function addSalesQuoteLocation(
@@ -7553,16 +7712,24 @@ export async function updateSalesQuoteLocation(
   });
 }
 
-export async function deleteSalesQuoteLocation(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteSalesQuoteLocation(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`sales_quote_locations?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`sales_quote_locations?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete location") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("sales_quote_location", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 // Migration 056: addable Sign/Space Sensor/Misc lines at a location.
@@ -7619,16 +7786,24 @@ export async function updateSalesQuoteLocationItem(
   });
 }
 
-export async function deleteSalesQuoteLocationItem(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteSalesQuoteLocationItem(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`sales_quote_location_items?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`sales_quote_location_items?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete item") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("sales_quote_location_item", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 const SALES_QUOTE_IMAGE_BUCKET = "sales-quote-images";
@@ -7972,13 +8147,18 @@ export async function deleteSalesQuoteLocationImage(imageId: string, _storagePat
   try {
     const response = await fetch(supabaseUrl(`sales_quote_location_images?id=eq.${imageId}`), {
       method: "PATCH",
-      headers: supabaseHeaders(accessToken),
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
       body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
     });
-    if (response.ok) {
-      await logDeletionEvent("sales_quote_location_image", imageId, label, "deleted", actorEmail, accessToken);
+    if (!response.ok) {
+      return false;
     }
-    return response.ok;
+    const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+    if (deletedRows.length === 0) {
+      return false;
+    }
+    await logDeletionEvent("sales_quote_location_image", imageId, label, "deleted", actorEmail, accessToken);
+    return true;
   } catch (error) {
     console.error("deleteSalesQuoteLocationImage threw", error);
     return false;
@@ -8045,13 +8225,18 @@ export async function restoreSalesQuoteLocationImage(imageId: string, label: str
   }
   const response = await fetch(supabaseUrl(`sales_quote_location_images?id=eq.${imageId}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: null, deleted_at: null }),
   });
-  if (response.ok) {
-    await logDeletionEvent("sales_quote_location_image", imageId, label, "restored", actorEmail, accessToken);
+  if (!response.ok) {
+    return false;
   }
-  return response.ok;
+  const restoredRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (restoredRows.length === 0) {
+    return false;
+  }
+  await logDeletionEvent("sales_quote_location_image", imageId, label, "restored", actorEmail, accessToken);
+  return true;
 }
 
 // --- Project Locations -------------------------------------------------
@@ -8124,16 +8309,24 @@ export async function updateProjectLocation(
   });
 }
 
-export async function deleteProjectLocation(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteProjectLocation(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`project_locations?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`project_locations?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete location") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("project_location", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 export type DeletedProjectLocation = {
@@ -8250,16 +8443,24 @@ export async function updateProjectLocationItem(
   });
 }
 
-export async function deleteProjectLocationItem(id: string, label: string, actorEmail: string, accessToken?: string): Promise<void> {
+export async function deleteProjectLocationItem(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, error: "Not configured." };
   }
-  await fetch(supabaseUrl(`project_location_items?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`project_location_items?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete item") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
   await logDeletionEvent("project_location_item", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 export function buildProjectImageStoragePath(projectLocationId: string, fileName: string): string {
@@ -8368,13 +8569,18 @@ export async function deleteProjectLocationImage(imageId: string, _storagePath: 
   try {
     const response = await fetch(supabaseUrl(`project_location_images?id=eq.${imageId}`), {
       method: "PATCH",
-      headers: supabaseHeaders(accessToken),
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
       body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
     });
-    if (response.ok) {
-      await logDeletionEvent("project_location_image", imageId, label, "deleted", actorEmail, accessToken);
+    if (!response.ok) {
+      return false;
     }
-    return response.ok;
+    const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+    if (deletedRows.length === 0) {
+      return false;
+    }
+    await logDeletionEvent("project_location_image", imageId, label, "deleted", actorEmail, accessToken);
+    return true;
   } catch (error) {
     console.error("deleteProjectLocationImage threw", error);
     return false;
@@ -8441,13 +8647,18 @@ export async function restoreProjectLocationImage(imageId: string, label: string
   }
   const response = await fetch(supabaseUrl(`project_location_images?id=eq.${imageId}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ deleted_by_email: null, deleted_at: null }),
   });
-  if (response.ok) {
-    await logDeletionEvent("project_location_image", imageId, label, "restored", actorEmail, accessToken);
+  if (!response.ok) {
+    return false;
   }
-  return response.ok;
+  const restoredRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (restoredRows.length === 0) {
+    return false;
+  }
+  await logDeletionEvent("project_location_image", imageId, label, "restored", actorEmail, accessToken);
+  return true;
 }
 
 export async function addProjectShippingAddress(
@@ -8635,13 +8846,18 @@ export async function deleteProjectShipmentPhoto(photoId: string, label: string,
   try {
     const response = await fetch(supabaseUrl(`project_shipment_photos?id=eq.${photoId}`), {
       method: "PATCH",
-      headers: supabaseHeaders(accessToken),
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
       body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
     });
-    if (response.ok) {
-      await logDeletionEvent("project_shipment_photo", photoId, label, "deleted", actorEmail, accessToken);
+    if (!response.ok) {
+      return false;
     }
-    return response.ok;
+    const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+    if (deletedRows.length === 0) {
+      return false;
+    }
+    await logDeletionEvent("project_shipment_photo", photoId, label, "deleted", actorEmail, accessToken);
+    return true;
   } catch (error) {
     console.error("deleteProjectShipmentPhoto threw", error);
     return false;
