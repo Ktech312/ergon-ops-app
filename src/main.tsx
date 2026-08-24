@@ -1215,7 +1215,7 @@ function App() {
   // A reorder point of 0 means "don't track reordering for this item" (most
   // one-off/never-reordered parts default here), not "flag the instant it
   // hits exactly zero" -- E: "most item are still one-offs."
-  const lowStock = inventoryItems.filter((part) => !part.retired && part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint);
+  const lowStock = inventoryItems.filter((part) => !part.retired && part.trackReorder && availableOf(part) <= part.reorderPoint);
   const inventoryValue = inventoryItems.reduce((sum, part) => sum + part.stock * part.cost, 0);
   const allocatedForProjectsValue = inventoryItems.reduce((sum, part) => sum + (part.allocated ?? 0) * part.cost, 0);
   const openPoValue = purchaseOrders.reduce((sum, po) => sum + po.total, 0);
@@ -4945,7 +4945,7 @@ function App() {
     setInventoryItems((current) => current.map((item) => (item.ref === part.ref ? { ...item, allocated: allocatedAfter } : item)));
     recordMovements([movement]);
     const availableAfter = part.stock - allocatedAfter;
-    if (part.reorderPoint > 0 && availableAfter <= part.reorderPoint) {
+    if (part.trackReorder && availableAfter <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: availableAfter });
     }
 
@@ -5000,7 +5000,7 @@ function App() {
       current.map((item) => (item.ref === part.ref ? { ...item, stock: item.stock - shipQty, allocated: Math.max(0, (item.allocated ?? 0) - shipQty) } : item)),
     );
     recordMovements([movement]);
-    if (part.reorderPoint > 0 && movement.quantityAfter <= part.reorderPoint) {
+    if (part.trackReorder && movement.quantityAfter <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: movement.quantityAfter });
     }
   }
@@ -5177,7 +5177,7 @@ function App() {
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: adjustedQty } : item)));
     recordMovements([movement]);
     const availableAfterAdjust = adjustedQty - (part.allocated ?? 0);
-    if (part.reorderPoint > 0 && availableAfterAdjust <= part.reorderPoint) {
+    if (part.trackReorder && availableAfterAdjust <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: availableAfterAdjust });
     }
     });
@@ -5207,7 +5207,7 @@ function App() {
     setInventoryItems((current) => current.map((item) => (item.ref === partRef ? { ...item, stock: item.stock - transferQty } : item)));
     recordMovements([movement]);
     const availableAfterTransfer = movement.quantityAfter - (part.allocated ?? 0);
-    if (part.reorderPoint > 0 && availableAfterTransfer <= part.reorderPoint) {
+    if (part.trackReorder && availableAfterTransfer <= part.reorderPoint) {
       notifyLowStockReached({ ...part, stock: availableAfterTransfer });
     }
     setProjectAllocations((current) => [
@@ -5303,7 +5303,7 @@ function App() {
 
     for (const movement of componentMovements) {
       const part = inventoryItems.find((item) => item.ref === movement.sku);
-      if (part && part.reorderPoint > 0 && movement.quantityAfter <= part.reorderPoint) {
+      if (part && part.trackReorder && movement.quantityAfter <= part.reorderPoint) {
         notifyLowStockReached({ ...part, stock: movement.quantityAfter });
       }
     }
@@ -8361,6 +8361,7 @@ function Inventory({
     cost: 0,
     stock: 0,
     reorderPoint: 0,
+    trackReorder: false,
     imageUrl: "",
     barcode: "",
     purchaseUrls: [],
@@ -8466,7 +8467,7 @@ function Inventory({
     marketing: ["View only"],
   };
   const filteredInventoryItems = inventoryItems.filter((part) => {
-    const status = part.retired ? "Retired" : part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy";
+    const status = part.retired ? "Retired" : part.trackReorder && availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy";
     const tabMatch = inventoryTab === "finished" ? part.category === "Build" : part.category !== "Build";
     return (
       tabMatch &&
@@ -8675,7 +8676,7 @@ function Inventory({
         available: availableOf(part),
         reorder_point: part.reorderPoint,
         unit_cost: part.cost,
-        status: part.retired ? "Retired" : part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy",
+        status: part.retired ? "Retired" : part.trackReorder && availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy",
         tags: (part.tags ?? []).join("; "),
         barcode: part.barcode ?? "",
       })),
@@ -9089,7 +9090,7 @@ function Inventory({
                   <td>{part.allocated ?? 0}</td>
                   <td>{availableOf(part)}</td>
                   <td>{money(part.cost)}</td>
-                  <td>{part.retired ? <span className="status retired">Retired</span> : part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
+                  <td>{part.retired ? <span className="status retired">Retired</span> : part.trackReorder && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
                   <td onClick={(event) => event.stopPropagation()}>
                     <div className="table-actions">
                       <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
@@ -9144,7 +9145,7 @@ function Inventory({
                 <span className="status">Stock: {part.stock}</span>
                 {(part.allocated ?? 0) > 0 && <span className="status">Allocated: {part.allocated}</span>}
                 <span className="status">{money(part.cost)}</span>
-                {part.retired ? <span className="status retired">Retired</span> : part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
+                {part.retired ? <span className="status retired">Retired</span> : part.trackReorder && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
               </span>
               <span className="table-actions" onClick={(event) => event.stopPropagation()}>
                 <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
@@ -9519,7 +9520,24 @@ function Inventory({
               <label>Manufacturer<input value={itemDraft.manufacturer} onChange={(event) => setItemDraft((current) => ({ ...current, manufacturer: event.target.value }))} /></label>
               <label>Unit cost<input type="number" min="0" value={itemDraft.cost} onChange={(event) => setItemDraft((current) => ({ ...current, cost: Number(event.target.value) }))} /></label>
               <label>Current stock<input type="number" min="0" value={itemDraft.stock} onChange={(event) => setItemDraft((current) => ({ ...current, stock: Number(event.target.value) }))} /></label>
-              <label>Reorder point<input type="number" min="0" value={itemDraft.reorderPoint} onChange={(event) => setItemDraft((current) => ({ ...current, reorderPoint: Number(event.target.value) }))} /></label>
+              <label>
+                Reorder point
+                <input
+                  type="number"
+                  min="0"
+                  value={itemDraft.reorderPoint}
+                  disabled={!itemDraft.trackReorder}
+                  onChange={(event) => setItemDraft((current) => ({ ...current, reorderPoint: Number(event.target.value) }))}
+                />
+              </label>
+              <label className="checkbox-inline">
+                <input
+                  type="checkbox"
+                  checked={!(itemDraft.trackReorder ?? false)}
+                  onChange={(event) => setItemDraft((current) => ({ ...current, trackReorder: !event.target.checked }))}
+                />
+                Don't track for Reorder
+              </label>
             </div>
             <div className="compact-edit-section">
               <div className="compact-section-header">
@@ -12529,7 +12547,7 @@ function Reports({
     .sort((a, b) => Math.abs(b.trend.change) - Math.abs(a.trend.change))
     .slice(0, 8);
   const sourceRows = filteredInventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
-  const reorderRows = filteredInventoryItems.filter((part) => !part.retired && part.reorderPoint > 0 && availableOf(part) <= part.reorderPoint).sort((a, b) => availableOf(a) - availableOf(b)).slice(0, 12);
+  const reorderRows = filteredInventoryItems.filter((part) => !part.retired && part.trackReorder && availableOf(part) <= part.reorderPoint).sort((a, b) => availableOf(a) - availableOf(b)).slice(0, 12);
   const openPurchaseRequests = filteredPurchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
   const purchaseRequestExposure = openPurchaseRequests.reduce((sum, request) => sum + Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost, 0);
   const plannedBuildShortages = filteredBuildTransactions

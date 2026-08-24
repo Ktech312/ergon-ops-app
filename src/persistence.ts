@@ -3952,6 +3952,13 @@ export type Part = {
   // cutover don't all need updating; read as `part.allocated ?? 0`.
   allocated?: number;
   reorderPoint: number;
+  // Migration 092: explicit "track reorder for this item" switch, replacing
+  // the earlier "reorder point 0 = disabled" overload -- 0 can now be a
+  // real threshold again when this is true. Optional for the same
+  // hardcoded-seed-literal reason as `allocated` above; read as
+  // `part.trackReorder ?? false`. Defaults to false (most items are
+  // one-offs, per E).
+  trackReorder?: boolean;
   vendorUrl?: string;
   imageUrl?: string;
   barcode?: string;
@@ -3978,12 +3985,17 @@ type InventoryItemRow = {
   inventory_tags: string[] | null;
   is_active: boolean;
   inventory_balances: Array<{ quantity_on_hand: number | string; quantity_allocated: number | string | null }> | null;
+  track_reorder: boolean | null;
 };
 
 const INVENTORY_ITEM_SELECT =
-  "id,sku,item_name,description,manufacturer,category,default_unit_cost,reorder_point,vendor_url,image_url,barcode_value,purchase_sources,price_history,inventory_tags,is_active,inventory_balances(quantity_on_hand,quantity_allocated)";
-// Migration 091 safety: same shape minus quantity_allocated, in case that
+  "id,sku,item_name,description,manufacturer,category,default_unit_cost,reorder_point,track_reorder,vendor_url,image_url,barcode_value,purchase_sources,price_history,inventory_tags,is_active,inventory_balances(quantity_on_hand,quantity_allocated)";
+// Migration 092 safety: same shape minus track_reorder, in case that
 // column hasn't landed yet -- without this, the whole Inventory load 400s.
+const INVENTORY_ITEM_SELECT_PRE_092 =
+  "id,sku,item_name,description,manufacturer,category,default_unit_cost,reorder_point,vendor_url,image_url,barcode_value,purchase_sources,price_history,inventory_tags,is_active,inventory_balances(quantity_on_hand,quantity_allocated)";
+// Migration 091 safety: same shape minus quantity_allocated either, in
+// case that column hasn't landed yet.
 const INVENTORY_ITEM_SELECT_PRE_091 =
   "id,sku,item_name,description,manufacturer,category,default_unit_cost,reorder_point,vendor_url,image_url,barcode_value,purchase_sources,price_history,inventory_tags,is_active,inventory_balances(quantity_on_hand)";
 
@@ -4000,6 +4012,7 @@ function mapInventoryItemRow(row: InventoryItemRow): Part {
     stock,
     allocated,
     reorderPoint: Number(row.reorder_point) || 0,
+    trackReorder: Boolean(row.track_reorder),
     vendorUrl: row.vendor_url ?? undefined,
     imageUrl: row.image_url ?? undefined,
     barcode: row.barcode_value ?? undefined,
@@ -4018,14 +4031,24 @@ export async function loadInventoryItems(accessToken?: string): Promise<Part[]> 
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok && response.status === 400) {
-    const fallbackResponse = await fetch(supabaseUrl(`inventory_items?select=${INVENTORY_ITEM_SELECT_PRE_091}&order=item_name.asc`), {
+    const fallbackResponse = await fetch(supabaseUrl(`inventory_items?select=${INVENTORY_ITEM_SELECT_PRE_092}&order=item_name.asc`), {
       headers: supabaseHeaders(accessToken),
     });
-    if (!fallbackResponse.ok) {
+    if (fallbackResponse.ok) {
+      const fallbackRows = (await fallbackResponse.json()) as InventoryItemRow[];
+      return fallbackRows.map(mapInventoryItemRow);
+    }
+    if (fallbackResponse.status !== 400) {
       return [];
     }
-    const fallbackRows = (await fallbackResponse.json()) as InventoryItemRow[];
-    return fallbackRows.map(mapInventoryItemRow);
+    const olderFallbackResponse = await fetch(supabaseUrl(`inventory_items?select=${INVENTORY_ITEM_SELECT_PRE_091}&order=item_name.asc`), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (!olderFallbackResponse.ok) {
+      return [];
+    }
+    const olderFallbackRows = (await olderFallbackResponse.json()) as InventoryItemRow[];
+    return olderFallbackRows.map(mapInventoryItemRow);
   }
   if (!response.ok) {
     return [];
@@ -4063,6 +4086,7 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
     category: item.category,
     default_unit_cost: item.cost,
     reorder_point: item.reorderPoint,
+    track_reorder: item.trackReorder ?? false,
     vendor_url: item.vendorUrl || null,
     image_url: item.imageUrl || null,
     barcode_value: item.barcode || null,
@@ -4072,11 +4096,21 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
     is_active: !item.retired,
   }));
 
-  const itemResponse = await fetch(supabaseUrl("inventory_items?on_conflict=sku"), {
+  let itemResponse = await fetch(supabaseUrl("inventory_items?on_conflict=sku"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(itemPayload),
   });
+  // Migration 092 safety: retry without track_reorder if it hasn't landed
+  // yet, so the rest of the item still saves.
+  if (!itemResponse.ok && itemResponse.status === 400) {
+    const fallbackItemPayload = itemPayload.map(({ track_reorder: _trackReorder, ...rest }) => rest);
+    itemResponse = await fetch(supabaseUrl("inventory_items?on_conflict=sku"), {
+      method: "POST",
+      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(fallbackItemPayload),
+    });
+  }
   if (!itemResponse.ok) {
     throw new Error(`Could not save inventory items: ${itemResponse.status}`);
   }

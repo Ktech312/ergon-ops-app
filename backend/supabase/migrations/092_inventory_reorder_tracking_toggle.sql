@@ -1,0 +1,14 @@
+-- Migration 092: explicit "track reorder for this item" toggle, replacing
+-- the overloaded "reorder point 0 = disabled" convention from migration 091.
+--
+-- E: "would it be better to have a push check box that says, 'Don't track
+-- for Reorder'?" -- yes: reorder_point=0 permanently reserved 0 as "off,"
+-- so nobody could ever set a genuine "alert me the instant this hits zero"
+-- threshold. A separate boolean gives the number field its meaning back.
+--
+-- Defaults to false (not tracked) for both new AND existing rows -- E:
+-- "set them all to not track" (most items are one-offs, matching the
+-- reorder-point-zero reset from migration 091/the SQL run right before
+-- this). Adding a NOT NULL column with a constant DEFAULT backfills every
+-- existing row to false in the same statement -- no separate UPDATE needed.
+alter table inventory_items add column if not exists track_reorder boolean not null default false;
