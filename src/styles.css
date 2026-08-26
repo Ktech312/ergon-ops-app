@@ -4079,15 +4079,40 @@ tr:hover .row-delete-btn,
 }
 
 .source-url-row {
+  align-items: center;
   display: grid;
   gap: 8px;
-  grid-template-columns: 150px minmax(0, 1fr) 34px;
+  grid-template-columns: 150px minmax(0, 1fr) 34px 34px;
 }
 
 .price-history-row {
+  align-items: center;
   display: grid;
   gap: 8px;
-  grid-template-columns: 140px 150px 110px minmax(0, 1fr) 34px;
+  grid-template-columns: 140px 150px 110px minmax(0, 1fr) 34px 34px;
+}
+
+/* Static (non-editing) price history row -- same column grid as the
+   editable one so the pencil doesn't jump around, but plain text instead
+   of inputs (E: "this should have come from the receipt, so i don't want
+   to be able to edit it that easy"). */
+.price-history-row-static span {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 2px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.price-history-row-static small {
+  color: #9a9184;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .compact-remove {

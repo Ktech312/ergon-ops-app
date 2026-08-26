@@ -13,6 +13,7 @@ import {
   Building2,
   CalendarDays,
   Camera,
+  Check,
   ChevronDown,
   ChevronUp,
   ClipboardList,
@@ -26,6 +27,7 @@ import {
   ListChecks,
   MapPin,
   MoreHorizontal,
+  Pencil,
   Plus,
   Search,
   ShoppingCart,
@@ -212,6 +214,7 @@ import {
   revokeAdmin,
   saveDeviceRecipes,
   deleteEquipmentType,
+  deleteInventoryItem,
   saveInventoryItems,
   saveLocalAppState,
   saveMovementsBuildsAllocations,
@@ -5233,6 +5236,23 @@ function App() {
     });
   }
 
+  // Real hard delete -- Retire (is_active) already exists as this entity's
+  // "hide but keep for history" path, so this is the same exception used
+  // for Device Recipes (see deleteEquipmentType): a plain DB DELETE, logged
+  // to deletion_log, with any real FK history (stock, movements, BOM
+  // membership) blocking it with a friendly message instead of silently
+  // succeeding or a raw Postgres error.
+  async function handleDeleteInventoryItem(ref: string): Promise<{ ok: boolean; error?: string }> {
+    if (!authSession) {
+      return { ok: false, error: "You must be signed in to delete an inventory item." };
+    }
+    const result = await deleteInventoryItem(ref, authSession.email, authSession.accessToken);
+    if (result.ok) {
+      setInventoryItems((current) => current.filter((item) => item.ref !== ref));
+    }
+    return result;
+  }
+
   function receiveInventoryStock(partRef: string, qty: number, unitCost: number, poNumber: string, notes: string, projectName?: string) {
     withProductionLock("inventory_item", partRef, () => {
     const part = inventoryItems.find((item) => item.ref === partRef);
@@ -6483,7 +6503,7 @@ function App() {
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
             {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} />}
+            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDeleteItem={handleDeleteInventoryItem} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
@@ -8502,6 +8522,7 @@ function Inventory({
   purchaseOrders,
   oneOffReconciliations,
   onMergeOneOff,
+  onDeleteItem,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
@@ -8533,6 +8554,7 @@ function Inventory({
   purchaseOrders: PurchaseOrder[];
   oneOffReconciliations: OneOffReconciliation[];
   onMergeOneOff: (params: { itemKey: string; itemName: string; totalQty: number; lastUnitCost: number; orderNumbers: string[]; targetSku: string; notes: string }) => void;
+  onDeleteItem: (ref: string) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -8556,6 +8578,11 @@ function Inventory({
   const [mergeOneOffDraft, setMergeOneOffDraft] = useState<{ partRef: string; notes: string }>({ partRef: "", notes: "" });
   const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
   const [itemDraft, setItemDraft] = useState<Part>(emptyItemDraft);
+  // Price history is meant to reflect what a real receipt said, not
+  // something to casually overtype -- E: "this should have come from the
+  // receipt, so i don't want to be able to edit it that easy." Static text
+  // by default; only the row whose id matches this becomes editable.
+  const [editingPriceHistoryId, setEditingPriceHistoryId] = useState<number | null>(null);
   const [previewItem, setPreviewItem] = useState<Part | null>(null);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustModalMode, setAdjustModalMode] = useState<"count" | "transfer">("count");
@@ -8812,13 +8839,17 @@ function Inventory({
   }
 
   function addPriceHistory() {
+    const newId = Date.now();
     setItemDraft((current) => ({
       ...current,
       priceHistory: [
         ...(current.priceHistory ?? []),
-        { id: Date.now(), date: new Date().toISOString().slice(0, 10), vendor: current.manufacturer || "TBD", unitCost: Number(current.cost) || 0, notes: "" },
+        { id: newId, date: new Date().toISOString().slice(0, 10), vendor: current.manufacturer || "TBD", unitCost: Number(current.cost) || 0, notes: "" },
       ],
     }));
+    // A brand-new row is blank -- open it in edit mode right away instead
+    // of showing empty static text with no way to tell it needs filling in.
+    setEditingPriceHistoryId(newId);
   }
 
   function updatePriceHistory(id: number, field: keyof PriceHistoryEntry, value: string | number) {
@@ -8930,6 +8961,18 @@ function Inventory({
 
   function toggleItemRetired() {
     setItemDraft((current) => ({ ...current, retired: !current.retired }));
+  }
+
+  async function deleteSelectedItem() {
+    if (!editingItemRef || !window.confirm(`Delete ${itemDraft.name}? This can't be undone. Use Retire instead if you need to keep it out of the picker without losing its stock/movement history.`)) {
+      return;
+    }
+    const result = await onDeleteItem(editingItemRef);
+    if (result.ok) {
+      setShowItemModal(false);
+    } else {
+      window.alert(result.error ?? "Could not delete inventory item.");
+    }
   }
 
   function openAdjustModal(part?: Part) {
@@ -9841,6 +9884,11 @@ function Inventory({
                   <div className="source-url-row" key={source.id}>
                     <input value={source.label} onChange={(event) => updatePurchaseUrl(source.id, "label", event.target.value)} placeholder="Vendor or source" />
                     <input value={source.url} onChange={(event) => updatePurchaseUrl(source.id, "url", event.target.value)} placeholder="Purchase URL" />
+                    {source.url ? (
+                      <a className="icon-button" href={source.url} target="_blank" rel="noreferrer" aria-label="Open purchase link"><ExternalLink size={15} /></a>
+                    ) : (
+                      <span />
+                    )}
                     <button className="icon-button compact-remove" type="button" onClick={() => removePurchaseUrl(source.id)} aria-label="Remove purchase URL"><Trash2 size={15} /></button>
                   </div>
                 ))}
@@ -9851,26 +9899,39 @@ function Inventory({
               <div className="compact-section-header">
                 <div>
                   <h3>Purchase Price History</h3>
-                  <p>Track what it cost, who sold it, and why it changed.</p>
+                  <p>What it cost, who sold it, and why it changed -- from the receipt. Click the pencil to correct a record.</p>
                 </div>
                 <button className="secondary-action mini-action" type="button" onClick={addPriceHistory}><Plus size={14} /> Add Price</button>
               </div>
               <div className="price-history-list">
-                {sortedDraftHistory.map((entry) => (
-                  <div className="price-history-row" key={entry.id}>
-                    <input type="date" value={entry.date} onChange={(event) => updatePriceHistory(entry.id, "date", event.target.value)} aria-label="Purchase date" />
-                    <input value={entry.vendor} onChange={(event) => updatePriceHistory(entry.id, "vendor", event.target.value)} placeholder="Vendor" aria-label="Vendor" />
-                    <input type="number" min="0" value={entry.unitCost} onChange={(event) => updatePriceHistory(entry.id, "unitCost", Number(event.target.value))} placeholder="Unit cost" aria-label="Unit cost" />
-                    <input value={entry.notes} onChange={(event) => updatePriceHistory(entry.id, "notes", event.target.value)} placeholder="Notes" aria-label="Price notes" />
-                    <button className="icon-button compact-remove" type="button" onClick={() => removePriceHistory(entry.id)} aria-label="Remove price history"><Trash2 size={15} /></button>
-                  </div>
-                ))}
+                {sortedDraftHistory.map((entry) =>
+                  editingPriceHistoryId === entry.id ? (
+                    <div className="price-history-row" key={entry.id}>
+                      <input type="date" value={entry.date} onChange={(event) => updatePriceHistory(entry.id, "date", event.target.value)} aria-label="Purchase date" />
+                      <input value={entry.vendor} onChange={(event) => updatePriceHistory(entry.id, "vendor", event.target.value)} placeholder="Vendor" aria-label="Vendor" />
+                      <input type="number" min="0" value={entry.unitCost} onChange={(event) => updatePriceHistory(entry.id, "unitCost", Number(event.target.value))} placeholder="Unit cost" aria-label="Unit cost" />
+                      <input value={entry.notes} onChange={(event) => updatePriceHistory(entry.id, "notes", event.target.value)} placeholder="Notes" aria-label="Price notes" />
+                      <button className="icon-button" type="button" onClick={() => setEditingPriceHistoryId(null)} aria-label="Done editing price record"><Check size={15} /></button>
+                      <button className="icon-button compact-remove" type="button" onClick={() => removePriceHistory(entry.id)} aria-label="Remove price history"><Trash2 size={15} /></button>
+                    </div>
+                  ) : (
+                    <div className="price-history-row price-history-row-static" key={entry.id}>
+                      <span><small>Date</small>{entry.date || "No date"}</span>
+                      <span><small>Vendor</small>{entry.vendor || "No vendor"}</span>
+                      <span><small>Cost</small>{moneyExact(entry.unitCost)}</span>
+                      <span className="price-history-notes"><small>Notes</small>{entry.notes || "No notes"}</span>
+                      <button className="icon-button" type="button" onClick={() => setEditingPriceHistoryId(entry.id)} aria-label="Edit price record"><Pencil size={15} /></button>
+                      <button className="icon-button compact-remove" type="button" onClick={() => removePriceHistory(entry.id)} aria-label="Remove price history"><Trash2 size={15} /></button>
+                    </div>
+                  ),
+                )}
                 {sortedDraftHistory.length === 0 && <div className="empty-compact-state">No price records yet. Add the first vendor cost to start tracking trend.</div>}
               </div>
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowItemModal(false)}>Cancel</button>
               {editingItemRef && <button className="secondary-action danger-action" type="button" onClick={toggleItemRetired}>{itemDraft.retired ? "Reactivate Item" : "Retire Item"}</button>}
+              {editingItemRef && <button className="icon-button compact-remove" type="button" onClick={deleteSelectedItem} aria-label="Delete inventory item"><Trash2 size={15} /></button>}
               <button className="primary-action" type="button" onClick={saveItem}>{editingItemRef ? "Save Item" : "Add Item"}</button>
             </div>
           </section>

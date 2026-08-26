@@ -4264,6 +4264,45 @@ async function getMainWarehouseLocationId(accessToken: string): Promise<string |
   return mainWarehouseLocationId;
 }
 
+// Inventory items only ever had Retire (is_active) as a "make it go away"
+// path -- E asked to actually delete a merge-testing item outright ("we
+// will eventually start with fresh data"). Real hard delete, matching
+// deleteEquipmentType's shape: several tables reference inventory_items.id
+// with no ON DELETE clause (inventory_balances, inventory_movements,
+// purchase_order_lines, equipment_bom_components, and more), so an item
+// with any real stock/movement/BOM history will legitimately fail with a
+// 409 -- Retire is the correct action for those, not a bug to work around.
+export async function deleteInventoryItem(sku: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, error: "Not configured." };
+  }
+  const lookupResponse = await fetch(supabaseUrl(`inventory_items?sku=eq.${encodeURIComponent(sku)}&select=id,item_name`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  const lookupRows = lookupResponse.ok ? ((await lookupResponse.json()) as Array<{ id: string; item_name: string }>) : [];
+  const item = lookupRows[0];
+  if (!item) {
+    // Nothing remote to delete -- either never synced yet or already gone.
+    return { ok: true };
+  }
+  const response = await fetch(supabaseUrl(`inventory_items?id=eq.${item.id}`), {
+    method: "DELETE",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+  });
+  if (!response.ok) {
+    if (response.status === 409) {
+      return { ok: false, error: "Can't delete -- this item has stock, movement, or build-BOM history. Use Retire instead to keep it out of the picker without losing that history." };
+    }
+    return { ok: false, error: await readSupabaseError(response, "Could not delete inventory item") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't remove anything -- you may not have permission." };
+  }
+  await logDeletionEvent("inventory_item", item.id, item.item_name || sku, "deleted", actorEmail, accessToken);
+  return { ok: true };
+}
+
 export async function saveInventoryItems(items: Part[], accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken || items.length === 0) {
     return;
