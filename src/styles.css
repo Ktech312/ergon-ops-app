@@ -1258,7 +1258,16 @@ table {
 }
 
 .inventory-table {
-  min-width: 1280px;
+  min-width: 1180px;
+}
+
+/* Tags got its own real column (2026-08-24), but the shared .tag-chip-row
+   class (also used by Product Catalog and Tasks) shouldn't shrink
+   everywhere just to make room here -- scope a tighter cap to this table
+   only, so the new column doesn't force the table wider than it needs to
+   be and push the page into unwanted horizontal scroll. */
+.inventory-table td .tag-chip-row {
+  max-width: 100px;
 }
 
 /* Product Catalog: same "show ~10 rows, scroll inside the panel" pattern as
@@ -1324,6 +1333,13 @@ th {
 
 .inventory-table th:last-child {
   background: #f8f5ef;
+  /* Higher than .inventory-table td:last-child's z-index: 3 above -- both
+     the header's sticky-right last cell and every body row's sticky-right
+     last cell (the Adjust button) share the same right:0 sticky position,
+     and with equal z-index the later-in-DOM tbody rows painted over the
+     thead on vertical scroll (Adjust buttons bleeding up through the
+     header). The header's copy needs to win that stack every time. */
+  z-index: 4;
 }
 
 .inventory-table .filter-row th:last-child {
