@@ -5340,6 +5340,32 @@ function App() {
     });
   }
 
+  // "I only want it purged from the One-off section, not the inventory
+  // section" -- E, after a merge's stock had already landed correctly but
+  // its reconciliation record failed to save (the makeId("oor") UUID bug,
+  // fixed above), leaving the one-off reappearing even though the real
+  // inventory item is fine and shouldn't be touched. Same reconciliation
+  // mechanism as a merge, minus the receiveInventoryStock call -- marks the
+  // full current quantity as handled without changing any stock.
+  function dismissOneOff(params: { itemKey: string; itemName: string; totalQty: number; orderNumbers: string[] }) {
+    const reconciliation: OneOffReconciliation = {
+      id: makeId("oor"),
+      itemKey: params.itemKey,
+      itemName: params.itemName,
+      qty: params.totalQty,
+      targetSku: "",
+      orderNumbers: params.orderNumbers.join(", "),
+      resolvedByEmail: authSession?.email ?? "",
+      resolvedAt: new Date().toISOString(),
+    };
+    setOneOffReconciliations((current) => [reconciliation, ...current]);
+    logOneOffReconciliation(reconciliation, authSession?.accessToken).catch((error) => {
+      window.alert(
+        `Dismissed locally, but the record failed to save (${error instanceof Error ? error.message : "unknown error"}) -- ${params.itemName} may reappear in One-Off Items after a reload.`,
+      );
+    });
+  }
+
   function adjustInventoryStock(partRef: string, nextQty: number, notes: string) {
     withProductionLock("inventory_item", partRef, () => {
     const part = inventoryItems.find((item) => item.ref === partRef);
@@ -6503,7 +6529,7 @@ function App() {
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
             {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDeleteItem={handleDeleteInventoryItem} />}
+            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDismissOneOff={dismissOneOff} onDeleteItem={handleDeleteInventoryItem} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
@@ -8522,6 +8548,7 @@ function Inventory({
   purchaseOrders,
   oneOffReconciliations,
   onMergeOneOff,
+  onDismissOneOff,
   onDeleteItem,
 }: {
   roleMode: RoleMode;
@@ -8554,6 +8581,7 @@ function Inventory({
   purchaseOrders: PurchaseOrder[];
   oneOffReconciliations: OneOffReconciliation[];
   onMergeOneOff: (params: { itemKey: string; itemName: string; totalQty: number; lastUnitCost: number; orderNumbers: string[]; targetSku: string; notes: string }) => void;
+  onDismissOneOff: (params: { itemKey: string; itemName: string; totalQty: number; orderNumbers: string[] }) => void;
   onDeleteItem: (ref: string) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const emptyItemDraft: Part = {
@@ -9491,10 +9519,10 @@ function Inventory({
         </div>
       </section>
       <section className="panel">
-        <PanelHeader title="Build History" label="Undo recent manufactured equipment builds" />
+        <PanelHeader title="Builds" label="Plan, complete, or undo manufactured equipment builds" />
         <div className="stack">
           {buildTransactions.slice(0, 6).map((build) => (
-            <div className="row-card" key={build.id}>
+            <div className="row-card build-history-row" key={build.id}>
               <div>
                 <strong>{build.buildNumber}</strong>
                 <span>{build.quantityBuilt} x {build.equipmentName}</span>
@@ -9577,6 +9605,17 @@ function Inventory({
               <span className="table-actions">
                 <button className="table-action secondary-table-action" type="button" onClick={() => openMergeOneOffModal(oneOff)}>Merge Into Existing Item</button>
                 <button className="table-action secondary-table-action" type="button" onClick={() => openAddItemModalFromOneOff(oneOff)}>Create New Item</button>
+                <button
+                  className="table-action secondary-table-action"
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(`Dismiss "${oneOff.name}"? This only clears it from One-Off Items -- it doesn't touch inventory. It'll show up again if this same item name is received again later.`)) {
+                      onDismissOneOff({ itemKey: oneOff.key, itemName: oneOff.name, totalQty: oneOff.totalQty, orderNumbers: oneOff.orderNumbers });
+                    }
+                  }}
+                >
+                  Dismiss
+                </button>
               </span>
             </div>
           ))}
@@ -9781,7 +9820,7 @@ function Inventory({
                 </div>
               ))}
             </div>
-            <div className="source-file"><ShoppingCart size={16} /><span>This will post a build transaction. Use Build History to undo it if the build was entered by mistake.</span></div>
+            <div className="source-file"><ShoppingCart size={16} /><span>This will post a build transaction. Use the Builds panel to undo it if the build was entered by mistake.</span></div>
             <label className="transaction-ack">
               <input type="checkbox" checked={buildConfirmAck} onChange={(event) => setBuildConfirmAck(event.target.checked)} />
               <span>I reviewed the build quantity and understand this will consume the listed inventory parts.</span>

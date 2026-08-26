@@ -2679,12 +2679,25 @@ td small.quote-ref-tag {
   margin-top: 12px;
 }
 
+/* Row-card's default side-by-side (label | actions) layout left the
+   actions column too narrow for its 4-6 controls, so they wrapped onto
+   several right-justified lines with a big blank gap to their left --
+   read as "a large square with lots of empty space" (E, 2026-08-25).
+   Stacking label-then-actions instead gives the actions row the full
+   card width to flow left-to-right in. */
+.build-history-row {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
 .build-history-actions {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
+  gap: 6px;
+  justify-content: flex-start;
 }
 
 .build-history-actions select {
