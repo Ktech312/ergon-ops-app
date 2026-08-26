@@ -4133,6 +4133,20 @@ tr:hover .row-delete-btn,
   text-transform: uppercase;
 }
 
+/* On desktop the notes column is genuinely narrow (competing with 5 other
+   columns), so ellipsis truncation is the right call. Once .price-history-row
+   stacks to one column under 760px (see the shared mobile grid-stacking
+   list) each field gets the device's full width -- wrapping instead of
+   truncating shows more of a real note without needing to open edit mode
+   for it, matching the site's established "wrap when there's room, only
+   truncate when there isn't" convention. */
+@media (max-width: 760px) {
+  .price-history-row-static span {
+    overflow: visible;
+    white-space: normal;
+  }
+}
+
 .compact-remove {
   height: 38px;
   width: 34px;

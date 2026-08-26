@@ -652,10 +652,18 @@ export async function setPrimaryUserRole(userId: string, roleKey: string, access
     return;
   }
 
-  await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.true&role_key=neq.${roleKey}`), {
+  // A row count of 0 here is normal (nothing to clean up yet) -- the real
+  // risk flagged in the 2026-08-24 audit was response.ok going unchecked
+  // entirely, which could leave a stale is_primary=true row behind if this
+  // ever genuinely failed (RLS, network) with no signal at all. Now it
+  // throws like every sibling write in this function already does.
+  const cleanupResponse = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.true&role_key=neq.${roleKey}`), {
     method: "DELETE",
     headers: supabaseHeaders(accessToken),
   });
+  if (!cleanupResponse.ok) {
+    throw new Error(`Could not clear the previous primary role: ${cleanupResponse.status}`);
+  }
 
   const response = await fetch(supabaseUrl("app_user_roles?on_conflict=user_id,role_key"), {
     method: "POST",
@@ -685,10 +693,13 @@ export async function setSecondaryUserRoles(userId: string, roleKeys: string[], 
     return;
   }
 
-  await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.false`), {
+  const cleanupResponse = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.false`), {
     method: "DELETE",
     headers: supabaseHeaders(accessToken),
   });
+  if (!cleanupResponse.ok) {
+    throw new Error(`Could not clear the previous secondary roles: ${cleanupResponse.status}`);
+  }
 
   if (roleKeys.length === 0) {
     return;
