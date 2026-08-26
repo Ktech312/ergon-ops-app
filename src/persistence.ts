@@ -225,23 +225,31 @@ export async function logOneOffReconciliation(entry: OneOffReconciliation, acces
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  try {
-    await fetch(supabaseUrl("one_off_reconciliations"), {
-      method: "POST",
-      headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
-      body: JSON.stringify({
-        id: entry.id,
-        item_key: entry.itemKey,
-        item_name: entry.itemName,
-        qty: entry.qty,
-        target_sku: entry.targetSku,
-        order_numbers: entry.orderNumbers || null,
-        resolved_by_email: entry.resolvedByEmail || null,
-        resolved_at: entry.resolvedAt,
-      }),
-    });
-  } catch {
-    // Never let a logging failure block the stock merge that already happened locally.
+  // Deliberately not sending entry.id -- it's a client-side makeId("oor")
+  // string (e.g. "oor-1735099200000-a1b2c3"), not a real UUID, and
+  // one_off_reconciliations.id is `uuid primary key default
+  // gen_random_uuid()`. Sending it caused every single insert to fail with
+  // an "invalid input syntax for type uuid" 400 -- silently, since this
+  // function never checked response.ok, so no merge's reconciliation record
+  // ever actually reached the database. The merged item's stock/movement
+  // still landed correctly (that's a separate write), but the one-off
+  // reappeared at full quantity on every reload since nothing was ever
+  // recorded as reconciled. Let Postgres generate the real id instead.
+  const response = await fetch(supabaseUrl("one_off_reconciliations"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
+    body: JSON.stringify({
+      item_key: entry.itemKey,
+      item_name: entry.itemName,
+      qty: entry.qty,
+      target_sku: entry.targetSku,
+      order_numbers: entry.orderNumbers || null,
+      resolved_by_email: entry.resolvedByEmail || null,
+      resolved_at: entry.resolvedAt,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not record the one-off reconciliation"));
   }
 }
 
@@ -4297,6 +4305,14 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
     throw new Error(`Could not save inventory items: ${itemResponse.status}`);
   }
   const savedRows = (await itemResponse.json()) as Array<{ id: string; sku: string }>;
+  // A 200/204 with a shorter row list than sent means something (RLS, a
+  // constraint) silently dropped part of this batch -- every field on every
+  // item rides on this one upsert (tags, cost, category, everything), so a
+  // partial write here is exactly the kind of "looked like it saved, wasn't
+  // really" bug the rest of the app got audited for on 2026-08-24.
+  if (savedRows.length < itemPayload.length) {
+    throw new Error(`Inventory save only wrote ${savedRows.length} of ${itemPayload.length} item(s) -- some edits may not have persisted. Check RLS on inventory_items.`);
+  }
   const idBySku = new Map(savedRows.map((row) => [row.sku, row.id]));
 
   const locationId = await getMainWarehouseLocationId(accessToken);

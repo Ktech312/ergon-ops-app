@@ -5309,7 +5309,15 @@ function App() {
       resolvedAt: new Date().toISOString(),
     };
     setOneOffReconciliations((current) => [reconciliation, ...current]);
-    logOneOffReconciliation(reconciliation, authSession?.accessToken).catch(() => {});
+    logOneOffReconciliation(reconciliation, authSession?.accessToken).catch((error) => {
+      // The stock/movement side of the merge already landed (receiveInventoryStock
+      // above is a separate write) -- this is just the reconciliation record that
+      // keeps the one-off from reappearing next reload. Surface it loudly instead
+      // of swallowing it the way this exact call used to.
+      window.alert(
+        `${params.itemName} was merged into ${params.targetSku}'s stock, but the reconciliation record failed to save (${error instanceof Error ? error.message : "unknown error"}) -- it may reappear in One-Off Items after a reload. Try the merge again, or check Supabase RLS on one_off_reconciliations.`,
+      );
+    });
   }
 
   function adjustInventoryStock(partRef: string, nextQty: number, notes: string) {
