@@ -1258,7 +1258,7 @@ table {
 }
 
 .inventory-table {
-  min-width: 1180px;
+  min-width: 1280px;
 }
 
 /* Product Catalog: same "show ~10 rows, scroll inside the panel" pattern as
@@ -1344,20 +1344,11 @@ td small.quote-ref-tag {
   text-transform: uppercase;
 }
 
-.part-cell-layout {
-  align-items: start;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(210px, 1fr) minmax(92px, max-content);
-  min-width: 0;
-}
-
 .tag-chip-row {
   align-content: start;
   display: grid;
   gap: 3px;
   grid-template-columns: max-content;
-  justify-self: start;
   max-width: 128px;
   min-width: 0;
   width: max-content;
@@ -5557,10 +5548,6 @@ td.empty-compact-state {
 
   .inventory-table-scroll {
     display: none;
-  }
-
-  .part-cell-layout {
-    grid-template-columns: 1fr;
   }
 
   .tag-chip-row {

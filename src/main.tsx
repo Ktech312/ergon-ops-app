@@ -8516,14 +8516,14 @@ function Inventory({
   const [buildConfirmPlannedId, setBuildConfirmPlannedId] = useState<string | undefined>(undefined);
   const [workOrderBuildId, setWorkOrderBuildId] = useState<string | null>(null);
   const [inventoryTab, setInventoryTab] = useState<"parts" | "finished">("parts");
-  const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All" });
+  const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All", tag: "All" });
   useEffect(() => {
     if (!searchFocus) {
       return;
     }
     const matched = inventoryItems.find((part) => part.ref === searchFocus.term);
     setInventoryTab(matched?.category === "Build" ? "finished" : "parts");
-    setFilters({ ref: searchFocus.term, part: "", category: "All", manufacturer: "", status: "All" });
+    setFilters({ ref: searchFocus.term, part: "", category: "All", manufacturer: "", status: "All", tag: "All" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchFocus?.token]);
   const [skuScan, setSkuScan] = useState("");
@@ -8600,6 +8600,11 @@ function Inventory({
     support: ["View only"],
     marketing: ["View only"],
   };
+  // Every distinct tag currently in use, for the Tags filter dropdown --
+  // recomputed from the live item list so a newly-tagged item's tag shows
+  // up as a filter option without needing a separate managed tag list.
+  const distinctInventoryTags = Array.from(new Set(inventoryItems.flatMap((part) => part.tags ?? []))).sort();
+
   const filteredInventoryItems = inventoryItems.filter((part) => {
     const status = part.retired ? "Retired" : part.trackReorder && availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy";
     const tabMatch = inventoryTab === "finished" ? part.category === "Build" : part.category !== "Build";
@@ -8609,7 +8614,8 @@ function Inventory({
       `${part.name} ${part.description}`.toLowerCase().includes(filters.part.toLowerCase()) &&
       (filters.category === "All" || part.category === filters.category) &&
       part.manufacturer.toLowerCase().includes(filters.manufacturer.toLowerCase()) &&
-      (filters.status === "All" || status === filters.status)
+      (filters.status === "All" || status === filters.status) &&
+      (filters.tag === "All" || (part.tags ?? []).includes(filters.tag))
     );
   });
 
@@ -9204,11 +9210,17 @@ function Inventory({
         <div className="inventory-table-scroll">
           <table className="inventory-table tight-table">
             <thead>
-              <tr><th>Image</th><th>SKU</th><th>Part</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Allocated</th><th>Available</th><th>Unit Cost</th><th>Status</th><th></th></tr>
+              <tr><th>Image</th><th>SKU</th><th>Part</th><th>Tags</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Allocated</th><th>Available</th><th>Unit Cost</th><th>Status</th><th></th></tr>
               <tr className="filter-row">
                 <th></th>
                 <th><input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter SKU" /></th>
                 <th><input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" /></th>
+                <th>
+                  <select value={filters.tag} onChange={(event) => setFilters((current) => ({ ...current, tag: event.target.value }))}>
+                    <option>All</option>
+                    {distinctInventoryTags.map((tag) => <option key={tag}>{tag}</option>)}
+                  </select>
+                </th>
                 <th>
                   <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
                     <option>All</option>
@@ -9246,14 +9258,10 @@ function Inventory({
                   </td>
                   <td><strong>{part.ref}</strong></td>
                   <td>
-                    <div className="part-cell-layout">
-                      <div>
-                        <strong>{part.name}</strong>
-                        <small>{part.description}</small>
-                      </div>
-                      {(part.tags ?? []).length > 0 && <div className="tag-chip-row">{(part.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
-                    </div>
+                    <strong>{part.name}</strong>
+                    <small>{part.description}</small>
                   </td>
+                  <td>{(part.tags ?? []).length > 0 && <div className="tag-chip-row">{(part.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>}</td>
                   <td>{part.category}</td>
                   <td>{part.manufacturer}</td>
                   <td>{part.stock}</td>
@@ -9285,6 +9293,10 @@ function Inventory({
               <option>Display</option>
               <option>Build</option>
             </select>
+            <select value={filters.tag} onChange={(event) => setFilters((current) => ({ ...current, tag: event.target.value }))}>
+              <option>All</option>
+              {distinctInventoryTags.map((tag) => <option key={tag}>{tag}</option>)}
+            </select>
             <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
               <option>All</option>
               <option>Healthy</option>
@@ -9311,6 +9323,7 @@ function Inventory({
                   <small className="muted">{part.ref} &middot; {part.category} &middot; {part.manufacturer}</small>
                 </span>
               </span>
+              {(part.tags ?? []).length > 0 && <div className="tag-chip-row">{(part.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
               <span className="mobile-card-pills">
                 <span className="status">Stock: {part.stock}</span>
                 {(part.allocated ?? 0) > 0 && <span className="status">Allocated: {part.allocated}</span>}
