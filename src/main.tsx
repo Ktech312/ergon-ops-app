@@ -1014,6 +1014,48 @@ function usePersistedCollapse(storageKey: string, defaultValue = false) {
   return [collapsed, setCollapsed] as const;
 }
 
+// Same "ergon:" localStorage convention as usePersistedCollapse above, but
+// for an arbitrary JSON-serializable value (filter bars, active sub-tab,
+// etc.) instead of just a boolean -- E: "every time i refresh i have to
+// readjust my filter or where i am on the page, make it hard to test."
+// Falls back to defaultValue when nothing's saved yet, storage isn't
+// available, or the saved JSON doesn't parse (e.g. an older shape from
+// before a filter field was added).
+function usePersistedJson<T>(storageKey: string, defaultValue: T) {
+  const key = `ergon:filters:${storageKey}`;
+  const [value, setValueState] = useState<T>(() => {
+    try {
+      const saved = window.localStorage.getItem(key);
+      if (saved === null) {
+        return defaultValue;
+      }
+      const parsed = JSON.parse(saved) as T;
+      // Merge object-shaped values with the default so a filter field added
+      // after someone already had a saved value (e.g. the new Tags filter)
+      // shows up instead of being silently missing from the restored state.
+      return typeof defaultValue === "object" && defaultValue !== null && typeof parsed === "object" && parsed !== null && !Array.isArray(defaultValue)
+        ? { ...defaultValue, ...parsed }
+        : parsed;
+    } catch {
+      return defaultValue;
+    }
+  });
+
+  function setValue(next: T | ((current: T) => T)) {
+    setValueState((current) => {
+      const resolved = typeof next === "function" ? (next as (current: T) => T)(current) : next;
+      try {
+        window.localStorage.setItem(key, JSON.stringify(resolved));
+      } catch {
+        // Storage unavailable -- state still updates for this session.
+      }
+      return resolved;
+    });
+  }
+
+  return [value, setValue] as const;
+}
+
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -8515,8 +8557,8 @@ function Inventory({
   const [buildConfirmAck, setBuildConfirmAck] = useState(false);
   const [buildConfirmPlannedId, setBuildConfirmPlannedId] = useState<string | undefined>(undefined);
   const [workOrderBuildId, setWorkOrderBuildId] = useState<string | null>(null);
-  const [inventoryTab, setInventoryTab] = useState<"parts" | "finished">("parts");
-  const [filters, setFilters] = useState({ ref: "", part: "", category: "All", manufacturer: "", status: "All", tag: "All" });
+  const [inventoryTab, setInventoryTab] = usePersistedJson<"parts" | "finished">("inventory-tab", "parts");
+  const [filters, setFilters] = usePersistedJson("inventory-filters", { ref: "", part: "", category: "All", manufacturer: "", status: "All", tag: "All" });
   useEffect(() => {
     if (!searchFocus) {
       return;
