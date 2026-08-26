@@ -2679,12 +2679,17 @@ td small.quote-ref-tag {
   margin-top: 12px;
 }
 
-/* Row-card's default side-by-side (label | actions) layout left the
-   actions column too narrow for its 4-6 controls, so they wrapped onto
-   several right-justified lines with a big blank gap to their left --
-   read as "a large square with lots of empty space" (E, 2026-08-25).
-   Stacking label-then-actions instead gives the actions row the full
-   card width to flow left-to-right in. */
+/* The real bug (E caught the actual fix made it worse, 2026-08-25):
+   `.row-card div { display: grid; gap: 3px; }` above targets every <div>
+   inside a row-card, including .build-history-actions -- and one class +
+   one element beats one class alone in CSS specificity, so THAT rule's
+   `display: grid` always won over .build-history-actions's own
+   `display: flex` below, no matter what this block said. Every action
+   (status pill, Work Order, Request Parts, the stage dropdown, Complete,
+   Cancel) was silently a single-column grid item stretching to the full
+   row width -- a stack of full-width buttons, not a wrapped flex row.
+   Scoping the selector to `.row-card .build-history-actions` (two
+   classes) is what actually wins now. */
 .build-history-row {
   align-items: stretch;
   flex-direction: column;
@@ -2692,7 +2697,7 @@ td small.quote-ref-tag {
   padding: 8px 10px;
 }
 
-.build-history-actions {
+.row-card .build-history-actions {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
