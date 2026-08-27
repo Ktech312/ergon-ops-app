@@ -728,6 +728,7 @@ button {
   gap: 8px;
   height: 38px;
   padding: 0 12px;
+  position: relative;
   text-align: left;
   white-space: nowrap;
 }
@@ -6777,5 +6778,233 @@ body:has(.modal-backdrop) .install-banner {
 
   .portfolio-health-status {
     align-items: flex-start;
+  }
+}
+
+/* Direct Messages (migration 094) -- mobile-first: single pane, list vs.
+   thread toggled by whether a conversation is selected (`.thread-open` on
+   the shell), not a desktop two-pane layout retrofitted for narrow
+   screens later. Desktop widens into the real two-pane view below 900px+. */
+.messages-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: calc(100vh - 220px);
+  min-height: 480px;
+}
+
+.messages-list-panel,
+.messages-thread-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Mobile: show exactly one pane at a time. */
+.messages-list-panel {
+  display: flex;
+}
+
+.messages-thread-panel {
+  display: none;
+}
+
+.messages-shell.thread-open .messages-list-panel {
+  display: none;
+}
+
+.messages-shell.thread-open .messages-thread-panel {
+  display: flex;
+}
+
+.messages-conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.messages-conversation-row {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+  grid-template-columns: 1fr auto;
+  padding: 10px 12px;
+  position: relative;
+  text-align: left;
+}
+
+.messages-conversation-row:hover {
+  background: #f8f5ef;
+}
+
+.messages-conversation-row.active {
+  background: #f5efe3;
+  border-color: #e8e1d5;
+}
+
+.messages-conversation-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messages-conversation-meta {
+  color: #9a9184;
+  font-size: 11px;
+  grid-column: 1 / -1;
+}
+
+.messages-unread-badge {
+  align-items: center;
+  background: #9a2f20;
+  border-radius: 999px;
+  color: white;
+  display: flex;
+  font-size: 11px;
+  font-weight: 800;
+  height: 20px;
+  justify-content: center;
+  min-width: 20px;
+  padding: 0 6px;
+}
+
+.messages-thread-header {
+  align-items: center;
+  border-bottom: 1px solid #e8e1d5;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 12px;
+}
+
+.messages-back-button {
+  display: inline-flex;
+}
+
+.messages-thread-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+.messages-bubble-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.messages-bubble-row.mine {
+  justify-content: flex-end;
+}
+
+.messages-bubble {
+  background: #f8f5ef;
+  border-radius: 12px;
+  max-width: 78%;
+  padding: 8px 12px;
+}
+
+.messages-bubble-row.mine .messages-bubble {
+  background: #f5e3d8;
+}
+
+.messages-bubble span {
+  display: block;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.messages-bubble small {
+  color: #9a9184;
+  display: block;
+  font-size: 10px;
+  margin-top: 3px;
+}
+
+.messages-compose-row {
+  align-items: flex-end;
+  border-top: 1px solid #e8e1d5;
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 12px;
+}
+
+.messages-compose-row textarea {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  flex: 1;
+  font: inherit;
+  max-height: 120px;
+  min-height: 42px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.messages-empty-thread {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  justify-content: center;
+}
+
+.messages-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.messages-search-result-row {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.messages-search-result-row:hover {
+  background: #f8f5ef;
+}
+
+@media (min-width: 900px) {
+  .messages-shell {
+    flex-direction: row;
+  }
+
+  /* Both panes always show on desktop regardless of .thread-open --
+     .messages-shell.thread-open .messages-list-panel (two classes) has
+     higher specificity than a bare .messages-list-panel rule here would,
+     so it has to be re-specified at that same specificity to actually
+     win (the exact bug fixed in the Builds panel, 2026-08-26 -- not
+     repeating it with !important here). */
+  .messages-list-panel,
+  .messages-shell.thread-open .messages-list-panel {
+    display: flex;
+    flex: 0 0 320px;
+  }
+
+  .messages-thread-panel,
+  .messages-shell.thread-open .messages-thread-panel {
+    display: flex;
+    flex: 1;
+  }
+
+  .messages-back-button {
+    display: none;
   }
 }

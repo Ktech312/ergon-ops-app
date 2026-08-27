@@ -8,9 +8,9 @@ Purpose: carry context between chat sessions. Read this first in any new session
 - Do not use, import from, migrate against, or reference VLTD. VLTD is a separate project. If Supabase Studio or Vercel shows VLTD selected, switch away before touching anything for Ergon.
 - The live user-facing target is Vercel production: `https://ergon-ops-app.vercel.app/`.
 - The intended Ergon Supabase project id is `hnjxvsxsxoowhegcqurf`.
-- Repo migrations currently exist from `001_initial_ops_schema.sql` through `093_one_off_reconciliations.sql`.
+- Repo migrations currently exist from `001_initial_ops_schema.sql` through `094_direct_messages.sql`.
 - GitHub/Vercel deploys app code. It does not automatically apply Supabase SQL migrations. Supabase setup remains separate unless a migration pipeline is added.
-- **Migrations confirmed run in Supabase by E: 069, 070, 071, 072, 073, 074, 075, 076, 077, 078, 079, 080, 081, 082, 083, 084, 085, 086, 087, 088, 089, 090, 091.** Every migration through 091 is now live -- Create Purchase, Waiting on Receiving/Completed, per-line receiving, Put On Hold, the Build-category data fix, the Sales/Project photo origin tagging, the site-wide soft-delete/deletion_log work, the Client Ledger (installed_assets, expected_lifespan_years, kickoff/warranty dates, closeout document types, Primary List/added_to_ledger/ledger_bucket), and the Inventory Allocated/Available split (quantity_allocated) are all fully functional. **Migration 073 (SaaS contract columns) confirmed run 2026-08-22** — E: "this was done, as a placeholder." The columns/table are live; treat any SaaS tile/Calendar data as placeholder, not verified real-world figures, until E populates it for real. **Migration 087 confirmed run 2026-08-22. Migration 088 confirmed run 2026-08-23. Migration 089 (Client Ledger) confirmed run 2026-08-23. Migration 090 (Primary List) confirmed run 2026-08-23. Migration 091 (inventory_balances.quantity_allocated) confirmed run 2026-08-23. Migration 092 (inventory_items.track_reorder) confirmed run 2026-08-27. Migration 093 (one_off_reconciliations) confirmed run 2026-08-23.**
+- **Migrations confirmed run in Supabase by E: 069, 070, 071, 072, 073, 074, 075, 076, 077, 078, 079, 080, 081, 082, 083, 084, 085, 086, 087, 088, 089, 090, 091.** Every migration through 091 is now live -- Create Purchase, Waiting on Receiving/Completed, per-line receiving, Put On Hold, the Build-category data fix, the Sales/Project photo origin tagging, the site-wide soft-delete/deletion_log work, the Client Ledger (installed_assets, expected_lifespan_years, kickoff/warranty dates, closeout document types, Primary List/added_to_ledger/ledger_bucket), and the Inventory Allocated/Available split (quantity_allocated) are all fully functional. **Migration 073 (SaaS contract columns) confirmed run 2026-08-22** — E: "this was done, as a placeholder." The columns/table are live; treat any SaaS tile/Calendar data as placeholder, not verified real-world figures, until E populates it for real. **Migration 087 confirmed run 2026-08-22. Migration 088 confirmed run 2026-08-23. Migration 089 (Client Ledger) confirmed run 2026-08-23. Migration 090 (Primary List) confirmed run 2026-08-23. Migration 091 (inventory_balances.quantity_allocated) confirmed run 2026-08-23. Migration 092 (inventory_items.track_reorder) confirmed run 2026-08-27. Migration 093 (one_off_reconciliations) confirmed run 2026-08-23. Migration 094 (direct_messages) is new and NOT yet confirmed run.**
 - **Migration 080's document-linking feature (Purchasing's old "Attach Purchase Paperwork" section) was fully superseded and removed 2026-08-20** — see the Create Purchase work-log entry. The `project_documents.purchase_order_id`/`purchase_request_id` columns from migration 080 are still in the DB (harmless, unused) but nothing in the app writes to them anymore.
 - E has repeatedly had trouble pasting SQL from a downloaded file into the Supabase SQL editor (a stray `;` character appeared mid-statement, source unclear — not present in the actual repo file). When handing off a migration, paste the raw SQL directly into the chat message as a code block in addition to (or instead of) sending the file, so E can copy straight from the chat.
 - Dedicated setup handoff: `backend/docs/supabase-production-handoff.md`.
@@ -92,7 +92,105 @@ Status (updated after E called out that curating which tables got done, silently
 - **Resolved, false alarm:** E's "boxes missing from the bottom of the Project page" turned out to be a mixup between the Projects *list* page (no tile grid there, never had one) and the Project *detail* page's tile grid (still there, working) -- not a bug, no fix needed.
 - **New: Portfolio Budget & Schedule panel**, Projects list page (`ProjectPortfolioHealth` component, `main.tsx`, right before `function Projects`) -- E asked what to do with the "extra room" on that page once the missing-boxes question resolved; proposed a mockup (published as a Claude Artifact, sketch only, placeholder data), E approved, then it got built for real. Two blocks: **Budget health** (Purchase Order spend per `project.ref`, new `purchaseOrders` prop threaded into `Projects`, vs `project.allocated`, target tick + green/amber/red) and **Schedule health** (`projectCompletion()`, moved to module scope so this component can share it, vs target date). See the data-model note below on `ProjectSite.due` -- the schedule side has to degrade gracefully because that field isn't a real date.
 
-## Recent work log (most recent first — 2026-08-13 through 2026-08-25)
+## Recent work log (most recent first — 2026-08-13 through 2026-08-27)
+- **(pending commit, migration 094 NOT yet confirmed run)** — **New Direct Messages feature: real 1:1 chat between any two signed-in users.** E: "I have a direct message and alert system built into it now [VLTD], I think we need that on this also, once the icon is on their phone, they will get alerts for messages or new tasks." Researched VLTD's actual implementation first (per standing rule) rather than guessing, then asked E to scope it -- chose "Full DM feature + push together" (the largest option) over push-alerts-only.
+  - **Deliberately a different schema shape than VLTD's, not a straight port.** VLTD's `profiles.id` IS `auth.users.id` by construction, so any conversation participant is guaranteed a real logged-in user. Ergon has no equivalent -- `team_members` (migration 019) is explicitly "NOT tied to auth.users... someone can be assigned tasks before they've ever logged in," so it's the wrong identity source for a feature that has to actually deliver a message TO a real session. The real anchor is `app_known_users` (migration 012: `user_id references auth.users(id)`, auto-upserted on every login via the existing `upsertKnownUser` call) -- conversations reference that directly.
+  - **`app_known_users`' existing read policy was admin-or-self only** (migration 012), which blocks the "search for who to message" picker for anyone but an admin. Migration 094 adds a second, broader SELECT policy (`using (true)`) rather than replacing the existing one -- Postgres RLS policies of the same command OR together, so this just adds broad read access on top, consistent with how `team_members`/`vendors` are already broadly readable on this small internal team.
+  - **Migration 094**: `conversations` (canonical-ordered participant pair, unique constraint, `last_message_at` kept current by a trigger) + `direct_messages` (body, sender, read_at), full RLS (participants-only read/write, only the recipient can mark a message read), plus the `app_known_users` policy widening above.
+  - **No `supabase-js`/realtime client exists anywhere in this app** -- every other feature is plain REST `fetch()` (see the data-model note below), so this **polls instead of subscribing to Postgres changes**: the conversation list + unread counts refresh every 20s app-wide (so the nav badge stays right even off the Messages tab), and an open thread polls every 5s. Not true realtime -- flagged here explicitly, not silently downgraded, in case E wants a real websocket subscription later (would need adding `@supabase/supabase-js` as a new dependency, a bigger change than anything else in this feature).
+  - **New "Messages" nav tab**, added to every role's default tab list (E: a small team, no reason to gate person-to-person messaging by department) -- full `View`/`ALL_TABS`/`TAB_LABELS`/`viewFromHash`/mobile-nav-icon/page-title-subtitle wiring, caught by TypeScript's exhaustiveness check on the `Record<View, ...>` maps (4 spots, same mechanism used for every past tab addition this session).
+  - **UI is mobile-first from the start**, not a desktop two-pane layout retrofitted later: single pane below 900px (conversation list OR the open thread, toggled by a back arrow), real two-pane side-by-side above 900px. Caught the exact same CSS specificity trap fixed in the Builds panel entry above while building the desktop override (`.messages-shell.thread-open .messages-list-panel` needing to be re-specified at matching specificity, not just `!important`'d) -- applying that lesson immediately instead of repeating the mistake.
+  - **`knownUsers` state reused, not duplicated** -- it already existed app-wide (previously loaded only for the Admin directory via `reloadAdminDirectory`); Messages' own load effect now also populates it for every signed-in user (a little redundant for an admin session, simpler than threading one shared reload through both features).
+  - Migration 094 SQL is below in the same entry the next session should hand to E, or paste directly:
+    ```sql
+    create policy "authenticated read app_known_users for messaging"
+      on app_known_users for select to authenticated using (true);
+
+    create table if not exists conversations (
+      id uuid primary key default gen_random_uuid(),
+      participant_a_id uuid not null references auth.users(id) on delete cascade,
+      participant_b_id uuid not null references auth.users(id) on delete cascade,
+      last_message_at timestamptz not null default now(),
+      created_at timestamptz not null default now(),
+      check (participant_a_id <> participant_b_id),
+      check (participant_a_id < participant_b_id),
+      unique (participant_a_id, participant_b_id)
+    );
+
+    create index if not exists idx_conversations_participant_a on conversations(participant_a_id, last_message_at desc);
+    create index if not exists idx_conversations_participant_b on conversations(participant_b_id, last_message_at desc);
+
+    create table if not exists direct_messages (
+      id uuid primary key default gen_random_uuid(),
+      conversation_id uuid not null references conversations(id) on delete cascade,
+      sender_id uuid not null references auth.users(id) on delete cascade,
+      body text not null check (char_length(body) > 0 and char_length(body) <= 4000),
+      created_at timestamptz not null default now(),
+      read_at timestamptz
+    );
+
+    create index if not exists idx_direct_messages_conversation on direct_messages(conversation_id, created_at);
+
+    create or replace function bump_conversation_last_message_at()
+    returns trigger as $$
+    begin
+      update conversations set last_message_at = new.created_at where id = new.conversation_id;
+      return new;
+    end;
+    $$ language plpgsql security definer;
+
+    drop trigger if exists direct_messages_bump_conversation on direct_messages;
+    create trigger direct_messages_bump_conversation
+      after insert on direct_messages
+      for each row execute function bump_conversation_last_message_at();
+
+    alter table conversations enable row level security;
+    alter table direct_messages enable row level security;
+
+    create policy "participants read their conversations"
+      on conversations for select to authenticated
+      using (auth.uid() = participant_a_id or auth.uid() = participant_b_id);
+
+    create policy "participants create their conversations"
+      on conversations for insert to authenticated
+      with check (auth.uid() = participant_a_id or auth.uid() = participant_b_id);
+
+    create policy "participants read their messages"
+      on direct_messages for select to authenticated
+      using (
+        exists (
+          select 1 from conversations c
+          where c.id = conversation_id
+            and (c.participant_a_id = auth.uid() or c.participant_b_id = auth.uid())
+        )
+      );
+
+    create policy "participants send messages in their conversations"
+      on direct_messages for insert to authenticated
+      with check (
+        sender_id = auth.uid()
+        and exists (
+          select 1 from conversations c
+          where c.id = conversation_id
+            and (c.participant_a_id = auth.uid() or c.participant_b_id = auth.uid())
+        )
+      );
+
+    create policy "recipients mark messages read"
+      on direct_messages for update to authenticated
+      using (
+        sender_id <> auth.uid()
+        and exists (
+          select 1 from conversations c
+          where c.id = conversation_id
+            and (c.participant_a_id = auth.uid() or c.participant_b_id = auth.uid())
+        )
+      )
+      with check (sender_id <> auth.uid());
+    ```
+  - **Not yet built (this same feature request, next phase)**: push notifications, so a message actually alerts someone's phone with the app closed. Ergon's own in-app notification system (`notify()`, main.tsx) already fans out to email/Slack for many events and is more built-out than VLTD's -- adding push as a 4th channel there, wired to new-DM-message plus the existing task-assignment call sites, is next. Needs a new `push_subscriptions` table, a real service worker (Ergon's `public/sw.js` is currently a confirmed no-op, exists only for PWA installability), VAPID keys (to be generated and handed to E for Vercel env vars, same as any other secret this session), and one new send endpoint.
+  - tsc/build both clean, CSS brace-balanced.
+
 - **(`e7cc5db`, overnight autonomous work)** — **Closed two flagged gaps from the 2026-08-24 audit + mobile-audited everything built 2026-08-25, per E's "any items you can work on or confirm while i'm gone."**
   - **`setPrimaryUserRole`/`setSecondaryUserRoles`'s cleanup DELETE steps now checked** (the gap flagged and left open in the audit work-log entry): both now throw on `!response.ok` instead of silently continuing, matching every sibling write in those functions. A 0-row-affected result stays a non-error here (deliberately, unlike the delete/status-change pattern elsewhere) -- "nothing to clean up yet" is the normal case for a user's first role assignment, only a genuine request failure needed catching. Both callers already had try/catch + a real `setAdminStatus` display, so no caller changes needed.
   - **Mobile-audited today's new UI** (Tags column/filter, One-Off Dismiss button, Inventory item modal's Delete/clickable-links/price-history changes, the Builds panel): everything already using shared, previously-audited flex-wrap/grid-stacking patterns checked out safe as-is (`.table-actions`, `.report-table-row`, `.modal-actions`, the `.source-url-row`/`.price-history-row` mobile-stacking list). One real improvement made: `.price-history-row-static`'s notes/vendor/date text was ellipsis-truncated even under the mobile single-column stack, where there's actually room to show it -- added a `max-width: 760px` override to wrap instead of truncate there, matching the site's existing "wrap when there's room" convention.

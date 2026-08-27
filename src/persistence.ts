@@ -975,6 +975,188 @@ export async function loadAllKnownUsers(accessToken?: string): Promise<KnownUser
   return rows.map((row) => ({ userId: row.user_id, email: row.email, lastSeenAt: row.last_seen_at }));
 }
 
+// --- Direct Messages (migration 094) ---------------------------------
+// Ported concept (not code) from the VLTD sister project, per E: "I have a
+// direct message and alert system built into it now, I think we need that
+// on this also." Deliberately a different schema shape than VLTD's --
+// VLTD's `profiles.id` IS `auth.users.id` by construction, so any
+// conversation participant is guaranteed to be a real logged-in user.
+// Ergon has no such table (`team_members` is explicitly NOT tied to
+// auth.users -- see migration 019), so conversations reference
+// `app_known_users`' real `auth.users.id` directly instead. No
+// supabase-js/realtime client exists anywhere in this app (every other
+// feature is plain REST fetch()) -- this follows that same convention and
+// polls rather than subscribing to Postgres changes; see main.tsx for the
+// poll interval and why.
+
+export type Conversation = {
+  id: string;
+  participantAId: string;
+  participantBId: string;
+  lastMessageAt: string;
+  createdAt: string;
+};
+
+type ConversationRow = {
+  id: string;
+  participant_a_id: string;
+  participant_b_id: string;
+  last_message_at: string;
+  created_at: string;
+};
+
+function mapConversationRow(row: ConversationRow): Conversation {
+  return {
+    id: row.id,
+    participantAId: row.participant_a_id,
+    participantBId: row.participant_b_id,
+    lastMessageAt: row.last_message_at,
+    createdAt: row.created_at,
+  };
+}
+
+export type DirectMessage = {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  body: string;
+  createdAt: string;
+  readAt: string | null;
+};
+
+type DirectMessageRow = {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  body: string;
+  created_at: string;
+  read_at: string | null;
+};
+
+function mapDirectMessageRow(row: DirectMessageRow): DirectMessage {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    senderId: row.sender_id,
+    body: row.body,
+    createdAt: row.created_at,
+    readAt: row.read_at,
+  };
+}
+
+export async function loadConversations(userId: string, accessToken?: string): Promise<Conversation[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`conversations?or=(participant_a_id.eq.${userId},participant_b_id.eq.${userId})&order=last_message_at.desc`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ConversationRow[];
+  return rows.map(mapConversationRow);
+}
+
+export async function loadConversationMessages(conversationId: string, accessToken?: string): Promise<DirectMessage[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`direct_messages?conversation_id=eq.${conversationId}&order=created_at.asc&limit=500`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as DirectMessageRow[];
+  return rows.map(mapDirectMessageRow);
+}
+
+// Sorts the two ids into the schema's canonical (a < b) order before every
+// read/write -- the unique constraint on (participant_a_id, participant_b_id)
+// means the pair is the same conversation no matter who started it, but
+// only if both sides always query it in the same order.
+export function canonicalConversationPair(userIdA: string, userIdB: string): [string, string] {
+  return userIdA < userIdB ? [userIdA, userIdB] : [userIdB, userIdA];
+}
+
+export async function getOrCreateConversation(myUserId: string, otherUserId: string, accessToken?: string): Promise<Conversation> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const [participantAId, participantBId] = canonicalConversationPair(myUserId, otherUserId);
+  const response = await fetch(supabaseUrl("conversations?on_conflict=participant_a_id,participant_b_id"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify({ participant_a_id: participantAId, participant_b_id: participantBId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not start conversation"));
+  }
+  const rows = (await response.json()) as ConversationRow[];
+  if (rows.length === 0) {
+    throw new Error("Could not start conversation -- you may not have permission.");
+  }
+  return mapConversationRow(rows[0]);
+}
+
+export async function sendDirectMessage(conversationId: string, senderId: string, body: string, accessToken?: string): Promise<DirectMessage> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("direct_messages"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ conversation_id: conversationId, sender_id: senderId, body }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not send message"));
+  }
+  const rows = (await response.json()) as DirectMessageRow[];
+  if (rows.length === 0) {
+    throw new Error("Message didn't send -- you may not have permission.");
+  }
+  return mapDirectMessageRow(rows[0]);
+}
+
+// Doesn't need to know which conversations the user is in -- RLS on
+// direct_messages already restricts every row returned to conversations
+// this user actually participates in, so this is naturally scoped.
+export async function loadUnreadDirectMessageCounts(myUserId: string, accessToken?: string): Promise<Record<string, number>> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return {};
+  }
+  const response = await fetch(supabaseUrl(`direct_messages?select=conversation_id&sender_id=neq.${myUserId}&read_at=is.null`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return {};
+  }
+  const rows = (await response.json()) as Array<{ conversation_id: string }>;
+  const counts: Record<string, number> = {};
+  for (const row of rows) {
+    counts[row.conversation_id] = (counts[row.conversation_id] ?? 0) + 1;
+  }
+  return counts;
+}
+
+export async function markConversationRead(conversationId: string, myUserId: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  // Not treated as an error if 0 rows match -- "nothing unread" is the
+  // normal case every time you reopen a conversation you're caught up on.
+  await fetch(
+    supabaseUrl(`direct_messages?conversation_id=eq.${conversationId}&sender_id=neq.${myUserId}&read_at=is.null`),
+    {
+      method: "PATCH",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ read_at: new Date().toISOString() }),
+    },
+  );
+}
+
 export type UserRoles = { primary: string; secondary: string[] };
 
 export async function loadAllUserRoles(accessToken?: string): Promise<Record<string, UserRoles>> {

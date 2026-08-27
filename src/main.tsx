@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as XLSX from "xlsx";
 import {
   AlertTriangle,
+  ArrowLeft,
   Award,
   Archive,
   BarChart3,
@@ -26,6 +27,7 @@ import {
   LayoutDashboard,
   ListChecks,
   MapPin,
+  MessageCircle,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -156,6 +158,12 @@ import {
   loadAllAllowedViews,
   loadAllApprovalStatuses,
   loadAllKnownUsers,
+  loadConversations,
+  loadConversationMessages,
+  loadUnreadDirectMessageCounts,
+  getOrCreateConversation,
+  sendDirectMessage,
+  markConversationRead,
   loadAllUserRoles,
   loadAuthSession,
   loadBuildTransactions,
@@ -273,6 +281,8 @@ import {
   type FullBackupSnapshot,
   type InventoryMovement,
   type KnownUser,
+  type Conversation,
+  type DirectMessage,
   type NotificationItem,
   type NotificationRule,
   type Part,
@@ -338,7 +348,7 @@ import {
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger";
+type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "messages";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -396,7 +406,7 @@ type RoleMode = "warehouse" | "purchasing" | "pm" | "manager" | "sales" | "engin
 
 const ALL_ROLE_KEYS: RoleMode[] = ["warehouse", "purchasing", "pm", "manager", "sales", "engineering", "product_development", "implementation", "support", "marketing"];
 
-const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger"];
+const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "messages"];
 
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
@@ -412,22 +422,27 @@ const TAB_LABELS: Record<View, string> = {
   admin: "Admin",
   library: "Library",
   client_ledger: "Client Ledger",
+  messages: "Messages",
 };
 
 // Starting point when a role has no explicit per-user tab override. An admin
 // can grant/restrict any individual user's exact tab list from the Admin page
 // regardless of these defaults.
+// "messages" is on every role's default list -- a small internal team,
+// unlike a per-function tab like Inventory or Sales, there's no reason
+// anyone shouldn't be able to message a coworker (E: "once the icon is on
+// their phone, they will get alerts for messages or new tasks").
 const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
-  warehouse: ["dashboard", "inventory", "projects", "tasks"],
-  purchasing: ["dashboard", "purchasing", "inventory", "vendors", "tasks", "reports"],
-  pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports", "saas_calendar"],
-  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger"],
-  sales: ["dashboard", "sales", "marketing", "tasks", "reports", "saas_calendar"],
-  engineering: ["dashboard", "projects", "inventory", "tasks", "reports"],
-  product_development: ["dashboard", "projects", "tasks", "reports"],
-  implementation: ["dashboard", "projects", "purchasing", "inventory", "vendors", "tasks"],
-  support: ["dashboard", "tasks", "reports"],
-  marketing: ["dashboard", "marketing", "reports", "tasks"],
+  warehouse: ["dashboard", "inventory", "projects", "tasks", "messages"],
+  purchasing: ["dashboard", "purchasing", "inventory", "vendors", "tasks", "reports", "messages"],
+  pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports", "saas_calendar", "messages"],
+  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "messages"],
+  sales: ["dashboard", "sales", "marketing", "tasks", "reports", "saas_calendar", "messages"],
+  engineering: ["dashboard", "projects", "inventory", "tasks", "reports", "messages"],
+  product_development: ["dashboard", "projects", "tasks", "reports", "messages"],
+  implementation: ["dashboard", "projects", "purchasing", "inventory", "vendors", "tasks", "messages"],
+  support: ["dashboard", "tasks", "reports", "messages"],
+  marketing: ["dashboard", "marketing", "reports", "tasks", "messages"],
 };
 
 // Mobile bottom nav's center button -- v1 is a navigation shortcut to
@@ -464,6 +479,7 @@ const MOBILE_NAV_TAB_ICON: Record<View, (size: number) => React.ReactNode> = {
   admin: (size) => <User size={size} />,
   library: (size) => <BookOpen size={size} />,
   client_ledger: (size) => <Archive size={size} />,
+  messages: (size) => <MessageCircle size={size} />,
 };
 
 const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
@@ -975,7 +991,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library", "client_ledger"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library", "client_ledger", "messages"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -1231,6 +1247,20 @@ function App() {
   const [teamMemberStatus, setTeamMemberStatus] = useState("");
   const [pendingPhotoCount, setPendingPhotoCount] = useState(0);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  // Direct Messages (migration 094). No supabase-js/realtime client exists
+  // anywhere in this app -- every other feature is plain REST fetch(), so
+  // this polls instead of subscribing to Postgres changes (see the
+  // dedicated poll-interval effect below for why and how often). Reuses
+  // the app-wide `knownUsers` state (declared above, previously only
+  // loaded for the Admin directory) rather than a second copy of the same
+  // data -- see the effect below, which now loads it for every signed-in
+  // user, not just admins.
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [unreadMessageCounts, setUnreadMessageCounts] = useState<Record<string, number>>({});
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [activeConversationMessages, setActiveConversationMessages] = useState<DirectMessage[]>([]);
+  const [messagesStatus, setMessagesStatus] = useState("");
+  const totalUnreadMessages = Object.values(unreadMessageCounts).reduce((sum, count) => sum + count, 0);
   const [notificationRules, setNotificationRules] = useState<NotificationRule[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
@@ -2112,6 +2142,86 @@ function App() {
     loadAllApprovalStatuses(accessToken)
       .then(setApprovalStatuses)
       .catch(() => setApprovalReviewStatus("Could not load pending approvals."));
+  }
+
+  // Direct Messages overview: who's known + the conversation list + unread
+  // counts, so the nav badge is right even when the Messages tab isn't
+  // open. No realtime client exists in this app -- this polls every 20s
+  // instead, same tradeoff every other "keep this roughly fresh" piece of
+  // Ergon already makes (see the debounced whole-array saves elsewhere).
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setConversations([]);
+      setUnreadMessageCounts({});
+      return;
+    }
+    const session = authSession;
+    function reloadMessagesOverview() {
+      // Every signed-in user now needs the known-users list for the "New
+      // Message" search, not just admins (migration 094 widened
+      // app_known_users' read policy specifically for this). Loaded here
+      // independently of Admin's own reloadAdminDirectory (left untouched,
+      // still runs for admins) -- a little redundant for an admin session,
+      // but simpler and safer than threading a shared reload through both.
+      loadAllKnownUsers(session.accessToken).then(setKnownUsers).catch(() => {});
+      loadConversations(session.userId, session.accessToken).then(setConversations).catch(() => {});
+      loadUnreadDirectMessageCounts(session.userId, session.accessToken).then(setUnreadMessageCounts).catch(() => {});
+    }
+    reloadMessagesOverview();
+    const interval = window.setInterval(reloadMessagesOverview, 20_000);
+    return () => window.clearInterval(interval);
+  }, [authSession]);
+
+  // The open thread polls faster than the overview above -- 5s feels close
+  // enough to live for a small team without needing a websocket.
+  useEffect(() => {
+    if (!activeConversationId || !authSession) {
+      setActiveConversationMessages([]);
+      return;
+    }
+    const session = authSession;
+    const conversationId = activeConversationId;
+    function reloadThread() {
+      loadConversationMessages(conversationId, session.accessToken).then(setActiveConversationMessages).catch(() => {});
+    }
+    reloadThread();
+    markConversationRead(conversationId, session.userId, session.accessToken)
+      .then(() => setUnreadMessageCounts((current) => ({ ...current, [conversationId]: 0 })))
+      .catch(() => {});
+    const interval = window.setInterval(reloadThread, 5_000);
+    return () => window.clearInterval(interval);
+  }, [activeConversationId, authSession]);
+
+  async function handleStartConversation(otherUserId: string) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const conversation = await getOrCreateConversation(authSession.userId, otherUserId, authSession.accessToken);
+      setConversations((current) => (current.some((entry) => entry.id === conversation.id) ? current : [conversation, ...current]));
+      setActiveConversationId(conversation.id);
+      setMessagesStatus("");
+    } catch (error) {
+      setMessagesStatus(error instanceof Error ? error.message : "Could not start conversation.");
+    }
+  }
+
+  async function handleSendDirectMessage(body: string) {
+    if (!authSession || !activeConversationId || !body.trim()) {
+      return;
+    }
+    try {
+      const message = await sendDirectMessage(activeConversationId, authSession.userId, body.trim(), authSession.accessToken);
+      setActiveConversationMessages((current) => [...current, message]);
+      setConversations((current) =>
+        current
+          .map((entry) => (entry.id === activeConversationId ? { ...entry, lastMessageAt: message.createdAt } : entry))
+          .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)),
+      );
+      setMessagesStatus("");
+    } catch (error) {
+      setMessagesStatus(error instanceof Error ? error.message : "Could not send message.");
+    }
   }
 
   useEffect(() => {
@@ -6364,6 +6474,7 @@ function App() {
             {allowedTabs.includes("reports") && <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />}
             {allowedTabs.includes("saas_calendar") && <NavButton icon={<CalendarDays size={16} />} label="SaaS Calendar" active={view === "saas_calendar"} onClick={() => navigateToView("saas_calendar")} />}
             {allowedTabs.includes("client_ledger") && <NavButton icon={<Archive size={16} />} label="Client Ledger" active={view === "client_ledger"} onClick={() => navigateToView("client_ledger")} />}
+            {allowedTabs.includes("messages") && <NavButton icon={<MessageCircle size={16} />} label="Messages" active={view === "messages"} onClick={() => navigateToView("messages")} hasUnread={totalUnreadMessages > 0} />}
           </nav>
           <div className="top-nav-actions">
             <div className={`sync-status ${syncStatus}`} title={syncStatus === "error" ? authStatus : undefined}>
@@ -6623,6 +6734,21 @@ function App() {
             currentUserEmail={authSession?.email ?? ""}
           />
         )}
+        {view === "messages" && allowedTabs.includes("messages") && (
+          <Messages
+            myUserId={authSession?.userId ?? ""}
+            myEmail={authSession?.email ?? ""}
+            knownUsers={knownUsers}
+            conversations={conversations}
+            unreadMessageCounts={unreadMessageCounts}
+            activeConversationId={activeConversationId}
+            activeConversationMessages={activeConversationMessages}
+            status={messagesStatus}
+            onSelectConversation={setActiveConversationId}
+            onStartConversation={handleStartConversation}
+            onSendMessage={handleSendDirectMessage}
+          />
+        )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
           <TasksBoard
             tasks={tasks}
@@ -6733,11 +6859,12 @@ function App() {
   );
 }
 
-function NavButton({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
+function NavButton({ icon, label, active, onClick, hasUnread }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void; hasUnread?: boolean }) {
   return (
     <button className={`nav-button ${active ? "active" : ""}`} onClick={onClick}>
       {icon}
       <span>{label}</span>
+      {hasUnread && <span className="notification-dot" />}
     </button>
   );
 }
@@ -6971,6 +7098,7 @@ function pageTitle(view: View) {
     saas_calendar: "SaaS Calendar",
     admin: "Admin",
     library: "Learning Library",
+    messages: "Messages",
     client_ledger: "Client Ledger",
   };
   return titles[view];
@@ -6998,6 +7126,7 @@ function pageSubtitle(view: View) {
     admin: "Users, roles, approvals, and system configuration.",
     library: "Reference guides and onboarding materials.",
     client_ledger: "The permanent record for a site once it closes out -- lifecycle, financials, hardware, and final documents.",
+    messages: "Direct messages with anyone on the team.",
   };
   return subtitles[view];
 }
@@ -12718,6 +12847,178 @@ function ClientLedger({
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowAddAsset(false)}>Cancel</button>
               <button className="primary-action" type="button" disabled={!assetDraft.catalogItemId || !assetDraft.serials.trim()} onClick={submitAssetDraft}>Save</button>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Migration 094: real person-to-person direct messaging, ported (concept,
+// not code) from the VLTD sister project -- E: "I have a direct message
+// and alert system built into it now, I think we need that on this also."
+// Mobile-first from the start (single pane, list <-> thread toggle by
+// whether a conversation is selected) rather than a two-pane desktop
+// layout retrofitted for narrow screens later.
+function Messages({
+  myUserId,
+  myEmail,
+  knownUsers,
+  conversations,
+  unreadMessageCounts,
+  activeConversationId,
+  activeConversationMessages,
+  status,
+  onSelectConversation,
+  onStartConversation,
+  onSendMessage,
+}: {
+  myUserId: string;
+  myEmail: string;
+  knownUsers: KnownUser[];
+  conversations: Conversation[];
+  unreadMessageCounts: Record<string, number>;
+  activeConversationId: string | null;
+  activeConversationMessages: DirectMessage[];
+  status: string;
+  onSelectConversation: (conversationId: string | null) => void;
+  onStartConversation: (otherUserId: string) => void;
+  onSendMessage: (body: string) => void;
+}) {
+  const [showNewMessageModal, setShowNewMessageModal] = useState(false);
+  const [newMessageSearch, setNewMessageSearch] = useState("");
+  const [draftBody, setDraftBody] = useState("");
+  const threadEndRef = useRef<HTMLDivElement | null>(null);
+
+  const emailByUserId = new Map(knownUsers.map((user) => [user.userId, user.email]));
+  const otherUserId = (conversation: Conversation) => (conversation.participantAId === myUserId ? conversation.participantBId : conversation.participantAId);
+
+  const searchResults = knownUsers.filter(
+    (user) => user.userId !== myUserId && user.email.toLowerCase().includes(newMessageSearch.trim().toLowerCase()),
+  );
+
+  const activeConversation = conversations.find((entry) => entry.id === activeConversationId) ?? null;
+
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ block: "end" });
+  }, [activeConversationMessages]);
+
+  function submitDraft() {
+    if (!draftBody.trim()) {
+      return;
+    }
+    onSendMessage(draftBody);
+    setDraftBody("");
+  }
+
+  return (
+    <div className={`messages-shell ${activeConversationId ? "thread-open" : ""}`}>
+      <section className="panel messages-list-panel">
+        <div className="panel-title-row">
+          <div>
+            <h2>Conversations</h2>
+            <p>Direct messages with anyone on the team.</p>
+          </div>
+          <button className="primary-action" type="button" onClick={() => { setShowNewMessageModal(true); setNewMessageSearch(""); }}><Plus size={15} /> New Message</button>
+        </div>
+        {status && <div className="source-file"><span>{status}</span></div>}
+        <div className="messages-conversation-list">
+          {conversations.map((conversation) => {
+            const partnerId = otherUserId(conversation);
+            const partnerEmail = emailByUserId.get(partnerId) ?? "Unknown user";
+            const unread = unreadMessageCounts[conversation.id] ?? 0;
+            return (
+              <button
+                key={conversation.id}
+                type="button"
+                className={`messages-conversation-row ${conversation.id === activeConversationId ? "active" : ""}`}
+                onClick={() => onSelectConversation(conversation.id)}
+              >
+                <span className="messages-conversation-name">{partnerEmail}</span>
+                <span className="messages-conversation-meta">{new Date(conversation.lastMessageAt).toLocaleString()}</span>
+                {unread > 0 && <span className="messages-unread-badge">{unread}</span>}
+              </button>
+            );
+          })}
+          {conversations.length === 0 && <div className="empty-compact-state">No conversations yet -- start one with "New Message."</div>}
+        </div>
+      </section>
+      <section className="panel messages-thread-panel">
+        {activeConversation ? (
+          <>
+            <div className="messages-thread-header">
+              <button className="icon-button messages-back-button" type="button" onClick={() => onSelectConversation(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
+              <strong>{emailByUserId.get(otherUserId(activeConversation)) ?? "Unknown user"}</strong>
+            </div>
+            <div className="messages-thread-scroll">
+              {activeConversationMessages.map((message) => (
+                <div key={message.id} className={`messages-bubble-row ${message.senderId === myUserId ? "mine" : ""}`}>
+                  <div className="messages-bubble">
+                    <span>{message.body}</span>
+                    <small>{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</small>
+                  </div>
+                </div>
+              ))}
+              {activeConversationMessages.length === 0 && <div className="empty-compact-state">No messages yet -- say hello.</div>}
+              <div ref={threadEndRef} />
+            </div>
+            <div className="messages-compose-row">
+              <textarea
+                value={draftBody}
+                onChange={(event) => setDraftBody(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    submitDraft();
+                  }
+                }}
+                placeholder="Write a message... (Enter to send, Shift+Enter for a new line)"
+              />
+              <button className="primary-action" type="button" onClick={submitDraft} disabled={!draftBody.trim()}>Send</button>
+            </div>
+          </>
+        ) : (
+          <div className="empty-compact-state messages-empty-thread">Select a conversation, or start a new one.</div>
+        )}
+      </section>
+      {showNewMessageModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-message-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="new-message-modal-title">New Message</h2>
+                <p>Search by email to start a conversation with anyone who's signed into Ergon.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowNewMessageModal(false)} aria-label="Close new message modal">x</button>
+            </div>
+            <div className="bom-modal-grid">
+              <label className="span-2">
+                Search by email
+                <input value={newMessageSearch} onChange={(event) => setNewMessageSearch(event.target.value)} placeholder="name@company.com" autoFocus />
+              </label>
+            </div>
+            <div className="messages-search-results">
+              {searchResults.map((user) => (
+                <button
+                  key={user.userId}
+                  type="button"
+                  className="messages-search-result-row"
+                  onClick={() => {
+                    onStartConversation(user.userId);
+                    setShowNewMessageModal(false);
+                  }}
+                >
+                  {user.email}
+                </button>
+              ))}
+              {newMessageSearch.trim() && searchResults.length === 0 && <div className="empty-compact-state">No one matches "{newMessageSearch}" -- they may not have signed into Ergon yet.</div>}
+              {!newMessageSearch.trim() && knownUsers.filter((user) => user.userId !== myUserId).length === 0 && (
+                <div className="empty-compact-state">No one else has signed into Ergon yet ({myEmail} is the only known user so far).</div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setShowNewMessageModal(false)}>Cancel</button>
             </div>
           </section>
         </div>
