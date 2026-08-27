@@ -26,13 +26,20 @@ const AUTH_SESSION_KEY = "ergon:auth-session:v1";
 const WORKSPACE_KEY = "default";
 const STATE_KEYS: Array<keyof PersistedAppState> = ["roleMode"];
 
-function envValue(key: "VITE_SUPABASE_URL" | "VITE_SUPABASE_ANON_KEY") {
+function envValue(key: "VITE_SUPABASE_URL" | "VITE_SUPABASE_ANON_KEY" | "VITE_VAPID_PUBLIC_KEY") {
   const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
   return env?.[key] ?? "";
 }
 
 export function isRemotePersistenceConfigured() {
   return Boolean(envValue("VITE_SUPABASE_URL") && envValue("VITE_SUPABASE_ANON_KEY"));
+}
+
+// VAPID public key for Web Push (migration 095) -- safe to expose to the
+// client, that's what "public" means here; only VAPID_PRIVATE_KEY (server
+// env, used by /api/send-push.js) needs to stay secret.
+export function vapidPublicKey(): string {
+  return envValue("VITE_VAPID_PUBLIC_KEY");
 }
 
 function supabaseHeaders(accessToken?: string) {
@@ -1139,6 +1146,50 @@ export async function loadUnreadDirectMessageCounts(myUserId: string, accessToke
     counts[row.conversation_id] = (counts[row.conversation_id] ?? 0) + 1;
   }
   return counts;
+}
+
+// --- Push notification subscriptions (migration 095) -------------------
+// `endpoint` is the natural upsert key -- unique per device+browser
+// install, so re-subscribing the same device refreshes its keys instead
+// of creating a duplicate row. One person can have several rows (phone +
+// laptop both opted in); push fans out to every device they've turned it
+// on for.
+export async function upsertPushSubscription(
+  userId: string,
+  subscription: { endpoint: string; p256dh: string; authKey: string },
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const response = await fetch(supabaseUrl("push_subscriptions?on_conflict=endpoint"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify({
+      user_id: userId,
+      endpoint: subscription.endpoint,
+      p256dh: subscription.p256dh,
+      auth_key: subscription.authKey,
+      last_seen_at: new Date().toISOString(),
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not save push subscription"));
+  }
+  const rows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (rows.length === 0) {
+    throw new Error("Push subscription didn't save -- you may not have permission.");
+  }
+}
+
+export async function removePushSubscription(endpoint: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl(`push_subscriptions?endpoint=eq.${encodeURIComponent(endpoint)}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
 }
 
 export async function markConversationRead(conversationId: string, myUserId: string, accessToken?: string): Promise<void> {
@@ -2588,7 +2639,7 @@ export async function createNotification(
 // a guess.
 export async function recordNotificationDelivery(
   notificationId: string,
-  channel: "email" | "slack" | "teams",
+  channel: "email" | "slack" | "teams" | "push",
   status: "sent" | "failed" | "skipped",
   errorMessage?: string,
   accessToken?: string,

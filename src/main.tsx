@@ -164,6 +164,8 @@ import {
   getOrCreateConversation,
   sendDirectMessage,
   markConversationRead,
+  upsertPushSubscription,
+  vapidPublicKey,
   loadAllUserRoles,
   loadAuthSession,
   loadBuildTransactions,
@@ -1075,6 +1077,20 @@ function usePersistedJson<T>(storageKey: string, defaultValue: T) {
   return [value, setValue] as const;
 }
 
+// Web Push's applicationServerKey wants a raw Uint8Array, but VAPID public
+// keys are handed around as base64url strings everywhere else (env vars,
+// the server). Standard conversion boilerplate for that one API.
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -1261,6 +1277,10 @@ function App() {
   const [activeConversationMessages, setActiveConversationMessages] = useState<DirectMessage[]>([]);
   const [messagesStatus, setMessagesStatus] = useState("");
   const totalUnreadMessages = Object.values(unreadMessageCounts).reduce((sum, count) => sum + count, 0);
+  // "unsupported" covers both no Push API in this browser and no VAPID key
+  // configured yet (see api/send-push.js's setup comment) -- either way,
+  // there's no "Turn on notifications" affordance to show.
+  const [pushPermissionState, setPushPermissionState] = useState<"unknown" | "unsupported" | "unsubscribed" | "subscribed">("unknown");
   const [notificationRules, setNotificationRules] = useState<NotificationRule[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
@@ -2219,8 +2239,84 @@ function App() {
           .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)),
       );
       setMessagesStatus("");
+      // Routed through the same notify()/notification_rules engine every
+      // other event uses (migration 095 seeds this event push-only) --
+      // deliberately no dedupeKey, every message is its own notification.
+      const conversation = conversations.find((entry) => entry.id === activeConversationId);
+      const partnerId = conversation ? (conversation.participantAId === authSession.userId ? conversation.participantBId : conversation.participantAId) : null;
+      const partnerEmail = partnerId ? knownUsers.find((user) => user.userId === partnerId)?.email : undefined;
+      if (partnerEmail) {
+        void notify("direct_message_received", partnerEmail, `New message from ${authSession.email}`, body.trim().slice(0, 200), "conversation", activeConversationId);
+      }
     } catch (error) {
       setMessagesStatus(error instanceof Error ? error.message : "Could not send message.");
+    }
+  }
+
+  // Checks (doesn't request) whether push is already on for this device --
+  // getSubscription() never triggers the permission prompt, only
+  // subscribe() does, so this is safe to run automatically on load.
+  useEffect(() => {
+    if (!authSession) {
+      return;
+    }
+    let cancelled = false;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !vapidPublicKey()) {
+      setPushPermissionState("unsupported");
+      return;
+    }
+    navigator.serviceWorker
+      .getRegistration("/sw.js")
+      .then((registration) => registration?.pushManager.getSubscription() ?? null)
+      .then((subscription) => {
+        if (!cancelled) {
+          setPushPermissionState(subscription ? "subscribed" : "unsubscribed");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPushPermissionState("unsubscribed");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authSession]);
+
+  async function handleSubscribeToPush() {
+    if (!authSession) {
+      return;
+    }
+    const publicKey = vapidPublicKey();
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !publicKey) {
+      setMessagesStatus("Push notifications aren't supported in this browser, or aren't configured yet.");
+      return;
+    }
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setMessagesStatus("Notification permission wasn't granted -- check your browser/OS notification settings for this site.");
+        return;
+      }
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        // TS's DOM lib types applicationServerKey as BufferSource, which a
+        // plain Uint8Array<ArrayBufferLike> doesn't structurally satisfy
+        // in newer TS versions (SharedArrayBuffer vs ArrayBuffer) -- the
+        // runtime value is correct, this is a lib-typing mismatch only.
+        applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
+      });
+      const json = subscription.toJSON();
+      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+        throw new Error("The browser didn't return a usable push subscription.");
+      }
+      await upsertPushSubscription(authSession.userId, { endpoint: json.endpoint, p256dh: json.keys.p256dh, authKey: json.keys.auth }, authSession.accessToken);
+      setPushPermissionState("subscribed");
+      setMessagesStatus("Push notifications are on for this device.");
+    } catch (error) {
+      setMessagesStatus(error instanceof Error ? error.message : "Could not turn on push notifications.");
     }
   }
 
@@ -4171,7 +4267,8 @@ function App() {
     const inAppActive = ruleActive(eventType, "in_app");
     const emailActive = ruleActive(eventType, "email");
     const slackActive = ruleActive(eventType, "slack");
-    if (!inAppActive && !emailActive && !slackActive) {
+    const pushActive = ruleActive(eventType, "push");
+    if (!inAppActive && !emailActive && !slackActive && !pushActive) {
       return;
     }
     const created = await createNotification({ recipientEmail, eventType, title, body, relatedEntityType, relatedEntityId, dedupeKey }, authSession.accessToken).catch(() => null);
@@ -4208,6 +4305,28 @@ function App() {
         await recordNotificationDelivery(created.id, "slack", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
       } catch (error) {
         await recordNotificationDelivery(created.id, "slack", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
+      }
+    }
+    if (pushActive) {
+      // Push needs a real auth.users id, not an email -- resolve it from
+      // the known-users directory (migration 094/095). No entry means
+      // this person has never signed in, so there's nothing to push to;
+      // skip quietly rather than logging a confusing "failed" delivery.
+      const recipientUserId = knownUsers.find((user) => user.email.toLowerCase() === recipientEmail.toLowerCase())?.userId;
+      if (!recipientUserId) {
+        await recordNotificationDelivery(created.id, "push", "skipped", "Recipient has never signed into Ergon -- no push subscription possible.", authSession.accessToken).catch(() => {});
+      } else {
+        try {
+          const response = await fetch("/api/send-push", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ userId: recipientUserId, title, body, url: relatedEntityType === "task" ? "#tasks" : "#dashboard" }),
+          });
+          const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
+          await recordNotificationDelivery(created.id, "push", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
+        } catch (error) {
+          await recordNotificationDelivery(created.id, "push", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
+        }
       }
     }
   }
@@ -6744,9 +6863,11 @@ function App() {
             activeConversationId={activeConversationId}
             activeConversationMessages={activeConversationMessages}
             status={messagesStatus}
+            pushPermissionState={pushPermissionState}
             onSelectConversation={setActiveConversationId}
             onStartConversation={handleStartConversation}
             onSendMessage={handleSendDirectMessage}
+            onSubscribeToPush={handleSubscribeToPush}
           />
         )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
@@ -12870,9 +12991,11 @@ function Messages({
   activeConversationId,
   activeConversationMessages,
   status,
+  pushPermissionState,
   onSelectConversation,
   onStartConversation,
   onSendMessage,
+  onSubscribeToPush,
 }: {
   myUserId: string;
   myEmail: string;
@@ -12882,9 +13005,11 @@ function Messages({
   activeConversationId: string | null;
   activeConversationMessages: DirectMessage[];
   status: string;
+  pushPermissionState: "unknown" | "unsupported" | "unsubscribed" | "subscribed";
   onSelectConversation: (conversationId: string | null) => void;
   onStartConversation: (otherUserId: string) => void;
   onSendMessage: (body: string) => void;
+  onSubscribeToPush: () => void;
 }) {
   const [showNewMessageModal, setShowNewMessageModal] = useState(false);
   const [newMessageSearch, setNewMessageSearch] = useState("");
@@ -12913,7 +13038,15 @@ function Messages({
   }
 
   return (
-    <div className={`messages-shell ${activeConversationId ? "thread-open" : ""}`}>
+    <>
+      {pushPermissionState === "unsubscribed" && (
+        <div className="source-file messages-push-banner">
+          <Bell size={16} />
+          <span>Turn on notifications so you don't miss a message when the app is closed.</span>
+          <button className="secondary-action mini-action" type="button" onClick={onSubscribeToPush}>Turn On</button>
+        </div>
+      )}
+      <div className={`messages-shell ${activeConversationId ? "thread-open" : ""}`}>
       <section className="panel messages-list-panel">
         <div className="panel-title-row">
           <div>
@@ -13023,7 +13156,8 @@ function Messages({
           </section>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -14447,6 +14581,7 @@ function AdminPage({
                 <th>In-app bell</th>
                 <th>Email</th>
                 <th>Slack / Teams</th>
+                <th>Push</th>
                 <th>Active</th>
               </tr>
             </thead>
@@ -14457,6 +14592,7 @@ function AdminPage({
                   <td data-label="In-app bell"><input type="checkbox" checked={rule.channels.includes("in_app")} onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "in_app"] : rule.channels.filter((c) => c !== "in_app") })} /></td>
                   <td data-label="Email"><input type="checkbox" checked={rule.channels.includes("email")} title="Sends a real email via Resend when this event fires" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "email"] : rule.channels.filter((c) => c !== "email") })} /></td>
                   <td data-label="Slack / Teams"><input type="checkbox" checked={rule.channels.includes("slack")} title="Posts to Slack/Teams once SLACK_WEBHOOK_URL is set in Vercel" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "slack"] : rule.channels.filter((c) => c !== "slack") })} /></td>
+                  <td data-label="Push"><input type="checkbox" checked={rule.channels.includes("push")} title="Alerts the recipient's phone/browser once they've turned on notifications and VAPID keys are set in Vercel" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "push"] : rule.channels.filter((c) => c !== "push") })} /></td>
                   <td data-label="Active"><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateNotificationRule(rule.id, { isActive: event.target.checked })} /></td>
                 </tr>
               ))}

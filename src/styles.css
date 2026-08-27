@@ -6781,6 +6781,15 @@ body:has(.modal-backdrop) .install-banner {
   }
 }
 
+.messages-push-banner {
+  margin-bottom: 14px;
+  margin-top: 0;
+}
+
+.messages-push-banner span {
+  flex: 1;
+}
+
 /* Direct Messages (migration 094) -- mobile-first: single pane, list vs.
    thread toggled by whether a conversation is selected (`.thread-open` on
    the shell), not a desktop two-pane layout retrofitted for narrow
