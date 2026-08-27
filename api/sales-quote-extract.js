@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import formidable from "formidable";
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
+import { requireAuth } from "./_lib/requireAuth.js";
 
 export const config = {
   api: {
@@ -357,6 +358,9 @@ export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     res.status(405).json({ error: "Use POST with a sales quote PDF." });
+    return;
+  }
+  if (!(await requireAuth(req, res))) {
     return;
   }
 

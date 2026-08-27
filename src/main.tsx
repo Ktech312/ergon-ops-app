@@ -2504,7 +2504,7 @@ function App() {
     try {
       const response = await fetch("/api/send-invite-email", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", authorization: `Bearer ${authSession?.accessToken ?? ""}` },
         body: JSON.stringify({ email: invite.email, fullName: invite.fullName, roleLabel, inviteUrl, companyName: branding.companyName }),
       });
       const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
@@ -4285,7 +4285,7 @@ function App() {
       try {
         const response = await fetch("/api/send-notification-email", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
           body: JSON.stringify({ to: recipientEmail, subject: title, body, companyName: branding.companyName }),
         });
         const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
@@ -4298,7 +4298,7 @@ function App() {
       try {
         const response = await fetch("/api/send-notification-slack", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
           body: JSON.stringify({ title, body }),
         });
         const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
@@ -4319,7 +4319,7 @@ function App() {
         try {
           const response = await fetch("/api/send-push", {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
             body: JSON.stringify({ userId: recipientUserId, title, body, url: relatedEntityType === "task" ? "#tasks" : "#dashboard" }),
           });
           const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
@@ -4717,7 +4717,7 @@ function App() {
       try {
         const emailResponse = await fetch("/api/send-submittal-email", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
           body: JSON.stringify({ clientEmail, clientName, projectName: project.name, projectRef: project.ref, shareUrl }),
         });
         const emailResult = (await emailResponse.json()) as { sent: boolean; reason?: string; error?: string };
@@ -4804,7 +4804,7 @@ function App() {
       try {
         const emailResponse = await fetch("/api/send-proposal-email", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
           body: JSON.stringify({
             clientEmail: quote.clientEmail,
             clientName: quote.clientName,
@@ -6763,7 +6763,7 @@ function App() {
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -10485,6 +10485,7 @@ function Projects({
   projectSites,
   setProjectSites,
   inventoryItems,
+  accessToken,
   projectDocuments,
   onCreateDocuments,
   onUpdateDocumentStatus,
@@ -10553,6 +10554,7 @@ function Projects({
   deletedProjectLocationImages?: DeletedProjectLocationImage[];
   onRestoreProjectLocationImage?: (id: string) => Promise<boolean>;
   canReviewDeleted?: boolean;
+  accessToken?: string;
   onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
   onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
   onDownloadDocument: (doc: UploadedDoc) => void;
@@ -11161,6 +11163,7 @@ function Projects({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          authorization: `Bearer ${accessToken ?? ""}`,
         },
         body: JSON.stringify({
           projectRef,

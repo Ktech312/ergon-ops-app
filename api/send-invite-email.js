@@ -4,10 +4,14 @@
 // "copy the invite link and send it yourself" if nothing is set up.
 
 import { sendEmail } from "./_lib/mailer.js";
+import { requireAuth } from "./_lib/requireAuth.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST to send an invite email." });
+    return;
+  }
+  if (!(await requireAuth(req, res))) {
     return;
   }
 

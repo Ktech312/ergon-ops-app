@@ -20,10 +20,14 @@
 // regardless of its VITE_ prefix.)
 
 import webpush from "web-push";
+import { requireAuth } from "./_lib/requireAuth.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST to send a push notification." });
+    return;
+  }
+  if (!(await requireAuth(req, res))) {
     return;
   }
 

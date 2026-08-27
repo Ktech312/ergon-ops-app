@@ -12,9 +12,14 @@
 // To actually send, add this Vercel project env var:
 //   SLACK_WEBHOOK_URL - an incoming webhook URL from Slack or Teams
 
+import { requireAuth } from "./_lib/requireAuth.js";
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST to send a Slack/Teams notification." });
+    return;
+  }
+  if (!(await requireAuth(req, res))) {
     return;
   }
 
