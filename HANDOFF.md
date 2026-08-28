@@ -1,6 +1,6 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-08-25
+Last updated: 2026-08-27
 
 Purpose: carry context between chat sessions. Read this first in any new session before making changes.
 
@@ -94,6 +94,10 @@ Status (updated after E called out that curating which tables got done, silently
 - **New: Portfolio Budget & Schedule panel**, Projects list page (`ProjectPortfolioHealth` component, `main.tsx`, right before `function Projects`) -- E asked what to do with the "extra room" on that page once the missing-boxes question resolved; proposed a mockup (published as a Claude Artifact, sketch only, placeholder data), E approved, then it got built for real. Two blocks: **Budget health** (Purchase Order spend per `project.ref`, new `purchaseOrders` prop threaded into `Projects`, vs `project.allocated`, target tick + green/amber/red) and **Schedule health** (`projectCompletion()`, moved to module scope so this component can share it, vs target date). See the data-model note below on `ProjectSite.due` -- the schedule side has to degrade gracefully because that field isn't a real date.
 
 ## Recent work log (most recent first — 2026-08-13 through 2026-08-27)
+- **(`ff805b5`, no migration)** — **Inventory's 7-tile stat row now fits on one line on desktop.** E, from a screenshot circling the row wrapped to two lines: "make these boxes small and even enough to fit in one row."
+  - New `.inventory-metric-grid` modifier class (scoped to just this row's `<section className="metric-grid ...">`), not a change to the shared `.metric-grid`/`.metric` classes Dashboard/Sales/Purchasing/Projects also use -- those keep their original tile size.
+  - `grid-template-columns: repeat(7, minmax(0, 1fr))` plus smaller padding/icon/font sizes, gated inside `@media (min-width: 761px)` so it only applies on desktop and doesn't fight the existing mobile 2-up `.metric-grid` override at equal selector specificity (the exact cascade trap the 2026-08-18 `.metric-grid` mobile bug already hit once -- placing an unscoped same-specificity rule after a media query wins regardless of viewport). Mobile keeps the standard 2-up card layout, unchanged.
+  - tsc/build both clean.
 - **`01525b2`, no migration** — **Security review: every serverless API route in this app was completely unauthenticated -- fixed all 7.** E, after a real security incident on the VLTD sister project overnight: "I need you to run whatever scan you can to make sure nothing was made public if a security group scan this app online for holes."
   - **Confirmed the repo is public on GitHub** (`Ktech312/ergon-ops-app`) -- so this wasn't a theoretical "what if a scanner finds this," it was "anyone can already read exactly how to abuse this by opening the file on GitHub."
   - **The finding**: none of `send-invite-email`, `send-notification-email`, `send-notification-slack`, `send-proposal-email`, `send-submittal-email`, `send-push` (built earlier this same session), or `sales-quote-extract` checked who was calling them -- every one was a fully public POST endpoint. Worst case: `send-invite-email` let anyone on the internet use this app's own real, trusted Gmail/Resend sender to blast an email with an attacker-controlled link and subject to any address, styled exactly like a legitimate "you've been invited" email -- a phishing vector riding on a real business's sending reputation, not just spam. `send-push` (the one built today) could spam any Ergon user's phone by user id; `sales-quote-extract` would run arbitrary uploaded PDFs through parsing (and, if `OPENAI_API_KEY` is ever set, burn OpenAI credits) for anyone who found the endpoint.
