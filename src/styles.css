@@ -2747,7 +2747,7 @@ td small.quote-ref-tag {
    alone) for the same reason `.build-history-actions` needed it above --
    `.row-card div` otherwise wins the specificity tie and forces grid. */
 .row-card .build-history-row-header {
-  align-items: flex-start;
+  align-items: center;
   display: flex;
   justify-content: space-between;
   gap: 8px;
@@ -2758,6 +2758,17 @@ td small.quote-ref-tag {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* E: "the 1X or whatever number it may be, lets make it stand out more" --
+   it was rendering as plain muted small text (inherited from the generic
+   `.row-card span` rule), indistinguishable from the equipment name next
+   to it. Two classes to beat that shared rule's specificity, same trap as
+   above. */
+.build-history-title .build-qty {
+  color: #a01029;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 /* The readiness message ("Equipment type was renamed or deleted...") is a

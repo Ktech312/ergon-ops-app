@@ -9361,7 +9361,7 @@ function Inventory({
   function buildReadinessForTransaction(build: BuildTransaction) {
     const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
     if (!recipe) {
-      return { recipe: undefined, hasShortage: true, message: "Equipment type was renamed or deleted after this build was planned." };
+      return { recipe: undefined, hasShortage: true, message: "Cancel this build -- its equipment type no longer exists, so parts can't be requested and it can't be completed." };
     }
 
     const hasShortage = recipe.components.some((component) => {
@@ -9801,11 +9801,12 @@ function Inventory({
               <div className="build-history-row-header">
                 <div className="build-history-title">
                   <strong>{build.buildNumber}</strong>
-                  <span>{build.quantityBuilt} x {build.equipmentName}</span>
+                  <span className="build-qty">{build.quantityBuilt}&times;</span>
+                  <span>{build.equipmentName}</span>
                 </div>
                 {build.status === "planned" && (
-                  <button className="icon-button compact-remove" type="button" onClick={() => onCancelPlannedBuild(build.id)} aria-label={`Cancel ${build.buildNumber}`}>
-                    <Trash2 size={15} />
+                  <button className="icon-button-sm" type="button" onClick={() => onCancelPlannedBuild(build.id)} aria-label={`Cancel ${build.buildNumber}`}>
+                    <Trash2 size={13} />
                   </button>
                 )}
               </div>
@@ -9814,7 +9815,7 @@ function Inventory({
                   <>
                     <span className={buildReadinessForTransaction(build).hasShortage ? "status warn build-readiness-message" : "status ok build-readiness-message"}>{buildReadinessForTransaction(build).message}</span>
                     <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
-                    {buildReadinessForTransaction(build).hasShortage && <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => requestBuildShortageParts(build.id)}>Request Parts</button>}
+                    {buildReadinessForTransaction(build).hasShortage && buildReadinessForTransaction(build).recipe && <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => requestBuildShortageParts(build.id)}>Request Parts</button>}
                     <label className="build-stage-select">Stage
                       <select value={build.stage ?? "planned"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
                         <option value="planned">Planned</option>
