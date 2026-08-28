@@ -2771,15 +2771,17 @@ td small.quote-ref-tag {
   font-weight: 900;
 }
 
-/* The readiness message ("Equipment type was renamed or deleted...") is a
-   full sentence, not a short status word -- .status's shared
-   white-space: nowrap (correct for "Healthy"/"Reorder"/etc. everywhere
-   else) forced this one pill to stay on one line, which on a phone-width
-   card dragged the whole row wider than the viewport and clipped the
-   Cancel trash icon off-screen. Scoped override, not a change to .status
-   itself. */
-.build-readiness-message {
-  white-space: normal;
+/* E: the full-sentence readiness explanation ("Cancel this build --
+   its equipment type no longer exists...") took up too much room as a
+   wrapped pill. Replaced with a small red flag icon carrying the
+   explanation as a hover/long-press tooltip (title attribute) instead --
+   same information, a fraction of the space. Only used for the warning
+   state; "Ready" stays a normal short .status.ok pill. */
+.build-flag {
+  align-items: center;
+  color: #a01029;
+  cursor: help;
+  display: inline-flex;
 }
 
 .build-history-actions select {

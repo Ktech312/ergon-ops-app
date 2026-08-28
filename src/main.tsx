@@ -22,6 +22,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Flag,
   FolderOpen,
   Image,
   LayoutDashboard,
@@ -9347,6 +9348,12 @@ function Inventory({
   }
 
   async function requestBuildShortageParts(buildId: string) {
+    const build = buildTransactions.find((item) => item.id === buildId);
+    const hasRecipe = build ? Boolean(buildReadinessForTransaction(build).recipe) : true;
+    if (!hasRecipe) {
+      setBuildActionStatus("Can't request parts -- this build's equipment type no longer exists, so there's no parts list to work from. Cancel this build instead.");
+      return;
+    }
     const queued = await onQueueBuildShortageRequests(buildId);
     setBuildActionStatus(queued > 0 ? `Queued ${queued} purchase request${queued === 1 ? "" : "s"} -- check Purchasing.` : "Nothing to request -- every part is already available.");
   }
@@ -9796,7 +9803,9 @@ function Inventory({
       <section className="panel" id="builds-panel">
         <PanelHeader title="Builds" label="Plan, complete, or undo manufactured equipment builds" />
         <div className="stack">
-          {buildTransactions.slice(0, 6).map((build, index) => (
+          {buildTransactions.slice(0, 6).map((build, index) => {
+            const readiness = buildReadinessForTransaction(build);
+            return (
             <div className={`row-card build-history-row${justPlannedBuild && index === 0 ? " just-copied" : ""}`} key={build.id}>
               <div className="build-history-row-header">
                 <div className="build-history-title">
@@ -9813,9 +9822,15 @@ function Inventory({
               <div className="build-history-actions">
                 {build.status === "planned" ? (
                   <>
-                    <span className={buildReadinessForTransaction(build).hasShortage ? "status warn build-readiness-message" : "status ok build-readiness-message"}>{buildReadinessForTransaction(build).message}</span>
+                    {readiness.hasShortage ? (
+                      <span className="build-flag" title={readiness.message} aria-label={readiness.message}>
+                        <Flag size={14} />
+                      </span>
+                    ) : (
+                      <span className="status ok">{readiness.message}</span>
+                    )}
                     <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
-                    {buildReadinessForTransaction(build).hasShortage && buildReadinessForTransaction(build).recipe && <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => requestBuildShortageParts(build.id)}>Request Parts</button>}
+                    {readiness.hasShortage && <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => requestBuildShortageParts(build.id)}>Request Parts</button>}
                     <label className="build-stage-select">Stage
                       <select value={build.stage ?? "planned"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
                         <option value="planned">Planned</option>
@@ -9824,10 +9839,9 @@ function Inventory({
                         <option value="tested">Tested</option>
                       </select>
                     </label>
-                    <button className="table-action mini-action-sm" type="button" disabled={buildReadinessForTransaction(build).hasShortage} onClick={() => {
-                      const ready = buildReadinessForTransaction(build);
-                      if (ready.recipe) {
-                        onBuildInventoryUnit(ready.recipe, build.quantityBuilt, build.id);
+                    <button className="table-action mini-action-sm" type="button" disabled={readiness.hasShortage} onClick={() => {
+                      if (readiness.recipe) {
+                        onBuildInventoryUnit(readiness.recipe, build.quantityBuilt, build.id);
                       }
                     }}>Complete</button>
                   </>
@@ -9848,7 +9862,8 @@ function Inventory({
                 ) : <span className="status retired">{build.status === "cancelled" ? "Cancelled" : "Undone"}</span>}
               </div>
             </div>
-          ))}
+            );
+          })}
           {buildTransactions.length === 0 && <div className="empty-compact-state">No build transactions yet.</div>}
         </div>
       </section>
