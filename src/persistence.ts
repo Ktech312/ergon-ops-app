@@ -5046,15 +5046,15 @@ export async function saveBuildTransactions(builds: BuildTransaction[], accessTo
   if (!isRemotePersistenceConfigured() || !accessToken || builds.length === 0) {
     return;
   }
-  const equipmentResponse = await fetch(supabaseUrl("equipment_types?select=equipment_name,output_inventory_item_id"), {
+  const equipmentResponse = await fetch(supabaseUrl("equipment_types?select=id,equipment_name,output_inventory_item_id"), {
     headers: supabaseHeaders(accessToken),
   });
-  const equipmentRows = equipmentResponse.ok ? ((await equipmentResponse.json()) as Array<{ equipment_name: string; output_inventory_item_id: string | null }>) : [];
+  const equipmentRows = equipmentResponse.ok ? ((await equipmentResponse.json()) as Array<{ id: string; equipment_name: string; output_inventory_item_id: string | null }>) : [];
   const equipmentByName = new Map(equipmentRows.map((row) => [row.equipment_name, row]));
 
   const payload = builds.map((build) => ({
     build_number: build.buildNumber,
-    equipment_type_id: null,
+    equipment_type_id: equipmentByName.get(build.equipmentName)?.id ?? null,
     finished_inventory_item_id: equipmentByName.get(build.equipmentName)?.output_inventory_item_id ?? null,
     quantity_built: build.quantityBuilt,
     status: build.status,
