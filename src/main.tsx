@@ -9812,7 +9812,7 @@ function Inventory({
               <div className="build-history-actions">
                 {build.status === "planned" ? (
                   <>
-                    <span className={buildReadinessForTransaction(build).hasShortage ? "status warn" : "status ok"}>{buildReadinessForTransaction(build).message}</span>
+                    <span className={buildReadinessForTransaction(build).hasShortage ? "status warn build-readiness-message" : "status ok build-readiness-message"}>{buildReadinessForTransaction(build).message}</span>
                     <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
                     {buildReadinessForTransaction(build).hasShortage && <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => requestBuildShortageParts(build.id)}>Request Parts</button>}
                     <label className="build-stage-select">Stage

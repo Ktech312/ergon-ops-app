@@ -2760,6 +2760,17 @@ td small.quote-ref-tag {
   gap: 6px;
 }
 
+/* The readiness message ("Equipment type was renamed or deleted...") is a
+   full sentence, not a short status word -- .status's shared
+   white-space: nowrap (correct for "Healthy"/"Reorder"/etc. everywhere
+   else) forced this one pill to stay on one line, which on a phone-width
+   card dragged the whole row wider than the viewport and clipped the
+   Cancel trash icon off-screen. Scoped override, not a change to .status
+   itself. */
+.build-readiness-message {
+  white-space: normal;
+}
+
 .build-history-actions select {
   background: #fffdf9;
   border: 1px solid #ded7cb;
