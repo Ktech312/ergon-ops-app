@@ -5388,7 +5388,18 @@ function App() {
         action();
       } catch (error) {
         setSyncStatus("error");
-        setAuthStatus(error instanceof Error ? error.message : "Record is locked for another operation.");
+        const message = error instanceof Error ? error.message : "Record is locked for another operation.";
+        setAuthStatus(message);
+        // setAuthStatus alone is invisible once logged in (only renders on
+        // the signed-out screen) -- found live, 2026-08-28: a real Inventory
+        // Adjust silently did nothing with zero on-screen feedback because
+        // the session's access token had expired, and this catch block was
+        // the only thing that ran. Same fix already applied elsewhere in
+        // the app for the identical failure shape; withProductionLock
+        // guards 7 call sites (Inventory add/update/adjust/transfer,
+        // allocate/ship, both build actions) so this one alert covers all
+        // of them at once.
+        window.alert(message);
       } finally {
         await releaseTransactionLock(lockId, authSession.accessToken);
       }
