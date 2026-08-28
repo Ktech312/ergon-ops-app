@@ -9719,16 +9719,16 @@ function Inventory({
                   <strong>{part.name}</strong>
                   <small className="muted">{part.ref} &middot; {part.category} &middot; {part.manufacturer}</small>
                 </span>
+                <span className="table-actions" onClick={(event) => event.stopPropagation()}>
+                  <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
+                </span>
               </span>
-              {(part.tags ?? []).length > 0 && <div className="tag-chip-row">{(part.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
               <span className="mobile-card-pills">
+                {(part.tags ?? []).length > 0 && <div className="tag-chip-row">{(part.tags ?? []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
                 <span className="status">Stock: {part.stock}</span>
                 {(part.allocated ?? 0) > 0 && <span className="status">Allocated: {part.allocated}</span>}
                 <span className="status">{money(part.cost)}</span>
                 {part.retired ? <span className="status retired">Retired</span> : part.trackReorder && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
-                <span className="table-actions" onClick={(event) => event.stopPropagation()}>
-                  <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
-                </span>
               </span>
             </div>
           ))}

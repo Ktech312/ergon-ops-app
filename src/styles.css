@@ -6654,9 +6654,29 @@ body:has(.modal-backdrop) .install-banner {
   align-items: center;
 }
 
-.inventory-mobile-list .mobile-card-pills .table-actions {
-  margin-left: auto;
-  min-width: 0;
+/* E, from a screenshot with arrows: move Adjust up next to the title and
+   let the tags fold into the Stock/Cost/Status pill row, freeing the
+   tags' own dedicated row -- "this will allow the image to become twice
+   the size in this pill." Adjust moved in JSX to .mobile-card-row itself
+   (pushed flush right since .mobile-card-title now takes the flexible
+   space); tags stay in their own .tag-chip-row markup (unchanged
+   styling) but render as direct flex items of .mobile-card-pills via
+   display: contents on the now-relocated wrapper. */
+.inventory-mobile-list .thumbnail-button {
+  height: 72px;
+  width: 72px;
+}
+
+.inventory-mobile-list .mobile-card-title {
+  flex: 1;
+}
+
+.inventory-mobile-list .mobile-card-row .table-actions {
+  flex: none;
+}
+
+.inventory-mobile-list .mobile-card-pills .tag-chip-row {
+  display: contents;
 }
 
 /* Generic CSS-only table stacking, for every remaining raw <table> that
