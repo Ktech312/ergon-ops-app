@@ -9361,7 +9361,7 @@ function Inventory({
   function buildReadinessForTransaction(build: BuildTransaction) {
     const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
     if (!recipe) {
-      return { recipe: undefined, hasShortage: true, message: "Equipment recipe not found." };
+      return { recipe: undefined, hasShortage: true, message: "Equipment type was renamed or deleted after this build was planned." };
     }
 
     const hasShortage = recipe.components.some((component) => {
@@ -9798,9 +9798,16 @@ function Inventory({
         <div className="stack">
           {buildTransactions.slice(0, 6).map((build, index) => (
             <div className={`row-card build-history-row${justPlannedBuild && index === 0 ? " just-copied" : ""}`} key={build.id}>
-              <div>
-                <strong>{build.buildNumber}</strong>
-                <span>{build.quantityBuilt} x {build.equipmentName}</span>
+              <div className="build-history-row-header">
+                <div className="build-history-title">
+                  <strong>{build.buildNumber}</strong>
+                  <span>{build.quantityBuilt} x {build.equipmentName}</span>
+                </div>
+                {build.status === "planned" && (
+                  <button className="icon-button compact-remove" type="button" onClick={() => onCancelPlannedBuild(build.id)} aria-label={`Cancel ${build.buildNumber}`}>
+                    <Trash2 size={15} />
+                  </button>
+                )}
               </div>
               <div className="build-history-actions">
                 {build.status === "planned" ? (
@@ -9822,7 +9829,6 @@ function Inventory({
                         onBuildInventoryUnit(ready.recipe, build.quantityBuilt, build.id);
                       }
                     }}>Complete</button>
-                    <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => onCancelPlannedBuild(build.id)}>Cancel</button>
                   </>
                 ) : build.status === "posted" ? (
                   <>

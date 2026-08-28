@@ -2739,6 +2739,27 @@ td small.quote-ref-tag {
   justify-content: flex-start;
 }
 
+/* E, from the live mobile pass: "1x can go next to the build name" (was
+   its own stacked line) and "Cancel can be the trash can icon and go to
+   the top right corner" (was a text button competing for space with
+   Work Order/Request Parts/Stage/Complete on rows below) -- both save a
+   full line off every card. Two classes each (not just `.build-history-*`
+   alone) for the same reason `.build-history-actions` needed it above --
+   `.row-card div` otherwise wins the specificity tie and forces grid. */
+.row-card .build-history-row-header {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.row-card .build-history-title {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .build-history-actions select {
   background: #fffdf9;
   border: 1px solid #ded7cb;
