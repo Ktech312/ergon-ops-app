@@ -1132,6 +1132,37 @@ button {
   }
 }
 
+/* Inventory's stat row has 7 tiles -- the shared 180px-minmax .metric-grid
+   wraps a 7th tile to its own row. Scoped here (not a shared .metric-grid
+   change) so Dashboard/Sales/Purchasing's fewer-tile rows keep their
+   original size. min-width-gated so it doesn't fight the mobile 2-up
+   override above at equal specificity (same trap the .metric-grid mobile
+   fix hit once already -- see HANDOFF). */
+@media (min-width: 761px) {
+  .inventory-metric-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .inventory-metric-grid .metric {
+    gap: 4px;
+    min-height: 0;
+    padding: 12px 10px;
+  }
+
+  .inventory-metric-grid .metric div svg {
+    height: 16px;
+    width: 16px;
+  }
+
+  .inventory-metric-grid .metric span {
+    font-size: 11px;
+  }
+
+  .inventory-metric-grid .metric strong {
+    font-size: 18px;
+  }
+}
+
 .metric div {
   color: #a01029;
 }

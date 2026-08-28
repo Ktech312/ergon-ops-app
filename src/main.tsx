@@ -9522,7 +9522,7 @@ function Inventory({
 
   return (
     <div className="content-grid">
-      <section className="metric-grid">
+      <section className="metric-grid inventory-metric-grid">
         <Metric icon={<Boxes size={20} />} label="Total SKUs" value={String(inventoryItems.length)} />
         <Metric icon={<Bell size={20} />} label="Low Stock" value={String(lowStock.length)} />
         <Metric icon={<DollarSign size={20} />} label="Inventory Value (on hand)" value={money(inventoryValueTotal)} />
