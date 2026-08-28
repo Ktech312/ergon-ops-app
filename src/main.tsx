@@ -9700,9 +9700,9 @@ function Inventory({
                 {(part.allocated ?? 0) > 0 && <span className="status">Allocated: {part.allocated}</span>}
                 <span className="status">{money(part.cost)}</span>
                 {part.retired ? <span className="status retired">Retired</span> : part.trackReorder && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
-              </span>
-              <span className="table-actions" onClick={(event) => event.stopPropagation()}>
-                <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
+                <span className="table-actions" onClick={(event) => event.stopPropagation()}>
+                  <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
+                </span>
               </span>
             </div>
           ))}

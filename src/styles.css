@@ -6571,6 +6571,23 @@ body:has(.modal-backdrop) .install-banner {
   gap: 8px;
 }
 
+/* E, from a screenshot: the Adjust button's own full-width row (below the
+   Stock/Cost/Status pills) added a whole extra row of height to every
+   Inventory mobile card just to hold one button -- "shrink the Adjust
+   button slightly and move it up... allowing you to reduce the height of
+   those pill[s]." Adjust now renders as the last item inside the pills
+   row itself (JSX change) instead of its own row below; scoped to
+   Inventory's list only since .mobile-card-pills/.table-actions are
+   shared by every other mobile-card table in the app. */
+.inventory-mobile-list .mobile-card-pills {
+  align-items: center;
+}
+
+.inventory-mobile-list .mobile-card-pills .table-actions {
+  margin-left: auto;
+  min-width: 0;
+}
+
 /* Generic CSS-only table stacking, for every remaining raw <table> that
    doesn't have (and doesn't need) a bespoke mobile-card component --
    mostly smaller admin/config tables (Notification Rules, Standard
