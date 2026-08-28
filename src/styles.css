@@ -2746,8 +2746,23 @@ td small.quote-ref-tag {
   color: #1b1a18;
   font: inherit;
   font-size: 12px;
-  min-height: 30px;
-  padding: 0 8px;
+  min-height: 28px;
+  padding: 0 6px;
+}
+
+/* E: "the drop down is not clear" -- a bare <select> with no caption,
+   sitting in a row of buttons, doesn't read as "this is the build's
+   stage." Small uppercase caption in front of it, same visual language
+   as .work-order-summary's own Stage field. */
+.build-stage-select {
+  align-items: center;
+  color: #756d62;
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 800;
+  gap: 4px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .work-order-panel {
@@ -3424,6 +3439,31 @@ tr:hover .row-delete-btn,
     position: absolute;
     top: 0;
     width: 100%;
+  }
+}
+
+/* Work Order's Print button called window.print() with no print area of
+   its own -- the .quote-intake-print-area rule above hides body* on EVERY
+   print job app-wide, and nothing here matched it, so Print produced a
+   blank page (E: "print give me pages that are empty"). Same pattern,
+   scoped to this modal instead. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .work-order-panel,
+  .work-order-panel * {
+    visibility: visible;
+  }
+  .work-order-panel {
+    left: 0;
+    position: absolute;
+    top: 0;
+    width: 100%;
+  }
+  .work-order-panel .modal-header button,
+  .work-order-panel .work-order-print-hide {
+    display: none !important;
   }
 }
 
@@ -5606,6 +5646,37 @@ td.empty-compact-state {
 
   .report-table-row > span[data-label]::before,
   .request-row > span[data-label]::before {
+    color: #756d62;
+    content: attr(data-label);
+    flex: none;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  /* Same orphaned-header bug on the Work Order modal's Need/Have/Status
+     columns (E screenshot: bare "1" / "0" / "Short 1" stacked with no
+     idea which number means what). Same fix: hide the head row, label
+     each value directly, and tighten the row's own padding since a
+     stacked 4-line row doesn't need full desktop padding on each line. */
+  .work-order-line.head {
+    display: none;
+  }
+
+  .work-order-line {
+    gap: 4px;
+    padding: 8px 10px;
+  }
+
+  .work-order-line > span[data-label] {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+  }
+
+  .work-order-line > span[data-label]::before {
     color: #756d62;
     content: attr(data-label);
     flex: none;

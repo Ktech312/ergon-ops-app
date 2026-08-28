@@ -6003,13 +6003,14 @@ function App() {
   async function queueBuildShortageRequests(buildId: string) {
     const build = buildTransactions.find((item) => item.id === buildId);
     if (!build || build.status !== "planned") {
-      return;
+      return 0;
     }
 
     const recipe = deviceRecipes.find((item) => item.outputName === build.equipmentName || item.name === build.equipmentName);
     if (!recipe) {
-      return;
+      return 0;
     }
+    let queuedCount = 0;
     for (const component of recipe.components) {
       const part = inventoryItems.find((item) => item.name === component.itemName);
       if (!part || part.retired) {
@@ -6020,8 +6021,10 @@ function App() {
       const shortage = Math.max(0, required - available);
       if (shortage > 0) {
         await queuePurchaseRequest(part, shortage, "Planned Build Shortage", `${build.buildNumber} needs ${required}; ${available} available.`, build.buildNumber);
+        queuedCount += 1;
       }
     }
+    return queuedCount;
   }
 
   async function queueProjectBomPurchaseRequest(partName: string, quantity: number, projectName: string, projectRef: string, requestSpeed: BomLine["requestSpeed"], notes: string, procurementTrack: PurchaseRequest["procurementTrack"]) {
@@ -8819,7 +8822,7 @@ function Inventory({
   onUndoBuildTransaction: (buildId: string) => void;
   onUpdateBuildStage: (buildId: string, stage: NonNullable<BuildTransaction["stage"]>) => void;
   onCancelPlannedBuild: (buildId: string) => void;
-  onQueueBuildShortageRequests: (buildId: string) => void;
+  onQueueBuildShortageRequests: (buildId: string) => Promise<number>;
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
@@ -8870,6 +8873,21 @@ function Inventory({
   const [buildConfirmAck, setBuildConfirmAck] = useState(false);
   const [buildConfirmPlannedId, setBuildConfirmPlannedId] = useState<string | undefined>(undefined);
   const [workOrderBuildId, setWorkOrderBuildId] = useState<string | null>(null);
+  // Plan Build/Request Parts/Queue Shortages all used to give zero visible
+  // confirmation -- E: "cant tell if it actually does anything... doesn't
+  // work... doesn't seem to do anything either." Plan Build scrolls to and
+  // briefly glows the new build card (always buildTransactions[0], since
+  // planBuildTransaction unshifts); the other two show the same
+  // fixed/centered self-dismissing toast Purchasing already uses.
+  const [justPlannedBuild, setJustPlannedBuild] = useState(false);
+  const [buildActionStatus, setBuildActionStatus] = useState<string | null>(null);
+  useEffect(() => {
+    if (!buildActionStatus) {
+      return;
+    }
+    const timer = setTimeout(() => setBuildActionStatus(null), 5000);
+    return () => clearTimeout(timer);
+  }, [buildActionStatus]);
   const [inventoryTab, setInventoryTab] = usePersistedJson<"parts" | "finished">("inventory-tab", "parts");
   const [filters, setFilters] = usePersistedJson("inventory-filters", { ref: "", part: "", category: "All", manufacturer: "", status: "All", tag: "All" });
   useEffect(() => {
@@ -9323,6 +9341,14 @@ function Inventory({
     }
 
     onPlanBuild(selectedBuildRecipe, Math.max(1, Math.round(Number(buildDraft.qty) || 1)));
+    setJustPlannedBuild(true);
+    setTimeout(() => document.getElementById("builds-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    setTimeout(() => setJustPlannedBuild(false), 1500);
+  }
+
+  async function requestBuildShortageParts(buildId: string) {
+    const queued = await onQueueBuildShortageRequests(buildId);
+    setBuildActionStatus(queued > 0 ? `Queued ${queued} purchase request${queued === 1 ? "" : "s"} -- check Purchasing.` : "Nothing to request -- every part is already available.");
   }
 
   function confirmBuild() {
@@ -9716,7 +9742,7 @@ function Inventory({
             <p>Select equipment, edit its parts in a pop-up, then build finished units into inventory.</p>
           </div>
           <div className="action-row">
-            <button className="primary-action" type="button" onClick={() => setShowDeviceModal(true)}><Plus size={15} /> Edit Equipment BOM</button>
+            <button className="secondary-action mini-action-sm" type="button" onClick={() => setShowDeviceModal(true)} title="Edit this equipment type's own component list -- most people won't need this."><Plus size={13} /> Edit Equipment BOM</button>
           </div>
         </div>
         <div className="build-planner">
@@ -9743,8 +9769,7 @@ function Inventory({
           ))}
         </div>
         <div className="manufacturing-actions-row">
-          <button className="secondary-action" type="button" onClick={planBuild} disabled={selectedBuildRecipe.retired || buildComponentRows.length === 0}><CalendarDays size={15} /> Plan Build</button>
-          <button className="secondary-action" type="button" onClick={() => setShowDeviceModal(true)} disabled={selectedBuildRecipe.retired || buildComponentRows.length === 0}>Review Build</button>
+          <button className="primary-action" type="button" onClick={planBuild} disabled={selectedBuildRecipe.retired || buildComponentRows.length === 0}><CalendarDays size={15} /> Plan Build</button>
         </div>
       </section>
       <section className="panel">
@@ -9768,11 +9793,11 @@ function Inventory({
           {deadStockItems.length === 0 && <div className="empty-compact-state">Nothing idle 90+ days right now.</div>}
         </div>
       </section>
-      <section className="panel">
+      <section className="panel" id="builds-panel">
         <PanelHeader title="Builds" label="Plan, complete, or undo manufactured equipment builds" />
         <div className="stack">
-          {buildTransactions.slice(0, 6).map((build) => (
-            <div className="row-card build-history-row" key={build.id}>
+          {buildTransactions.slice(0, 6).map((build, index) => (
+            <div className={`row-card build-history-row${justPlannedBuild && index === 0 ? " just-copied" : ""}`} key={build.id}>
               <div>
                 <strong>{build.buildNumber}</strong>
                 <span>{build.quantityBuilt} x {build.equipmentName}</span>
@@ -9781,33 +9806,37 @@ function Inventory({
                 {build.status === "planned" ? (
                   <>
                     <span className={buildReadinessForTransaction(build).hasShortage ? "status warn" : "status ok"}>{buildReadinessForTransaction(build).message}</span>
-                    <button className="table-action secondary-table-action" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
-                    {buildReadinessForTransaction(build).hasShortage && <button className="table-action secondary-table-action" type="button" onClick={() => onQueueBuildShortageRequests(build.id)}>Request Parts</button>}
-                    <select value={build.stage ?? "planned"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
-                      <option value="planned">Planned</option>
-                      <option value="kitting">Kitting</option>
-                      <option value="assembled">Assembled</option>
-                      <option value="tested">Tested</option>
-                    </select>
-                    <button className="table-action" type="button" disabled={buildReadinessForTransaction(build).hasShortage} onClick={() => {
+                    <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
+                    {buildReadinessForTransaction(build).hasShortage && <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => requestBuildShortageParts(build.id)}>Request Parts</button>}
+                    <label className="build-stage-select">Stage
+                      <select value={build.stage ?? "planned"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
+                        <option value="planned">Planned</option>
+                        <option value="kitting">Kitting</option>
+                        <option value="assembled">Assembled</option>
+                        <option value="tested">Tested</option>
+                      </select>
+                    </label>
+                    <button className="table-action mini-action-sm" type="button" disabled={buildReadinessForTransaction(build).hasShortage} onClick={() => {
                       const ready = buildReadinessForTransaction(build);
                       if (ready.recipe) {
                         onBuildInventoryUnit(ready.recipe, build.quantityBuilt, build.id);
                       }
                     }}>Complete</button>
-                    <button className="table-action secondary-table-action" type="button" onClick={() => onCancelPlannedBuild(build.id)}>Cancel</button>
+                    <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => onCancelPlannedBuild(build.id)}>Cancel</button>
                   </>
                 ) : build.status === "posted" ? (
                   <>
-                    <button className="table-action secondary-table-action" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
-                    <select value={build.stage ?? "complete"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
-                      <option value="planned">Planned</option>
-                      <option value="kitting">Kitting</option>
-                      <option value="assembled">Assembled</option>
-                      <option value="tested">Tested</option>
-                      <option value="complete">Complete</option>
-                    </select>
-                    <button className="table-action secondary-table-action" type="button" onClick={() => onUndoBuildTransaction(build.id)}>Undo</button>
+                    <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => setWorkOrderBuildId(build.id)}>Work Order</button>
+                    <label className="build-stage-select">Stage
+                      <select value={build.stage ?? "complete"} onChange={(event) => onUpdateBuildStage(build.id, event.target.value as NonNullable<BuildTransaction["stage"]>)}>
+                        <option value="planned">Planned</option>
+                        <option value="kitting">Kitting</option>
+                        <option value="assembled">Assembled</option>
+                        <option value="tested">Tested</option>
+                        <option value="complete">Complete</option>
+                      </select>
+                    </label>
+                    <button className="table-action secondary-table-action mini-action-sm" type="button" onClick={() => onUndoBuildTransaction(build.id)}>Undo</button>
                   </>
                 ) : <span className="status retired">{build.status === "cancelled" ? "Cancelled" : "Undone"}</span>}
               </div>
@@ -9816,6 +9845,13 @@ function Inventory({
           {buildTransactions.length === 0 && <div className="empty-compact-state">No build transactions yet.</div>}
         </div>
       </section>
+
+      {buildActionStatus && (
+        <div className="purchasing-action-status">
+          <span>{buildActionStatus}</span>
+          <button className="icon-button" type="button" onClick={() => setBuildActionStatus(null)} aria-label="Dismiss">x</button>
+        </div>
+      )}
       <section className="panel wide">
         <div className="panel-title-row">
           <div>
@@ -10009,17 +10045,17 @@ function Inventory({
                 {workOrderRows.map((row) => (
                   <div className="work-order-line" key={row.component.itemName}>
                     <span><strong>{row.component.itemName}</strong><small>{row.part?.ref ?? "No SKU"} - {row.part?.manufacturer ?? "No matched inventory item"}</small></span>
-                    <span>{row.required}</span>
-                    <span>{row.available}</span>
-                    <span>{row.shortage > 0 ? <b className="status warn">Short {row.shortage}</b> : <b className="status ok">Available</b>}</span>
+                    <span data-label="Need">{row.required}</span>
+                    <span data-label="Have">{row.available}</span>
+                    <span data-label="Status">{row.shortage > 0 ? <b className="status warn">Short {row.shortage}</b> : <b className="status ok">Available</b>}</span>
                   </div>
                 ))}
               </div>
             )}
-            <div className="source-file"><ClipboardList size={16} /><span>Use this as the build traveler for picking parts, kitting, assembly, and test before posting completion.</span></div>
-            <div className="modal-actions">
+            <div className="source-file work-order-print-hide"><ClipboardList size={16} /><span>Use this as the build traveler for picking parts, kitting, assembly, and test before posting completion.</span></div>
+            <div className="modal-actions work-order-print-hide">
               <button className="secondary-action" type="button" onClick={() => window.print()}>Print</button>
-              {workOrderBuild.status === "planned" && workOrderHasShortage && <button className="secondary-action" type="button" onClick={() => onQueueBuildShortageRequests(workOrderBuild.id)}><ShoppingCart size={15} /> Queue Shortages</button>}
+              {workOrderBuild.status === "planned" && workOrderHasShortage && <button className="secondary-action" type="button" onClick={() => requestBuildShortageParts(workOrderBuild.id)}><ShoppingCart size={15} /> Queue Shortages</button>}
               <button className="secondary-action" type="button" onClick={() => setWorkOrderBuildId(null)}>Close</button>
               {workOrderBuild.status === "planned" && workOrderRecipe && (
                 <button className="primary-action" type="button" disabled={workOrderHasShortage} onClick={() => {
