@@ -10443,6 +10443,9 @@ function ProjectPortfolioHealth({ projectSites, purchaseOrders }: { projectSites
     return dueDate.getTime() < Date.now() && projectCompletion(project) < 100;
   });
 
+  const PHASES: ProjectSite["status"][] = ["Draft", "Planning", "Procurement", "Staging", "Install Ready", "Closed"];
+  const phaseCounts = PHASES.map((phase) => ({ phase, count: projectSites.filter((project) => project.status === phase).length }));
+
   if (activeProjects.length === 0) {
     return null;
   }
@@ -10471,6 +10474,17 @@ function ProjectPortfolioHealth({ projectSites, purchaseOrders }: { projectSites
         <Metric icon={<DollarSign size={20} />} label="Total Spent" value={money(totalSpent)} />
         <Metric icon={<AlertTriangle size={20} />} label="Over Budget" value={String(overBudgetProjects.length)} />
         <Metric icon={<CalendarDays size={20} />} label="Behind Schedule" value={String(behindScheduleProjects.length)} />
+      </div>
+
+      <div className="portfolio-health-block">
+        <div className="portfolio-health-block-head">
+          <h3>Projects by phase</h3>
+        </div>
+        <div className="tag-picker-grid">
+          {phaseCounts.map(({ phase, count }) => (
+            <span className={phase === "Closed" ? "status retired" : "status"} key={phase}>{phase}: {count}</span>
+          ))}
+        </div>
       </div>
 
       <div className="portfolio-health-block">
@@ -10788,6 +10802,20 @@ function Projects({
         (selectedProject.estimatedLaborCost || 0) -
         (selectedProject.subcontractorCost || 0) -
         (selectedProject.travelExpenses || 0);
+  // Margin section (E's request): overall gross margin %, plus each cost
+  // bucket shown as a % of sale -- the standard industry categories for a
+  // systems-integration job (Materials/Equipment, Labor, Subcontractor,
+  // Travel/Other). There's no per-category revenue split in the data model
+  // (only one total Sale amount), so this is cost-as-%-of-revenue per
+  // category, not an isolated margin per category -- the same convention
+  // most small integrators use when they don't track revenue by trade.
+  const projectGrossMarginPercent = selectedProject.saleAmount ? Math.round((projectEstimatedProfit! / selectedProject.saleAmount) * 1000) / 10 : null;
+  const projectMarginCategories = [
+    { label: "Materials/Equipment", cost: selectedProject.allocated || 0 },
+    { label: "Labor", cost: selectedProject.estimatedLaborCost || 0 },
+    { label: "Subcontractor", cost: selectedProject.subcontractorCost || 0 },
+    { label: "Travel/Other", cost: selectedProject.travelExpenses || 0 },
+  ].map((category) => ({ ...category, pctOfSale: selectedProject.saleAmount ? Math.round((category.cost / selectedProject.saleAmount) * 1000) / 10 : null }));
   const sowHasContent = Object.values(selectedProject.sow).some((value) => value.trim() !== "");
   const shipmentStatusCounts = (selectedProject.shipments ?? []).reduce(
     (counts, shipment) => ({ ...counts, [shipment.status]: (counts[shipment.status] ?? 0) + 1 }),
@@ -11562,6 +11590,7 @@ function Projects({
           <div className="snapshot-grid cost-snapshot-grid">
             <div><span>Project Sale</span><strong>{selectedProject.saleAmount ? money(selectedProject.saleAmount) : "Not set"}</strong></div>
             <div><span>Est. Profit</span><strong>{projectEstimatedProfit === null ? "Not set" : money(projectEstimatedProfit)}</strong></div>
+            <div><span>Gross Margin</span><strong>{projectGrossMarginPercent === null ? "Not set" : `${projectGrossMarginPercent}%`}</strong></div>
           </div>
         </section>
 
@@ -12041,6 +12070,7 @@ function Projects({
       <ProjectLocationsSection
         project={selectedProject}
         catalogItems={catalogItems}
+        inventoryItems={inventoryItems}
         onAddLocation={(locationType) => onAddProjectLocation(selectedProject.ref, locationType)}
         onUpdateLocation={(locationId, updates) => onUpdateProjectLocation(selectedProject.ref, locationId, updates)}
         onDeleteLocation={(locationId) => onDeleteProjectLocation(selectedProject.ref, locationId)}
@@ -12216,6 +12246,24 @@ function Projects({
                   placeholder="0.00"
                 />
               </label>
+            </div>
+            <div className="compact-edit-section">
+              <div className="compact-section-header">
+                <div>
+                  <h3>Margin</h3>
+                  <p>{selectedProject.saleAmount ? "Each cost bucket as a share of the sale amount." : "Set a sale amount above to see margin."}</p>
+                </div>
+              </div>
+              <div className="snapshot-grid">
+                <div><span>Gross margin</span><strong>{projectGrossMarginPercent === null ? "--" : `${projectGrossMarginPercent}%`}</strong></div>
+                {projectMarginCategories.map((category) => (
+                  <div key={category.label}>
+                    <span>{category.label}</span>
+                    <strong>{category.pctOfSale === null ? money(category.cost) : `${category.pctOfSale}%`}</strong>
+                    {category.pctOfSale !== null && <small className="muted">{money(category.cost)}</small>}
+                  </div>
+                ))}
+              </div>
             </div>
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setShowCostBreakdownModal(false)}>Cancel</button>
@@ -18676,6 +18724,7 @@ function ProjectImagesModal({
 function ProjectLocationsSection({
   project,
   catalogItems,
+  inventoryItems,
   onAddLocation,
   onUpdateLocation,
   onDeleteLocation,
@@ -18692,6 +18741,7 @@ function ProjectLocationsSection({
 }: {
   project: ProjectSite;
   catalogItems: CatalogItem[];
+  inventoryItems: Part[];
   onAddLocation: (locationType: "garage" | "lot") => void;
   onUpdateLocation: (locationId: string, updates: Parameters<typeof updateProjectLocation>[1]) => void;
   onDeleteLocation: (locationId: string) => void;
@@ -18725,6 +18775,23 @@ function ProjectLocationsSection({
 
   const locations = project.locations ?? [];
   const selectedLocation = locations.find((location) => location.id === selectedLocationId) ?? null;
+  // E: "when we click on a project we should have all the details down to
+  // each location like the info, bom, cost, etc." Info and BOM (the line
+  // items below) already existed per location -- cost didn't. Estimated
+  // from the same catalog pricing the rest of the app already uses
+  // (resolveCatalogUnitCost handles the inventory-linked cost source
+  // correctly, not just the catalog's own stored unitCost).
+  function locationLineCost(catalogItemId: string | null, qty: number): number {
+    const catalogItem = catalogItemId ? catalogItems.find((item) => item.id === catalogItemId) : undefined;
+    return catalogItem ? resolveCatalogUnitCost(catalogItem, inventoryItems) * qty : 0;
+  }
+  function locationEstimatedCost(location: ProjectLocation): number {
+    const lineArrays: ProjectLocationItem[][] = [location.cameraLines, location.signLines, location.sensorLines, location.miscLines, location.vpuLines];
+    return lineArrays.reduce(
+      (sum, lines) => sum + lines.reduce((lineSum, line) => lineSum + locationLineCost(line.catalogItemId, line.qty) + locationLineCost(line.accessoryCatalogItemId, line.accessoryQty ?? 0), 0),
+      0,
+    );
+  }
   const activeCatalogItems = catalogItems.filter((item) => !item.isRetired);
   const cameraCatalogItems = activeCatalogItems.filter((item) => item.category === "Cameras");
   const signCatalogItems = activeCatalogItems.filter((item) => item.category === "Signage");
@@ -18754,7 +18821,7 @@ function ProjectLocationsSection({
 
       <table className="stack-table-mobile">
         <thead>
-          <tr><th>Type</th><th>Name</th><th>Photos</th><th>Files</th><th></th></tr>
+          <tr><th>Type</th><th>Name</th><th>Cost</th><th>Photos</th><th>Files</th><th></th></tr>
         </thead>
         <tbody>
           {locations.map((location) => {
@@ -18772,6 +18839,7 @@ function ProjectLocationsSection({
                     placeholder={location.locationType === "garage" ? "Garage name" : "Lot name"}
                   />
                 </td>
+                <td data-label="Cost">{money(locationEstimatedCost(location))}</td>
                 <td>
                   <button
                     className="icon-count-button"
@@ -18817,7 +18885,7 @@ function ProjectLocationsSection({
             );
           })}
           {locations.length === 0 && (
-            <tr><td colSpan={5} className="empty-compact-state">No garages or lots yet -- use + Garage / + Lot, or convert a Closed - Won Sales Quote to pull them in.</td></tr>
+            <tr><td colSpan={6} className="empty-compact-state">No garages or lots yet -- use + Garage / + Lot, or convert a Closed - Won Sales Quote to pull them in.</td></tr>
           )}
         </tbody>
       </table>
@@ -18828,7 +18896,7 @@ function ProjectLocationsSection({
             <div className="modal-header">
               <div>
                 <h2 id="project-location-title">{selectedLocation.name || (selectedLocation.locationType === "garage" ? "Garage" : "Lot")}</h2>
-                <p>Site details for this garage/lot.</p>
+                <p>Site details for this garage/lot -- estimated hardware cost {money(locationEstimatedCost(selectedLocation))}.</p>
               </div>
               <button className="icon-button" type="button" onClick={() => setSelectedLocationId(null)} aria-label="Close location details">x</button>
             </div>
