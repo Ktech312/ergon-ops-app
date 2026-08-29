@@ -74,6 +74,10 @@ import {
   addInstalledAssets,
   updateInstalledAsset,
   deleteInstalledAsset,
+  loadProjectStakeholders,
+  addProjectStakeholder,
+  updateProjectStakeholder,
+  deleteProjectStakeholder,
   addProjectLocationItem,
   updateProjectLocationItem,
   deleteProjectLocationItem,
@@ -301,6 +305,7 @@ import {
   type DeletedProjectLocationImage,
   type ProjectLedgerInfo,
   type InstalledAsset,
+  type ProjectStakeholder,
   type ProjectLocationImage,
   type ProjectLocationItem,
   type ProjectShippingAddress,
@@ -1194,6 +1199,10 @@ function App() {
   // open (a site could have 50+ units, no reason to load them all upfront).
   const [projectLedgerInfo, setProjectLedgerInfo] = useState<ProjectLedgerInfo[]>([]);
   const [installedAssets, setInstalledAssets] = useState<InstalledAsset[]>([]);
+  // Migration 097: Project Stakeholders -- same lazy-load-per-open-project
+  // shape as installedAssets above, triggered when a project's detail page
+  // (not just Client Ledger) is opened, since the Address Book lives there.
+  const [projectStakeholders, setProjectStakeholders] = useState<ProjectStakeholder[]>([]);
   // Phase 10d: Equipment Recipes no longer lives in the local/blob state --
   // it's always loaded fresh from the real table (see the effect below).
   const [deviceRecipes, setDeviceRecipes] = useState<BuildRecipe[]>([]);
@@ -1531,6 +1540,51 @@ function App() {
       return;
     }
     setInstalledAssets((current) => current.filter((asset) => asset.id !== id));
+  }
+
+  async function handleLoadProjectStakeholders(projectId: string) {
+    if (!authSession) {
+      setProjectStakeholders([]);
+      return;
+    }
+    setProjectStakeholders(await loadProjectStakeholders(projectId, authSession.accessToken));
+  }
+
+  async function handleAddProjectStakeholder(projectId: string, stakeholder: { role: string; name: string; phone: string; email: string; address: string; notes: string }): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    try {
+      const created = await addProjectStakeholder(projectId, stakeholder, authSession.email, authSession.accessToken);
+      if (created) {
+        setProjectStakeholders((current) => [...current, created]);
+      }
+      return true;
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not add stakeholder.");
+      return false;
+    }
+  }
+
+  async function handleUpdateProjectStakeholder(id: string, updates: Partial<{ role: string; name: string; phone: string; email: string; address: string; notes: string }>) {
+    if (!authSession) {
+      return;
+    }
+    setProjectStakeholders((current) => current.map((stakeholder) => (stakeholder.id === id ? { ...stakeholder, ...updates } : stakeholder)));
+    await updateProjectStakeholder(id, updates, authSession.accessToken);
+  }
+
+  async function handleDeleteProjectStakeholder(id: string) {
+    if (!authSession) {
+      return;
+    }
+    const label = projectStakeholders.find((stakeholder) => stakeholder.id === id)?.name ?? "Stakeholder";
+    const result = await deleteProjectStakeholder(id, label, authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete stakeholder.");
+      return;
+    }
+    setProjectStakeholders((current) => current.filter((stakeholder) => stakeholder.id !== id));
   }
 
   // Uploads Site Builder photos that got stuck in the offline queue (see
@@ -6778,7 +6832,7 @@ function App() {
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -10626,6 +10680,11 @@ function Projects({
   deletedProjectLocationImages,
   onRestoreProjectLocationImage,
   canReviewDeleted,
+  projectStakeholders,
+  onLoadProjectStakeholders,
+  onAddProjectStakeholder,
+  onUpdateProjectStakeholder,
+  onDeleteProjectStakeholder,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -10638,6 +10697,11 @@ function Projects({
   onRestoreProjectLocationImage?: (id: string) => Promise<boolean>;
   canReviewDeleted?: boolean;
   accessToken?: string;
+  projectStakeholders: ProjectStakeholder[];
+  onLoadProjectStakeholders: (projectId: string) => void;
+  onAddProjectStakeholder: (projectId: string, stakeholder: { role: string; name: string; phone: string; email: string; address: string; notes: string }) => Promise<boolean>;
+  onUpdateProjectStakeholder: (id: string, updates: Partial<{ role: string; name: string; phone: string; email: string; address: string; notes: string }>) => void;
+  onDeleteProjectStakeholder: (id: string) => void;
   onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
   onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
   onDownloadDocument: (doc: UploadedDoc) => void;
@@ -10719,6 +10783,7 @@ function Projects({
   const [showProjectInfoModal, setShowProjectInfoModal] = useState(false);
   const [showBuildSalesBomModal, setShowBuildSalesBomModal] = useState(false);
   const [showProjectDocsModal, setShowProjectDocsModal] = useState(false);
+  const [projectDocUploadType, setProjectDocUploadType] = useState<NonNullable<UploadedDoc["type"]>>("Project");
   const [showSowModal, setShowSowModal] = useState(false);
   const [showBomSectionModal, setShowBomSectionModal] = useState(false);
   const [showShippingModal, setShowShippingModal] = useState(false);
@@ -10742,6 +10807,7 @@ function Projects({
   });
   const [showAddressBookModal, setShowAddressBookModal] = useState(false);
   const [newProjectShippingAddressDraft, setNewProjectShippingAddressDraft] = useState({ label: "", attnName: "", streetAddress: "", city: "", state: "", zip: "", phone: "", homePhone: "", cellPhone: "", workPhone: "" });
+  const [newStakeholderDraft, setNewStakeholderDraft] = useState({ role: "", name: "", phone: "", email: "", address: "", notes: "" });
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
   const [bomDraft, setBomDraft] = useState({
     item: "",
@@ -10759,6 +10825,14 @@ function Projects({
   const [bomItemMode, setBomItemMode] = useState<"select" | "custom">("select");
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
   const selectedProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject.name || doc.project === selectedProject.ref);
+  const selectedProjectId = selectedProject.id;
+  useEffect(() => {
+    if (selectedProjectId) {
+      onLoadProjectStakeholders(selectedProjectId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId]);
+  const selectedProjectStakeholders = selectedProjectId ? projectStakeholders.filter((stakeholder) => stakeholder.projectId === selectedProjectId) : [];
 
   useEffect(() => {
     onDetailContextChange?.(
@@ -11327,7 +11401,7 @@ function Projects({
         project: selectedProject.name,
         size: file.size,
         status: "Uploaded" as const,
-        type: "Project" as const,
+        type: projectDocUploadType,
         storage: "Browser" as const,
         uploadedAt: new Date(Date.now() + index).toISOString(),
       },
@@ -11681,38 +11755,61 @@ function Projects({
               <div className="panel-title-row">
                 <div>
                   <h2>Project Documents</h2>
-                  <p>Backups and reference files.</p>
+                  <p>Backups and reference files, grouped by type -- Closeout's own document types live in the Client Ledger's Closeout Vault instead.</p>
                 </div>
-                <label className="secondary-action mini-action project-doc-upload">
-                  <Upload size={15} /> Upload
-                  <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.dwg,.dxf,.rvt,.ifc,.step,.stp" multiple onChange={handleProjectDocumentSelect} />
-                </label>
+                <div className="quote-header-pill-row">
+                  <select value={projectDocUploadType} onChange={(event) => setProjectDocUploadType(event.target.value as NonNullable<UploadedDoc["type"]>)} aria-label="Document type for next upload">
+                    <option value="Project">Project</option>
+                    <option value="Drawings">Drawings</option>
+                    <option value="SOW">SOW</option>
+                    <option value="BOM">BOM</option>
+                    <option value="Procurement">Procurement</option>
+                    <option value="Sales Quote">Sales Quote</option>
+                  </select>
+                  <label className="secondary-action mini-action project-doc-upload">
+                    <Upload size={15} /> Upload
+                    <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.dwg,.dxf,.rvt,.ifc,.step,.stp" multiple onChange={handleProjectDocumentSelect} />
+                  </label>
+                </div>
               </div>
               <div className="upload-rule-note">
                 <FileText size={15} />
-                <span>Project Documents are for PDF, Word, Excel/CSV, and CAD/reference files. Garage/lot pictures belong in Photos.</span>
+                <span>Project Documents are for PDF, Word, Excel/CSV, and CAD/reference files. Garage/lot pictures belong in Photos. Pick a type above before uploading.</span>
               </div>
-              <div className="project-doc-list">
-                {selectedProjectDocuments.map((doc) => (
-                  <div className="document-row" key={`${doc.id}-${doc.name}`}>
-                    <div>
-                      <strong>{doc.name}</strong>
-                      <span>{doc.type ?? "Project"} - {doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.storage ?? "Browser"}</span>
-                      <small>{formatDocumentProvenance(doc)}</small>
+              {GENERAL_DOCUMENT_TYPES.map((groupType) => {
+                const docsInGroup = selectedProjectDocuments.filter((doc) => (doc.type ?? "Project") === groupType);
+                if (docsInGroup.length === 0) {
+                  return null;
+                }
+                return (
+                  <div className="compact-edit-section" key={groupType}>
+                    <div className="compact-section-header"><h3>{groupType} ({docsInGroup.length})</h3></div>
+                    <div className="project-doc-list">
+                      {docsInGroup.map((doc) => (
+                        <div className="document-row" key={`${doc.id}-${doc.name}`}>
+                          <div>
+                            <strong>{doc.name}</strong>
+                            <span>{doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.storage ?? "Browser"}</span>
+                            <small>{formatDocumentProvenance(doc)}</small>
+                          </div>
+                          <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
+                            <option>Uploaded</option>
+                            <option>Ready to review</option>
+                            <option>Backed up</option>
+                            <option>Archived</option>
+                          </select>
+                          {doc.storagePath && (
+                            <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc)}>Download</button>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    <select value={doc.status} onChange={(event) => updateProjectDocumentStatus(doc.id, event.target.value as UploadedDoc["status"])}>
-                      <option>Uploaded</option>
-                      <option>Ready to review</option>
-                      <option>Backed up</option>
-                      <option>Archived</option>
-                    </select>
-                    {doc.storagePath && (
-                      <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument(doc)}>Download</button>
-                    )}
                   </div>
-                ))}
-                {selectedProjectDocuments.length === 0 && <div className="empty-compact-state">No documents yet.</div>}
-              </div>
+                );
+              })}
+              {selectedProjectDocuments.filter((doc) => GENERAL_DOCUMENT_TYPES.includes((doc.type ?? "Project") as (typeof GENERAL_DOCUMENT_TYPES)[number])).length === 0 && (
+                <div className="empty-compact-state">No documents yet.</div>
+              )}
             </section>
           </div>
         </div>
@@ -12057,6 +12154,71 @@ function Projects({
                 }}
               >
                 <Plus size={14} /> Add Shipping Address
+              </button>
+            </div>
+
+            <div className="address-card">
+              <span className="address-card-title">Stakeholders</span>
+              <p className="muted">Anyone else tied to this project -- property owner, GC, electrician, architect, etc. -- with their own contact info.</p>
+              <ul className="line-list">
+                {selectedProjectStakeholders.map((stakeholder) => (
+                  <li className="line-item" key={stakeholder.id}>
+                    <div>
+                      <strong>{stakeholder.name}</strong>
+                      <span>{stakeholder.role}</span>
+                      <span>
+                        {[
+                          stakeholder.phone && `Phone ${stakeholder.phone}`,
+                          stakeholder.email && `Email ${stakeholder.email}`,
+                          stakeholder.address,
+                        ].filter(Boolean).join(" -- ") || "No contact info set"}
+                      </span>
+                    </div>
+                    <button className="icon-button compact-remove" type="button" onClick={() => { if (window.confirm(`Remove ${stakeholder.name} as a stakeholder?`)) onDeleteProjectStakeholder(stakeholder.id); }} aria-label={`Remove ${stakeholder.name}`}>
+                      <Trash2 size={15} />
+                    </button>
+                  </li>
+                ))}
+                {selectedProjectStakeholders.length === 0 && <li className="empty-compact-state">No stakeholders added yet.</li>}
+              </ul>
+
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-medium">
+                  <span>Role</span>
+                  <input list="stakeholder-role-suggestions" value={newStakeholderDraft.role} placeholder="e.g. Property Owner" onChange={(event) => setNewStakeholderDraft((current) => ({ ...current, role: event.target.value }))} />
+                  <datalist id="stakeholder-role-suggestions">
+                    <option value="Property Owner" />
+                    <option value="General Contractor" />
+                    <option value="Electrician" />
+                    <option value="Architect" />
+                    <option value="Facilities Manager" />
+                    <option value="Security Consultant" />
+                  </datalist>
+                </label>
+                <label className="tight-field tight-field-wide"><span>Name</span><input value={newStakeholderDraft.name} onChange={(event) => setNewStakeholderDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+              </div>
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-medium"><span>Phone</span><input value={newStakeholderDraft.phone} onChange={(event) => setNewStakeholderDraft((current) => ({ ...current, phone: event.target.value }))} /></label>
+                <label className="tight-field tight-field-wide"><span>Email</span><input type="email" value={newStakeholderDraft.email} onChange={(event) => setNewStakeholderDraft((current) => ({ ...current, email: event.target.value }))} /></label>
+              </div>
+              <div className="tight-form-row">
+                <label className="tight-field tight-field-wide"><span>Address</span><input value={newStakeholderDraft.address} onChange={(event) => setNewStakeholderDraft((current) => ({ ...current, address: event.target.value }))} /></label>
+              </div>
+              <button
+                className="secondary-action mini-action"
+                type="button"
+                disabled={!newStakeholderDraft.role.trim() || !newStakeholderDraft.name.trim() || !selectedProjectId}
+                onClick={async () => {
+                  if (!selectedProjectId) {
+                    return;
+                  }
+                  const ok = await onAddProjectStakeholder(selectedProjectId, newStakeholderDraft);
+                  if (ok) {
+                    setNewStakeholderDraft({ role: "", name: "", phone: "", email: "", address: "", notes: "" });
+                  }
+                }}
+              >
+                <Plus size={14} /> Add Stakeholder
               </button>
             </div>
 
@@ -12555,6 +12717,14 @@ const CLOSEOUT_DOCUMENT_TYPES: Array<NonNullable<UploadedDoc["type"]>> = [
   "Network/IP Schema",
   "Power/Breaker Schedule",
 ];
+
+// Migration 096 -- E: "a separate section for Drawings or within project
+// documents a sub folder for drawings, submittals, etc." Submittals is
+// its own separate feature already (not folded in here); this is the
+// general (non-Closeout) Project Documents type set, now with a real
+// Drawings category, used to group the flat document list into
+// per-type sections instead of one undifferentiated list.
+const GENERAL_DOCUMENT_TYPES: Array<NonNullable<UploadedDoc["type"]>> = ["Project", "Drawings", "SOW", "BOM", "Procurement", "Sales Quote"];
 
 // EOL math: target replacement date = install date + the catalog item's
 // expected lifespan. Badge thresholds straight from E's notes -- Active

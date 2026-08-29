@@ -3814,6 +3814,10 @@ export type ProjectDocument = {
     | "SOW"
     | "BOM"
     | "Project"
+    // Migration 096 -- E: "a separate section for Drawings or within
+    // project documents a sub folder for drawings" -- working drawings,
+    // distinct from Closeout's single final As-Built Diagram below.
+    | "Drawings"
     // Migration 089 (Client Ledger's Closeout Vault) -- final, handoff-time
     // documents, distinct from the working documents above.
     | "As-Built Diagram"
@@ -3860,6 +3864,7 @@ function appDocumentType(type: ProjectDocument["type"]): string {
     case "SOW": return "sow";
     case "BOM": return "bom";
     case "Project": return "project";
+    case "Drawings": return "drawings";
     case "As-Built Diagram": return "as_built";
     case "O&M Manual": return "om_manual";
     case "Completion Certificate": return "completion_certificate";
@@ -3876,6 +3881,7 @@ function pgDocumentType(documentType: string): ProjectDocument["type"] {
     case "sow": return "SOW";
     case "bom": return "BOM";
     case "project": return "Project";
+    case "drawings": return "Drawings";
     case "as_built": return "As-Built Diagram";
     case "om_manual": return "O&M Manual";
     case "completion_certificate": return "Completion Certificate";
@@ -6246,6 +6252,144 @@ export async function deleteInstalledAsset(id: string, label: string, actorEmail
     return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
   }
   await logDeletionEvent("installed_asset", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
+}
+
+// Migration 097: Project Stakeholders -- E: "Good to have a stakeholder
+// section including any addresses." Genuinely open-ended roles (property
+// owner, GC, electrician, etc.), unlike the Address Book's fixed
+// Client/Billing/Shipping cards. Same lazily-loaded, kept-out-of-
+// PROJECT_SITE_SELECT shape as installed_assets, for the same reason.
+export type ProjectStakeholder = {
+  id: string;
+  projectId: string;
+  role: string;
+  name: string;
+  phone: string;
+  email: string;
+  address: string;
+  notes: string;
+  createdByEmail: string;
+  createdAt: string;
+};
+
+type ProjectStakeholderRow = {
+  id: string;
+  project_id: string;
+  role: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  notes: string | null;
+  created_by_email: string | null;
+  created_at: string;
+};
+
+function mapProjectStakeholderRow(row: ProjectStakeholderRow): ProjectStakeholder {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    role: row.role,
+    name: row.name,
+    phone: row.phone ?? "",
+    email: row.email ?? "",
+    address: row.address ?? "",
+    notes: row.notes ?? "",
+    createdByEmail: row.created_by_email ?? "",
+    createdAt: row.created_at,
+  };
+}
+
+const PROJECT_STAKEHOLDER_SELECT = "id,project_id,role,name,phone,email,address,notes,created_by_email,created_at";
+
+export async function loadProjectStakeholders(projectId: string, accessToken?: string): Promise<ProjectStakeholder[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`project_stakeholders?project_id=eq.${projectId}&select=${PROJECT_STAKEHOLDER_SELECT}&deleted_at=is.null&order=created_at.asc`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ProjectStakeholderRow[];
+  return rows.map(mapProjectStakeholderRow);
+}
+
+export async function addProjectStakeholder(
+  projectId: string,
+  stakeholder: { role: string; name: string; phone: string; email: string; address: string; notes: string },
+  actorEmail: string,
+  accessToken?: string,
+): Promise<ProjectStakeholder | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("project_stakeholders"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      project_id: projectId,
+      role: stakeholder.role,
+      name: stakeholder.name,
+      phone: stakeholder.phone || null,
+      email: stakeholder.email || null,
+      address: stakeholder.address || null,
+      notes: stakeholder.notes || null,
+      created_by_email: actorEmail || null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not add stakeholder: ${await readSupabaseError(response, "unknown error")}`);
+  }
+  const rows = (await response.json()) as ProjectStakeholderRow[];
+  return rows[0] ? mapProjectStakeholderRow(rows[0]) : null;
+}
+
+export async function updateProjectStakeholder(
+  id: string,
+  updates: Partial<{ role: string; name: string; phone: string; email: string; address: string; notes: string }>,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.role !== undefined) payload.role = updates.role;
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.phone !== undefined) payload.phone = updates.phone || null;
+  if (updates.email !== undefined) payload.email = updates.email || null;
+  if (updates.address !== undefined) payload.address = updates.address || null;
+  if (updates.notes !== undefined) payload.notes = updates.notes || null;
+  if (Object.keys(payload).length === 0) {
+    return;
+  }
+  await fetch(supabaseUrl(`project_stakeholders?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteProjectStakeholder(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, error: "Not configured." };
+  }
+  const response = await fetch(supabaseUrl(`project_stakeholders?id=eq.${id}`), {
+    method: "PATCH",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
+  });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete stakeholder") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
+  await logDeletionEvent("project_stakeholder", id, label, "deleted", actorEmail, accessToken);
   return { ok: true };
 }
 
