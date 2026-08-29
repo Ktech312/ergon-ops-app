@@ -5015,13 +5015,19 @@ export async function loadBuildTransactions(accessToken?: string): Promise<Build
     return [];
   }
   const [buildsResponse, movements] = await Promise.all([
-    fetch(supabaseUrl(`build_transactions?select=${BUILD_TRANSACTION_SELECT}&order=created_at.desc&limit=2000`), { headers: supabaseHeaders(accessToken) }),
+    fetch(supabaseUrl(`build_transactions?select=${BUILD_TRANSACTION_SELECT}&deleted_at=is.null&order=created_at.desc&limit=2000`), { headers: supabaseHeaders(accessToken) }),
     loadInventoryMovements(accessToken),
   ]);
-  if (!buildsResponse.ok) {
+  // Migration 098 safety net: if deleted_at doesn't exist yet, the filtered
+  // query 400s -- retry without it so Builds isn't blank until the
+  // migration runs (deleted builds just won't be hideable yet).
+  const finalResponse = buildsResponse.ok
+    ? buildsResponse
+    : await fetch(supabaseUrl(`build_transactions?select=${BUILD_TRANSACTION_SELECT}&order=created_at.desc&limit=2000`), { headers: supabaseHeaders(accessToken) });
+  if (!finalResponse.ok) {
     return [];
   }
-  const rows = (await buildsResponse.json()) as BuildTransactionRow[];
+  const rows = (await finalResponse.json()) as BuildTransactionRow[];
   const movementsByBuild = new Map<string, InventoryMovement[]>();
   movements.forEach((movement) => {
     if (!movement.buildNumber) {
@@ -5073,6 +5079,33 @@ export async function saveBuildTransactions(builds: BuildTransaction[], accessTo
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
     body: JSON.stringify(payload),
   });
+}
+
+// E: "I need to be able to delete these [cancelled/undone builds], it
+// should just log if any user does, but i don't want a long list of
+// cancelled items." Soft-delete only -- build_number is the natural key
+// here since BuildTransaction.id IS the build_number (never a raw uuid
+// in the app layer), and the whole-array upsert in saveBuildTransactions
+// above never touches deleted_at/deleted_by_email, so a repeat debounced
+// save can't accidentally resurrect a deleted build.
+export async function deleteBuildTransaction(buildNumber: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, error: "Not configured." };
+  }
+  const response = await fetch(supabaseUrl(`build_transactions?build_number=eq.${encodeURIComponent(buildNumber)}`), {
+    method: "PATCH",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
+  });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete build") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ build_number: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
+  await logDeletionEvent("build_transaction", buildNumber, buildNumber, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 type ProjectAllocationRow = {

@@ -78,6 +78,7 @@ import {
   addProjectStakeholder,
   updateProjectStakeholder,
   deleteProjectStakeholder,
+  deleteBuildTransaction,
   addProjectLocationItem,
   updateProjectLocationItem,
   deleteProjectLocationItem,
@@ -386,6 +387,24 @@ const BOM_ITEM_GROUPS = ["VPUs", "Cameras", "Sign Controllers", "Misc Parts"] as
 // cycle counts, the Stock column itself) keeps reading `.stock` directly.
 function availableOf(part: Part): number {
   return part.stock - (part.allocated ?? 0);
+}
+
+// E, from a screenshot with a $0-stock item circled: "what is gauged as
+// Healthy, we have no parts but everything says healthy." Root cause:
+// "Healthy" was the fallback for anything that wasn't Retired or over its
+// reorder point -- and trackReorder defaults to false for every item
+// (migration 092, deliberately, until E turns tracking on per-item), so an
+// untracked item at 0 stock fell straight into "Healthy" with its stock
+// level never actually evaluated. "Healthy" implies an assessment was
+// made and passed; "Not Tracked" says plainly that none was.
+function inventoryStatusLabel(part: Part): "Retired" | "Not Tracked" | "Reorder" | "Healthy" {
+  if (part.retired) {
+    return "Retired";
+  }
+  if (!part.trackReorder) {
+    return "Not Tracked";
+  }
+  return availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy";
 }
 
 function categorizeInventoryItemForBom(part: Part): (typeof BOM_ITEM_GROUPS)[number] {
@@ -5975,6 +5994,18 @@ function App() {
     );
   }
 
+  async function handleDeleteBuildTransaction(buildId: string) {
+    if (!authSession) {
+      return;
+    }
+    const result = await deleteBuildTransaction(buildId, authSession.email, authSession.accessToken);
+    if (!result.ok) {
+      window.alert(result.error ?? "Could not delete build.");
+      return;
+    }
+    setBuildTransactions((current) => current.filter((build) => build.id !== buildId));
+  }
+
   // Phase 10a: all of the functions below write through to the real
   // `purchase_requests` table via persistence.ts, then mirror the change
   // into local state (and purchaseRequestsRef, kept in sync alongside it so
@@ -6828,7 +6859,7 @@ function App() {
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
             {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDismissOneOff={dismissOneOff} onDeleteItem={handleDeleteInventoryItem} />}
+            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onDeleteBuildTransaction={handleDeleteBuildTransaction} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDismissOneOff={dismissOneOff} onDeleteItem={handleDeleteInventoryItem} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
@@ -8855,6 +8886,7 @@ function Inventory({
   onUndoBuildTransaction,
   onUpdateBuildStage,
   onCancelPlannedBuild,
+  onDeleteBuildTransaction,
   onQueueBuildShortageRequests,
   tasks,
   taskActivity,
@@ -8888,6 +8920,7 @@ function Inventory({
   onUndoBuildTransaction: (buildId: string) => void;
   onUpdateBuildStage: (buildId: string, stage: NonNullable<BuildTransaction["stage"]>) => void;
   onCancelPlannedBuild: (buildId: string) => void;
+  onDeleteBuildTransaction: (buildId: string) => void;
   onQueueBuildShortageRequests: (buildId: string) => Promise<number>;
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
@@ -9045,7 +9078,7 @@ function Inventory({
   const distinctInventoryTags = Array.from(new Set(inventoryItems.flatMap((part) => part.tags ?? []))).sort();
 
   const filteredInventoryItems = inventoryItems.filter((part) => {
-    const status = part.retired ? "Retired" : part.trackReorder && availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy";
+    const status = inventoryStatusLabel(part);
     const tabMatch = inventoryTab === "finished" ? part.category === "Build" : part.category !== "Build";
     return (
       tabMatch &&
@@ -9293,7 +9326,7 @@ function Inventory({
         available: availableOf(part),
         reorder_point: part.reorderPoint,
         unit_cost: part.cost,
-        status: part.retired ? "Retired" : part.trackReorder && availableOf(part) <= part.reorderPoint ? "Reorder" : "Healthy",
+        status: inventoryStatusLabel(part),
         tags: (part.tags ?? []).join("; "),
         barcode: part.barcode ?? "",
       })),
@@ -9710,6 +9743,7 @@ function Inventory({
                   <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
                     <option>All</option>
                     <option>Healthy</option>
+                    <option>Not Tracked</option>
                     <option>Reorder</option>
                     <option>Retired</option>
                   </select>
@@ -9737,7 +9771,7 @@ function Inventory({
                   <td>{part.allocated ?? 0}</td>
                   <td>{availableOf(part)}</td>
                   <td>{money(part.cost)}</td>
-                  <td>{part.retired ? <span className="status retired">Retired</span> : part.trackReorder && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
+                  <td>{inventoryStatusLabel(part) === "Retired" ? <span className="status retired">Retired</span> : inventoryStatusLabel(part) === "Not Tracked" ? <span className="status">Not Tracked</span> : inventoryStatusLabel(part) === "Reorder" ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}</td>
                   <td onClick={(event) => event.stopPropagation()}>
                     <div className="table-actions">
                       <button className="table-action secondary-table-action" type="button" onClick={() => openAdjustModal(part)} disabled={part.retired}>Adjust</button>
@@ -9769,6 +9803,7 @@ function Inventory({
             <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
               <option>All</option>
               <option>Healthy</option>
+              <option>Not Tracked</option>
               <option>Reorder</option>
               <option>Retired</option>
             </select>
@@ -9800,7 +9835,7 @@ function Inventory({
                 <span className="status">Stock: {part.stock}</span>
                 {(part.allocated ?? 0) > 0 && <span className="status">Allocated: {part.allocated}</span>}
                 <span className="status">{money(part.cost)}</span>
-                {part.retired ? <span className="status retired">Retired</span> : part.trackReorder && availableOf(part) <= part.reorderPoint ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
+                {inventoryStatusLabel(part) === "Retired" ? <span className="status retired">Retired</span> : inventoryStatusLabel(part) === "Not Tracked" ? <span className="status">Not Tracked</span> : inventoryStatusLabel(part) === "Reorder" ? <span className="status warn">Reorder</span> : <span className="status ok">Healthy</span>}
               </span>
             </div>
           ))}
@@ -9880,6 +9915,20 @@ function Inventory({
                 </div>
                 {build.status === "planned" && (
                   <button className="icon-button-sm" type="button" onClick={() => onCancelPlannedBuild(build.id)} aria-label={`Cancel ${build.buildNumber}`}>
+                    <Trash2 size={13} />
+                  </button>
+                )}
+                {(build.status === "cancelled" || build.status === "undone") && (
+                  <button
+                    className="icon-button-sm"
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`Delete ${build.buildNumber}? This is logged and can't be undone.`)) {
+                        onDeleteBuildTransaction(build.id);
+                      }
+                    }}
+                    aria-label={`Delete ${build.buildNumber}`}
+                  >
                     <Trash2 size={13} />
                   </button>
                 )}
