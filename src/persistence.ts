@@ -4553,6 +4553,55 @@ export async function deleteInventoryItem(sku: string, actorEmail: string, acces
   return { ok: true };
 }
 
+// E: "i think ADMIN should be able to delete it because I will have a lot
+// of demo data i will have to delete eventually." The normal delete above
+// blocks on ANY inventory_balances row existing at all -- but every item
+// gets one automatically at creation (it's how quantity_on_hand is
+// tracked, even at 0), so in practice the normal delete blocks nearly
+// every item, demo or not, not just ones with real history.
+//
+// This is deliberately narrower than "admin can delete anything": it only
+// clears inventory_balances rows that are genuinely empty
+// (quantity_on_hand = 0, quantity_reserved = 0) before retrying, so a
+// brand-new/never-touched demo item can actually be removed. If real
+// movements, BOM membership, or purchase order lines exist, the delete
+// still fails -- even for an admin, on purpose -- since that's real
+// business/audit history, not demo clutter, and destroying it would be a
+// much bigger decision than "let admin clean up test data."
+export async function forceDeleteInventoryItem(sku: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, error: "Not configured." };
+  }
+  const lookupResponse = await fetch(supabaseUrl(`inventory_items?sku=eq.${encodeURIComponent(sku)}&select=id,item_name`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  const lookupRows = lookupResponse.ok ? ((await lookupResponse.json()) as Array<{ id: string; item_name: string }>) : [];
+  const item = lookupRows[0];
+  if (!item) {
+    return { ok: true };
+  }
+  await fetch(supabaseUrl(`inventory_balances?inventory_item_id=eq.${item.id}&quantity_on_hand=eq.0&quantity_reserved=eq.0`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+  const response = await fetch(supabaseUrl(`inventory_items?id=eq.${item.id}`), {
+    method: "DELETE",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+  });
+  if (!response.ok) {
+    if (response.status === 409) {
+      return { ok: false, error: "Still can't delete -- this item has real movement, build-BOM, or purchase order history, not just an empty stock record. Use Retire instead." };
+    }
+    return { ok: false, error: await readSupabaseError(response, "Could not delete inventory item") };
+  }
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (deletedRows.length === 0) {
+    return { ok: false, error: "Delete didn't remove anything -- you may not have permission." };
+  }
+  await logDeletionEvent("inventory_item", item.id, `${item.item_name || sku} (admin force-delete)`, "deleted", actorEmail, accessToken);
+  return { ok: true };
+}
+
 export async function saveInventoryItems(items: Part[], accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken || items.length === 0) {
     return;

@@ -79,6 +79,7 @@ import {
   updateProjectStakeholder,
   deleteProjectStakeholder,
   deleteBuildTransaction,
+  forceDeleteInventoryItem,
   addProjectLocationItem,
   updateProjectLocationItem,
   deleteProjectLocationItem,
@@ -5567,6 +5568,17 @@ function App() {
     return result;
   }
 
+  async function handleForceDeleteInventoryItem(ref: string): Promise<{ ok: boolean; error?: string }> {
+    if (!authSession) {
+      return { ok: false, error: "You must be signed in to delete an inventory item." };
+    }
+    const result = await forceDeleteInventoryItem(ref, authSession.email, authSession.accessToken);
+    if (result.ok) {
+      setInventoryItems((current) => current.filter((item) => item.ref !== ref));
+    }
+    return result;
+  }
+
   function receiveInventoryStock(partRef: string, qty: number, unitCost: number, poNumber: string, notes: string, projectName?: string) {
     withProductionLock("inventory_item", partRef, () => {
     const part = inventoryItems.find((item) => item.ref === partRef);
@@ -6859,7 +6871,7 @@ function App() {
               {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
             </div>
             {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onDeleteBuildTransaction={handleDeleteBuildTransaction} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDismissOneOff={dismissOneOff} onDeleteItem={handleDeleteInventoryItem} />}
+            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onDeleteBuildTransaction={handleDeleteBuildTransaction} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDismissOneOff={dismissOneOff} onDeleteItem={handleDeleteInventoryItem} onForceDeleteItem={handleForceDeleteInventoryItem} isAdmin={isAdmin} />}
             {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
           </>
         )}
@@ -8901,6 +8913,8 @@ function Inventory({
   onMergeOneOff,
   onDismissOneOff,
   onDeleteItem,
+  onForceDeleteItem,
+  isAdmin,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
@@ -8935,6 +8949,8 @@ function Inventory({
   onMergeOneOff: (params: { itemKey: string; itemName: string; totalQty: number; lastUnitCost: number; orderNumbers: string[]; targetSku: string; notes: string }) => void;
   onDismissOneOff: (params: { itemKey: string; itemName: string; totalQty: number; orderNumbers: string[] }) => void;
   onDeleteItem: (ref: string) => Promise<{ ok: boolean; error?: string }>;
+  onForceDeleteItem: (ref: string) => Promise<{ ok: boolean; error?: string }>;
+  isAdmin: boolean;
 }) {
   const emptyItemDraft: Part = {
     ref: nextSkuRef(inventoryItems),
@@ -9365,9 +9381,26 @@ function Inventory({
     const result = await onDeleteItem(editingItemRef);
     if (result.ok) {
       setShowItemModal(false);
-    } else {
-      window.alert(result.error ?? "Could not delete inventory item.");
+      return;
     }
+    // E: "i think ADMIN should be able to delete it because I will have a
+    // lot of demo data i will have to delete eventually." The normal
+    // delete blocks on ANY inventory_balances row, which every item gets
+    // automatically -- so admins get offered a narrower escalation right
+    // here instead of a dead end, but only for exactly this failure (not
+    // e.g. a permission error, where retrying stronger wouldn't help).
+    if (isAdmin && result.error?.includes("stock, movement, or build-BOM history")) {
+      if (window.confirm(`${result.error}\n\nAs an admin, you can force-delete if this item only has an empty stock record (no real movements, BOM membership, or purchase history). Try that now?`)) {
+        const forceResult = await onForceDeleteItem(editingItemRef);
+        if (forceResult.ok) {
+          setShowItemModal(false);
+        } else {
+          window.alert(forceResult.error ?? "Could not delete inventory item.");
+        }
+      }
+      return;
+    }
+    window.alert(result.error ?? "Could not delete inventory item.");
   }
 
   function openAdjustModal(part?: Part) {
