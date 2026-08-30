@@ -1215,6 +1215,134 @@ export async function getMessageAttachmentUrl(storagePath: string, accessToken?:
   return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1${body.signedURL}`;
 }
 
+// --- Group channels (migration 101) -- phase 1 of the Slack/ClickUp/
+// Drive replacement roadmap (see HANDOFF.md). One shared shape for every
+// channel type (section-wide or per-project today; per-client in a later
+// phase) rather than a separate system per type -- the embedded
+// "Discussion" tabs and the future Messages-hub rebuild are two views of
+// this same data. Broadly authenticated, unlike direct_messages -- these
+// are team-visible channels, not private 1:1s; real visibility is
+// enforced the same way every other section already is, client-side by
+// tab access, not a new per-channel ACL.
+export type Channel = {
+  id: string;
+  type: "section" | "project" | "client";
+  sectionKey: string | null;
+  projectId: string | null;
+  name: string;
+};
+
+type ChannelRow = {
+  id: string;
+  type: "section" | "project" | "client";
+  section_key: string | null;
+  project_id: string | null;
+  name: string;
+};
+
+function mapChannelRow(row: ChannelRow): Channel {
+  return { id: row.id, type: row.type, sectionKey: row.section_key, projectId: row.project_id, name: row.name };
+}
+
+export async function loadChannels(accessToken?: string): Promise<Channel[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("channels?select=id,type,section_key,project_id,name&order=name.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ChannelRow[];
+  return rows.map(mapChannelRow);
+}
+
+export type ChannelMessage = {
+  id: string;
+  channelId: string;
+  senderId: string;
+  body: string;
+  createdAt: string;
+  attachmentStoragePath: string | null;
+  attachmentFileName: string | null;
+  attachmentMimeType: string | null;
+  attachmentSizeBytes: number | null;
+};
+
+type ChannelMessageRow = {
+  id: string;
+  channel_id: string;
+  sender_id: string;
+  body: string | null;
+  created_at: string;
+  attachment_storage_path: string | null;
+  attachment_file_name: string | null;
+  attachment_mime_type: string | null;
+  attachment_size_bytes: number | string | null;
+};
+
+function mapChannelMessageRow(row: ChannelMessageRow): ChannelMessage {
+  return {
+    id: row.id,
+    channelId: row.channel_id,
+    senderId: row.sender_id,
+    body: row.body ?? "",
+    createdAt: row.created_at,
+    attachmentStoragePath: row.attachment_storage_path ?? null,
+    attachmentFileName: row.attachment_file_name ?? null,
+    attachmentMimeType: row.attachment_mime_type ?? null,
+    attachmentSizeBytes: row.attachment_size_bytes == null ? null : Number(row.attachment_size_bytes),
+  };
+}
+
+export async function loadChannelMessages(channelId: string, accessToken?: string): Promise<ChannelMessage[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`channel_messages?channel_id=eq.${channelId}&order=created_at.asc&limit=500`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ChannelMessageRow[];
+  return rows.map(mapChannelMessageRow);
+}
+
+export async function sendChannelMessage(
+  channelId: string,
+  senderId: string,
+  body: string,
+  accessToken?: string,
+  attachment?: { storagePath: string; fileName: string; mimeType: string; sizeBytes: number },
+): Promise<ChannelMessage> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("channel_messages"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      channel_id: channelId,
+      sender_id: senderId,
+      body: body.trim() || null,
+      attachment_storage_path: attachment?.storagePath ?? null,
+      attachment_file_name: attachment?.fileName ?? null,
+      attachment_mime_type: attachment?.mimeType ?? null,
+      attachment_size_bytes: attachment?.sizeBytes ?? null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not send message"));
+  }
+  const rows = (await response.json()) as ChannelMessageRow[];
+  if (rows.length === 0) {
+    throw new Error("Message didn't send -- you may not have permission.");
+  }
+  return mapChannelMessageRow(rows[0]);
+}
+
 // Doesn't need to know which conversations the user is in -- RLS on
 // direct_messages already restricts every row returned to conversations
 // this user actually participates in, so this is naturally scoped.

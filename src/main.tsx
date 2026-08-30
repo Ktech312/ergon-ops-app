@@ -219,6 +219,9 @@ import {
   loadTaskHardwareDependencies,
   loadTasks,
   loadTeamMembers,
+  loadChannels,
+  loadChannelMessages,
+  sendChannelMessage,
   loadUserRoleMode,
   loadUsersByRole,
   markWelcomeSeen,
@@ -354,6 +357,8 @@ import {
   type TaskSection,
   type TaskStatus,
   type TeamMember,
+  type Channel,
+  type ChannelMessage,
   type SiteHardwareRule,
   type SiteHardwareMetric,
   type UserInvite,
@@ -1295,6 +1300,14 @@ function App() {
   const [taskStatusMessage, setTaskStatusMessage] = useState("");
   const [taskActivity, setTaskActivity] = useState<TaskActivityEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  // Which section's embedded "Discussion" tab is showing, if any (e.g.
+  // "inventory" while on the Inventory & Purchasing group) -- overrides
+  // the normal Stock/Purchasing/Vendors-style content for that group.
+  // Cleared any time navigateToView fires, including switching between
+  // the group's own real tabs, so Discussion behaves like one more tab
+  // in that same row rather than a separate mode to get stuck in.
+  const [activeDiscussionSection, setActiveDiscussionSection] = useState<string | null>(null);
   const [teamMemberStatus, setTeamMemberStatus] = useState("");
   const [pendingPhotoCount, setPendingPhotoCount] = useState(0);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -4345,6 +4358,31 @@ function App() {
     reloadTeamMembers(authSession.accessToken);
   }, [authSession]);
 
+  // Group channels (migration 101, Slack/ClickUp/Drive roadmap in
+  // HANDOFF.md) -- the list itself (section/project channels) rarely
+  // changes, so it's loaded the same lightweight way as teamMembers
+  // rather than folded into loadRemoteAppState's big aggregate query.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setChannels([]);
+      return;
+    }
+    loadChannels(authSession.accessToken).then(setChannels).catch(() => {});
+  }, [authSession]);
+
+  // A new Project auto-gets a channel server-side (migration 101's
+  // trigger), but the client's own channels list won't know about it
+  // until reloaded -- keyed on project count specifically so this only
+  // re-fires when a project is actually added, not on every edit to an
+  // existing one.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadChannels(authSession.accessToken).then(setChannels).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectSites.length]);
+
   async function handleAddTeamMember(member: Omit<TeamMember, "id">) {
     if (!authSession) {
       return;
@@ -5370,6 +5408,7 @@ function App() {
     window.localStorage.setItem(scrollKey(), String(window.scrollY));
     window.location.hash = nextView;
     setAccountMenuOpen(false);
+    setActiveDiscussionSection(null);
   }
 
   // Global top-nav search -- parts (Inventory), purchase orders (Reports'
@@ -6927,16 +6966,30 @@ function App() {
         {(view === "purchasing" || view === "inventory" || view === "vendors") && (
           <>
             <div className="segmented-tabs operations-subtabs">
-              {allowedTabs.includes("inventory") && <button className={view === "inventory" ? "active" : ""} type="button" onClick={() => navigateToView("inventory")}>Stock</button>}
-              {allowedTabs.includes("purchasing") && <button className={view === "purchasing" ? "active" : ""} type="button" onClick={() => navigateToView("purchasing")}>Purchasing</button>}
-              {allowedTabs.includes("vendors") && <button className={view === "vendors" ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
+              {allowedTabs.includes("inventory") && <button className={view === "inventory" && !activeDiscussionSection ? "active" : ""} type="button" onClick={() => navigateToView("inventory")}>Stock</button>}
+              {allowedTabs.includes("purchasing") && <button className={view === "purchasing" && !activeDiscussionSection ? "active" : ""} type="button" onClick={() => navigateToView("purchasing")}>Purchasing</button>}
+              {allowedTabs.includes("vendors") && <button className={view === "vendors" && !activeDiscussionSection ? "active" : ""} type="button" onClick={() => navigateToView("vendors")}>Vendors</button>}
+              <button className={activeDiscussionSection === "inventory" ? "active" : ""} type="button" onClick={() => setActiveDiscussionSection("inventory")}>Discussion</button>
             </div>
-            {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-            {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onDeleteBuildTransaction={handleDeleteBuildTransaction} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDismissOneOff={dismissOneOff} onDeleteItem={handleDeleteInventoryItem} onForceDeleteItem={handleForceDeleteInventoryItem} isAdmin={isAdmin} />}
-            {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
+            {activeDiscussionSection === "inventory" ? (
+              (() => {
+                const channel = channels.find((entry) => entry.type === "section" && entry.sectionKey === "inventory");
+                return channel ? (
+                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+                ) : (
+                  <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
+                );
+              })()
+            ) : (
+              <>
+                {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
+                {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onDeleteBuildTransaction={handleDeleteBuildTransaction} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDismissOneOff={dismissOneOff} onDeleteItem={handleDeleteInventoryItem} onForceDeleteItem={handleForceDeleteInventoryItem} isAdmin={isAdmin} />}
+                {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
+              </>
+            )}
           </>
         )}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} channels={channels} knownUsers={knownUsers} myUserId={authSession?.userId ?? ""} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <SalesHome
             catalogItems={catalogItems}
@@ -10844,6 +10897,9 @@ function Projects({
   onAddProjectStakeholder,
   onUpdateProjectStakeholder,
   onDeleteProjectStakeholder,
+  channels,
+  knownUsers,
+  myUserId,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -10869,6 +10925,9 @@ function Projects({
   tasks: EOTask[];
   taskActivity: TaskActivityEntry[];
   teamMembers: TeamMember[];
+  channels: Channel[];
+  knownUsers: KnownUser[];
+  myUserId: string;
   onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
@@ -10958,6 +11017,7 @@ function Projects({
     saasRenewalDate: "",
   });
   const [showCostBreakdownModal, setShowCostBreakdownModal] = useState(false);
+  const [showDiscussionModal, setShowDiscussionModal] = useState(false);
   const [costBreakdownDraft, setCostBreakdownDraft] = useState<{ saleAmount: number | null; estimatedLaborCost: number | null; subcontractorCost: number | null; travelExpenses: number | null }>({
     saleAmount: null,
     estimatedLaborCost: null,
@@ -10985,6 +11045,7 @@ function Projects({
   const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
   const selectedProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject.name || doc.project === selectedProject.ref);
   const selectedProjectId = selectedProject.id;
+  const projectChannel = channels.find((entry) => entry.type === "project" && entry.projectId === selectedProjectId);
   useEffect(() => {
     if (selectedProjectId) {
       onLoadProjectStakeholders(selectedProjectId);
@@ -12506,7 +12567,33 @@ function Projects({
           ]}
           onClick={openCostBreakdownModal}
         />
+        <ProjectTile
+          icon={<MessageCircle size={18} />}
+          title="Discussion"
+          hint="This project's own channel -- never dies, even once the project closes"
+          stats={[{ label: "Channel", value: projectChannel ? "Ready" : "Not set yet" }]}
+          onClick={() => setShowDiscussionModal(true)}
+        />
       </div>
+
+      {showDiscussionModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="discussion-modal-title">
+            <div className="modal-header">
+              <div>
+                <h2 id="discussion-modal-title">Discussion -- {selectedProject.name}</h2>
+                <p>This channel stays with the project permanently, including after it closes.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowDiscussionModal(false)} aria-label="Close">x</button>
+            </div>
+            {projectChannel ? (
+              <ChannelDiscussion channel={projectChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+            ) : (
+              <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
+            )}
+          </section>
+        </div>
+      )}
 
       {showCostBreakdownModal && (
         <div className="modal-backdrop" role="presentation">
@@ -13425,6 +13512,284 @@ function ClientLedger({
   );
 }
 
+// E: "we need to add a User name section, then this will say user name and
+// their Position, Example: Abhi East coast PM" -- team_members already has
+// fullName + roleTitle (editable in Admin's Team Roster), reused here
+// instead of a new table. Falls back to the email local-part when a
+// person has no roster entry or left fullName blank. Shared by DM threads
+// and group channels alike, not just Messages.
+function teamDisplayName(email: string, teamMembers: TeamMember[]): string {
+  const member = teamMembers.find((entry) => entry.email && entry.email.toLowerCase() === email.toLowerCase());
+  const name = member?.fullName?.trim();
+  if (!name) {
+    return email.split("@")[0] || email;
+  }
+  return member?.roleTitle?.trim() ? `${name} ${member.roleTitle.trim()}` : name;
+}
+
+// Shared message-thread UI (scroll history + compose row + attachments) --
+// extracted so DM threads (migration 094/100) and group channels
+// (migration 101, the Slack/ClickUp/Drive roadmap in HANDOFF.md) render
+// through the exact same component instead of two copies of the same
+// bubble/compose/attachment logic. `senderNameFor`, when given, labels
+// each non-mine bubble with who sent it -- needed for a channel (could be
+// anyone), skipped for a DM (already obvious from the thread header).
+type ThreadMessage = {
+  id: string;
+  senderId: string;
+  body: string;
+  createdAt: string;
+  attachmentStoragePath: string | null;
+  attachmentFileName: string | null;
+  attachmentMimeType: string | null;
+  attachmentSizeBytes: number | null;
+};
+
+function MessageThread({
+  messages,
+  myUserId,
+  accessToken,
+  onSend,
+  emptyText,
+  senderNameFor,
+}: {
+  messages: ThreadMessage[];
+  myUserId: string;
+  accessToken?: string;
+  onSend: (body: string, file?: File) => void;
+  emptyText: string;
+  senderNameFor?: (senderId: string) => string;
+}) {
+  const [draftBody, setDraftBody] = useState("");
+  const [draftFile, setDraftFile] = useState<File | null>(null);
+  const [draftFilePreviewUrl, setDraftFilePreviewUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
+  const threadEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages]);
+
+  // Resolve a short-lived signed URL for every attachment as messages load
+  // -- eagerly, not on click, since a picture is meant to preview inline
+  // like a normal chat app rather than needing an extra "view" step.
+  useEffect(() => {
+    let cancelled = false;
+    messages
+      .filter((message) => message.attachmentStoragePath && !attachmentUrls[message.id])
+      .forEach((message) => {
+        getMessageAttachmentUrl(message.attachmentStoragePath!, accessToken).then((url) => {
+          if (url && !cancelled) {
+            setAttachmentUrls((current) => ({ ...current, [message.id]: url }));
+          }
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, accessToken]);
+
+  function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    setDraftFile(file);
+    setDraftFilePreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
+    });
+  }
+
+  function clearDraftFile() {
+    setDraftFilePreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+    setDraftFile(null);
+  }
+
+  function submitDraft() {
+    if (!draftBody.trim() && !draftFile) {
+      return;
+    }
+    onSend(draftBody, draftFile ?? undefined);
+    setDraftBody("");
+    clearDraftFile();
+  }
+
+  return (
+    <>
+      <div className="messages-thread-scroll">
+        {messages.map((message) => {
+          const attachmentUrl = message.attachmentStoragePath ? attachmentUrls[message.id] : undefined;
+          const isImage = (message.attachmentMimeType ?? "").startsWith("image/");
+          const mine = message.senderId === myUserId;
+          return (
+            <div key={message.id} className={`messages-bubble-row ${mine ? "mine" : ""}`}>
+              <div className="messages-bubble">
+                {!mine && senderNameFor && <small className="messages-bubble-sender">{senderNameFor(message.senderId)}</small>}
+                {message.attachmentStoragePath && (
+                  isImage ? (
+                    attachmentUrl ? (
+                      <a href={attachmentUrl} target="_blank" rel="noreferrer">
+                        <img src={attachmentUrl} alt={message.attachmentFileName ?? "Attached image"} className="messages-attachment-image" />
+                      </a>
+                    ) : (
+                      <div className="messages-attachment-loading">Loading image...</div>
+                    )
+                  ) : (
+                    <a
+                      className="messages-attachment-file"
+                      href={attachmentUrl ?? undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(event) => { if (!attachmentUrl) event.preventDefault(); }}
+                    >
+                      <FileText size={16} />
+                      <span>{message.attachmentFileName ?? "Attachment"}</span>
+                      <Download size={14} />
+                    </a>
+                  )
+                )}
+                {message.body && <span>{message.body}</span>}
+                <small>{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</small>
+              </div>
+            </div>
+          );
+        })}
+        {messages.length === 0 && <div className="empty-compact-state">{emptyText}</div>}
+        <div ref={threadEndRef} />
+      </div>
+      {draftFile && (
+        <div className="messages-draft-attachment">
+          {draftFilePreviewUrl ? (
+            <img src={draftFilePreviewUrl} alt={draftFile.name} className="messages-draft-attachment-thumb" />
+          ) : (
+            <FileText size={16} />
+          )}
+          <span>{draftFile.name}</span>
+          <button className="messages-inline-icon" type="button" onClick={clearDraftFile} aria-label="Remove attachment" title="Remove attachment">
+            <Trash2 size={13} />
+          </button>
+        </div>
+      )}
+      <div className="messages-compose-row">
+        <input ref={fileInputRef} type="file" className="visually-hidden" onChange={handleFileSelect} />
+        <button
+          className="messages-inline-icon messages-attach-button"
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="Attach a picture or file"
+          title="Attach a picture or file"
+        >
+          <Camera size={17} />
+        </button>
+        <textarea
+          value={draftBody}
+          onChange={(event) => setDraftBody(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              submitDraft();
+            }
+          }}
+          placeholder="Write a message... (Enter to send, Shift+Enter for a new line)"
+        />
+        <button className="primary-action" type="button" onClick={submitDraft} disabled={!draftBody.trim() && !draftFile}>Send</button>
+      </div>
+    </>
+  );
+}
+
+// Group channel Discussion panel (migration 101, Slack/ClickUp/Drive
+// roadmap in HANDOFF.md) -- self-contained (loads/polls its own channel's
+// messages) so it can drop into any section/project page as one embedded
+// "Discussion" tab without the parent needing to manage thread state.
+// senderNameFor is always passed (unlike a DM, a channel message could be
+// from anyone) so every non-mine bubble is labeled.
+function ChannelDiscussion({
+  channel,
+  myUserId,
+  accessToken,
+  teamMembers,
+  knownUsers,
+}: {
+  channel: Channel;
+  myUserId: string;
+  accessToken?: string;
+  teamMembers: TeamMember[];
+  knownUsers: KnownUser[];
+}) {
+  const [messages, setMessages] = useState<ChannelMessage[]>([]);
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    if (!accessToken) {
+      setMessages([]);
+      return;
+    }
+    function reload() {
+      loadChannelMessages(channel.id, accessToken).then(setMessages).catch(() => {});
+    }
+    reload();
+    const interval = window.setInterval(reload, 5_000);
+    return () => window.clearInterval(interval);
+  }, [channel.id, accessToken]);
+
+  const emailByUserId = new Map(knownUsers.map((user) => [user.userId, user.email]));
+  function senderNameFor(senderId: string) {
+    const email = emailByUserId.get(senderId);
+    return email ? teamDisplayName(email, teamMembers) : "Unknown user";
+  }
+
+  const CHANNEL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+
+  async function handleSend(body: string, file?: File) {
+    if (!accessToken) {
+      return;
+    }
+    if (file && file.size > CHANNEL_ATTACHMENT_MAX_BYTES) {
+      setStatus(`"${file.name}" is too large -- attachments are limited to 20MB.`);
+      return;
+    }
+    try {
+      let attachment: { storagePath: string; fileName: string; mimeType: string; sizeBytes: number } | undefined;
+      if (file) {
+        const storagePath = buildMessageAttachmentStoragePath(channel.id, file.name);
+        const uploaded = await uploadMessageAttachment(file, storagePath, accessToken);
+        if (!uploaded) {
+          setStatus(`Could not upload "${file.name}".`);
+          return;
+        }
+        attachment = { storagePath, fileName: file.name, mimeType: file.type || "application/octet-stream", sizeBytes: file.size };
+      }
+      const message = await sendChannelMessage(channel.id, myUserId, body.trim(), accessToken, attachment);
+      setMessages((current) => [...current, message]);
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not send message.");
+    }
+  }
+
+  return (
+    <div className="channel-discussion-panel">
+      {status && <div className="source-file"><span>{status}</span></div>}
+      <MessageThread
+        messages={messages}
+        myUserId={myUserId}
+        accessToken={accessToken}
+        onSend={handleSend}
+        emptyText="No messages yet in this channel -- say hello."
+        senderNameFor={senderNameFor}
+      />
+    </div>
+  );
+}
+
 // Migration 094: real person-to-person direct messaging, ported (concept,
 // not code) from the VLTD sister project -- E: "I have a direct message
 // and alert system built into it now, I think we need that on this also."
@@ -13464,26 +13829,8 @@ function Messages({
   onSendMessage: (body: string, file?: File) => void;
   onSubscribeToPush: () => void;
 }) {
-  const [draftBody, setDraftBody] = useState("");
-  const [draftFile, setDraftFile] = useState<File | null>(null);
-  const [draftFilePreviewUrl, setDraftFilePreviewUrl] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
-  const threadEndRef = useRef<HTMLDivElement | null>(null);
-
-  // E: "we need to add a User name section, then this will say user name
-  // and their Position, Example: Abhi East coast PM" -- team_members
-  // already has fullName + roleTitle (editable in Admin's Team Roster),
-  // so this reuses that instead of a new table. Falls back to the email
-  // local-part when a person has no roster entry or left fullName blank.
-  const teamMemberByEmail = new Map(teamMembers.filter((member) => member.email).map((member) => [member.email.toLowerCase(), member]));
   function displayNameFor(email: string) {
-    const member = teamMemberByEmail.get(email.toLowerCase());
-    const name = member?.fullName?.trim();
-    if (!name) {
-      return email.split("@")[0] || email;
-    }
-    return member?.roleTitle?.trim() ? `${name} ${member.roleTitle.trim()}` : name;
+    return teamDisplayName(email, teamMembers);
   }
 
   const pinStorageKey = `ergon:pinned-messages:${myUserId}`;
@@ -13564,60 +13911,6 @@ function Messages({
 
   const activeConversation = conversations.find((entry) => entry.id === activeConversationId) ?? null;
 
-  useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ block: "end" });
-  }, [activeConversationMessages]);
-
-  // Resolve a short-lived signed URL for every attachment as messages load
-  // -- eagerly, not on click, since a picture is meant to preview inline
-  // like a normal chat app rather than needing an extra "view" step.
-  useEffect(() => {
-    let cancelled = false;
-    activeConversationMessages
-      .filter((message) => message.attachmentStoragePath && !attachmentUrls[message.id])
-      .forEach((message) => {
-        getMessageAttachmentUrl(message.attachmentStoragePath!, accessToken).then((url) => {
-          if (url && !cancelled) {
-            setAttachmentUrls((current) => ({ ...current, [message.id]: url }));
-          }
-        });
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversationMessages, accessToken]);
-
-  function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) {
-      return;
-    }
-    setDraftFile(file);
-    setDraftFilePreviewUrl((current) => {
-      if (current) URL.revokeObjectURL(current);
-      return file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
-    });
-  }
-
-  function clearDraftFile() {
-    setDraftFilePreviewUrl((current) => {
-      if (current) URL.revokeObjectURL(current);
-      return null;
-    });
-    setDraftFile(null);
-  }
-
-  function submitDraft() {
-    if (!draftBody.trim() && !draftFile) {
-      return;
-    }
-    onSendMessage(draftBody, draftFile ?? undefined);
-    setDraftBody("");
-    clearDraftFile();
-  }
-
   return (
     <>
       {pushPermissionState === "unsubscribed" && (
@@ -13687,82 +13980,13 @@ function Messages({
               <button className="icon-button messages-back-button" type="button" onClick={() => onSelectConversation(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
               <strong>{(() => { const email = emailByUserId.get(otherUserId(activeConversation)); return email ? displayNameFor(email) : "Unknown user"; })()}</strong>
             </div>
-            <div className="messages-thread-scroll">
-              {activeConversationMessages.map((message) => {
-                const attachmentUrl = message.attachmentStoragePath ? attachmentUrls[message.id] : undefined;
-                const isImage = (message.attachmentMimeType ?? "").startsWith("image/");
-                return (
-                  <div key={message.id} className={`messages-bubble-row ${message.senderId === myUserId ? "mine" : ""}`}>
-                    <div className="messages-bubble">
-                      {message.attachmentStoragePath && (
-                        isImage ? (
-                          attachmentUrl ? (
-                            <a href={attachmentUrl} target="_blank" rel="noreferrer">
-                              <img src={attachmentUrl} alt={message.attachmentFileName ?? "Attached image"} className="messages-attachment-image" />
-                            </a>
-                          ) : (
-                            <div className="messages-attachment-loading">Loading image...</div>
-                          )
-                        ) : (
-                          <a
-                            className="messages-attachment-file"
-                            href={attachmentUrl ?? undefined}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(event) => { if (!attachmentUrl) event.preventDefault(); }}
-                          >
-                            <FileText size={16} />
-                            <span>{message.attachmentFileName ?? "Attachment"}</span>
-                            <Download size={14} />
-                          </a>
-                        )
-                      )}
-                      {message.body && <span>{message.body}</span>}
-                      <small>{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</small>
-                    </div>
-                  </div>
-                );
-              })}
-              {activeConversationMessages.length === 0 && <div className="empty-compact-state">No messages yet -- say hello.</div>}
-              <div ref={threadEndRef} />
-            </div>
-            {draftFile && (
-              <div className="messages-draft-attachment">
-                {draftFilePreviewUrl ? (
-                  <img src={draftFilePreviewUrl} alt={draftFile.name} className="messages-draft-attachment-thumb" />
-                ) : (
-                  <FileText size={16} />
-                )}
-                <span>{draftFile.name}</span>
-                <button className="messages-inline-icon" type="button" onClick={clearDraftFile} aria-label="Remove attachment" title="Remove attachment">
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            )}
-            <div className="messages-compose-row">
-              <input ref={fileInputRef} type="file" className="visually-hidden" onChange={handleFileSelect} />
-              <button
-                className="messages-inline-icon messages-attach-button"
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                aria-label="Attach a picture or file"
-                title="Attach a picture or file"
-              >
-                <Camera size={17} />
-              </button>
-              <textarea
-                value={draftBody}
-                onChange={(event) => setDraftBody(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    submitDraft();
-                  }
-                }}
-                placeholder="Write a message... (Enter to send, Shift+Enter for a new line)"
-              />
-              <button className="primary-action" type="button" onClick={submitDraft} disabled={!draftBody.trim() && !draftFile}>Send</button>
-            </div>
+            <MessageThread
+              messages={activeConversationMessages}
+              myUserId={myUserId}
+              accessToken={accessToken}
+              onSend={onSendMessage}
+              emptyText="No messages yet -- say hello."
+            />
           </>
         ) : (
           <div className="empty-compact-state messages-empty-thread">Select a conversation, or start a new one.</div>

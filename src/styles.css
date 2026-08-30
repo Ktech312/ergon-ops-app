@@ -7035,6 +7035,19 @@ body:has(.modal-backdrop) .install-banner {
   display: flex;
 }
 
+/* Group channel Discussion panel (migration 101) -- embedded inline on a
+   section/project page rather than full-viewport like the standalone
+   Messages page, so a fixed height instead of calc(100vh - ...). */
+.channel-discussion-panel {
+  display: flex;
+  flex-direction: column;
+  height: 520px;
+}
+
+.channel-discussion-panel .messages-thread-scroll {
+  flex: 1;
+}
+
 .messages-conversation-list {
   display: flex;
   flex-direction: column;
@@ -7196,6 +7209,14 @@ body:has(.modal-backdrop) .install-banner {
 
 .messages-bubble-row.mine .messages-bubble {
   background: #f5e3d8;
+}
+
+.messages-bubble-sender {
+  color: #a01029;
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 2px;
 }
 
 .messages-bubble span {
