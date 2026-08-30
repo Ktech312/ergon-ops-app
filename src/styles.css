@@ -3075,6 +3075,17 @@ td small.quote-ref-tag {
   background: #f1e9de;
 }
 
+.visually-hidden {
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
 .site-info-value-with-action {
   align-items: center;
   display: flex;
@@ -7198,6 +7209,75 @@ body:has(.modal-backdrop) .install-banner {
   display: block;
   font-size: 10px;
   margin-top: 3px;
+}
+
+.messages-attachment-image {
+  border-radius: 8px;
+  display: block;
+  max-height: 260px;
+  max-width: 100%;
+}
+
+.messages-attachment-loading {
+  color: #9a9184;
+  font-size: 12px;
+  font-style: italic;
+  padding: 6px 0;
+}
+
+.messages-attachment-file {
+  align-items: center;
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  color: #413d37;
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  text-decoration: none;
+}
+
+.messages-attachment-file:hover {
+  background: #f1e9de;
+}
+
+.messages-attachment-file span {
+  display: block;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messages-draft-attachment {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 6px 10px;
+}
+
+.messages-draft-attachment span {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messages-draft-attachment-thumb {
+  border-radius: 4px;
+  height: 32px;
+  object-fit: cover;
+  width: 32px;
+}
+
+.messages-attach-button {
+  height: 42px;
+  width: 34px;
 }
 
 .messages-compose-row {

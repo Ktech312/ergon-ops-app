@@ -172,6 +172,9 @@ import {
   loadUnreadDirectMessageCounts,
   getOrCreateConversation,
   sendDirectMessage,
+  buildMessageAttachmentStoragePath,
+  uploadMessageAttachment,
+  getMessageAttachmentUrl,
   markConversationRead,
   upsertPushSubscription,
   vapidPublicKey,
@@ -2333,12 +2336,31 @@ function App() {
     }
   }
 
-  async function handleSendDirectMessage(body: string) {
-    if (!authSession || !activeConversationId || !body.trim()) {
+  const MESSAGE_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+
+  // E: "can you allow Picture and File uploads to the messages" -- an
+  // attachment can stand alone (no caption) or ride along with text, so
+  // this only bails if BOTH are empty, not just body like before.
+  async function handleSendDirectMessage(body: string, file?: File) {
+    if (!authSession || !activeConversationId || (!body.trim() && !file)) {
+      return;
+    }
+    if (file && file.size > MESSAGE_ATTACHMENT_MAX_BYTES) {
+      setMessagesStatus(`"${file.name}" is too large -- attachments are limited to 20MB.`);
       return;
     }
     try {
-      const message = await sendDirectMessage(activeConversationId, authSession.userId, body.trim(), authSession.accessToken);
+      let attachment: { storagePath: string; fileName: string; mimeType: string; sizeBytes: number } | undefined;
+      if (file) {
+        const storagePath = buildMessageAttachmentStoragePath(activeConversationId, file.name);
+        const uploaded = await uploadMessageAttachment(file, storagePath, authSession.accessToken);
+        if (!uploaded) {
+          setMessagesStatus(`Could not upload "${file.name}".`);
+          return;
+        }
+        attachment = { storagePath, fileName: file.name, mimeType: file.type || "application/octet-stream", sizeBytes: file.size };
+      }
+      const message = await sendDirectMessage(activeConversationId, authSession.userId, body.trim(), authSession.accessToken, attachment);
       setActiveConversationMessages((current) => [...current, message]);
       setConversations((current) =>
         current
@@ -2353,7 +2375,8 @@ function App() {
       const partnerId = conversation ? (conversation.participantAId === authSession.userId ? conversation.participantBId : conversation.participantAId) : null;
       const partnerEmail = partnerId ? knownUsers.find((user) => user.userId === partnerId)?.email : undefined;
       if (partnerEmail) {
-        void notify("direct_message_received", partnerEmail, `New message from ${authSession.email}`, body.trim().slice(0, 200), "conversation", activeConversationId);
+        const notifyBody = body.trim() || (attachment ? `Sent a file: ${attachment.fileName}` : "");
+        void notify("direct_message_received", partnerEmail, `New message from ${authSession.email}`, notifyBody.slice(0, 200), "conversation", activeConversationId);
       }
     } catch (error) {
       setMessagesStatus(error instanceof Error ? error.message : "Could not send message.");
@@ -7007,6 +7030,7 @@ function App() {
           <Messages
             myUserId={authSession?.userId ?? ""}
             myEmail={authSession?.email ?? ""}
+            accessToken={authSession?.accessToken}
             knownUsers={knownUsers}
             teamMembers={teamMembers}
             conversations={conversations}
@@ -13410,6 +13434,7 @@ function ClientLedger({
 function Messages({
   myUserId,
   myEmail,
+  accessToken,
   knownUsers,
   teamMembers,
   conversations,
@@ -13425,6 +13450,7 @@ function Messages({
 }: {
   myUserId: string;
   myEmail: string;
+  accessToken?: string;
   knownUsers: KnownUser[];
   teamMembers: TeamMember[];
   conversations: Conversation[];
@@ -13435,10 +13461,14 @@ function Messages({
   pushPermissionState: "unknown" | "unsupported" | "unsubscribed" | "subscribed";
   onSelectConversation: (conversationId: string | null) => void;
   onStartConversation: (otherUserId: string) => void;
-  onSendMessage: (body: string) => void;
+  onSendMessage: (body: string, file?: File) => void;
   onSubscribeToPush: () => void;
 }) {
   const [draftBody, setDraftBody] = useState("");
+  const [draftFile, setDraftFile] = useState<File | null>(null);
+  const [draftFilePreviewUrl, setDraftFilePreviewUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
   const threadEndRef = useRef<HTMLDivElement | null>(null);
 
   // E: "we need to add a User name section, then this will say user name
@@ -13538,12 +13568,54 @@ function Messages({
     threadEndRef.current?.scrollIntoView({ block: "end" });
   }, [activeConversationMessages]);
 
-  function submitDraft() {
-    if (!draftBody.trim()) {
+  // Resolve a short-lived signed URL for every attachment as messages load
+  // -- eagerly, not on click, since a picture is meant to preview inline
+  // like a normal chat app rather than needing an extra "view" step.
+  useEffect(() => {
+    let cancelled = false;
+    activeConversationMessages
+      .filter((message) => message.attachmentStoragePath && !attachmentUrls[message.id])
+      .forEach((message) => {
+        getMessageAttachmentUrl(message.attachmentStoragePath!, accessToken).then((url) => {
+          if (url && !cancelled) {
+            setAttachmentUrls((current) => ({ ...current, [message.id]: url }));
+          }
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversationMessages, accessToken]);
+
+  function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
       return;
     }
-    onSendMessage(draftBody);
+    setDraftFile(file);
+    setDraftFilePreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
+    });
+  }
+
+  function clearDraftFile() {
+    setDraftFilePreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+    setDraftFile(null);
+  }
+
+  function submitDraft() {
+    if (!draftBody.trim() && !draftFile) {
+      return;
+    }
+    onSendMessage(draftBody, draftFile ?? undefined);
     setDraftBody("");
+    clearDraftFile();
   }
 
   return (
@@ -13616,18 +13688,68 @@ function Messages({
               <strong>{(() => { const email = emailByUserId.get(otherUserId(activeConversation)); return email ? displayNameFor(email) : "Unknown user"; })()}</strong>
             </div>
             <div className="messages-thread-scroll">
-              {activeConversationMessages.map((message) => (
-                <div key={message.id} className={`messages-bubble-row ${message.senderId === myUserId ? "mine" : ""}`}>
-                  <div className="messages-bubble">
-                    <span>{message.body}</span>
-                    <small>{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</small>
+              {activeConversationMessages.map((message) => {
+                const attachmentUrl = message.attachmentStoragePath ? attachmentUrls[message.id] : undefined;
+                const isImage = (message.attachmentMimeType ?? "").startsWith("image/");
+                return (
+                  <div key={message.id} className={`messages-bubble-row ${message.senderId === myUserId ? "mine" : ""}`}>
+                    <div className="messages-bubble">
+                      {message.attachmentStoragePath && (
+                        isImage ? (
+                          attachmentUrl ? (
+                            <a href={attachmentUrl} target="_blank" rel="noreferrer">
+                              <img src={attachmentUrl} alt={message.attachmentFileName ?? "Attached image"} className="messages-attachment-image" />
+                            </a>
+                          ) : (
+                            <div className="messages-attachment-loading">Loading image...</div>
+                          )
+                        ) : (
+                          <a
+                            className="messages-attachment-file"
+                            href={attachmentUrl ?? undefined}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(event) => { if (!attachmentUrl) event.preventDefault(); }}
+                          >
+                            <FileText size={16} />
+                            <span>{message.attachmentFileName ?? "Attachment"}</span>
+                            <Download size={14} />
+                          </a>
+                        )
+                      )}
+                      {message.body && <span>{message.body}</span>}
+                      <small>{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</small>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {activeConversationMessages.length === 0 && <div className="empty-compact-state">No messages yet -- say hello.</div>}
               <div ref={threadEndRef} />
             </div>
+            {draftFile && (
+              <div className="messages-draft-attachment">
+                {draftFilePreviewUrl ? (
+                  <img src={draftFilePreviewUrl} alt={draftFile.name} className="messages-draft-attachment-thumb" />
+                ) : (
+                  <FileText size={16} />
+                )}
+                <span>{draftFile.name}</span>
+                <button className="messages-inline-icon" type="button" onClick={clearDraftFile} aria-label="Remove attachment" title="Remove attachment">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )}
             <div className="messages-compose-row">
+              <input ref={fileInputRef} type="file" className="visually-hidden" onChange={handleFileSelect} />
+              <button
+                className="messages-inline-icon messages-attach-button"
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="Attach a picture or file"
+                title="Attach a picture or file"
+              >
+                <Camera size={17} />
+              </button>
               <textarea
                 value={draftBody}
                 onChange={(event) => setDraftBody(event.target.value)}
@@ -13639,7 +13761,7 @@ function Messages({
                 }}
                 placeholder="Write a message... (Enter to send, Shift+Enter for a new line)"
               />
-              <button className="primary-action" type="button" onClick={submitDraft} disabled={!draftBody.trim()}>Send</button>
+              <button className="primary-action" type="button" onClick={submitDraft} disabled={!draftBody.trim() && !draftFile}>Send</button>
             </div>
           </>
         ) : (

@@ -1029,15 +1029,23 @@ export type DirectMessage = {
   body: string;
   createdAt: string;
   readAt: string | null;
+  attachmentStoragePath: string | null;
+  attachmentFileName: string | null;
+  attachmentMimeType: string | null;
+  attachmentSizeBytes: number | null;
 };
 
 type DirectMessageRow = {
   id: string;
   conversation_id: string;
   sender_id: string;
-  body: string;
+  body: string | null;
   created_at: string;
   read_at: string | null;
+  attachment_storage_path: string | null;
+  attachment_file_name: string | null;
+  attachment_mime_type: string | null;
+  attachment_size_bytes: number | string | null;
 };
 
 function mapDirectMessageRow(row: DirectMessageRow): DirectMessage {
@@ -1045,9 +1053,13 @@ function mapDirectMessageRow(row: DirectMessageRow): DirectMessage {
     id: row.id,
     conversationId: row.conversation_id,
     senderId: row.sender_id,
-    body: row.body,
+    body: row.body ?? "",
     createdAt: row.created_at,
     readAt: row.read_at,
+    attachmentStoragePath: row.attachment_storage_path ?? null,
+    attachmentFileName: row.attachment_file_name ?? null,
+    attachmentMimeType: row.attachment_mime_type ?? null,
+    attachmentSizeBytes: row.attachment_size_bytes == null ? null : Number(row.attachment_size_bytes),
   };
 }
 
@@ -1108,14 +1120,28 @@ export async function getOrCreateConversation(myUserId: string, otherUserId: str
   return mapConversationRow(rows[0]);
 }
 
-export async function sendDirectMessage(conversationId: string, senderId: string, body: string, accessToken?: string): Promise<DirectMessage> {
+export async function sendDirectMessage(
+  conversationId: string,
+  senderId: string,
+  body: string,
+  accessToken?: string,
+  attachment?: { storagePath: string; fileName: string; mimeType: string; sizeBytes: number },
+): Promise<DirectMessage> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     throw new Error("Not configured.");
   }
   const response = await fetch(supabaseUrl("direct_messages"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-    body: JSON.stringify({ conversation_id: conversationId, sender_id: senderId, body }),
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      sender_id: senderId,
+      body: body.trim() || null,
+      attachment_storage_path: attachment?.storagePath ?? null,
+      attachment_file_name: attachment?.fileName ?? null,
+      attachment_mime_type: attachment?.mimeType ?? null,
+      attachment_size_bytes: attachment?.sizeBytes ?? null,
+    }),
   });
   if (!response.ok) {
     throw new Error(await readSupabaseError(response, "Could not send message"));
@@ -1125,6 +1151,68 @@ export async function sendDirectMessage(conversationId: string, senderId: string
     throw new Error("Message didn't send -- you may not have permission.");
   }
   return mapDirectMessageRow(rows[0]);
+}
+
+// Message attachments (migration 100) -- private per-conversation bucket,
+// storage path prefixed with the conversation id so the bucket's own RLS
+// (see the migration) can restrict access to just the two participants,
+// same guarantee direct_messages' own row-level security already gives
+// the text. Signed URLs (1hr) are resolved on demand, same pattern as
+// project-documents/getDocumentDownloadUrl.
+const MESSAGE_ATTACHMENT_BUCKET = "message-attachments";
+
+export function buildMessageAttachmentStoragePath(conversationId: string, fileName: string): string {
+  const stamp = Date.now().toString(36);
+  const safeName = fileName.replace(/[^a-zA-Z0-9_.-]+/g, "_").slice(0, 120) || "file";
+  return `${conversationId}/${stamp}-${safeName}`;
+}
+
+export async function uploadMessageAttachment(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  const response = await fetch(
+    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${MESSAGE_ATTACHMENT_BUCKET}/${storagePath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": file.type || "application/octet-stream",
+        "x-upsert": "true",
+      },
+      body: file,
+    },
+  );
+  return response.ok;
+}
+
+export async function getMessageAttachmentUrl(storagePath: string, accessToken?: string): Promise<string | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !storagePath) {
+    return null;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  const response = await fetch(
+    `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/sign/${MESSAGE_ATTACHMENT_BUCKET}/${storagePath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ expiresIn: 3600 }),
+    },
+  );
+  if (!response.ok) {
+    return null;
+  }
+  const body = (await response.json()) as { signedURL?: string };
+  if (!body.signedURL) {
+    return null;
+  }
+  return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1${body.signedURL}`;
 }
 
 // Doesn't need to know which conversations the user is in -- RLS on
