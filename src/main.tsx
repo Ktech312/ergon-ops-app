@@ -7392,7 +7392,7 @@ function Dashboard({
   const importedLines = purchaseOrders.reduce((sum, order) => sum + order.lines.length, 0);
   const heldOrders = purchaseOrders.filter((order) => order.status === "On Hold");
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned");
-  const activePurchaseRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
+  const activePurchaseRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status) && !request.linkedPurchaseOrderId);
   const requestExposure = activePurchaseRequests.reduce((sum, request) => sum + request.quantity * request.estimatedUnitCost, 0);
   const recentReceipts = inventoryMovements.filter((movement) => movement.type === "receive").slice(0, 3);
   const recentTransfers = inventoryMovements.filter((movement) => movement.type === "transfer").slice(0, 3);
@@ -7762,7 +7762,7 @@ function Purchasing({
   // area titled Completed."
   const waitingPurchaseOrders = filteredPurchaseOrders.filter((po) => po.status !== "Received");
   const completedPurchaseOrders = filteredPurchaseOrders.filter((po) => po.status === "Received");
-  const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
+  const activeRequests = purchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status) && !request.linkedPurchaseOrderId);
   const plannedBuilds = buildTransactions.filter((build) => build.status === "planned").length;
   const receivingRequest = purchaseRequests.find((request) => request.id === receivingRequestId) ?? null;
   const editingRequest = purchaseRequests.find((request) => request.id === editingRequestId) ?? null;
@@ -13728,7 +13728,7 @@ function Reports({
     .slice(0, 8);
   const sourceRows = filteredInventoryItems.filter((part) => (part.purchaseUrls ?? []).length > 0).slice(0, 8);
   const reorderRows = filteredInventoryItems.filter((part) => !part.retired && part.trackReorder && availableOf(part) <= part.reorderPoint).sort((a, b) => availableOf(a) - availableOf(b)).slice(0, 12);
-  const openPurchaseRequests = filteredPurchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status));
+  const openPurchaseRequests = filteredPurchaseRequests.filter((request) => !["Received", "Cancelled"].includes(request.status) && !request.linkedPurchaseOrderId);
   const purchaseRequestExposure = openPurchaseRequests.reduce((sum, request) => sum + Math.max(0, request.quantity - (request.receivedQuantity ?? 0)) * request.estimatedUnitCost, 0);
   const plannedBuildShortages = filteredBuildTransactions
     .filter((build) => build.status === "planned")
