@@ -6991,6 +6991,21 @@ function App() {
         )}
         {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} channels={channels} knownUsers={knownUsers} myUserId={authSession?.userId ?? ""} />}
         {view === "sales" && allowedTabs.includes("sales") && (
+          <>
+            <div className="segmented-tabs operations-subtabs">
+              <button className={!activeDiscussionSection ? "active" : ""} type="button" onClick={() => setActiveDiscussionSection(null)}>Overview</button>
+              <button className={activeDiscussionSection === "sales" ? "active" : ""} type="button" onClick={() => setActiveDiscussionSection("sales")}>Discussion</button>
+            </div>
+            {activeDiscussionSection === "sales" ? (
+              (() => {
+                const channel = channels.find((entry) => entry.type === "section" && entry.sectionKey === "sales");
+                return channel ? (
+                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+                ) : (
+                  <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
+                );
+              })()
+            ) : (
           <SalesHome
             catalogItems={catalogItems}
             catalogStatus={catalogStatus}
@@ -7059,9 +7074,28 @@ function App() {
             onRestoreSalesQuoteImage={handleRestoreSalesQuoteImage}
             canReviewDeleted={isAdmin || roleMode === "manager"}
           />
+            )}
+          </>
         )}
         {view === "marketing" && allowedTabs.includes("marketing") && (
-          <Marketing projectSites={projectSites} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} />
+          <>
+            <div className="segmented-tabs operations-subtabs">
+              <button className={!activeDiscussionSection ? "active" : ""} type="button" onClick={() => setActiveDiscussionSection(null)}>Overview</button>
+              <button className={activeDiscussionSection === "marketing" ? "active" : ""} type="button" onClick={() => setActiveDiscussionSection("marketing")}>Discussion</button>
+            </div>
+            {activeDiscussionSection === "marketing" ? (
+              (() => {
+                const channel = channels.find((entry) => entry.type === "section" && entry.sectionKey === "marketing");
+                return channel ? (
+                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+                ) : (
+                  <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
+                );
+              })()
+            ) : (
+              <Marketing projectSites={projectSites} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} />
+            )}
+          </>
         )}
         {view === "client_ledger" && allowedTabs.includes("client_ledger") && (
           <ClientLedger
