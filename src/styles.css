@@ -7050,16 +7050,69 @@ body:has(.modal-backdrop) .install-banner {
 }
 
 .messages-conversation-name {
+  align-items: center;
+  display: flex;
   font-weight: 700;
+  gap: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .messages-conversation-meta {
+  align-items: center;
   color: #9a9184;
+  display: flex;
   font-size: 11px;
+  gap: 5px;
   grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.messages-conversation-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messages-conversation-time {
+  flex-shrink: 0;
+}
+
+.messages-conversation-time::before {
+  content: "\00b7";
+  margin-right: 5px;
+}
+
+.messages-copied-flag {
+  color: #2f7a3d;
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+.messages-inline-icon {
+  align-items: center;
+  border-radius: 4px;
+  color: #a9a08f;
+  cursor: pointer;
+  display: inline-flex;
+  flex-shrink: 0;
+  justify-content: center;
+  padding: 2px;
+}
+
+.messages-inline-icon:hover {
+  background: #ece5d8;
+  color: #6b6255;
+}
+
+.messages-pin-toggle {
+  color: #c9c0b0;
+}
+
+.messages-conversation-row.pinned .messages-pin-toggle,
+.messages-pin-toggle:hover {
+  color: #a01029;
 }
 
 .messages-roster-row .messages-conversation-name {

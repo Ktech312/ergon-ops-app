@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardList,
+  Copy,
   DollarSign,
   Download,
   ExternalLink,
@@ -31,6 +32,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   Pencil,
+  Pin,
   Plus,
   Search,
   ShoppingCart,
@@ -13430,6 +13432,46 @@ function Messages({
   const [draftBody, setDraftBody] = useState("");
   const threadEndRef = useRef<HTMLDivElement | null>(null);
 
+  // No real Username/Position field yet (E: "we need to add a User name
+  // section, then this will say user name and their Position, Example:
+  // Abhi East coast PM") -- for now, derive a display name from the email
+  // local-part so the list isn't showing full email addresses as the
+  // primary label. The full email still shows, small, in the meta row.
+  function usernameFromEmail(email: string) {
+    return email.split("@")[0] || email;
+  }
+
+  const pinStorageKey = `ergon:pinned-messages:${myUserId}`;
+  const [pinnedUserIds, setPinnedUserIds] = useState<string[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(pinStorageKey);
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  function togglePin(userId: string, event: React.MouseEvent) {
+    event.stopPropagation();
+    setPinnedUserIds((current) => {
+      const next = current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId];
+      try {
+        window.localStorage.setItem(pinStorageKey, JSON.stringify(next));
+      } catch {
+        // Best-effort -- a private window or full storage just means pins don't survive reload.
+      }
+      return next;
+    });
+  }
+
+  const [copiedUserId, setCopiedUserId] = useState<string | null>(null);
+  function copyEmail(email: string, userId: string, event: React.MouseEvent) {
+    event.stopPropagation();
+    navigator.clipboard.writeText(email).then(() => {
+      setCopiedUserId(userId);
+      window.setTimeout(() => setCopiedUserId((current) => (current === userId ? null : current)), 1500);
+    });
+  }
+
   const emailByUserId = new Map(knownUsers.map((user) => [user.userId, user.email]));
   const otherUserId = (conversation: Conversation) => (conversation.participantAId === myUserId ? conversation.participantBId : conversation.participantAId);
 
@@ -13442,6 +13484,38 @@ function Messages({
   const rosterWithoutConversation = knownUsers.filter(
     (user) => user.userId !== myUserId && !conversationPartnerIds.has(user.userId),
   );
+
+  // Unified, sortable list: pinned entries always float to the top (E:
+  // "Make it so you can PIN usernames to the TOP of the message board"),
+  // then real conversations by recency, then not-yet-started roster rows.
+  type MessageRow = { userId: string; email: string; conversationId: string | null; lastMessageAt: string | null; unread: number; pinned: boolean };
+  const allRows: MessageRow[] = [
+    ...conversations.map((conversation) => {
+      const partnerId = otherUserId(conversation);
+      return {
+        userId: partnerId,
+        email: emailByUserId.get(partnerId) ?? "Unknown user",
+        conversationId: conversation.id,
+        lastMessageAt: conversation.lastMessageAt,
+        unread: unreadMessageCounts[conversation.id] ?? 0,
+        pinned: pinnedUserIds.includes(partnerId),
+      };
+    }),
+    ...rosterWithoutConversation.map((user) => ({
+      userId: user.userId,
+      email: user.email,
+      conversationId: null,
+      lastMessageAt: null,
+      unread: 0,
+      pinned: pinnedUserIds.includes(user.userId),
+    })),
+  ].sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    if (a.lastMessageAt && b.lastMessageAt) return b.lastMessageAt.localeCompare(a.lastMessageAt);
+    if (a.lastMessageAt) return -1;
+    if (b.lastMessageAt) return 1;
+    return usernameFromEmail(a.email).localeCompare(usernameFromEmail(b.email));
+  });
 
   const activeConversation = conversations.find((entry) => entry.id === activeConversationId) ?? null;
 
@@ -13476,35 +13550,45 @@ function Messages({
         </div>
         {status && <div className="source-file"><span>{status}</span></div>}
         <div className="messages-conversation-list">
-          {conversations.map((conversation) => {
-            const partnerId = otherUserId(conversation);
-            const partnerEmail = emailByUserId.get(partnerId) ?? "Unknown user";
-            const unread = unreadMessageCounts[conversation.id] ?? 0;
-            return (
-              <button
-                key={conversation.id}
-                type="button"
-                className={`messages-conversation-row ${conversation.id === activeConversationId ? "active" : ""}`}
-                onClick={() => onSelectConversation(conversation.id)}
-              >
-                <span className="messages-conversation-name">{partnerEmail}</span>
-                <span className="messages-conversation-meta">{new Date(conversation.lastMessageAt).toLocaleString()}</span>
-                {unread > 0 && <span className="messages-unread-badge">{unread}</span>}
-              </button>
-            );
-          })}
-          {rosterWithoutConversation.map((user) => (
+          {allRows.map((row) => (
             <button
-              key={user.userId}
+              key={row.userId}
               type="button"
-              className="messages-conversation-row messages-roster-row"
-              onClick={() => onStartConversation(user.userId)}
+              className={`messages-conversation-row ${row.conversationId ? "" : "messages-roster-row"} ${row.conversationId === activeConversationId && row.conversationId ? "active" : ""} ${row.pinned ? "pinned" : ""}`}
+              onClick={() => (row.conversationId ? onSelectConversation(row.conversationId) : onStartConversation(row.userId))}
             >
-              <span className="messages-conversation-name">{user.email}</span>
-              <span className="messages-conversation-meta">Say hello</span>
+              <span className="messages-conversation-name">
+                {usernameFromEmail(row.email)}
+                <span
+                  className="messages-inline-icon messages-pin-toggle"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={row.pinned ? "Unpin" : "Pin to top"}
+                  title={row.pinned ? "Unpin" : "Pin to top"}
+                  onClick={(event) => togglePin(row.userId, event)}
+                >
+                  <Pin size={12} fill={row.pinned ? "currentColor" : "none"} />
+                </span>
+              </span>
+              <span className="messages-conversation-meta">
+                <span className="messages-conversation-email">{row.email}</span>
+                <span
+                  className="messages-inline-icon messages-copy-email"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Copy email"
+                  title="Copy email"
+                  onClick={(event) => copyEmail(row.email, row.userId, event)}
+                >
+                  <Copy size={11} />
+                </span>
+                {copiedUserId === row.userId && <span className="messages-copied-flag">Copied</span>}
+                <span className="messages-conversation-time">{row.lastMessageAt ? new Date(row.lastMessageAt).toLocaleString() : "Say hello"}</span>
+              </span>
+              {row.unread > 0 && <span className="messages-unread-badge">{row.unread}</span>}
             </button>
           ))}
-          {conversations.length === 0 && rosterWithoutConversation.length === 0 && (
+          {allRows.length === 0 && (
             <div className="empty-compact-state">No one else has signed into Ergon yet ({myEmail} is the only known user so far).</div>
           )}
         </div>
@@ -13514,7 +13598,7 @@ function Messages({
           <>
             <div className="messages-thread-header">
               <button className="icon-button messages-back-button" type="button" onClick={() => onSelectConversation(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
-              <strong>{emailByUserId.get(otherUserId(activeConversation)) ?? "Unknown user"}</strong>
+              <strong>{(() => { const email = emailByUserId.get(otherUserId(activeConversation)); return email ? usernameFromEmail(email) : "Unknown user"; })()}</strong>
             </div>
             <div className="messages-thread-scroll">
               {activeConversationMessages.map((message) => (
