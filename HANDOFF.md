@@ -137,6 +137,45 @@ Status (updated after E called out that curating which tables got done, silently
 - **Resolved, false alarm:** E's "boxes missing from the bottom of the Project page" turned out to be a mixup between the Projects *list* page (no tile grid there, never had one) and the Project *detail* page's tile grid (still there, working) -- not a bug, no fix needed.
 - **New: Portfolio Budget & Schedule panel**, Projects list page (`ProjectPortfolioHealth` component, `main.tsx`, right before `function Projects`) -- E asked what to do with the "extra room" on that page once the missing-boxes question resolved; proposed a mockup (published as a Claude Artifact, sketch only, placeholder data), E approved, then it got built for real. Two blocks: **Budget health** (Purchase Order spend per `project.ref`, new `purchaseOrders` prop threaded into `Projects`, vs `project.allocated`, target tick + green/amber/red) and **Schedule health** (`projectCompletion()`, moved to module scope so this component can share it, vs target date). See the data-model note below on `ProjectSite.due` -- the schedule side has to degrade gracefully because that field isn't a real date.
 
+## Long-term roadmap: Ergon as the Slack/ClickUp/Drive replacement (agreed 2026-08-30, not started)
+
+E's stated direction, from an overnight planning conversation (research → clarifying questions → design proposal → agreement, no code written for any of this yet): "we need 3 different apps and the info is spread out between Hubspot, Google Drive, ClickUp and Slack. I would like the ClickUp and Slack features with using google drive as a backup for items and not have to jump through all of these apps... eventually eliminate that app all together." HubSpot is explicitly deferred ("ignore for now" — eventual two-way sync for billing/project status is the only piece E wants from it, later). This is a multi-week initiative E already expects to take real time ("this may take weeks to build and test") — treat it as a standing roadmap to work through in phases, not a single feature request.
+
+**The agreed design** (confirmed by E after the plan was played back):
+
+- **Channels are one underlying concept**, surfaced in three places, not three separate systems:
+  1. **Section channels** — one fixed, permanent "Discussion" tab per major app section (Sales, Purchasing, Marketing, Inventory, etc.), added to the existing sub-tab bar pattern already used in Inventory & Purchasing (Stock/Purchasing/Vendors + new Discussion tab); for single-view pages, becomes a 2-tab [Main | Discussion] layout. Singletons — always exist, never created/deleted by users.
+  2. **Project channels** — every Project auto-gets one, tied to `project_id`. **Never dies.** Closing a project does not archive-and-lose its channel; the channel and its full history move with the project into wherever it lives afterward (the Client's ledger).
+  3. **Client channels** — see the Clients section below. The client's own ongoing channel, plus a rolled-up view into every project channel that ever ran under that client.
+  - All three share the same underlying table/shape (a channel optionally linked to a real entity, or to nobody for a real 1:1 DM — DMs already exist, migration 094).
+  - **Auto-membership, not manual invites** — matches existing role/tab-access rules (whoever can already see a Project/section can see its channel) rather than a new per-channel membership system to administer.
+  - The standalone Messages hub (exists today, DMs only) gets rebuilt into a real Slack-style sidebar: DMs, Projects, Sections grouped separately, each a view into the same underlying channel data the embedded tabs use.
+
+- **Clients become a real entity — this is required, not optional, for the above to work.** Confirmed by checking the actual code: today's Client Ledger (`ClientLedger` component, main.tsx ~12922) is entirely per-*project* — `ledgerInfo`/`installedAssets` key off `project_id`, and `project.client` is just a repeated text field with zero deduplication. Two projects for the same real client ("Newport News Shipbuilding" appears on more than one project today) show as unrelated rows. To get E's actual ask ("when a project gets closed, that whole section goes under the Client as one large combined section") this needs:
+  1. A real `clients` table.
+  2. Existing `project.client` text values matched/linked to a real Client — auto-linked where unambiguous, but **needs a short manual reconciliation pass with E** for anything that doesn't match cleanly (e.g. is "Newport News" the same client as "Newport News Shipbuilding" and "Newport News 37th St.", or three different things?) — do not auto-guess this, it's exactly the kind of silent-wrong-merge that's expensive to untangle later. Show E the actual distinct client strings in the live data and let them confirm groupings in one pass before anything is merged.
+  3. Client Ledger becomes a client-grouped view (one entry per Client, every project/site that ever ran for them rolled up underneath) instead of today's flat per-project list.
+  4. The Client gets the same Discussion-tab pattern as everywhere else.
+
+- **Search**: extend the existing global search (main.tsx ~5381, today: client-side substring match, 3 entity types only — inventory parts/POs/projects, shown as a dropdown) rather than replace it. Researched how Notion's is built/why it's well-regarded (their own writeups: workspaces under ~1,000 docs — Ergon's scale — skip vector/embedding search entirely and lean on ranking + UX):
+  - Postgres full-text search (`tsvector`/`ts_rank`) across a much wider set of entities: add Tasks, Messages/channels (including closed/archived ones -- this is the actual fix for "old chats are hard to find," not the channel-merging above, which fixes *where things live* rather than *finding them regardless*), Vendors, Sales Quotes, Documents.
+  - No vector DB / embeddings needed at this data volume — that would be over-building for the size of this workspace.
+  - Keep the fast dropdown for quick jumps; add a real full-page results view (filterable by entity type, scopable to "just chats" vs "everything," per E's ask) for anything bigger than a few hits.
+  - Rank by recency + exact-title-match boost as a first pass; usage-frequency boosting and an AI Q&A layer on top are legitimate later add-ons, not part of the initial build.
+
+- **Google Drive**: auto-backup only (confirmed, not browse/import) — every file uploaded to Ergon (photos, documents, message attachments) also gets copied to a Drive folder automatically. Not a two-way sync, not a way to pull *existing* Drive files into Ergon.
+
+- **No history import from Slack/ClickUp/Drive** — confirmed explicitly ("let's do 1 [fresh start] to make sure it all works... I don't want old stuff in there yet"). New activity lives in Ergon going forward; old conversations stay in Slack/ClickUp if E ever needs to look back. This alone rules out a large chunk of otherwise-plausible scope (Slack/ClickUp API integrations for pulling history) — don't build toward it unless E explicitly asks later.
+
+- **HubSpot**: explicitly out of scope for all of the above. The only piece E wants eventually is two-way sync for **billing and project status markers** — flagged for its own separate scoping conversation later, not bundled into this initiative.
+
+**Proposed phase order** (not yet started as of 2026-08-30; confirm with E before beginning each phase, given the multi-week scope):
+1. Section Discussion tabs + Project Discussion tabs (channels tied to what already exists structurally — no new entities needed yet)
+2. Standalone Messages hub rebuilt as a real channel sidebar (DMs / Projects / Sections), reusing #1's data
+3. Search extended per above (dropdown + full-page, wider entity coverage, includes closed/archived channels)
+4. Clients as a real entity (with the manual reconciliation pass) + per-client channels + Client Ledger becomes client-grouped
+5. (Later, unscoped) Google Drive auto-backup; HubSpot two-way sync for billing/status — each needs its own scoping pass when E is ready
+
 ## Recent work log (most recent first — 2026-08-13 through 2026-08-30)
 - **(`b073371`, migration 100 needs to be run)** — **Picture and file uploads in Messages.** E: "for now, in the messaging, can you allow Picture and File uploads to the messages." Followed by, on the earlier Slack research: "yes, I think the full function of back and forth makes sense to do... build all the features slack does in here eventually... eliminate that app all together" -- captured as long-term direction below, not built (see note at the bottom of this entry).
   - **Migration 100** SQL:
