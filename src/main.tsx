@@ -10527,13 +10527,27 @@ function ProjectTile({
 // Best-effort parse of ProjectSite.due -- it's a free-text display string
 // (target_date_display), not a real date column, so values like "TBD" or
 // "Q3 2026" are expected and must degrade gracefully rather than produce a
-// nonsense day count.
+// nonsense day count. A bare "Jul 30" (the common case -- no year typed)
+// still "parses" fine on its own, but JS defaults the missing year to 2001,
+// which silently turned every un-yeared target into "9000+ days overdue"
+// instead of degrading to null. Supply the current year explicitly when
+// none is present, then roll forward a year if that still lands far in the
+// past -- a date typed in December for next January shouldn't read as
+// overdue by a year.
 function parseProjectDueDate(due: string): Date | null {
-  if (!due.trim()) {
+  const trimmed = due.trim();
+  if (!trimmed) {
     return null;
   }
-  const parsed = new Date(due);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  const hasExplicitYear = /\d{4}/.test(trimmed);
+  const parsed = new Date(hasExplicitYear ? trimmed : `${trimmed}, ${new Date().getFullYear()}`);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  if (!hasExplicitYear && parsed.getTime() < Date.now() - 1000 * 60 * 60 * 24 * 183) {
+    parsed.setFullYear(parsed.getFullYear() + 1);
+  }
+  return parsed;
 }
 
 function ProjectPortfolioHealth({ projectSites, purchaseOrders }: { projectSites: ProjectSite[]; purchaseOrders: PurchaseOrder[] }) {
