@@ -138,6 +138,30 @@ Status (updated after E called out that curating which tables got done, silently
 - **New: Portfolio Budget & Schedule panel**, Projects list page (`ProjectPortfolioHealth` component, `main.tsx`, right before `function Projects`) -- E asked what to do with the "extra room" on that page once the missing-boxes question resolved; proposed a mockup (published as a Claude Artifact, sketch only, placeholder data), E approved, then it got built for real. Two blocks: **Budget health** (Purchase Order spend per `project.ref`, new `purchaseOrders` prop threaded into `Projects`, vs `project.allocated`, target tick + green/amber/red) and **Schedule health** (`projectCompletion()`, moved to module scope so this component can share it, vs target date). See the data-model note below on `ProjectSite.due` -- the schedule side has to degrade gracefully because that field isn't a real date.
 
 ## Recent work log (most recent first — 2026-08-13 through 2026-08-30)
+- **(`b073371`, migration 100 needs to be run)** — **Picture and file uploads in Messages.** E: "for now, in the messaging, can you allow Picture and File uploads to the messages." Followed by, on the earlier Slack research: "yes, I think the full function of back and forth makes sense to do... build all the features slack does in here eventually... eliminate that app all together" -- captured as long-term direction below, not built (see note at the bottom of this entry).
+  - **Migration 100** SQL:
+    ```sql
+    alter table direct_messages alter column body drop not null;
+    alter table direct_messages drop constraint if exists direct_messages_body_check;
+    alter table direct_messages add constraint direct_messages_body_check
+      check (body is null or char_length(body) <= 4000);
+    alter table direct_messages add column if not exists attachment_storage_path text;
+    alter table direct_messages add column if not exists attachment_file_name text;
+    alter table direct_messages add column if not exists attachment_mime_type text;
+    alter table direct_messages add column if not exists attachment_size_bytes bigint;
+    alter table direct_messages drop constraint if exists direct_messages_has_content;
+    alter table direct_messages add constraint direct_messages_has_content
+      check ((body is not null and char_length(body) > 0) or attachment_storage_path is not null);
+    insert into storage.buckets (id, name, public)
+    values ('message-attachments', 'message-attachments', false)
+    on conflict (id) do nothing;
+    -- (plus 2 storage.objects RLS policies, see backend/supabase/migrations/100_direct_message_attachments.sql for the full file -- long enough to be worth copying straight from there)
+    ```
+  - **Private bucket, not the broad-authenticated pattern used for project-documents/catalog-datasheets.** Storage paths are prefixed with the conversation id specifically so the bucket's RLS can check the requester is one of the two real participants (same guarantee `direct_messages`' own row-level security already gives the text) -- these are private DMs, org-wide file visibility isn't appropriate here.
+  - **Compose row**: new attach button (camera icon, left of the textarea) opens a file picker; selecting a file shows a preview chip (thumbnail for images, filename otherwise) with a remove button, before sending. An attachment can stand alone with no caption -- Send is enabled by file-present OR text-present, not just text like before. 20MB client-side cap with a clear error if exceeded.
+  - **Thread rendering**: images show inline (click for full-size in a new tab); other files show as a name + download row. Signed URLs (1hr expiry) resolve automatically as messages load, not on click, so it previews like a normal chat app.
+  - **Live-verified pre-migration behavior** (this is the actual current state until migration 100 runs): attach button and preview chip work correctly client-side; clicking Send correctly fails with a visible "Could not upload "filename"." status message (bucket doesn't exist yet) -- caught, no crash, no phantom message sent. Same honest-failure shape as every other pre-migration gap this session.
+  - **On the bigger ask** ("build all the features slack does... eliminate that app all together"): logged as E's actual long-term direction, not scoped or estimated yet -- a full Slack-replacement is a large, multi-part vision (threads, reactions, channels, search, mobile push, etc.), worth its own planning conversation rather than inferring scope from one line. Flag it back to E before any of that gets built, don't assume which pieces matter most.
 - **(`194d77a`, migration 099 needs to be run)** — **Slack DM groundwork, everything short of an actual bot token.** E asked to research linking Messages/Alerts to Slack or specific people; after that came back ("shared channel = config only, per-person DM = a real but modest build"), E: "put this on the list to work on the backend part overnight, I want to be as close as possible without linking the account yet." Built the full per-person-DM path except the one thing only E can do (creating the real Slack App and handing over its token) -- nothing sends anywhere right now, every path returns an honest "not configured" response.
   - **Migration 099** adds `team_members.slack_user_id` -- same table as today's Display Name field, same reasoning (already keyed by email, already loaded client-side for every signed-in user, no new RLS policy needed). SQL:
     ```sql
