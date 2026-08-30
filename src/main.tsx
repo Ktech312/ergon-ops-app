@@ -6735,7 +6735,7 @@ function App() {
             {allowedTabs.includes("reports") && <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />}
             {allowedTabs.includes("saas_calendar") && <NavButton icon={<CalendarDays size={16} />} label="SaaS Calendar" active={view === "saas_calendar"} onClick={() => navigateToView("saas_calendar")} />}
             {allowedTabs.includes("client_ledger") && <NavButton icon={<Archive size={16} />} label="Client Ledger" active={view === "client_ledger"} onClick={() => navigateToView("client_ledger")} />}
-            {allowedTabs.includes("messages") && <NavButton icon={<MessageCircle size={16} />} label="Messages" active={view === "messages"} onClick={() => navigateToView("messages")} hasUnread={totalUnreadMessages > 0} />}
+            {allowedTabs.includes("messages") && <NavButton icon={<MessageCircle size={16} />} label="Messages" iconOnly active={view === "messages"} onClick={() => navigateToView("messages")} hasUnread={totalUnreadMessages > 0} />}
           </nav>
           <div className="top-nav-actions">
             <div className={`sync-status ${syncStatus}`} title={syncStatus === "error" ? authStatus : undefined}>
@@ -7122,11 +7122,11 @@ function App() {
   );
 }
 
-function NavButton({ icon, label, active, onClick, hasUnread }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void; hasUnread?: boolean }) {
+function NavButton({ icon, label, active, onClick, hasUnread, iconOnly }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void; hasUnread?: boolean; iconOnly?: boolean }) {
   return (
-    <button className={`nav-button ${active ? "active" : ""}`} onClick={onClick}>
+    <button className={`nav-button ${active ? "active" : ""} ${iconOnly ? "icon-only" : ""}`} onClick={onClick} title={iconOnly ? label : undefined} aria-label={iconOnly ? label : undefined}>
       {icon}
-      <span>{label}</span>
+      {!iconOnly && <span>{label}</span>}
       {hasUnread && <span className="notification-dot" />}
     </button>
   );
@@ -13427,16 +13427,20 @@ function Messages({
   onSendMessage: (body: string) => void;
   onSubscribeToPush: () => void;
 }) {
-  const [showNewMessageModal, setShowNewMessageModal] = useState(false);
-  const [newMessageSearch, setNewMessageSearch] = useState("");
   const [draftBody, setDraftBody] = useState("");
   const threadEndRef = useRef<HTMLDivElement | null>(null);
 
   const emailByUserId = new Map(knownUsers.map((user) => [user.userId, user.email]));
   const otherUserId = (conversation: Conversation) => (conversation.participantAId === myUserId ? conversation.participantBId : conversation.participantAId);
 
-  const searchResults = knownUsers.filter(
-    (user) => user.userId !== myUserId && user.email.toLowerCase().includes(newMessageSearch.trim().toLowerCase()),
+  // No more "New Message" search modal -- E: "we shouldn't need this, as a
+  // new person joins, their name should just be added." The team roster is
+  // small and already loaded (knownUsers), so anyone without a conversation
+  // yet is just listed directly below the real conversations -- clicking
+  // them starts one on the spot via the same onStartConversation used here.
+  const conversationPartnerIds = new Set(conversations.map(otherUserId));
+  const rosterWithoutConversation = knownUsers.filter(
+    (user) => user.userId !== myUserId && !conversationPartnerIds.has(user.userId),
   );
 
   const activeConversation = conversations.find((entry) => entry.id === activeConversationId) ?? null;
@@ -13469,7 +13473,6 @@ function Messages({
             <h2>Conversations</h2>
             <p>Direct messages with anyone on the team.</p>
           </div>
-          <button className="primary-action" type="button" onClick={() => { setShowNewMessageModal(true); setNewMessageSearch(""); }}><Plus size={15} /> New Message</button>
         </div>
         {status && <div className="source-file"><span>{status}</span></div>}
         <div className="messages-conversation-list">
@@ -13490,7 +13493,20 @@ function Messages({
               </button>
             );
           })}
-          {conversations.length === 0 && <div className="empty-compact-state">No conversations yet -- start one with "New Message."</div>}
+          {rosterWithoutConversation.map((user) => (
+            <button
+              key={user.userId}
+              type="button"
+              className="messages-conversation-row messages-roster-row"
+              onClick={() => onStartConversation(user.userId)}
+            >
+              <span className="messages-conversation-name">{user.email}</span>
+              <span className="messages-conversation-meta">Say hello</span>
+            </button>
+          ))}
+          {conversations.length === 0 && rosterWithoutConversation.length === 0 && (
+            <div className="empty-compact-state">No one else has signed into Ergon yet ({myEmail} is the only known user so far).</div>
+          )}
         </div>
       </section>
       <section className="panel messages-thread-panel">
@@ -13531,47 +13547,6 @@ function Messages({
           <div className="empty-compact-state messages-empty-thread">Select a conversation, or start a new one.</div>
         )}
       </section>
-      {showNewMessageModal && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-message-modal-title">
-            <div className="modal-header">
-              <div>
-                <h2 id="new-message-modal-title">New Message</h2>
-                <p>Search by email to start a conversation with anyone who's signed into Ergon.</p>
-              </div>
-              <button className="icon-button" type="button" onClick={() => setShowNewMessageModal(false)} aria-label="Close new message modal">x</button>
-            </div>
-            <div className="bom-modal-grid">
-              <label className="span-2">
-                Search by email
-                <input value={newMessageSearch} onChange={(event) => setNewMessageSearch(event.target.value)} placeholder="name@company.com" autoFocus />
-              </label>
-            </div>
-            <div className="messages-search-results">
-              {searchResults.map((user) => (
-                <button
-                  key={user.userId}
-                  type="button"
-                  className="messages-search-result-row"
-                  onClick={() => {
-                    onStartConversation(user.userId);
-                    setShowNewMessageModal(false);
-                  }}
-                >
-                  {user.email}
-                </button>
-              ))}
-              {newMessageSearch.trim() && searchResults.length === 0 && <div className="empty-compact-state">No one matches "{newMessageSearch}" -- they may not have signed into Ergon yet.</div>}
-              {!newMessageSearch.trim() && knownUsers.filter((user) => user.userId !== myUserId).length === 0 && (
-                <div className="empty-compact-state">No one else has signed into Ergon yet ({myEmail} is the only known user so far).</div>
-              )}
-            </div>
-            <div className="modal-actions">
-              <button className="secondary-action" type="button" onClick={() => setShowNewMessageModal(false)}>Cancel</button>
-            </div>
-          </section>
-        </div>
-      )}
       </div>
     </>
   );

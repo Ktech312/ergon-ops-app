@@ -733,6 +733,12 @@ button {
   white-space: nowrap;
 }
 
+.nav-button.icon-only {
+  justify-content: center;
+  padding: 0;
+  width: 38px;
+}
+
 .nav-button.active,
 .nav-button:hover {
   background:
@@ -798,7 +804,7 @@ button {
 }
 
 .notification-dot {
-  background: #9a2f20;
+  background: #2f7a3d;
   border-radius: 50%;
   height: 8px;
   position: absolute;
@@ -7054,6 +7060,16 @@ body:has(.modal-backdrop) .install-banner {
   color: #9a9184;
   font-size: 11px;
   grid-column: 1 / -1;
+}
+
+.messages-roster-row .messages-conversation-name {
+  color: #6b6255;
+  font-weight: 600;
+}
+
+.messages-roster-row .messages-conversation-meta {
+  color: #b2a996;
+  font-style: italic;
 }
 
 .messages-unread-badge {
