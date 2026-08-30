@@ -7002,6 +7002,7 @@ function App() {
             myUserId={authSession?.userId ?? ""}
             myEmail={authSession?.email ?? ""}
             knownUsers={knownUsers}
+            teamMembers={teamMembers}
             conversations={conversations}
             unreadMessageCounts={unreadMessageCounts}
             activeConversationId={activeConversationId}
@@ -13404,6 +13405,7 @@ function Messages({
   myUserId,
   myEmail,
   knownUsers,
+  teamMembers,
   conversations,
   unreadMessageCounts,
   activeConversationId,
@@ -13418,6 +13420,7 @@ function Messages({
   myUserId: string;
   myEmail: string;
   knownUsers: KnownUser[];
+  teamMembers: TeamMember[];
   conversations: Conversation[];
   unreadMessageCounts: Record<string, number>;
   activeConversationId: string | null;
@@ -13432,13 +13435,19 @@ function Messages({
   const [draftBody, setDraftBody] = useState("");
   const threadEndRef = useRef<HTMLDivElement | null>(null);
 
-  // No real Username/Position field yet (E: "we need to add a User name
-  // section, then this will say user name and their Position, Example:
-  // Abhi East coast PM") -- for now, derive a display name from the email
-  // local-part so the list isn't showing full email addresses as the
-  // primary label. The full email still shows, small, in the meta row.
-  function usernameFromEmail(email: string) {
-    return email.split("@")[0] || email;
+  // E: "we need to add a User name section, then this will say user name
+  // and their Position, Example: Abhi East coast PM" -- team_members
+  // already has fullName + roleTitle (editable in Admin's Team Roster),
+  // so this reuses that instead of a new table. Falls back to the email
+  // local-part when a person has no roster entry or left fullName blank.
+  const teamMemberByEmail = new Map(teamMembers.filter((member) => member.email).map((member) => [member.email.toLowerCase(), member]));
+  function displayNameFor(email: string) {
+    const member = teamMemberByEmail.get(email.toLowerCase());
+    const name = member?.fullName?.trim();
+    if (!name) {
+      return email.split("@")[0] || email;
+    }
+    return member?.roleTitle?.trim() ? `${name} ${member.roleTitle.trim()}` : name;
   }
 
   const pinStorageKey = `ergon:pinned-messages:${myUserId}`;
@@ -13514,7 +13523,7 @@ function Messages({
     if (a.lastMessageAt && b.lastMessageAt) return b.lastMessageAt.localeCompare(a.lastMessageAt);
     if (a.lastMessageAt) return -1;
     if (b.lastMessageAt) return 1;
-    return usernameFromEmail(a.email).localeCompare(usernameFromEmail(b.email));
+    return displayNameFor(a.email).localeCompare(displayNameFor(b.email));
   });
 
   const activeConversation = conversations.find((entry) => entry.id === activeConversationId) ?? null;
@@ -13558,7 +13567,7 @@ function Messages({
               onClick={() => (row.conversationId ? onSelectConversation(row.conversationId) : onStartConversation(row.userId))}
             >
               <span className="messages-conversation-name">
-                {usernameFromEmail(row.email)}
+                {displayNameFor(row.email)}
                 <span
                   className="messages-inline-icon messages-pin-toggle"
                   role="button"
@@ -13598,7 +13607,7 @@ function Messages({
           <>
             <div className="messages-thread-header">
               <button className="icon-button messages-back-button" type="button" onClick={() => onSelectConversation(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
-              <strong>{(() => { const email = emailByUserId.get(otherUserId(activeConversation)); return email ? usernameFromEmail(email) : "Unknown user"; })()}</strong>
+              <strong>{(() => { const email = emailByUserId.get(otherUserId(activeConversation)); return email ? displayNameFor(email) : "Unknown user"; })()}</strong>
             </div>
             <div className="messages-thread-scroll">
               {activeConversationMessages.map((message) => (
@@ -14994,6 +15003,21 @@ function AdminPage({
                     {isEditing && (
                       <tr>
                         <td colSpan={6}>
+                          <div className="secondary-role-picker">
+                            <span className="muted">Display name:</span>
+                            <input
+                              className="roster-name-input"
+                              key={member.id}
+                              defaultValue={member.fullName}
+                              placeholder="How they should show up in Messages"
+                              onBlur={(event) => {
+                                if (event.target.value !== member.fullName) {
+                                  onUpdateTeamMember(member.id, { fullName: event.target.value });
+                                }
+                              }}
+                              onClick={(event) => event.stopPropagation()}
+                            />
+                          </div>
                           <div className="secondary-role-picker">
                             <span className="muted">Primary group:</span>
                             <select

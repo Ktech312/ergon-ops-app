@@ -5046,6 +5046,11 @@ td.empty-compact-state {
   margin-top: 6px;
 }
 
+.roster-name-input {
+  margin-left: 8px;
+  max-width: 260px;
+}
+
 .secondary-role-picker .tag-picker-grid {
   margin-top: 4px;
 }
