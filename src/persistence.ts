@@ -2407,6 +2407,7 @@ export type TeamMember = {
   isActive: boolean;
   primaryRole: string;
   secondaryRoles: string[];
+  slackUserId: string;
 };
 
 type TeamMemberRow = {
@@ -2417,6 +2418,7 @@ type TeamMemberRow = {
   is_active: boolean;
   primary_role: string | null;
   secondary_roles: string[] | null;
+  slack_user_id: string | null;
 };
 
 function mapTeamMemberRow(row: TeamMemberRow): TeamMember {
@@ -2428,6 +2430,7 @@ function mapTeamMemberRow(row: TeamMemberRow): TeamMember {
     isActive: row.is_active,
     primaryRole: row.primary_role ?? "",
     secondaryRoles: row.secondary_roles ?? [],
+    slackUserId: row.slack_user_id ?? "",
   };
 }
 
@@ -2466,6 +2469,7 @@ export async function createTeamMember(member: Omit<TeamMember, "id">, accessTok
       is_active: member.isActive,
       primary_role: member.primaryRole || null,
       secondary_roles: member.secondaryRoles ?? [],
+      slack_user_id: member.slackUserId || null,
     }),
   });
 
@@ -2489,6 +2493,7 @@ export async function updateTeamMember(id: string, member: Partial<Omit<TeamMemb
   if (member.isActive !== undefined) payload.is_active = member.isActive;
   if (member.primaryRole !== undefined) payload.primary_role = member.primaryRole || null;
   if (member.secondaryRoles !== undefined) payload.secondary_roles = member.secondaryRoles;
+  if (member.slackUserId !== undefined) payload.slack_user_id = member.slackUserId || null;
 
   const response = await fetch(supabaseUrl(`team_members?id=eq.${id}`), {
     method: "PATCH",

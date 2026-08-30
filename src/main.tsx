@@ -4403,10 +4403,16 @@ function App() {
     }
     if (slackActive) {
       try {
+        // Per-person Slack DM groundwork (E: "as close as possible without
+        // linking the account yet") -- team_members.slack_user_id, when an
+        // admin has filled it in, resolves to a real recipient here. The
+        // endpoint prefers a bot-token DM to this ID, and only falls back
+        // to the older single-channel webhook if no bot token is set.
+        const slackUserId = teamMembers.find((member) => member.email.toLowerCase() === recipientEmail.toLowerCase())?.slackUserId || undefined;
         const response = await fetch("/api/send-notification-slack", {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({ title, body }),
+          body: JSON.stringify({ title, body, slackUserId }),
         });
         const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
         await recordNotificationDelivery(created.id, "slack", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
@@ -14721,6 +14727,7 @@ function AdminPage({
       isActive: true,
       primaryRole: rosterDraft.primaryRole,
       secondaryRoles: rosterDraft.secondaryRoles,
+      slackUserId: "",
     });
     onSendInvite({ email, fullName: rosterDraft.fullName.trim(), primaryRole: rosterDraft.primaryRole, secondaryRoles: rosterDraft.secondaryRoles });
     setRosterDraft({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] });
@@ -15019,6 +15026,22 @@ function AdminPage({
                             />
                           </div>
                           <div className="secondary-role-picker">
+                            <span className="muted" title="Slack Settings -> Profile -> ... More -> Copy member ID">Slack member ID:</span>
+                            <input
+                              className="roster-name-input"
+                              key={`${member.id}-slack`}
+                              defaultValue={member.slackUserId}
+                              placeholder="e.g. U0123ABC456 -- not linked yet"
+                              onBlur={(event) => {
+                                if (event.target.value !== member.slackUserId) {
+                                  onUpdateTeamMember(member.id, { slackUserId: event.target.value.trim() });
+                                }
+                              }}
+                              onClick={(event) => event.stopPropagation()}
+                            />
+                            <small className="muted"> -- from their Slack profile, so a DM can reach them once Slack is connected.</small>
+                          </div>
+                          <div className="secondary-role-picker">
                             <span className="muted">Primary group:</span>
                             <select
                               value={member.primaryRole}
@@ -15090,7 +15113,7 @@ function AdminPage({
                   <td>{rule.eventType.replace(/_/g, " ")}</td>
                   <td data-label="In-app bell"><input type="checkbox" checked={rule.channels.includes("in_app")} onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "in_app"] : rule.channels.filter((c) => c !== "in_app") })} /></td>
                   <td data-label="Email"><input type="checkbox" checked={rule.channels.includes("email")} title="Sends a real email via Resend when this event fires" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "email"] : rule.channels.filter((c) => c !== "email") })} /></td>
-                  <td data-label="Slack / Teams"><input type="checkbox" checked={rule.channels.includes("slack")} title="Posts to Slack/Teams once SLACK_WEBHOOK_URL is set in Vercel" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "slack"] : rule.channels.filter((c) => c !== "slack") })} /></td>
+                  <td data-label="Slack / Teams"><input type="checkbox" checked={rule.channels.includes("slack")} title="DMs the person in Slack once SLACK_BOT_TOKEN is set and their Slack member ID is on file (Team Roster) -- or posts to one shared channel once SLACK_WEBHOOK_URL is set, if neither of those is ready yet" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "slack"] : rule.channels.filter((c) => c !== "slack") })} /></td>
                   <td data-label="Push"><input type="checkbox" checked={rule.channels.includes("push")} title="Alerts the recipient's phone/browser once they've turned on notifications and VAPID keys are set in Vercel" onChange={(event) => onUpdateNotificationRule(rule.id, { channels: event.target.checked ? [...rule.channels, "push"] : rule.channels.filter((c) => c !== "push") })} /></td>
                   <td data-label="Active"><input type="checkbox" checked={rule.isActive} onChange={(event) => onUpdateNotificationRule(rule.id, { isActive: event.target.checked })} /></td>
                 </tr>
