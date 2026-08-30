@@ -1404,6 +1404,36 @@ function App() {
     };
   }, []);
 
+  // Proactive access-token refresh -- refreshAuthSession was only ever
+  // called reactively (inside the "load remote app state" effect below,
+  // itself keyed on `[authSession]`), so it only re-checks expiry when
+  // something else already changed authSession. A tab left open with no
+  // such change lets the token quietly age out (~1hr) with nothing to
+  // trigger a recheck; every Supabase request then silently returns 401,
+  // and thanks to the "swallow failures, return []" pattern used almost
+  // everywhere, that looked exactly like "signed in, but nothing loads"
+  // with zero error shown (found this live: app_known_users, conversations,
+  // and direct_messages all 401ing at once in an hours-old tab). Refresh a
+  // few minutes before expiresAt on its own timer, which re-arms itself off
+  // the new session, so elapsed wall-clock time alone is enough to trigger it.
+  useEffect(() => {
+    if (!authSession) {
+      return;
+    }
+    const session = authSession;
+    const refreshInMs = Math.max(10_000, session.expiresAt - Date.now() - 5 * 60_000);
+    const timer = window.setTimeout(() => {
+      refreshAuthSession(session)
+        .then(setAuthSession)
+        .catch(() => {
+          // Refresh token itself is dead (revoked, or truly expired) --
+          // nothing to silently retry; the user needs to sign in again,
+          // and the next real API call's own error handling takes it from here.
+        });
+    }, refreshInMs);
+    return () => window.clearTimeout(timer);
+  }, [authSession]);
+
   useEffect(() => {
     let cancelled = false;
     if (!isRemotePersistenceConfigured()) {
