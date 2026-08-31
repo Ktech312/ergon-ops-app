@@ -1343,6 +1343,50 @@ export async function sendChannelMessage(
   return mapChannelMessageRow(rows[0]);
 }
 
+// Global search, phase 3 of the Slack/ClickUp/Drive roadmap (HANDOFF.md)
+// -- the piece E specifically called out ("this is lacking in Slack").
+// Old messages are never loaded into memory just for browsing (DM
+// threads load per-conversation, channel threads load per-channel), so
+// unlike the rest of global search (a client-side filter over data
+// that's already in state), this is a real on-demand query -- fired only
+// when the user actually searches, not cached. RLS does the scoping for
+// free: direct_messages already restricts to the caller's own
+// conversations, channel_messages is broadly readable same as the
+// channels themselves. No date/status filter -- deliberately searches
+// closed/archived channels and old conversations too, since "old chats
+// are hard to find" was the actual problem being solved here.
+export type MessageSearchResult = {
+  id: string;
+  kind: "dm" | "channel";
+  conversationId: string | null;
+  channelId: string | null;
+  senderId: string;
+  body: string;
+  createdAt: string;
+};
+
+export async function searchMessages(term: string, accessToken?: string): Promise<MessageSearchResult[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || term.trim().length < 3) {
+    return [];
+  }
+  const pattern = `*${encodeURIComponent(term.trim())}*`;
+  const [dmResponse, channelResponse] = await Promise.all([
+    fetch(supabaseUrl(`direct_messages?body=ilike.${pattern}&select=id,conversation_id,sender_id,body,created_at&order=created_at.desc&limit=8`), {
+      headers: supabaseHeaders(accessToken),
+    }),
+    fetch(supabaseUrl(`channel_messages?body=ilike.${pattern}&select=id,channel_id,sender_id,body,created_at&order=created_at.desc&limit=8`), {
+      headers: supabaseHeaders(accessToken),
+    }),
+  ]);
+  const dmRows = dmResponse.ok ? ((await dmResponse.json()) as Array<{ id: string; conversation_id: string; sender_id: string; body: string; created_at: string }>) : [];
+  const channelRows = channelResponse.ok ? ((await channelResponse.json()) as Array<{ id: string; channel_id: string; sender_id: string; body: string; created_at: string }>) : [];
+  const results: MessageSearchResult[] = [
+    ...dmRows.map((row) => ({ id: row.id, kind: "dm" as const, conversationId: row.conversation_id, channelId: null, senderId: row.sender_id, body: row.body, createdAt: row.created_at })),
+    ...channelRows.map((row) => ({ id: row.id, kind: "channel" as const, conversationId: null, channelId: row.channel_id, senderId: row.sender_id, body: row.body, createdAt: row.created_at })),
+  ];
+  return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
+}
+
 // Doesn't need to know which conversations the user is in -- RLS on
 // direct_messages already restricts every row returned to conversations
 // this user actually participates in, so this is naturally scoped.

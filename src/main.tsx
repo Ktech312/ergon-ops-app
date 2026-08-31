@@ -223,6 +223,7 @@ import {
   loadChannels,
   loadChannelMessages,
   sendChannelMessage,
+  searchMessages,
   loadUserRoleMode,
   loadUsersByRole,
   markWelcomeSeen,
@@ -360,6 +361,7 @@ import {
   type TeamMember,
   type Channel,
   type ChannelMessage,
+  type MessageSearchResult,
   type SiteHardwareRule,
   type SiteHardwareMetric,
   type UserInvite,
@@ -1334,10 +1336,12 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [messageSearchResults, setMessageSearchResults] = useState<MessageSearchResult[]>([]);
   const [inventorySearchFocus, setInventorySearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [reportsSearchFocus, setReportsSearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [purchasingSearchFocus, setPurchasingSearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [taskFocus, setTaskFocus] = useState<{ taskId: string; token: number } | null>(null);
+  const [initialMessagesChannelId, setInitialMessagesChannelId] = useState<{ channelId: string; token: number } | null>(null);
   const [standardInstallTimes, setStandardInstallTimes] = useState<StandardInstallTime[]>([]);
   const [scheduleTemplates, setScheduleTemplates] = useState<ScheduleTemplate[]>([]);
   const [scheduleStatus, setScheduleStatus] = useState("");
@@ -5412,16 +5416,21 @@ function App() {
     setActiveDiscussionSection(null);
   }
 
-  // Global top-nav search -- parts (Inventory), purchase orders (Reports'
-  // Purchasing tab, which already has a real text filter), and projects
-  // (Projects, which already supports deep-linking to a specific project via
-  // #projects/<slug>). Capped at 5 per group; only searches once the query
-  // is at least 2 characters so it doesn't flood the dropdown on every
-  // keystroke of a 1-letter query.
+  // Global top-nav search -- phase 3 of the Slack/ClickUp/Drive roadmap
+  // (HANDOFF.md), extending what was already here (parts, POs, projects)
+  // to the rest of what's already loaded client-side: tasks, vendors,
+  // sales quotes, documents. All still a plain substring filter over
+  // in-memory arrays (Notion's own research: skip embeddings/full-text
+  // infra at this workspace size, most of "feels like good search" is
+  // ranking + UX, not a bigger backend) -- no new network calls for any
+  // of these. Message search (below) is the one exception, since full
+  // message history isn't cached client-side for browsing. Capped at 5
+  // per group; only searches once the query is at least 2 characters so
+  // it doesn't flood the dropdown on every keystroke of a 1-letter query.
   const globalSearchTerm = globalSearchQuery.trim().toLowerCase();
   const globalSearchMatches =
     globalSearchTerm.length < 2
-      ? { parts: [] as Part[], orders: [] as PurchaseOrder[], projects: [] as ProjectSite[] }
+      ? { parts: [] as Part[], orders: [] as PurchaseOrder[], projects: [] as ProjectSite[], tasksMatch: [] as EOTask[], vendorsMatch: [] as Vendor[], quotesMatch: [] as SalesQuote[], documentsMatch: [] as UploadedDoc[] }
       : {
           parts: inventoryItems
             .filter((part) => `${part.ref} ${part.name} ${part.description} ${part.manufacturer} ${part.category}`.toLowerCase().includes(globalSearchTerm))
@@ -5432,7 +5441,34 @@ function App() {
           projects: projectSites
             .filter((project) => `${project.name} ${project.ref} ${project.client}`.toLowerCase().includes(globalSearchTerm))
             .slice(0, 5),
+          tasksMatch: tasks
+            .filter((task) => `${task.title} ${task.taskNumber} ${task.description}`.toLowerCase().includes(globalSearchTerm))
+            .slice(0, 5),
+          vendorsMatch: vendors
+            .filter((vendor) => `${vendor.name} ${vendor.contactName} ${vendor.email}`.toLowerCase().includes(globalSearchTerm))
+            .slice(0, 5),
+          quotesMatch: salesQuotes
+            .filter((quote) => `${quote.quoteRef} ${quote.clientName} ${quote.siteName}`.toLowerCase().includes(globalSearchTerm))
+            .slice(0, 5),
+          documentsMatch: projectDocuments
+            .filter((doc) => `${doc.name} ${doc.project}`.toLowerCase().includes(globalSearchTerm))
+            .slice(0, 5),
         };
+
+  // Message search is a real query (see searchMessages' own comment for
+  // why), debounced so it fires once typing pauses rather than on every
+  // keystroke.
+  useEffect(() => {
+    if (!authSession || globalSearchTerm.length < 3) {
+      setMessageSearchResults([]);
+      return;
+    }
+    const session = authSession;
+    const timer = window.setTimeout(() => {
+      searchMessages(globalSearchTerm, session.accessToken).then(setMessageSearchResults).catch(() => setMessageSearchResults([]));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [globalSearchTerm, authSession]);
 
   function closeGlobalSearch() {
     setGlobalSearchQuery("");
@@ -5453,6 +5489,49 @@ function App() {
   function handleSelectSearchOrder(order: PurchaseOrder) {
     setReportsSearchFocus({ term: order.number, token: Date.now() });
     navigateToView("reports");
+    closeGlobalSearch();
+  }
+
+  function handleSelectSearchTask(task: EOTask) {
+    setTaskFocus({ taskId: task.id, token: Date.now() });
+    navigateToView("tasks");
+    closeGlobalSearch();
+  }
+
+  // Vendors/Sales Quotes/Documents don't have a deep-link-to-one-record
+  // mechanism the way parts/orders/tasks do (no existing *SearchFocus
+  // prop for those pages) -- jumps to the section itself rather than
+  // building three more pieces of per-page focus plumbing tonight. Real
+  // scope call, not an oversight -- noted in HANDOFF.md.
+  function handleSelectSearchVendor() {
+    navigateToView("vendors");
+    closeGlobalSearch();
+  }
+
+  function handleSelectSearchQuote() {
+    navigateToView("sales");
+    closeGlobalSearch();
+  }
+
+  function handleSelectSearchDocument(doc: UploadedDoc) {
+    const project = projectSites.find((entry) => entry.name === doc.project);
+    if (project) {
+      window.location.hash = `projects/${projectSlug(project.name)}`;
+    } else {
+      navigateToView("projects");
+    }
+    closeGlobalSearch();
+  }
+
+  function handleSelectSearchMessage(result: MessageSearchResult) {
+    if (result.kind === "dm" && result.conversationId) {
+      setInitialMessagesChannelId(null);
+      setActiveConversationId(result.conversationId);
+    } else if (result.kind === "channel" && result.channelId) {
+      setActiveConversationId(null);
+      setInitialMessagesChannelId({ channelId: result.channelId, token: Date.now() });
+    }
+    navigateToView("messages");
     closeGlobalSearch();
   }
 
@@ -6901,7 +6980,7 @@ function App() {
           <input
             type="text"
             value={globalSearchQuery}
-            placeholder="Search parts, POs, projects"
+            placeholder="Search everything -- parts, tasks, projects, messages..."
             onChange={(event) => {
               setGlobalSearchQuery(event.target.value);
               setGlobalSearchOpen(true);
@@ -6916,7 +6995,7 @@ function App() {
           />
           {globalSearchOpen && globalSearchTerm.length >= 2 && (
             <div className="global-search-results">
-              {globalSearchMatches.projects.length === 0 && globalSearchMatches.parts.length === 0 && globalSearchMatches.orders.length === 0 && (
+              {globalSearchMatches.projects.length === 0 && globalSearchMatches.parts.length === 0 && globalSearchMatches.orders.length === 0 && globalSearchMatches.tasksMatch.length === 0 && globalSearchMatches.vendorsMatch.length === 0 && globalSearchMatches.quotesMatch.length === 0 && globalSearchMatches.documentsMatch.length === 0 && messageSearchResults.length === 0 && (
                 <div className="global-search-empty">No matches for "{globalSearchQuery.trim()}".</div>
               )}
               {globalSearchMatches.projects.length > 0 && (
@@ -6948,6 +7027,61 @@ function App() {
                     <button key={order.number} type="button" className="global-search-result" onMouseDown={(event) => event.preventDefault()} onClick={() => handleSelectSearchOrder(order)}>
                       <strong>{order.number}</strong>
                       <span>{order.vendor} - {order.projectRef}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {globalSearchMatches.tasksMatch.length > 0 && (
+                <div className="global-search-group">
+                  <span className="global-search-group-label">Tasks</span>
+                  {globalSearchMatches.tasksMatch.map((task) => (
+                    <button key={task.id} type="button" className="global-search-result" onMouseDown={(event) => event.preventDefault()} onClick={() => handleSelectSearchTask(task)}>
+                      <strong>{task.title}</strong>
+                      <span>{task.taskNumber} - {task.status}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {globalSearchMatches.vendorsMatch.length > 0 && (
+                <div className="global-search-group">
+                  <span className="global-search-group-label">Vendors</span>
+                  {globalSearchMatches.vendorsMatch.map((vendor) => (
+                    <button key={vendor.id} type="button" className="global-search-result" onMouseDown={(event) => event.preventDefault()} onClick={() => handleSelectSearchVendor()}>
+                      <strong>{vendor.name}</strong>
+                      <span>{vendor.contactName || vendor.email || "Vendor"}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {globalSearchMatches.quotesMatch.length > 0 && (
+                <div className="global-search-group">
+                  <span className="global-search-group-label">Sales Quotes</span>
+                  {globalSearchMatches.quotesMatch.map((quote) => (
+                    <button key={quote.id} type="button" className="global-search-result" onMouseDown={(event) => event.preventDefault()} onClick={() => handleSelectSearchQuote()}>
+                      <strong>{quote.siteName}</strong>
+                      <span>{quote.quoteRef} - {quote.clientName}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {globalSearchMatches.documentsMatch.length > 0 && (
+                <div className="global-search-group">
+                  <span className="global-search-group-label">Documents</span>
+                  {globalSearchMatches.documentsMatch.map((doc) => (
+                    <button key={doc.id} type="button" className="global-search-result" onMouseDown={(event) => event.preventDefault()} onClick={() => handleSelectSearchDocument(doc)}>
+                      <strong>{doc.name}</strong>
+                      <span>{doc.project}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {messageSearchResults.length > 0 && (
+                <div className="global-search-group">
+                  <span className="global-search-group-label">Messages</span>
+                  {messageSearchResults.map((result) => (
+                    <button key={result.id} type="button" className="global-search-result" onMouseDown={(event) => event.preventDefault()} onClick={() => handleSelectSearchMessage(result)}>
+                      <strong>{result.kind === "channel" ? (channels.find((entry) => entry.id === result.channelId)?.name ?? "Channel") : (teamDisplayName(knownUsers.find((user) => user.userId === result.senderId)?.email ?? "", teamMembers) || "Direct message")}</strong>
+                      <span>{result.body.slice(0, 80)}</span>
                     </button>
                   ))}
                 </div>
@@ -7132,6 +7266,7 @@ function App() {
             onStartConversation={handleStartConversation}
             onSendMessage={handleSendDirectMessage}
             onSubscribeToPush={handleSubscribeToPush}
+            initialChannelId={initialMessagesChannelId}
           />
         )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
@@ -13874,6 +14009,7 @@ function Messages({
   onStartConversation,
   onSendMessage,
   onSubscribeToPush,
+  initialChannelId,
 }: {
   myUserId: string;
   myEmail: string;
@@ -13891,6 +14027,11 @@ function Messages({
   onStartConversation: (otherUserId: string) => void;
   onSendMessage: (body: string, file?: File) => void;
   onSubscribeToPush: () => void;
+  // Global search (main.tsx) needs to open a specific channel here from
+  // outside -- token-based like taskFocus/inventorySearchFocus elsewhere
+  // in this file, so re-picking the same channel from search again still
+  // re-triggers even though the id itself didn't change.
+  initialChannelId?: { channelId: string; token: number } | null;
 }) {
   // Messages hub, phase 2 of the group-channels roadmap (HANDOFF.md) --
   // channels join the same sidebar as DMs (grouped separately) instead of
@@ -13898,6 +14039,12 @@ function Messages({
   // reached from one place. activeChannelId and activeConversationId are
   // mutually exclusive -- selecting one clears the other.
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
+  useEffect(() => {
+    if (initialChannelId) {
+      setActiveChannelId(initialChannelId.channelId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialChannelId?.token]);
   const activeChannel = channels.find((entry) => entry.id === activeChannelId) ?? null;
   function selectChannel(channelId: string) {
     setActiveChannelId(channelId);
