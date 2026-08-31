@@ -7048,6 +7048,16 @@ body:has(.modal-backdrop) .install-banner {
   flex: 1;
 }
 
+.channel-discussion-panel .channel-tabs {
+  margin-bottom: 10px;
+}
+
+.channel-discussion-panel .task-mini-panel,
+.channel-discussion-panel .channel-files-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
 .messages-conversation-list {
   display: flex;
   flex-direction: column;

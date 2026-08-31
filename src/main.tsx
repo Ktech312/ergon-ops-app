@@ -7123,7 +7123,7 @@ function App() {
               (() => {
                 const channel = channels.find((entry) => entry.type === "section" && entry.sectionKey === "inventory");
                 return channel ? (
-                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />
                 ) : (
                   <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
                 );
@@ -7148,7 +7148,7 @@ function App() {
               (() => {
                 const channel = channels.find((entry) => entry.type === "section" && entry.sectionKey === "sales");
                 return channel ? (
-                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />
                 ) : (
                   <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
                 );
@@ -7235,7 +7235,7 @@ function App() {
               (() => {
                 const channel = channels.find((entry) => entry.type === "section" && entry.sectionKey === "marketing");
                 return channel ? (
-                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />
                 ) : (
                   <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
                 );
@@ -7280,6 +7280,15 @@ function App() {
             onSendMessage={handleSendDirectMessage}
             onSubscribeToPush={handleSubscribeToPush}
             initialChannelId={initialMessagesChannelId}
+            tasks={tasks}
+            taskActivity={taskActivity}
+            projectSites={projectSites}
+            onCreateTask={handleCreateTask}
+            onUpdateTask={handleUpdateTask}
+            onDeleteTask={handleDeleteTask}
+            onOpenTasksView={() => navigateToView("tasks")}
+            documents={projectDocuments}
+            onDownloadDocument={handleDownloadDocument}
           />
         )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
@@ -11849,7 +11858,7 @@ function Projects({
           <button className="active" type="button" onClick={() => onSetActiveDiscussionSection("projects")}>Discussion</button>
         </div>
         {projectsSectionChannel ? (
-          <ChannelDiscussion channel={projectsSectionChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+          <ChannelDiscussion channel={projectsSectionChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} />
         ) : (
           <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
         )}
@@ -12796,7 +12805,7 @@ function Projects({
               <button className="icon-button" type="button" onClick={() => setShowDiscussionModal(false)} aria-label="Close">x</button>
             </div>
             {projectChannel ? (
-              <ChannelDiscussion channel={projectChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+              <ChannelDiscussion channel={projectChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={projectDocuments} onDownloadDocument={onDownloadDocument} />
             ) : (
               <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
             )}
@@ -13920,21 +13929,86 @@ function MessageThread({
 // "Discussion" tab without the parent needing to manage thread state.
 // senderNameFor is always passed (unlike a DM, a channel message could be
 // from anyone) so every non-mine bubble is labeled.
+// Migration 104 groundwork: Slack pins List/Folder tabs onto a channel
+// beyond Messages -- E, looking at a real Slack workspace screenshot,
+// asked which of those map onto data Ergon already has. Tasks (List) and
+// Documents (Folder) do, via the section/projectRef/clientId Ergon
+// already tracks -- these are optional so section-channel call sites that
+// don't have task/document data handy can keep passing just the
+// Discussion props.
+function tasksForChannel(channel: Channel, tasks: EOTask[], projectSites: ProjectSite[]): EOTask[] {
+  if (channel.type === "section" && channel.sectionKey) {
+    return tasks.filter((task) => task.section === channel.sectionKey);
+  }
+  if (channel.type === "project" && channel.projectId) {
+    const site = projectSites.find((entry) => entry.id === channel.projectId);
+    return site ? tasks.filter((task) => task.projectRef === site.ref) : [];
+  }
+  if (channel.type === "client" && channel.clientId) {
+    const refs = new Set(projectSites.filter((entry) => entry.clientId === channel.clientId).map((entry) => entry.ref));
+    return tasks.filter((task) => refs.has(task.projectRef));
+  }
+  return [];
+}
+
+function documentsForChannel(channel: Channel, documents: UploadedDoc[], projectSites: ProjectSite[]): UploadedDoc[] {
+  if (channel.type === "project" && channel.projectId) {
+    const site = projectSites.find((entry) => entry.id === channel.projectId);
+    return site ? documents.filter((doc) => doc.project === site.name) : [];
+  }
+  if (channel.type === "client" && channel.clientId) {
+    const names = new Set(projectSites.filter((entry) => entry.clientId === channel.clientId).map((entry) => entry.name));
+    return documents.filter((doc) => names.has(doc.project));
+  }
+  return [];
+}
+
 function ChannelDiscussion({
   channel,
   myUserId,
   accessToken,
   teamMembers,
   knownUsers,
+  tasks,
+  taskActivity,
+  projectSites,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteTask,
+  onOpenTasksView,
+  documents,
+  onDownloadDocument,
 }: {
   channel: Channel;
   myUserId: string;
   accessToken?: string;
   teamMembers: TeamMember[];
   knownUsers: KnownUser[];
+  tasks?: EOTask[];
+  taskActivity?: TaskActivityEntry[];
+  projectSites?: ProjectSite[];
+  onCreateTask?: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
+  onUpdateTask?: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
+  onDeleteTask?: (id: string) => void;
+  onOpenTasksView?: () => void;
+  documents?: UploadedDoc[];
+  onDownloadDocument?: (doc: UploadedDoc) => void;
 }) {
   const [messages, setMessages] = useState<ChannelMessage[]>([]);
   const [status, setStatus] = useState("");
+  const [tab, setTab] = useState<"discussion" | "tasks" | "files">("discussion");
+
+  const showTasksTab = !!(tasks && taskActivity && projectSites && onCreateTask && onUpdateTask && onDeleteTask && onOpenTasksView);
+  const showFilesTab = !!(documents && onDownloadDocument && projectSites && channel.type !== "section");
+
+  useEffect(() => {
+    if (tab === "tasks" && !showTasksTab) {
+      setTab("discussion");
+    }
+    if (tab === "files" && !showFilesTab) {
+      setTab("discussion");
+    }
+  }, [tab, showTasksTab, showFilesTab]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -13986,15 +14060,61 @@ function ChannelDiscussion({
 
   return (
     <div className="channel-discussion-panel">
-      {status && <div className="source-file"><span>{status}</span></div>}
-      <MessageThread
-        messages={messages}
-        myUserId={myUserId}
-        accessToken={accessToken}
-        onSend={handleSend}
-        emptyText="No messages yet in this channel -- say hello."
-        senderNameFor={senderNameFor}
-      />
+      {(showTasksTab || showFilesTab) && (
+        <div className="segmented-tabs channel-tabs">
+          <button className={tab === "discussion" ? "active" : ""} type="button" onClick={() => setTab("discussion")}>Discussion</button>
+          {showTasksTab && <button className={tab === "tasks" ? "active" : ""} type="button" onClick={() => setTab("tasks")}>Tasks</button>}
+          {showFilesTab && <button className={tab === "files" ? "active" : ""} type="button" onClick={() => setTab("files")}>Files</button>}
+        </div>
+      )}
+      {tab === "discussion" && (
+        <>
+          {status && <div className="source-file"><span>{status}</span></div>}
+          <MessageThread
+            messages={messages}
+            myUserId={myUserId}
+            accessToken={accessToken}
+            onSend={handleSend}
+            emptyText="No messages yet in this channel -- say hello."
+            senderNameFor={senderNameFor}
+          />
+        </>
+      )}
+      {tab === "tasks" && showTasksTab && (
+        <TaskMiniPanel
+          title="Tasks"
+          tasks={tasksForChannel(channel, tasks!, projectSites!)}
+          taskActivity={taskActivity!}
+          teamMembers={teamMembers}
+          projectSites={projectSites!}
+          section={channel.type === "section" ? (channel.sectionKey as TaskSection) : undefined}
+          projectRef={channel.type === "project" ? projectSites!.find((entry) => entry.id === channel.projectId)?.ref : undefined}
+          hideAdd={channel.type === "client"}
+          onCreate={onCreateTask!}
+          onUpdate={onUpdateTask!}
+          onDelete={onDeleteTask!}
+          onOpenFull={onOpenTasksView!}
+        />
+      )}
+      {tab === "files" && showFilesTab && (
+        <div className="project-doc-list channel-files-list">
+          {documentsForChannel(channel, documents!, projectSites!).length === 0 ? (
+            <div className="empty-compact-state">No documents linked to this channel yet.</div>
+          ) : (
+            documentsForChannel(channel, documents!, projectSites!).map((doc) => (
+              <div className="document-row" key={`${doc.id}-${doc.name}`}>
+                <div>
+                  <strong>{doc.name}</strong>
+                  <span>{doc.size ? formatBytes(doc.size) : "linked sample"} - {doc.project}</span>
+                </div>
+                {doc.storagePath && (
+                  <button className="secondary-action mini-action" type="button" onClick={() => onDownloadDocument!(doc)}>Download</button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -14023,6 +14143,15 @@ function Messages({
   onSendMessage,
   onSubscribeToPush,
   initialChannelId,
+  tasks,
+  taskActivity,
+  projectSites,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteTask,
+  onOpenTasksView,
+  documents,
+  onDownloadDocument,
 }: {
   myUserId: string;
   myEmail: string;
@@ -14045,6 +14174,15 @@ function Messages({
   // in this file, so re-picking the same channel from search again still
   // re-triggers even though the id itself didn't change.
   initialChannelId?: { channelId: string; token: number } | null;
+  tasks?: EOTask[];
+  taskActivity?: TaskActivityEntry[];
+  projectSites?: ProjectSite[];
+  onCreateTask?: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
+  onUpdateTask?: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
+  onDeleteTask?: (id: string) => void;
+  onOpenTasksView?: () => void;
+  documents?: UploadedDoc[];
+  onDownloadDocument?: (doc: UploadedDoc) => void;
 }) {
   // Messages hub, phase 2 of the group-channels roadmap (HANDOFF.md) --
   // channels join the same sidebar as DMs (grouped separately) instead of
@@ -14264,7 +14402,7 @@ function Messages({
               <button className="icon-button messages-back-button" type="button" onClick={() => setActiveChannelId(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
               <strong><Hash size={15} />{activeChannel.name}</strong>
             </div>
-            <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+            <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={documents} onDownloadDocument={onDownloadDocument} />
           </>
         ) : activeConversation ? (
           <>
