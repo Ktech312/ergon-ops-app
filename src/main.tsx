@@ -13936,9 +13936,31 @@ function MessageThread({
 // already tracks -- these are optional so section-channel call sites that
 // don't have task/document data handy can keep passing just the
 // Discussion props.
+// channels.section_key matches the app's nav tabs (main.tsx View union);
+// EOTask.section is a separate, real task-categorization enum
+// (persistence.ts TaskSection) -- they only happen to share the words
+// "inventory" and "projects". "inventory" is really the combined
+// Inventory & Purchasing & Vendors tab group, so its channel covers both
+// task sections; "sales" splits into sales_catalog/sales_quotes;
+// "marketing" has no TaskSection at all yet (no page creates one) so it's
+// intentionally absent from this map -- see channelHasTaskSupport below.
+const SECTION_CHANNEL_TASK_SECTIONS: Partial<Record<string, TaskSection[]>> = {
+  inventory: ["inventory", "purchasing"],
+  projects: ["projects"],
+  sales: ["sales_catalog", "sales_quotes"],
+};
+
+function channelHasTaskSupport(channel: Channel): boolean {
+  if (channel.type === "project" || channel.type === "client") {
+    return true;
+  }
+  return !!(channel.type === "section" && channel.sectionKey && SECTION_CHANNEL_TASK_SECTIONS[channel.sectionKey]);
+}
+
 function tasksForChannel(channel: Channel, tasks: EOTask[], projectSites: ProjectSite[]): EOTask[] {
   if (channel.type === "section" && channel.sectionKey) {
-    return tasks.filter((task) => task.section === channel.sectionKey);
+    const sections = SECTION_CHANNEL_TASK_SECTIONS[channel.sectionKey];
+    return sections ? tasks.filter((task) => sections.includes(task.section)) : [];
   }
   if (channel.type === "project" && channel.projectId) {
     const site = projectSites.find((entry) => entry.id === channel.projectId);
@@ -13998,7 +14020,7 @@ function ChannelDiscussion({
   const [status, setStatus] = useState("");
   const [tab, setTab] = useState<"discussion" | "tasks" | "files">("discussion");
 
-  const showTasksTab = !!(tasks && taskActivity && projectSites && onCreateTask && onUpdateTask && onDeleteTask && onOpenTasksView);
+  const showTasksTab = !!(tasks && taskActivity && projectSites && onCreateTask && onUpdateTask && onDeleteTask && onOpenTasksView) && channelHasTaskSupport(channel);
   const showFilesTab = !!(documents && onDownloadDocument && projectSites && channel.type !== "section");
 
   useEffect(() => {
@@ -14087,9 +14109,10 @@ function ChannelDiscussion({
           taskActivity={taskActivity!}
           teamMembers={teamMembers}
           projectSites={projectSites!}
-          section={channel.type === "section" ? (channel.sectionKey as TaskSection) : undefined}
+          section={channel.type === "project" ? "projects" : undefined}
           projectRef={channel.type === "project" ? projectSites!.find((entry) => entry.id === channel.projectId)?.ref : undefined}
-          hideAdd={channel.type === "client"}
+          isInternal={channel.type === "project" ? false : undefined}
+          hideAdd={channel.type !== "project"}
           onCreate={onCreateTask!}
           onUpdate={onUpdateTask!}
           onDelete={onDeleteTask!}
