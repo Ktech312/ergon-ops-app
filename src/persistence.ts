@@ -1226,24 +1226,39 @@ export async function getMessageAttachmentUrl(storagePath: string, accessToken?:
 // tab access, not a new per-channel ACL.
 export type Channel = {
   id: string;
-  type: "section" | "project" | "client";
+  type: "section" | "project" | "client" | "group";
   sectionKey: string | null;
   projectId: string | null;
   clientId: string | null;
   name: string;
+  // 'group' only (migration 105) -- freeform, user-created channels.
+  // Section/Project/Client channels are never private and ignore this.
+  private: boolean;
+  createdBy: string | null;
 };
 
 type ChannelRow = {
   id: string;
-  type: "section" | "project" | "client";
+  type: "section" | "project" | "client" | "group";
   section_key: string | null;
   project_id: string | null;
   client_id: string | null;
   name: string;
+  private?: boolean;
+  created_by?: string | null;
 };
 
 function mapChannelRow(row: ChannelRow): Channel {
-  return { id: row.id, type: row.type, sectionKey: row.section_key, projectId: row.project_id, clientId: row.client_id ?? null, name: row.name };
+  return {
+    id: row.id,
+    type: row.type,
+    sectionKey: row.section_key,
+    projectId: row.project_id,
+    clientId: row.client_id ?? null,
+    name: row.name,
+    private: row.private ?? false,
+    createdBy: row.created_by ?? null,
+  };
 }
 
 export async function loadChannels(accessToken?: string): Promise<Channel[]> {
@@ -1263,6 +1278,94 @@ export async function loadChannels(accessToken?: string): Promise<Channel[]> {
   }
   const rows = (await response.json()) as ChannelRow[];
   return rows.map(mapChannelRow);
+}
+
+// Freeform group channels (migration 105) -- E: "create group chats that
+// are private or can be unlocked, also be able to add people to them."
+// Private by default; membership is a real table for the first time
+// (channel_members) since Section/Project/Client channels don't need
+// one -- they're broadly visible to the whole team already.
+export async function createGroupChannel(name: string, creatorUserId: string, memberUserIds: string[], accessToken?: string): Promise<Channel> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("channels"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ type: "group", name: name.trim(), private: true, created_by: creatorUserId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not create channel"));
+  }
+  const rows = (await response.json()) as ChannelRow[];
+  if (rows.length === 0) {
+    throw new Error("Channel didn't save -- you may not have permission.");
+  }
+  const channel = mapChannelRow(rows[0]);
+  const memberIds = [...new Set([creatorUserId, ...memberUserIds])];
+  const membersResponse = await fetch(supabaseUrl("channel_members"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(memberIds.map((userId) => ({ channel_id: channel.id, user_id: userId }))),
+  });
+  if (!membersResponse.ok) {
+    throw new Error(await readSupabaseError(membersResponse, "Channel created, but adding members failed"));
+  }
+  return channel;
+}
+
+export async function unlockChannel(channelId: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl(`channels?id=eq.${channelId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ private: false }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not unlock channel"));
+  }
+}
+
+export type ChannelMember = {
+  channelId: string;
+  userId: string;
+  addedAt: string;
+};
+
+type ChannelMemberRow = {
+  channel_id: string;
+  user_id: string;
+  added_at: string;
+};
+
+export async function loadChannelMembers(channelId: string, accessToken?: string): Promise<ChannelMember[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`channel_members?channel_id=eq.${channelId}&select=*`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ChannelMemberRow[];
+  return rows.map((row) => ({ channelId: row.channel_id, userId: row.user_id, addedAt: row.added_at }));
+}
+
+export async function addChannelMember(channelId: string, userId: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("channel_members"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ channel_id: channelId, user_id: userId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not add member"));
+  }
 }
 
 // --- Clients (migration 102) -- phase 4 of the roadmap, built from a
@@ -1403,6 +1506,62 @@ export async function sendChannelMessage(
     throw new Error("Message didn't send -- you may not have permission.");
   }
   return mapChannelMessageRow(rows[0]);
+}
+
+// Canvas (migration 104) -- Slack's per-channel Canvas tab, mapped onto a
+// single persistent notes/scope doc pinned to the channel. E, from real
+// Slack screenshots: "Canvas -> a persistent notes/scope doc pinned to
+// the channel." One row per channel (channel_id is the primary key), so
+// saving is always an upsert.
+export type ChannelCanvas = {
+  channelId: string;
+  content: string;
+  updatedBy: string | null;
+  updatedAt: string;
+};
+
+type ChannelCanvasRow = {
+  channel_id: string;
+  content: string;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+function mapChannelCanvasRow(row: ChannelCanvasRow): ChannelCanvas {
+  return { channelId: row.channel_id, content: row.content, updatedBy: row.updated_by, updatedAt: row.updated_at };
+}
+
+export async function loadChannelCanvas(channelId: string, accessToken?: string): Promise<ChannelCanvas | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl(`channel_canvas?channel_id=eq.${channelId}&select=*`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as ChannelCanvasRow[];
+  return rows.length > 0 ? mapChannelCanvasRow(rows[0]) : null;
+}
+
+export async function saveChannelCanvas(channelId: string, content: string, updatedBy: string, accessToken?: string): Promise<ChannelCanvas> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("channel_canvas"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify({ channel_id: channelId, content, updated_by: updatedBy, updated_at: new Date().toISOString() }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not save canvas"));
+  }
+  const rows = (await response.json()) as ChannelCanvasRow[];
+  if (rows.length === 0) {
+    throw new Error("Canvas didn't save -- you may not have permission.");
+  }
+  return mapChannelCanvasRow(rows[0]);
 }
 
 // Global search, phase 3 of the Slack/ClickUp/Drive roadmap (HANDOFF.md)

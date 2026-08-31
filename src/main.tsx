@@ -29,6 +29,7 @@ import {
   Image,
   LayoutDashboard,
   ListChecks,
+  Lock,
   MapPin,
   MessageCircle,
   MoreHorizontal,
@@ -36,6 +37,7 @@ import {
   Pin,
   Plus,
   Search,
+  Unlock,
   ShoppingCart,
   Trash2,
   Truck,
@@ -223,6 +225,12 @@ import {
   loadChannels,
   loadChannelMessages,
   sendChannelMessage,
+  loadChannelCanvas,
+  saveChannelCanvas,
+  createGroupChannel,
+  unlockChannel,
+  loadChannelMembers,
+  addChannelMember,
   searchMessages,
   loadClients,
   loadUserRoleMode,
@@ -4370,12 +4378,20 @@ function App() {
   // HANDOFF.md) -- the list itself (section/project channels) rarely
   // changes, so it's loaded the same lightweight way as teamMembers
   // rather than folded into loadRemoteAppState's big aggregate query.
+  function reloadChannels() {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadChannels(authSession.accessToken).then(setChannels).catch(() => {});
+  }
+
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setChannels([]);
       return;
     }
-    loadChannels(authSession.accessToken).then(setChannels).catch(() => {});
+    reloadChannels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authSession]);
 
   // A new Project auto-gets a channel server-side (migration 101's
@@ -7289,6 +7305,7 @@ function App() {
             onOpenTasksView={() => navigateToView("tasks")}
             documents={projectDocuments}
             onDownloadDocument={handleDownloadDocument}
+            onChannelsChanged={reloadChannels}
           />
         )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
@@ -14000,12 +14017,18 @@ function ChannelDiscussion({
   onOpenTasksView,
   documents,
   onDownloadDocument,
+  onChannelsChanged,
 }: {
   channel: Channel;
   myUserId: string;
   accessToken?: string;
   teamMembers: TeamMember[];
   knownUsers: KnownUser[];
+  // 'group' channels only -- called after unlocking or adding a member so
+  // the parent's channels list (and this channel's own private/member
+  // state) reflects the change. Section/Project/Client call sites never
+  // need this since those channels can't be private.
+  onChannelsChanged?: () => void;
   tasks?: EOTask[];
   taskActivity?: TaskActivityEntry[];
   projectSites?: ProjectSite[];
@@ -14018,7 +14041,7 @@ function ChannelDiscussion({
 }) {
   const [messages, setMessages] = useState<ChannelMessage[]>([]);
   const [status, setStatus] = useState("");
-  const [tab, setTab] = useState<"discussion" | "tasks" | "files">("discussion");
+  const [tab, setTab] = useState<"discussion" | "tasks" | "files" | "canvas">("discussion");
 
   const showTasksTab = !!(tasks && taskActivity && projectSites && onCreateTask && onUpdateTask && onDeleteTask && onOpenTasksView) && channelHasTaskSupport(channel);
   const showFilesTab = !!(documents && onDownloadDocument && projectSites && channel.type !== "section");
@@ -14031,6 +14054,89 @@ function ChannelDiscussion({
       setTab("discussion");
     }
   }, [tab, showTasksTab, showFilesTab]);
+
+  // Freeform group channels (migration 105) -- membership only matters
+  // for channel.type === "group"; Section/Project/Client channels are
+  // always broadly visible and never show this UI.
+  const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [showMemberPicker, setShowMemberPicker] = useState(false);
+  const [groupActionStatus, setGroupActionStatus] = useState("");
+
+  useEffect(() => {
+    setShowMemberPicker(false);
+    if (channel.type !== "group" || !accessToken) {
+      setMemberIds([]);
+      return;
+    }
+    loadChannelMembers(channel.id, accessToken).then((members) => setMemberIds(members.map((m) => m.userId))).catch(() => {});
+  }, [channel.id, channel.type, accessToken]);
+
+  async function handleUnlockChannel() {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await unlockChannel(channel.id, accessToken);
+      onChannelsChanged?.();
+    } catch (error) {
+      setGroupActionStatus(error instanceof Error ? error.message : "Could not unlock channel.");
+    }
+  }
+
+  async function handleAddMember(userId: string) {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await addChannelMember(channel.id, userId, accessToken);
+      setMemberIds((current) => [...current, userId]);
+      onChannelsChanged?.();
+    } catch (error) {
+      setGroupActionStatus(error instanceof Error ? error.message : "Could not add that person.");
+    }
+  }
+
+  // Canvas (migration 104) -- Slack's per-channel Canvas mapped onto a
+  // single persistent notes/scope doc. Loaded lazily (only once the tab
+  // is actually opened) rather than alongside messages every poll cycle,
+  // since it's edited far less often than it's read.
+  const [canvasContent, setCanvasContent] = useState("");
+  const [canvasLoaded, setCanvasLoaded] = useState(false);
+  const [canvasSaving, setCanvasSaving] = useState(false);
+  const [canvasDirty, setCanvasDirty] = useState(false);
+  const [canvasSavedAt, setCanvasSavedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCanvasLoaded(false);
+    setCanvasDirty(false);
+  }, [channel.id]);
+
+  useEffect(() => {
+    if (tab !== "canvas" || canvasLoaded || !accessToken) {
+      return;
+    }
+    loadChannelCanvas(channel.id, accessToken).then((canvas) => {
+      setCanvasContent(canvas?.content ?? "");
+      setCanvasSavedAt(canvas?.updatedAt ?? null);
+      setCanvasLoaded(true);
+    });
+  }, [tab, canvasLoaded, channel.id, accessToken]);
+
+  async function handleSaveCanvas() {
+    if (!accessToken) {
+      return;
+    }
+    setCanvasSaving(true);
+    try {
+      const saved = await saveChannelCanvas(channel.id, canvasContent, myUserId, accessToken);
+      setCanvasSavedAt(saved.updatedAt);
+      setCanvasDirty(false);
+    } catch {
+      setStatus("Could not save the canvas.");
+    } finally {
+      setCanvasSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!accessToken) {
@@ -14082,13 +14188,36 @@ function ChannelDiscussion({
 
   return (
     <div className="channel-discussion-panel">
-      {(showTasksTab || showFilesTab) && (
-        <div className="segmented-tabs channel-tabs">
-          <button className={tab === "discussion" ? "active" : ""} type="button" onClick={() => setTab("discussion")}>Discussion</button>
-          {showTasksTab && <button className={tab === "tasks" ? "active" : ""} type="button" onClick={() => setTab("tasks")}>Tasks</button>}
-          {showFilesTab && <button className={tab === "files" ? "active" : ""} type="button" onClick={() => setTab("files")}>Files</button>}
+      {channel.type === "group" && (
+        <div className="channel-group-meta">
+          <span className="channel-group-lock-status">
+            {channel.private ? <><Lock size={13} /> Private</> : <><Unlock size={13} /> Visible to everyone</>}
+          </span>
+          {channel.private && (
+            <button className="secondary-action mini-action" type="button" onClick={handleUnlockChannel}>Unlock (make visible to everyone)</button>
+          )}
+          <button className="secondary-action mini-action" type="button" onClick={() => setShowMemberPicker((current) => !current)}>Add people</button>
+          {groupActionStatus && <span className="channel-group-status">{groupActionStatus}</span>}
         </div>
       )}
+      {showMemberPicker && (
+        <div className="channel-group-member-picker">
+          {knownUsers.filter((user) => !memberIds.includes(user.userId)).map((user) => (
+            <button key={user.userId} className="secondary-action mini-action" type="button" onClick={() => handleAddMember(user.userId)}>
+              + {teamDisplayName(user.email, teamMembers)}
+            </button>
+          ))}
+          {knownUsers.every((user) => memberIds.includes(user.userId)) && (
+            <span className="empty-compact-state">Everyone known to Ergon is already a member.</span>
+          )}
+        </div>
+      )}
+      <div className="segmented-tabs channel-tabs">
+        <button className={tab === "discussion" ? "active" : ""} type="button" onClick={() => setTab("discussion")}>Discussion</button>
+        {showTasksTab && <button className={tab === "tasks" ? "active" : ""} type="button" onClick={() => setTab("tasks")}>Tasks</button>}
+        {showFilesTab && <button className={tab === "files" ? "active" : ""} type="button" onClick={() => setTab("files")}>Files</button>}
+        <button className={tab === "canvas" ? "active" : ""} type="button" onClick={() => setTab("canvas")}>Canvas</button>
+      </div>
       {tab === "discussion" && (
         <>
           {status && <div className="source-file"><span>{status}</span></div>}
@@ -14138,6 +14267,31 @@ function ChannelDiscussion({
           )}
         </div>
       )}
+      {tab === "canvas" && (
+        <div className="channel-canvas-panel">
+          {!canvasLoaded ? (
+            <div className="empty-compact-state">Loading canvas...</div>
+          ) : (
+            <>
+              <textarea
+                className="channel-canvas-textarea"
+                value={canvasContent}
+                placeholder="Persistent notes and scope for this channel -- goals, decisions, links, anything worth pinning where everyone can find it."
+                onChange={(event) => {
+                  setCanvasContent(event.target.value);
+                  setCanvasDirty(true);
+                }}
+              />
+              <div className="channel-canvas-footer">
+                <span>
+                  {canvasSaving ? "Saving..." : canvasDirty ? "Unsaved changes" : canvasSavedAt ? `Saved ${new Date(canvasSavedAt).toLocaleString()}` : "Not saved yet"}
+                </span>
+                <button className="secondary-action mini-action" type="button" disabled={!canvasDirty || canvasSaving} onClick={handleSaveCanvas}>Save</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -14175,6 +14329,7 @@ function Messages({
   onOpenTasksView,
   documents,
   onDownloadDocument,
+  onChannelsChanged,
 }: {
   myUserId: string;
   myEmail: string;
@@ -14182,6 +14337,7 @@ function Messages({
   knownUsers: KnownUser[];
   teamMembers: TeamMember[];
   channels: Channel[];
+  onChannelsChanged?: () => void;
   conversations: Conversation[];
   unreadMessageCounts: Record<string, number>;
   activeConversationId: string | null;
@@ -14225,8 +14381,104 @@ function Messages({
     onSelectConversation(null);
   }
   const sectionChannels = channels.filter((entry) => entry.type === "section").sort((a, b) => a.name.localeCompare(b.name));
-  const projectChannels = channels.filter((entry) => entry.type === "project").sort((a, b) => a.name.localeCompare(b.name));
+  function projectChannelIsClosed(channel: Channel) {
+    return (projectSites ?? []).find((site) => site.id === channel.projectId)?.status === "Closed";
+  }
+  const projectChannels = channels
+    .filter((entry) => entry.type === "project" && !projectChannelIsClosed(entry))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const closedProjectChannels = channels
+    .filter((entry) => entry.type === "project" && projectChannelIsClosed(entry))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const clientChannels = channels.filter((entry) => entry.type === "client").sort((a, b) => a.name.localeCompare(b.name));
+  const groupChannels = channels.filter((entry) => entry.type === "group").sort((a, b) => a.name.localeCompare(b.name));
+
+  // Freeform group channels (migration 105) -- E: "I know we talked about
+  // creating new tabs independently I don't see that." / "Create group
+  // chats that are private or can be unlocked, also be able to add
+  // people to them." Private by default; the creator picks initial
+  // members from everyone known to Ergon (same list DMs already use).
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupMemberIds, setNewGroupMemberIds] = useState<string[]>([]);
+  const [createGroupStatus, setCreateGroupStatus] = useState("");
+
+  function toggleNewGroupMember(userId: string) {
+    setNewGroupMemberIds((current) => (current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]));
+  }
+
+  async function handleCreateGroup() {
+    if (!accessToken || !newGroupName.trim()) {
+      return;
+    }
+    try {
+      const channel = await createGroupChannel(newGroupName.trim(), myUserId, newGroupMemberIds, accessToken);
+      setNewGroupName("");
+      setNewGroupMemberIds([]);
+      setShowCreateGroup(false);
+      setCreateGroupStatus("");
+      onChannelsChanged?.();
+      selectChannel(channel.id);
+    } catch (error) {
+      setCreateGroupStatus(error instanceof Error ? error.message : "Could not create channel.");
+    }
+  }
+
+  // E: "be able to shrink chat sections" -- collapsible group headers,
+  // remembered per-user like the DM pin list right below.
+  const collapsedGroupsStorageKey = `ergon:collapsed-channel-groups:${myUserId}`;
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    try {
+      const raw = window.localStorage.getItem(collapsedGroupsStorageKey);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  function toggleGroup(key: string) {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      try {
+        window.localStorage.setItem(collapsedGroupsStorageKey, JSON.stringify([...next]));
+      } catch {
+        // Best-effort -- a private window or full storage just means the collapsed state doesn't survive reload.
+      }
+      return next;
+    });
+  }
+  function renderChannelGroup(key: string, label: string, list: Channel[]) {
+    if (list.length === 0) {
+      return null;
+    }
+    const collapsed = collapsedGroups.has(key);
+    return (
+      <div key={key}>
+        <button type="button" className="messages-channel-group-label messages-channel-group-toggle" onClick={() => toggleGroup(key)}>
+          {collapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          <span>{label}</span>
+        </button>
+        {!collapsed &&
+          list.map((channel) => (
+            <button
+              key={channel.id}
+              type="button"
+              className={`messages-conversation-row messages-channel-row ${channel.id === activeChannelId ? "active" : ""}`}
+              onClick={() => selectChannel(channel.id)}
+            >
+              <span className="messages-conversation-name">
+                {channel.type === "group" && channel.private ? <Lock size={13} /> : <Hash size={13} />}
+                {channel.name}
+              </span>
+            </button>
+          ))}
+      </div>
+    );
+  }
 
   function displayNameFor(email: string) {
     return teamDisplayName(email, teamMembers);
@@ -14326,7 +14578,34 @@ function Messages({
             <h2>Conversations</h2>
             <p>Direct messages with anyone on the team.</p>
           </div>
+          <button className="secondary-action mini-action" type="button" onClick={() => setShowCreateGroup((current) => !current)}>
+            <Plus size={14} /> New Channel
+          </button>
         </div>
+        {showCreateGroup && (
+          <div className="messages-create-group">
+            <input
+              type="text"
+              placeholder="Channel name"
+              value={newGroupName}
+              onChange={(event) => setNewGroupName(event.target.value)}
+            />
+            <div className="messages-create-group-members">
+              {knownUsers.map((user) => (
+                <label key={user.userId} className="messages-create-group-member">
+                  <input type="checkbox" checked={newGroupMemberIds.includes(user.userId)} onChange={() => toggleNewGroupMember(user.userId)} />
+                  {displayNameFor(user.email)}
+                </label>
+              ))}
+            </div>
+            <p className="messages-create-group-hint">Private by default -- only you and whoever you add can see it. Unlock it later to make it visible to everyone.</p>
+            {createGroupStatus && <div className="source-file"><span>{createGroupStatus}</span></div>}
+            <div className="messages-create-group-actions">
+              <button className="secondary-action mini-action" type="button" onClick={() => setShowCreateGroup(false)}>Cancel</button>
+              <button className="primary-action mini-action" type="button" disabled={!newGroupName.trim()} onClick={handleCreateGroup}>Create</button>
+            </div>
+          </div>
+        )}
         {status && <div className="source-file"><span>{status}</span></div>}
         <div className="messages-conversation-list">
           {allRows.map((row) => (
@@ -14377,45 +14656,11 @@ function Messages({
           {allRows.length === 0 && (
             <div className="empty-compact-state">No one else has signed into Ergon yet ({myEmail} is the only known user so far).</div>
           )}
-          {sectionChannels.length > 0 && (
-            <div className="messages-channel-group-label">Sections</div>
-          )}
-          {sectionChannels.map((channel) => (
-            <button
-              key={channel.id}
-              type="button"
-              className={`messages-conversation-row messages-channel-row ${channel.id === activeChannelId ? "active" : ""}`}
-              onClick={() => selectChannel(channel.id)}
-            >
-              <span className="messages-conversation-name"><Hash size={13} />{channel.name}</span>
-            </button>
-          ))}
-          {projectChannels.length > 0 && (
-            <div className="messages-channel-group-label">Projects</div>
-          )}
-          {projectChannels.map((channel) => (
-            <button
-              key={channel.id}
-              type="button"
-              className={`messages-conversation-row messages-channel-row ${channel.id === activeChannelId ? "active" : ""}`}
-              onClick={() => selectChannel(channel.id)}
-            >
-              <span className="messages-conversation-name"><Hash size={13} />{channel.name}</span>
-            </button>
-          ))}
-          {clientChannels.length > 0 && (
-            <div className="messages-channel-group-label">Clients</div>
-          )}
-          {clientChannels.map((channel) => (
-            <button
-              key={channel.id}
-              type="button"
-              className={`messages-conversation-row messages-channel-row ${channel.id === activeChannelId ? "active" : ""}`}
-              onClick={() => selectChannel(channel.id)}
-            >
-              <span className="messages-conversation-name"><Hash size={13} />{channel.name}</span>
-            </button>
-          ))}
+          {renderChannelGroup("sections", "Sections", sectionChannels)}
+          {renderChannelGroup("projects", "Projects", projectChannels)}
+          {renderChannelGroup("closed-projects", "Closed Projects", closedProjectChannels)}
+          {renderChannelGroup("clients", "Clients", clientChannels)}
+          {renderChannelGroup("groups", "Groups", groupChannels)}
         </div>
       </section>
       <section className="panel messages-thread-panel">
@@ -14423,9 +14668,9 @@ function Messages({
           <>
             <div className="messages-thread-header">
               <button className="icon-button messages-back-button" type="button" onClick={() => setActiveChannelId(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
-              <strong><Hash size={15} />{activeChannel.name}</strong>
+              <strong>{activeChannel.type === "group" && activeChannel.private ? <Lock size={15} /> : <Hash size={15} />}{activeChannel.name}</strong>
             </div>
-            <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={documents} onDownloadDocument={onDownloadDocument} />
+            <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={documents} onDownloadDocument={onDownloadDocument} onChannelsChanged={onChannelsChanged} />
           </>
         ) : activeConversation ? (
           <>
