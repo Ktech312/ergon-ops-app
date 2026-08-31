@@ -25,6 +25,7 @@ import {
   FileText,
   Flag,
   FolderOpen,
+  Hash,
   Image,
   LayoutDashboard,
   ListChecks,
@@ -7120,6 +7121,7 @@ function App() {
             accessToken={authSession?.accessToken}
             knownUsers={knownUsers}
             teamMembers={teamMembers}
+            channels={channels}
             conversations={conversations}
             unreadMessageCounts={unreadMessageCounts}
             activeConversationId={activeConversationId}
@@ -13861,6 +13863,7 @@ function Messages({
   accessToken,
   knownUsers,
   teamMembers,
+  channels,
   conversations,
   unreadMessageCounts,
   activeConversationId,
@@ -13877,6 +13880,7 @@ function Messages({
   accessToken?: string;
   knownUsers: KnownUser[];
   teamMembers: TeamMember[];
+  channels: Channel[];
   conversations: Conversation[];
   unreadMessageCounts: Record<string, number>;
   activeConversationId: string | null;
@@ -13888,6 +13892,20 @@ function Messages({
   onSendMessage: (body: string, file?: File) => void;
   onSubscribeToPush: () => void;
 }) {
+  // Messages hub, phase 2 of the group-channels roadmap (HANDOFF.md) --
+  // channels join the same sidebar as DMs (grouped separately) instead of
+  // living only inside each section/project page, so anything can be
+  // reached from one place. activeChannelId and activeConversationId are
+  // mutually exclusive -- selecting one clears the other.
+  const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
+  const activeChannel = channels.find((entry) => entry.id === activeChannelId) ?? null;
+  function selectChannel(channelId: string) {
+    setActiveChannelId(channelId);
+    onSelectConversation(null);
+  }
+  const sectionChannels = channels.filter((entry) => entry.type === "section").sort((a, b) => a.name.localeCompare(b.name));
+  const projectChannels = channels.filter((entry) => entry.type === "project").sort((a, b) => a.name.localeCompare(b.name));
+
   function displayNameFor(email: string) {
     return teamDisplayName(email, teamMembers);
   }
@@ -13979,7 +13997,7 @@ function Messages({
           <button className="secondary-action mini-action" type="button" onClick={onSubscribeToPush}>Turn On</button>
         </div>
       )}
-      <div className={`messages-shell ${activeConversationId ? "thread-open" : ""}`}>
+      <div className={`messages-shell ${activeConversationId || activeChannelId ? "thread-open" : ""}`}>
       <section className="panel messages-list-panel">
         <div className="panel-title-row">
           <div>
@@ -13994,7 +14012,14 @@ function Messages({
               key={row.userId}
               type="button"
               className={`messages-conversation-row ${row.conversationId ? "" : "messages-roster-row"} ${row.conversationId === activeConversationId && row.conversationId ? "active" : ""} ${row.pinned ? "pinned" : ""}`}
-              onClick={() => (row.conversationId ? onSelectConversation(row.conversationId) : onStartConversation(row.userId))}
+              onClick={() => {
+                setActiveChannelId(null);
+                if (row.conversationId) {
+                  onSelectConversation(row.conversationId);
+                } else {
+                  onStartConversation(row.userId);
+                }
+              }}
             >
               <span className="messages-conversation-name">
                 {displayNameFor(row.email)}
@@ -14030,10 +14055,44 @@ function Messages({
           {allRows.length === 0 && (
             <div className="empty-compact-state">No one else has signed into Ergon yet ({myEmail} is the only known user so far).</div>
           )}
+          {sectionChannels.length > 0 && (
+            <div className="messages-channel-group-label">Sections</div>
+          )}
+          {sectionChannels.map((channel) => (
+            <button
+              key={channel.id}
+              type="button"
+              className={`messages-conversation-row messages-channel-row ${channel.id === activeChannelId ? "active" : ""}`}
+              onClick={() => selectChannel(channel.id)}
+            >
+              <span className="messages-conversation-name"><Hash size={13} />{channel.name}</span>
+            </button>
+          ))}
+          {projectChannels.length > 0 && (
+            <div className="messages-channel-group-label">Projects</div>
+          )}
+          {projectChannels.map((channel) => (
+            <button
+              key={channel.id}
+              type="button"
+              className={`messages-conversation-row messages-channel-row ${channel.id === activeChannelId ? "active" : ""}`}
+              onClick={() => selectChannel(channel.id)}
+            >
+              <span className="messages-conversation-name"><Hash size={13} />{channel.name}</span>
+            </button>
+          ))}
         </div>
       </section>
       <section className="panel messages-thread-panel">
-        {activeConversation ? (
+        {activeChannel ? (
+          <>
+            <div className="messages-thread-header">
+              <button className="icon-button messages-back-button" type="button" onClick={() => setActiveChannelId(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
+              <strong><Hash size={15} />{activeChannel.name}</strong>
+            </div>
+            <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} />
+          </>
+        ) : activeConversation ? (
           <>
             <div className="messages-thread-header">
               <button className="icon-button messages-back-button" type="button" onClick={() => onSelectConversation(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>

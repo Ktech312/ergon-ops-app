@@ -7154,6 +7154,21 @@ body:has(.modal-backdrop) .install-banner {
   font-style: italic;
 }
 
+.messages-channel-group-label {
+  color: #9a9184;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin: 10px 0 2px 12px;
+  text-transform: uppercase;
+}
+
+.messages-channel-row .messages-conversation-name {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
 .messages-unread-badge {
   align-items: center;
   background: #9a2f20;
@@ -7175,6 +7190,12 @@ body:has(.modal-backdrop) .install-banner {
   gap: 10px;
   margin-bottom: 10px;
   padding-bottom: 12px;
+}
+
+.messages-thread-header strong {
+  align-items: center;
+  display: flex;
+  gap: 6px;
 }
 
 .messages-back-button {
