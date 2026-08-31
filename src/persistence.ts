@@ -1229,6 +1229,7 @@ export type Channel = {
   type: "section" | "project" | "client";
   sectionKey: string | null;
   projectId: string | null;
+  clientId: string | null;
   name: string;
 };
 
@@ -1237,18 +1238,24 @@ type ChannelRow = {
   type: "section" | "project" | "client";
   section_key: string | null;
   project_id: string | null;
+  client_id: string | null;
   name: string;
 };
 
 function mapChannelRow(row: ChannelRow): Channel {
-  return { id: row.id, type: row.type, sectionKey: row.section_key, projectId: row.project_id, name: row.name };
+  return { id: row.id, type: row.type, sectionKey: row.section_key, projectId: row.project_id, clientId: row.client_id ?? null, name: row.name };
 }
 
 export async function loadChannels(accessToken?: string): Promise<Channel[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("channels?select=id,type,section_key,project_id,name&order=name.asc"), {
+  // select=* rather than an explicit column list -- client_id (migration
+  // 102) was added after this table's own migration (101), so an
+  // explicit list would 400 in the gap between running one and the
+  // other. * just picks up whatever columns exist right now, same
+  // graceful-in-between behavior loadTeamMembers already relies on.
+  const response = await fetch(supabaseUrl("channels?select=*&order=name.asc"), {
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok) {
@@ -1256,6 +1263,61 @@ export async function loadChannels(accessToken?: string): Promise<Channel[]> {
   }
   const rows = (await response.json()) as ChannelRow[];
   return rows.map(mapChannelRow);
+}
+
+// --- Clients (migration 102) -- phase 4 of the roadmap, built from a
+// reconciliation pass confirmed with E 2026-08-30 (see the migration's
+// own comment for the exact matches). Deliberately just id/name/created
+// tonight -- linking existing projects/sales_quotes and standing up each
+// client's own channel both happen server-side in the migration itself,
+// not here.
+export type Client = {
+  id: string;
+  name: string;
+  createdAt: string;
+};
+
+type ClientRow = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
+function mapClientRow(row: ClientRow): Client {
+  return { id: row.id, name: row.name, createdAt: row.created_at };
+}
+
+export async function loadClients(accessToken?: string): Promise<Client[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("clients?select=id,name,created_at&order=name.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ClientRow[];
+  return rows.map(mapClientRow);
+}
+
+export async function createClient(name: string, accessToken?: string): Promise<Client> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("clients"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not add client"));
+  }
+  const rows = (await response.json()) as ClientRow[];
+  if (rows.length === 0) {
+    throw new Error("Client didn't save -- you may not have permission.");
+  }
+  return mapClientRow(rows[0]);
 }
 
 export type ChannelMessage = {

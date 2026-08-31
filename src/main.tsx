@@ -224,6 +224,7 @@ import {
   loadChannelMessages,
   sendChannelMessage,
   searchMessages,
+  loadClients,
   loadUserRoleMode,
   loadUsersByRole,
   markWelcomeSeen,
@@ -362,6 +363,7 @@ import {
   type Channel,
   type ChannelMessage,
   type MessageSearchResult,
+  type Client,
   type SiteHardwareRule,
   type SiteHardwareMetric,
   type UserInvite,
@@ -1304,6 +1306,7 @@ function App() {
   const [taskActivity, setTaskActivity] = useState<TaskActivityEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   // Which section's embedded "Discussion" tab is showing, if any (e.g.
   // "inventory" while on the Inventory & Purchasing group) -- overrides
   // the normal Stock/Purchasing/Vendors-style content for that group.
@@ -4387,6 +4390,16 @@ function App() {
     loadChannels(authSession.accessToken).then(setChannels).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectSites.length]);
+
+  // Clients (migration 102, same roadmap) -- same lightweight load-once
+  // pattern as channels/teamMembers.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setClients([]);
+      return;
+    }
+    loadClients(authSession.accessToken).then(setClients).catch(() => {});
+  }, [authSession]);
 
   async function handleAddTeamMember(member: Omit<TeamMember, "id">) {
     if (!authSession) {
@@ -14052,6 +14065,7 @@ function Messages({
   }
   const sectionChannels = channels.filter((entry) => entry.type === "section").sort((a, b) => a.name.localeCompare(b.name));
   const projectChannels = channels.filter((entry) => entry.type === "project").sort((a, b) => a.name.localeCompare(b.name));
+  const clientChannels = channels.filter((entry) => entry.type === "client").sort((a, b) => a.name.localeCompare(b.name));
 
   function displayNameFor(email: string) {
     return teamDisplayName(email, teamMembers);
@@ -14219,6 +14233,19 @@ function Messages({
             <div className="messages-channel-group-label">Projects</div>
           )}
           {projectChannels.map((channel) => (
+            <button
+              key={channel.id}
+              type="button"
+              className={`messages-conversation-row messages-channel-row ${channel.id === activeChannelId ? "active" : ""}`}
+              onClick={() => selectChannel(channel.id)}
+            >
+              <span className="messages-conversation-name"><Hash size={13} />{channel.name}</span>
+            </button>
+          ))}
+          {clientChannels.length > 0 && (
+            <div className="messages-channel-group-label">Clients</div>
+          )}
+          {clientChannels.map((channel) => (
             <button
               key={channel.id}
               type="button"
