@@ -383,7 +383,7 @@ import {
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "messages" | "search";
+type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "messages" | "search" | "profile";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -477,6 +477,7 @@ const TAB_LABELS: Record<View, string> = {
   client_ledger: "Client Ledger",
   messages: "Messages",
   search: "Search Results",
+  profile: "Profile",
 };
 
 // Starting point when a role has no explicit per-user tab override. An admin
@@ -535,6 +536,7 @@ const MOBILE_NAV_TAB_ICON: Record<View, (size: number) => React.ReactNode> = {
   client_ledger: (size) => <Archive size={size} />,
   messages: (size) => <MessageCircle size={size} />,
   search: (size) => <Search size={size} />,
+  profile: (size) => <User size={size} />,
 };
 
 const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
@@ -1046,7 +1048,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library", "client_ledger", "messages", "search"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library", "client_ledger", "messages", "search", "profile"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -7070,6 +7072,16 @@ function App() {
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select></label>
+                  <button
+                    className={`secondary-action mini-action account-menu-admin-link ${view === "profile" ? "active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      navigateToView("profile");
+                      setAccountMenuOpen(false);
+                    }}
+                  >
+                    <User size={14} /> My Profile
+                  </button>
                   {canReviewApprovals && (
                     <button
                       className={`secondary-action mini-action account-menu-admin-link ${view === "admin" ? "active" : ""}`}
@@ -7248,6 +7260,62 @@ function App() {
           <p>{view === "projects" && projectDetailContext ? `Ref ${projectDetailContext.ref}` : pageSubtitle(view)}</p>
         </div>
 
+        {view === "profile" && (() => {
+          const own = teamMembers.find((member) => member.email.toLowerCase() === (authSession?.email ?? "").toLowerCase());
+          const groupLabels = own?.primaryRole
+            ? [own.primaryRole, ...own.secondaryRoles].map((key) => ROLE_KEY_OPTIONS.find((option) => option.value === key)?.label ?? key)
+            : [];
+          return (
+            <div className="panel wide profile-page">
+              <div className="profile-avatar-section">
+                {own?.avatarUrl ? (
+                  <img className="profile-avatar-large" src={own.avatarUrl} alt="" />
+                ) : (
+                  <div className="profile-avatar-large profile-avatar-placeholder"><User size={40} /></div>
+                )}
+                <label className="secondary-action mini-action profile-avatar-upload">
+                  Change photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file && own) {
+                        handleUploadTeamMemberAvatar(own.id, file);
+                      }
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="profile-info-section">
+                <label className="profile-field">
+                  <span className="muted">Display name</span>
+                  <input
+                    className="roster-name-input"
+                    key={own?.id}
+                    defaultValue={own?.fullName ?? ""}
+                    placeholder="How you show up in Messages"
+                    onBlur={(event) => {
+                      if (own && event.target.value !== own.fullName) {
+                        handleUpdateTeamMember(own.id, { fullName: event.target.value });
+                      }
+                    }}
+                  />
+                </label>
+                <div className="profile-field">
+                  <span className="muted">Email</span>
+                  <span>{authSession?.email}</span>
+                </div>
+                <div className="profile-field">
+                  <span className="muted">Groups</span>
+                  <span>{groupLabels.length > 0 ? groupLabels.join(", ") : "-"}</span>
+                </div>
+                {teamMemberStatus && <div className="source-file"><span>{teamMemberStatus}</span></div>}
+              </div>
+            </div>
+          );
+        })()}
         {view === "search" && (
           <div className="panel wide">
             <div className="search-page-filters">
@@ -7907,6 +7975,7 @@ function pageTitle(view: View) {
     messages: "Messages",
     client_ledger: "Client Ledger",
     search: "Search Results",
+    profile: "Profile",
   };
   return titles[view];
 }
@@ -7935,6 +8004,7 @@ function pageSubtitle(view: View) {
     client_ledger: "The permanent record for a site once it closes out -- lifecycle, financials, hardware, and final documents.",
     messages: "Direct messages with anyone on the team.",
     search: "Everything that matches, filterable by type.",
+    profile: "Your photo, name, and contact info -- how you show up to everyone else.",
   };
   return subtitles[view];
 }

@@ -1937,6 +1937,63 @@ td small.quote-ref-tag {
   width: 1px;
 }
 
+.profile-page {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+}
+
+.profile-avatar-section {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-avatar-large {
+  border-radius: 50%;
+  height: 120px;
+  object-fit: cover;
+  width: 120px;
+}
+
+.profile-avatar-placeholder {
+  align-items: center;
+  background: #ede6d9;
+  color: #9a9184;
+  display: flex;
+  justify-content: center;
+}
+
+.profile-avatar-upload {
+  cursor: pointer;
+  position: relative;
+}
+
+.profile-avatar-upload input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+
+.profile-info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 260px;
+}
+
+.profile-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.profile-field .muted {
+  font-size: 12px;
+}
+
 .project-doc-upload {
   cursor: pointer;
   position: relative;
