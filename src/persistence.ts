@@ -1215,6 +1215,44 @@ export async function getMessageAttachmentUrl(storagePath: string, accessToken?:
   return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1${body.signedURL}`;
 }
 
+// Avatars (migration 109) -- E: "Add user images to the main setup that
+// will carry next to these messages." Public bucket, unlike
+// message-attachments above -- an avatar isn't sensitive, and public
+// means every message bubble can use the URL directly with no signed-URL
+// round trip. avatar_url on team_members stores this full public URL,
+// not just a storage path, so nothing that renders an avatar needs to
+// resolve anything further.
+const AVATAR_BUCKET = "avatars";
+
+export function buildAvatarStoragePath(teamMemberId: string, fileName: string): string {
+  const stamp = Date.now().toString(36);
+  const extMatch = fileName.match(/\.[a-zA-Z0-9]+$/);
+  const ext = extMatch ? extMatch[0] : "";
+  return `${teamMemberId}/${stamp}${ext}`;
+}
+
+export async function uploadTeamMemberAvatar(file: File, storagePath: string, accessToken?: string): Promise<string | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+  const baseUrl = envValue("VITE_SUPABASE_URL").replace(/\/$/, "");
+  const response = await fetch(`${baseUrl}/storage/v1/object/${AVATAR_BUCKET}/${storagePath}`, {
+    method: "POST",
+    headers: {
+      apikey: anonKey,
+      authorization: `Bearer ${accessToken}`,
+      "content-type": file.type || "application/octet-stream",
+      "x-upsert": "true",
+    },
+    body: file,
+  });
+  if (!response.ok) {
+    return null;
+  }
+  return `${baseUrl}/storage/v1/object/public/${AVATAR_BUCKET}/${storagePath}`;
+}
+
 // --- Group channels (migration 101) -- phase 1 of the Slack/ClickUp/
 // Drive replacement roadmap (see HANDOFF.md). One shared shape for every
 // channel type (section-wide or per-project today; per-client in a later
@@ -1586,16 +1624,16 @@ export type MessageSearchResult = {
   createdAt: string;
 };
 
-export async function searchMessages(term: string, accessToken?: string): Promise<MessageSearchResult[]> {
+export async function searchMessages(term: string, accessToken?: string, limit: number = 8): Promise<MessageSearchResult[]> {
   if (!isRemotePersistenceConfigured() || !accessToken || term.trim().length < 3) {
     return [];
   }
   const pattern = `*${encodeURIComponent(term.trim())}*`;
   const [dmResponse, channelResponse] = await Promise.all([
-    fetch(supabaseUrl(`direct_messages?body=ilike.${pattern}&select=id,conversation_id,sender_id,body,created_at&order=created_at.desc&limit=8`), {
+    fetch(supabaseUrl(`direct_messages?body=ilike.${pattern}&select=id,conversation_id,sender_id,body,created_at&order=created_at.desc&limit=${limit}`), {
       headers: supabaseHeaders(accessToken),
     }),
-    fetch(supabaseUrl(`channel_messages?body=ilike.${pattern}&select=id,channel_id,sender_id,body,created_at&order=created_at.desc&limit=8`), {
+    fetch(supabaseUrl(`channel_messages?body=ilike.${pattern}&select=id,channel_id,sender_id,body,created_at&order=created_at.desc&limit=${limit}`), {
       headers: supabaseHeaders(accessToken),
     }),
   ]);
@@ -1605,7 +1643,7 @@ export async function searchMessages(term: string, accessToken?: string): Promis
     ...dmRows.map((row) => ({ id: row.id, kind: "dm" as const, conversationId: row.conversation_id, channelId: null, senderId: row.sender_id, body: row.body, createdAt: row.created_at })),
     ...channelRows.map((row) => ({ id: row.id, kind: "channel" as const, conversationId: null, channelId: row.channel_id, senderId: row.sender_id, body: row.body, createdAt: row.created_at })),
   ];
-  return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
+  return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
 }
 
 // Doesn't need to know which conversations the user is in -- RLS on
@@ -2889,6 +2927,7 @@ export type TeamMember = {
   primaryRole: string;
   secondaryRoles: string[];
   slackUserId: string;
+  avatarUrl: string;
 };
 
 type TeamMemberRow = {
@@ -2900,6 +2939,7 @@ type TeamMemberRow = {
   primary_role: string | null;
   secondary_roles: string[] | null;
   slack_user_id: string | null;
+  avatar_url?: string | null;
 };
 
 function mapTeamMemberRow(row: TeamMemberRow): TeamMember {
@@ -2912,6 +2952,7 @@ function mapTeamMemberRow(row: TeamMemberRow): TeamMember {
     primaryRole: row.primary_role ?? "",
     secondaryRoles: row.secondary_roles ?? [],
     slackUserId: row.slack_user_id ?? "",
+    avatarUrl: row.avatar_url ?? "",
   };
 }
 
@@ -2951,6 +2992,7 @@ export async function createTeamMember(member: Omit<TeamMember, "id">, accessTok
       primary_role: member.primaryRole || null,
       secondary_roles: member.secondaryRoles ?? [],
       slack_user_id: member.slackUserId || null,
+      avatar_url: member.avatarUrl || null,
     }),
   });
 
@@ -2975,6 +3017,7 @@ export async function updateTeamMember(id: string, member: Partial<Omit<TeamMemb
   if (member.primaryRole !== undefined) payload.primary_role = member.primaryRole || null;
   if (member.secondaryRoles !== undefined) payload.secondary_roles = member.secondaryRoles;
   if (member.slackUserId !== undefined) payload.slack_user_id = member.slackUserId || null;
+  if (member.avatarUrl !== undefined) payload.avatar_url = member.avatarUrl || null;
 
   const response = await fetch(supabaseUrl(`team_members?id=eq.${id}`), {
     method: "PATCH",

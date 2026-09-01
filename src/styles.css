@@ -683,6 +683,84 @@ button {
   padding: 8px;
 }
 
+.global-search-see-all {
+  background: transparent;
+  border: none;
+  border-top: 1px solid #ede6d9;
+  color: #a01029;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px;
+  text-align: left;
+}
+
+.global-search-see-all:hover {
+  text-decoration: underline;
+}
+
+.search-page-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.search-page-filter {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+}
+
+.search-page-filter.active {
+  background: #a01029;
+  border-color: #a01029;
+  color: white;
+}
+
+.search-page-group {
+  margin-bottom: 22px;
+}
+
+.search-page-group h3 {
+  border-bottom: 1px solid #ede6d9;
+  font-size: 14px;
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+}
+
+.search-page-result {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #f3efe6;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 2px;
+  padding: 10px 4px;
+  text-align: left;
+  width: 100%;
+}
+
+.search-page-result:hover {
+  background: #faf7f1;
+}
+
+.search-page-result strong {
+  font-size: 14px;
+}
+
+.search-page-result span {
+  color: #514b43;
+  font-size: 13px;
+}
+
 .brand {
   align-items: center;
   display: flex;
@@ -1824,6 +1902,39 @@ td small.quote-ref-tag {
 .project-doc-list {
   display: grid;
   gap: 10px;
+}
+
+.roster-name-cell {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.roster-avatar {
+  border-radius: 50%;
+  height: 24px;
+  object-fit: cover;
+  width: 24px;
+}
+
+.roster-avatar-placeholder {
+  align-items: center;
+  background: #ede6d9;
+  color: #9a9184;
+  display: flex;
+  justify-content: center;
+}
+
+.roster-avatar-upload {
+  cursor: pointer;
+  position: relative;
+}
+
+.roster-avatar-upload input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
 }
 
 .project-doc-upload {
@@ -7335,12 +7446,30 @@ body:has(.modal-backdrop) .install-banner {
 }
 
 .messages-bubble-row {
+  align-items: flex-end;
   display: flex;
+  gap: 6px;
   justify-content: flex-start;
 }
 
 .messages-bubble-row.mine {
   justify-content: flex-end;
+}
+
+.messages-bubble-avatar {
+  border-radius: 50%;
+  flex-shrink: 0;
+  height: 26px;
+  object-fit: cover;
+  width: 26px;
+}
+
+.messages-bubble-avatar-placeholder {
+  align-items: center;
+  background: #ede6d9;
+  color: #9a9184;
+  display: flex;
+  justify-content: center;
 }
 
 .messages-bubble {

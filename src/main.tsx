@@ -227,6 +227,8 @@ import {
   sendChannelMessage,
   loadChannelCanvas,
   saveChannelCanvas,
+  buildAvatarStoragePath,
+  uploadTeamMemberAvatar,
   createGroupChannel,
   unlockChannel,
   loadChannelMembers,
@@ -381,7 +383,7 @@ import {
 } from "./persistence";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "messages";
+type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "messages" | "search";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -474,6 +476,7 @@ const TAB_LABELS: Record<View, string> = {
   library: "Library",
   client_ledger: "Client Ledger",
   messages: "Messages",
+  search: "Search Results",
 };
 
 // Starting point when a role has no explicit per-user tab override. An admin
@@ -531,6 +534,7 @@ const MOBILE_NAV_TAB_ICON: Record<View, (size: number) => React.ReactNode> = {
   library: (size) => <BookOpen size={size} />,
   client_ledger: (size) => <Archive size={size} />,
   messages: (size) => <MessageCircle size={size} />,
+  search: (size) => <Search size={size} />,
 };
 
 const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
@@ -1348,6 +1352,8 @@ function App() {
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [messageSearchResults, setMessageSearchResults] = useState<MessageSearchResult[]>([]);
+  const [fullMessageSearchResults, setFullMessageSearchResults] = useState<MessageSearchResult[]>([]);
+  const [searchTypeFilter, setSearchTypeFilter] = useState("all");
   const [inventorySearchFocus, setInventorySearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [reportsSearchFocus, setReportsSearchFocus] = useState<{ term: string; token: number } | null>(null);
   const [purchasingSearchFocus, setPurchasingSearchFocus] = useState<{ term: string; token: number } | null>(null);
@@ -2281,6 +2287,19 @@ function App() {
     } catch (error) {
       setBrandingStatus(error instanceof Error ? error.message : "Could not save logo.");
     }
+  }
+
+  async function handleUploadTeamMemberAvatar(memberId: string, file: File) {
+    if (!authSession) {
+      return;
+    }
+    const storagePath = buildAvatarStoragePath(memberId, file.name);
+    const url = await uploadTeamMemberAvatar(file, storagePath, authSession.accessToken);
+    if (!url) {
+      setTeamMemberStatus("Could not upload that image.");
+      return;
+    }
+    handleUpdateTeamMember(memberId, { avatarUrl: url });
   }
 
   function reloadAdminDirectory(accessToken: string) {
@@ -4234,6 +4253,9 @@ function App() {
       } else if (created.assignedRoleKey) {
         notifyRoleAssignment(created.assignedRoleKey, "New task for your team", created.id, created.title);
       }
+      if (created.description) {
+        notifyMentions(created.description, "task", created.id, `the task "${created.title}"`, created.id);
+      }
       return true;
     } catch (error) {
       setTaskStatusMessage(error instanceof Error ? error.message : "Could not create task.");
@@ -4271,6 +4293,9 @@ function App() {
         notify("task_assigned", updated.assigneeEmail, "Task assigned", `"${updated.title}" was assigned to you.`, "task", updated.id, `task_assigned:${updated.id}:${updated.assigneeEmail}`);
       } else if (updated.assignedRoleKey && updated.assignedRoleKey !== previous?.assignedRoleKey) {
         notifyRoleAssignment(updated.assignedRoleKey, "Task assigned to your team", updated.id, updated.title);
+      }
+      if (task.description !== undefined && task.description !== previous?.description && updated.description) {
+        notifyMentions(updated.description, "task", updated.id, `the task "${updated.title}"`, updated.description.slice(0, 60));
       }
       if (previous && updated.status !== previous.status) {
         const statusLabel = TASK_STATUS_OPTIONS.find((option) => option.value === updated.status)?.label ?? updated.status;
@@ -4582,6 +4607,54 @@ function App() {
           await notify(eventType, member.email, title, body, "task", task.id, `${eventType}:${task.id}:${member.email}:${dedupeSuffix}:${today}`);
         }
       }
+    }
+  }
+
+  // @mentions (migration 108) -- E: "I need to be able alert people, so
+  // tag them @Sales or @Ehren so it would send me an Alert." @RoleLabel
+  // (spaces stripped, e.g. @ProductDevelopment) resolves to everyone
+  // currently holding that role, the same loadUsersByRole() lookup
+  // role-assigned tasks already use above; anything else is matched
+  // against a team member's first name. Best-effort, not a hard
+  // directory lookup -- an unmatched @token just stays plain text in the
+  // message, same as Slack before a mention resolves.
+  async function resolveMentionEmails(text: string): Promise<string[]> {
+    if (!authSession) {
+      return [];
+    }
+    const tokens = [...new Set([...text.matchAll(/@([A-Za-z][A-Za-z0-9_]*)/g)].map((match) => match[1]))];
+    if (tokens.length === 0) {
+      return [];
+    }
+    const emails = new Set<string>();
+    for (const token of tokens) {
+      const roleOption = ROLE_KEY_OPTIONS.find((option) => option.label.replace(/\s+/g, "").toLowerCase() === token.toLowerCase());
+      if (roleOption) {
+        const members = await loadUsersByRole(roleOption.value, authSession.accessToken).catch(() => []);
+        members.forEach((member) => emails.add(member.email.toLowerCase()));
+        continue;
+      }
+      const person = teamMembers.find((member) => member.fullName.trim().split(/\s+/)[0]?.toLowerCase() === token.toLowerCase());
+      if (person?.email) {
+        emails.add(person.email.toLowerCase());
+      }
+    }
+    emails.delete(authSession.email?.toLowerCase() ?? "");
+    return [...emails];
+  }
+
+  async function notifyMentions(text: string, relatedEntityType: string, relatedEntityId: string, sourceLabel: string, dedupeSuffix: string) {
+    const emails = await resolveMentionEmails(text);
+    for (const email of emails) {
+      await notify(
+        "mentioned",
+        email,
+        `You were mentioned in ${sourceLabel}`,
+        `${authSession?.email ?? "Someone"}: ${text.slice(0, 200)}`,
+        relatedEntityType,
+        relatedEntityId,
+        `mentioned:${relatedEntityType}:${relatedEntityId}:${email}:${dedupeSuffix}`,
+      );
     }
   }
 
@@ -5484,6 +5557,25 @@ function App() {
             .slice(0, 5),
         };
 
+  // Full-page search results (view === "search") -- same predicates as
+  // the dropdown above, just not capped at 5 per group. E: "Internal
+  // search section here, we talked about like Notion with filters."
+  // Duplicated rather than refactored out of globalSearchMatches -- the
+  // dropdown's own capped version is small and stable, not worth the risk
+  // of a shared-helper refactor touching a working search path.
+  const globalSearchMatchesFull =
+    globalSearchTerm.length < 2
+      ? { parts: [] as Part[], orders: [] as PurchaseOrder[], projects: [] as ProjectSite[], tasksMatch: [] as EOTask[], vendorsMatch: [] as Vendor[], quotesMatch: [] as SalesQuote[], documentsMatch: [] as UploadedDoc[] }
+      : {
+          parts: inventoryItems.filter((part) => `${part.ref} ${part.name} ${part.description} ${part.manufacturer} ${part.category}`.toLowerCase().includes(globalSearchTerm)),
+          orders: purchaseOrders.filter((order) => `${order.number} ${order.vendor} ${order.projectRef} ${order.sourceFile ?? ""}`.toLowerCase().includes(globalSearchTerm)),
+          projects: projectSites.filter((project) => `${project.name} ${project.ref} ${project.client}`.toLowerCase().includes(globalSearchTerm)),
+          tasksMatch: tasks.filter((task) => `${task.title} ${task.taskNumber} ${task.description}`.toLowerCase().includes(globalSearchTerm)),
+          vendorsMatch: vendors.filter((vendor) => `${vendor.name} ${vendor.contactName} ${vendor.email}`.toLowerCase().includes(globalSearchTerm)),
+          quotesMatch: salesQuotes.filter((quote) => `${quote.quoteRef} ${quote.clientName} ${quote.siteName}`.toLowerCase().includes(globalSearchTerm)),
+          documentsMatch: projectDocuments.filter((doc) => `${doc.name} ${doc.project}`.toLowerCase().includes(globalSearchTerm)),
+        };
+
   // Message search is a real query (see searchMessages' own comment for
   // why), debounced so it fires once typing pauses rather than on every
   // keystroke.
@@ -5498,6 +5590,20 @@ function App() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [globalSearchTerm, authSession]);
+
+  // Same query, more results -- only fires on the full search page itself
+  // so the dropdown's own 8-result fetch above isn't affected.
+  useEffect(() => {
+    if (view !== "search" || !authSession || globalSearchTerm.length < 3) {
+      setFullMessageSearchResults([]);
+      return;
+    }
+    const session = authSession;
+    const timer = window.setTimeout(() => {
+      searchMessages(globalSearchTerm, session.accessToken, 40).then(setFullMessageSearchResults).catch(() => setFullMessageSearchResults([]));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [globalSearchTerm, authSession, view]);
 
   function closeGlobalSearch() {
     setGlobalSearchQuery("");
@@ -7019,6 +7125,10 @@ function App() {
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 closeGlobalSearch();
+              } else if (event.key === "Enter" && globalSearchTerm.length >= 2) {
+                setGlobalSearchOpen(false);
+                setSearchTypeFilter("all");
+                navigateToView("search");
               }
             }}
           />
@@ -7115,6 +7225,18 @@ function App() {
                   ))}
                 </div>
               )}
+              <button
+                type="button"
+                className="global-search-see-all"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setGlobalSearchOpen(false);
+                  setSearchTypeFilter("all");
+                  navigateToView("search");
+                }}
+              >
+                See all results for "{globalSearchQuery.trim()}"
+              </button>
             </div>
           )}
         </div>
@@ -7126,6 +7248,129 @@ function App() {
           <p>{view === "projects" && projectDetailContext ? `Ref ${projectDetailContext.ref}` : pageSubtitle(view)}</p>
         </div>
 
+        {view === "search" && (
+          <div className="panel wide">
+            <div className="search-page-filters">
+              {[
+                { key: "all", label: "All", count: globalSearchMatchesFull.projects.length + globalSearchMatchesFull.parts.length + globalSearchMatchesFull.orders.length + globalSearchMatchesFull.tasksMatch.length + globalSearchMatchesFull.vendorsMatch.length + globalSearchMatchesFull.quotesMatch.length + globalSearchMatchesFull.documentsMatch.length + fullMessageSearchResults.length },
+                { key: "projects", label: "Projects", count: globalSearchMatchesFull.projects.length },
+                { key: "tasks", label: "Tasks", count: globalSearchMatchesFull.tasksMatch.length },
+                { key: "parts", label: "Parts", count: globalSearchMatchesFull.parts.length },
+                { key: "orders", label: "Orders", count: globalSearchMatchesFull.orders.length },
+                { key: "vendors", label: "Vendors", count: globalSearchMatchesFull.vendorsMatch.length },
+                { key: "quotes", label: "Sales Quotes", count: globalSearchMatchesFull.quotesMatch.length },
+                { key: "documents", label: "Documents", count: globalSearchMatchesFull.documentsMatch.length },
+                { key: "messages", label: "Messages", count: fullMessageSearchResults.length },
+              ].map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  className={`search-page-filter ${searchTypeFilter === option.key ? "active" : ""}`}
+                  onClick={() => setSearchTypeFilter(option.key)}
+                >
+                  {option.label} ({option.count})
+                </button>
+              ))}
+            </div>
+            {globalSearchTerm.length < 2 ? (
+              <div className="empty-compact-state">Type at least 2 characters in the search bar above.</div>
+            ) : (
+              <>
+                {(searchTypeFilter === "all" || searchTypeFilter === "projects") && globalSearchMatchesFull.projects.length > 0 && (
+                  <div className="search-page-group">
+                    <h3>Projects</h3>
+                    {globalSearchMatchesFull.projects.map((project) => (
+                      <button key={project.id ?? project.ref} type="button" className="search-page-result" onClick={() => handleSelectSearchProject(project)}>
+                        <strong>{project.name}</strong>
+                        <span>{project.ref} - {project.client}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(searchTypeFilter === "all" || searchTypeFilter === "tasks") && globalSearchMatchesFull.tasksMatch.length > 0 && (
+                  <div className="search-page-group">
+                    <h3>Tasks</h3>
+                    {globalSearchMatchesFull.tasksMatch.map((task) => (
+                      <button key={task.id} type="button" className="search-page-result" onClick={() => handleSelectSearchTask(task)}>
+                        <strong>{task.title}</strong>
+                        <span>{task.taskNumber} - {task.description.slice(0, 100)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(searchTypeFilter === "all" || searchTypeFilter === "parts") && globalSearchMatchesFull.parts.length > 0 && (
+                  <div className="search-page-group">
+                    <h3>Parts</h3>
+                    {globalSearchMatchesFull.parts.map((part) => (
+                      <button key={part.ref} type="button" className="search-page-result" onClick={() => handleSelectSearchPart(part)}>
+                        <strong>{part.name}</strong>
+                        <span>{part.ref} - {part.category}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(searchTypeFilter === "all" || searchTypeFilter === "orders") && globalSearchMatchesFull.orders.length > 0 && (
+                  <div className="search-page-group">
+                    <h3>Purchase Orders</h3>
+                    {globalSearchMatchesFull.orders.map((order) => (
+                      <button key={order.id} type="button" className="search-page-result" onClick={() => handleSelectSearchOrder(order)}>
+                        <strong>{order.number}</strong>
+                        <span>{order.vendor} - {order.projectRef}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(searchTypeFilter === "all" || searchTypeFilter === "vendors") && globalSearchMatchesFull.vendorsMatch.length > 0 && (
+                  <div className="search-page-group">
+                    <h3>Vendors</h3>
+                    {globalSearchMatchesFull.vendorsMatch.map((vendor) => (
+                      <button key={vendor.id} type="button" className="search-page-result" onClick={() => handleSelectSearchVendor()}>
+                        <strong>{vendor.name}</strong>
+                        <span>{vendor.contactName} - {vendor.email}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(searchTypeFilter === "all" || searchTypeFilter === "quotes") && globalSearchMatchesFull.quotesMatch.length > 0 && (
+                  <div className="search-page-group">
+                    <h3>Sales Quotes</h3>
+                    {globalSearchMatchesFull.quotesMatch.map((quote) => (
+                      <button key={quote.id} type="button" className="search-page-result" onClick={() => handleSelectSearchQuote()}>
+                        <strong>{quote.siteName}</strong>
+                        <span>{quote.quoteRef} - {quote.clientName}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(searchTypeFilter === "all" || searchTypeFilter === "documents") && globalSearchMatchesFull.documentsMatch.length > 0 && (
+                  <div className="search-page-group">
+                    <h3>Documents</h3>
+                    {globalSearchMatchesFull.documentsMatch.map((doc) => (
+                      <button key={doc.id} type="button" className="search-page-result" onClick={() => handleSelectSearchDocument(doc)}>
+                        <strong>{doc.name}</strong>
+                        <span>{doc.project}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(searchTypeFilter === "all" || searchTypeFilter === "messages") && fullMessageSearchResults.length > 0 && (
+                  <div className="search-page-group">
+                    <h3>Messages</h3>
+                    {fullMessageSearchResults.map((result) => (
+                      <button key={result.id} type="button" className="search-page-result" onClick={() => handleSelectSearchMessage(result)}>
+                        <strong>{result.kind === "channel" ? (channels.find((entry) => entry.id === result.channelId)?.name ?? "Channel") : (teamDisplayName(knownUsers.find((user) => user.userId === result.senderId)?.email ?? "", teamMembers) || "Direct message")}</strong>
+                        <span>{result.body.slice(0, 140)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {globalSearchMatchesFull.projects.length === 0 && globalSearchMatchesFull.parts.length === 0 && globalSearchMatchesFull.orders.length === 0 && globalSearchMatchesFull.tasksMatch.length === 0 && globalSearchMatchesFull.vendorsMatch.length === 0 && globalSearchMatchesFull.quotesMatch.length === 0 && globalSearchMatchesFull.documentsMatch.length === 0 && fullMessageSearchResults.length === 0 && (
+                  <div className="empty-compact-state">No matches for "{globalSearchQuery.trim()}".</div>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} allocatedForProjectsValue={allocatedForProjectsValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
         {(view === "purchasing" || view === "inventory" || view === "vendors") && (
           <>
@@ -7139,7 +7384,7 @@ function App() {
               (() => {
                 const channel = channels.find((entry) => entry.type === "section" && entry.sectionKey === "inventory");
                 return channel ? (
-                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />
+                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} onNotifyMentions={notifyMentions} />
                 ) : (
                   <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
                 );
@@ -7153,7 +7398,7 @@ function App() {
             )}
           </>
         )}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} channels={channels} knownUsers={knownUsers} myUserId={authSession?.userId ?? ""} activeDiscussionSection={activeDiscussionSection} onSetActiveDiscussionSection={setActiveDiscussionSection} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} channels={channels} knownUsers={knownUsers} myUserId={authSession?.userId ?? ""} activeDiscussionSection={activeDiscussionSection} onSetActiveDiscussionSection={setActiveDiscussionSection} onNotifyMentions={notifyMentions} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <>
             <div className="segmented-tabs operations-subtabs">
@@ -7164,7 +7409,7 @@ function App() {
               (() => {
                 const channel = channels.find((entry) => entry.type === "section" && entry.sectionKey === "sales");
                 return channel ? (
-                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />
+                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} onNotifyMentions={notifyMentions} />
                 ) : (
                   <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
                 );
@@ -7251,7 +7496,7 @@ function App() {
               (() => {
                 const channel = channels.find((entry) => entry.type === "section" && entry.sectionKey === "marketing");
                 return channel ? (
-                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} />
+                  <ChannelDiscussion channel={channel} myUserId={authSession?.userId ?? ""} accessToken={authSession?.accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} onNotifyMentions={notifyMentions} />
                 ) : (
                   <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
                 );
@@ -7306,6 +7551,7 @@ function App() {
             documents={projectDocuments}
             onDownloadDocument={handleDownloadDocument}
             onChannelsChanged={reloadChannels}
+            onNotifyMentions={notifyMentions}
           />
         )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
@@ -7358,6 +7604,7 @@ function App() {
             teamMemberStatus={teamMemberStatus}
             onAddTeamMember={handleAddTeamMember}
             onUpdateTeamMember={handleUpdateTeamMember}
+            onUploadAvatar={handleUploadTeamMemberAvatar}
             notificationRules={notificationRules}
             onUpdateNotificationRule={handleUpdateNotificationRule}
             standardInstallTimes={standardInstallTimes}
@@ -7659,6 +7906,7 @@ function pageTitle(view: View) {
     library: "Learning Library",
     messages: "Messages",
     client_ledger: "Client Ledger",
+    search: "Search Results",
   };
   return titles[view];
 }
@@ -7686,6 +7934,7 @@ function pageSubtitle(view: View) {
     library: "Reference guides and onboarding materials.",
     client_ledger: "The permanent record for a site once it closes out -- lifecycle, financials, hardware, and final documents.",
     messages: "Direct messages with anyone on the team.",
+    search: "Everything that matches, filterable by type.",
   };
   return subtitles[view];
 }
@@ -11112,6 +11361,7 @@ function Projects({
   myUserId,
   activeDiscussionSection,
   onSetActiveDiscussionSection,
+  onNotifyMentions,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
@@ -11142,6 +11392,7 @@ function Projects({
   myUserId: string;
   activeDiscussionSection: string | null;
   onSetActiveDiscussionSection: (section: string | null) => void;
+  onNotifyMentions?: (text: string, relatedEntityType: string, relatedEntityId: string, sourceLabel: string, dedupeSuffix: string) => void;
   onCreateTask: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
   onUpdateTask: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask: (id: string) => void;
@@ -11875,7 +12126,7 @@ function Projects({
           <button className="active" type="button" onClick={() => onSetActiveDiscussionSection("projects")}>Discussion</button>
         </div>
         {projectsSectionChannel ? (
-          <ChannelDiscussion channel={projectsSectionChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} />
+          <ChannelDiscussion channel={projectsSectionChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} onNotifyMentions={onNotifyMentions} />
         ) : (
           <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
         )}
@@ -12822,7 +13073,7 @@ function Projects({
               <button className="icon-button" type="button" onClick={() => setShowDiscussionModal(false)} aria-label="Close">x</button>
             </div>
             {projectChannel ? (
-              <ChannelDiscussion channel={projectChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={projectDocuments} onDownloadDocument={onDownloadDocument} />
+              <ChannelDiscussion channel={projectChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={projectDocuments} onDownloadDocument={onDownloadDocument} onNotifyMentions={onNotifyMentions} />
             ) : (
               <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
             )}
@@ -13787,6 +14038,7 @@ function MessageThread({
   onSend,
   emptyText,
   senderNameFor,
+  senderAvatarFor,
 }: {
   messages: ThreadMessage[];
   myUserId: string;
@@ -13794,6 +14046,8 @@ function MessageThread({
   onSend: (body: string, file?: File) => void;
   emptyText: string;
   senderNameFor?: (senderId: string) => string;
+  // Migration 109 -- returns a public avatar URL, or "" for no avatar set.
+  senderAvatarFor?: (senderId: string) => string;
 }) {
   const [draftBody, setDraftBody] = useState("");
   const [draftFile, setDraftFile] = useState<File | null>(null);
@@ -13863,8 +14117,12 @@ function MessageThread({
           const attachmentUrl = message.attachmentStoragePath ? attachmentUrls[message.id] : undefined;
           const isImage = (message.attachmentMimeType ?? "").startsWith("image/");
           const mine = message.senderId === myUserId;
+          const avatarUrl = !mine && senderAvatarFor ? senderAvatarFor(message.senderId) : "";
           return (
             <div key={message.id} className={`messages-bubble-row ${mine ? "mine" : ""}`}>
+              {!mine && senderAvatarFor && (
+                avatarUrl ? <img className="messages-bubble-avatar" src={avatarUrl} alt="" /> : <span className="messages-bubble-avatar messages-bubble-avatar-placeholder"><User size={13} /></span>
+              )}
               <div className="messages-bubble">
                 {!mine && senderNameFor && <small className="messages-bubble-sender">{senderNameFor(message.senderId)}</small>}
                 {message.attachmentStoragePath && (
@@ -14018,11 +14276,16 @@ function ChannelDiscussion({
   documents,
   onDownloadDocument,
   onChannelsChanged,
+  onNotifyMentions,
 }: {
   channel: Channel;
   myUserId: string;
   accessToken?: string;
   teamMembers: TeamMember[];
+  // @mentions (migration 108) -- called with the raw message/canvas text
+  // after it saves successfully; the parent (App scope) owns mention
+  // parsing and the notify() engine, this component just supplies text.
+  onNotifyMentions?: (text: string, relatedEntityType: string, relatedEntityId: string, sourceLabel: string, dedupeSuffix: string) => void;
   knownUsers: KnownUser[];
   // 'group' channels only -- called after unlocking or adding a member so
   // the parent's channels list (and this channel's own private/member
@@ -14131,6 +14394,10 @@ function ChannelDiscussion({
       const saved = await saveChannelCanvas(channel.id, canvasContent, myUserId, accessToken);
       setCanvasSavedAt(saved.updatedAt);
       setCanvasDirty(false);
+      if (canvasContent) {
+        const today = new Date().toISOString().slice(0, 10);
+        onNotifyMentions?.(canvasContent, "canvas", channel.id, `the #${channel.name} canvas`, today);
+      }
     } catch {
       setStatus("Could not save the canvas.");
     } finally {
@@ -14155,6 +14422,13 @@ function ChannelDiscussion({
   function senderNameFor(senderId: string) {
     const email = emailByUserId.get(senderId);
     return email ? teamDisplayName(email, teamMembers) : "Unknown user";
+  }
+  function senderAvatarFor(senderId: string) {
+    const email = emailByUserId.get(senderId);
+    if (!email) {
+      return "";
+    }
+    return teamMembers.find((member) => member.email.toLowerCase() === email.toLowerCase())?.avatarUrl ?? "";
   }
 
   const CHANNEL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
@@ -14181,6 +14455,9 @@ function ChannelDiscussion({
       const message = await sendChannelMessage(channel.id, myUserId, body.trim(), accessToken, attachment);
       setMessages((current) => [...current, message]);
       setStatus("");
+      if (message.body) {
+        onNotifyMentions?.(message.body, "channel_message", message.id, `#${channel.name}`, message.id);
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not send message.");
     }
@@ -14228,6 +14505,7 @@ function ChannelDiscussion({
             onSend={handleSend}
             emptyText="No messages yet in this channel -- say hello."
             senderNameFor={senderNameFor}
+            senderAvatarFor={senderAvatarFor}
           />
         </>
       )}
@@ -14330,6 +14608,7 @@ function Messages({
   documents,
   onDownloadDocument,
   onChannelsChanged,
+  onNotifyMentions,
 }: {
   myUserId: string;
   myEmail: string;
@@ -14338,6 +14617,7 @@ function Messages({
   teamMembers: TeamMember[];
   channels: Channel[];
   onChannelsChanged?: () => void;
+  onNotifyMentions?: (text: string, relatedEntityType: string, relatedEntityId: string, sourceLabel: string, dedupeSuffix: string) => void;
   conversations: Conversation[];
   unreadMessageCounts: Record<string, number>;
   activeConversationId: string | null;
@@ -14670,7 +14950,7 @@ function Messages({
               <button className="icon-button messages-back-button" type="button" onClick={() => setActiveChannelId(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
               <strong>{activeChannel.type === "group" && activeChannel.private ? <Lock size={15} /> : <Hash size={15} />}{activeChannel.name}</strong>
             </div>
-            <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={documents} onDownloadDocument={onDownloadDocument} onChannelsChanged={onChannelsChanged} />
+            <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={documents} onDownloadDocument={onDownloadDocument} onChannelsChanged={onChannelsChanged} onNotifyMentions={onNotifyMentions} />
           </>
         ) : activeConversation ? (
           <>
@@ -14684,6 +14964,10 @@ function Messages({
               accessToken={accessToken}
               onSend={onSendMessage}
               emptyText="No messages yet -- say hello."
+              senderAvatarFor={(senderId) => {
+                const email = emailByUserId.get(senderId);
+                return email ? teamMembers.find((member) => member.email.toLowerCase() === email.toLowerCase())?.avatarUrl ?? "" : "";
+              }}
             />
           </>
         ) : (
@@ -15621,6 +15905,7 @@ function AdminPage({
   teamMemberStatus,
   onAddTeamMember,
   onUpdateTeamMember,
+  onUploadAvatar,
   notificationRules,
   onUpdateNotificationRule,
   standardInstallTimes,
@@ -15690,6 +15975,7 @@ function AdminPage({
   teamMemberStatus: string;
   onAddTeamMember: (member: Omit<TeamMember, "id">) => void;
   onUpdateTeamMember: (id: string, member: Partial<Omit<TeamMember, "id">>) => void;
+  onUploadAvatar: (memberId: string, file: File) => void;
   notificationRules: NotificationRule[];
   onUpdateNotificationRule: (id: string, patch: Partial<Pick<NotificationRule, "channels" | "isActive">>) => void;
   standardInstallTimes: StandardInstallTime[];
@@ -15772,6 +16058,7 @@ function AdminPage({
       primaryRole: rosterDraft.primaryRole,
       secondaryRoles: rosterDraft.secondaryRoles,
       slackUserId: "",
+      avatarUrl: "",
     });
     onSendInvite({ email, fullName: rosterDraft.fullName.trim(), primaryRole: rosterDraft.primaryRole, secondaryRoles: rosterDraft.secondaryRoles });
     setRosterDraft({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] });
@@ -15992,7 +16279,12 @@ function AdminPage({
                 return (
                   <Fragment key={member.id}>
                     <tr className="clickable-row" onClick={() => setEditingRosterId(isEditing ? null : member.id)}>
-                      <td>{member.fullName || "-"}</td>
+                      <td>
+                        <span className="roster-name-cell">
+                          {member.avatarUrl ? <img className="roster-avatar" src={member.avatarUrl} alt="" /> : <span className="roster-avatar roster-avatar-placeholder"><User size={13} /></span>}
+                          {member.fullName || "-"}
+                        </span>
+                      </td>
                       <td>{member.email || "-"}</td>
                       <td>
                         {member.primaryRole
@@ -16068,6 +16360,24 @@ function AdminPage({
                               }}
                               onClick={(event) => event.stopPropagation()}
                             />
+                          </div>
+                          <div className="secondary-role-picker" onClick={(event) => event.stopPropagation()}>
+                            <span className="muted">Avatar:</span>
+                            {member.avatarUrl ? <img className="roster-avatar" src={member.avatarUrl} alt="" /> : <span className="roster-avatar roster-avatar-placeholder"><User size={13} /></span>}
+                            <label className="secondary-action mini-action roster-avatar-upload">
+                              Upload image
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0];
+                                  if (file) {
+                                    onUploadAvatar(member.id, file);
+                                  }
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
                           </div>
                           <div className="secondary-role-picker">
                             <span className="muted" title="Slack Settings -> Profile -> ... More -> Copy member ID">Slack member ID:</span>
