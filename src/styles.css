@@ -7326,18 +7326,84 @@ body:has(.modal-backdrop) .install-banner {
 }
 
 .people-picker-suggestion {
+  align-items: center;
   background: transparent;
   border: none;
   border-radius: 6px;
   cursor: pointer;
+  display: flex;
   font: inherit;
   font-size: 13px;
+  gap: 8px;
   padding: 7px 8px;
   text-align: left;
+  width: 100%;
 }
 
 .people-picker-suggestion:hover {
   background: #f8f5ef;
+}
+
+.people-picker-suggestion-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.people-picker-suggestion-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people-picker-suggestion-email {
+  color: #9a9184;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A small avatar + presence dot, shared by the People Picker, the
+   @mention dropdown, and DM rows -- E's Slack reference showed avatar +
+   online status next to every match, in all three of these spots. */
+.presence-avatar-wrap {
+  flex-shrink: 0;
+  position: relative;
+}
+
+.people-picker-avatar {
+  align-items: center;
+  border-radius: 50%;
+  display: flex;
+  height: 24px;
+  justify-content: center;
+  object-fit: cover;
+  width: 24px;
+}
+
+.people-picker-avatar-placeholder {
+  background: #ede6d9;
+  color: #9a9184;
+}
+
+.presence-dot {
+  border: 2px solid white;
+  border-radius: 50%;
+  bottom: -2px;
+  height: 10px;
+  position: absolute;
+  right: -2px;
+  width: 10px;
+}
+
+.presence-dot-online {
+  background: #2f9e44;
+}
+
+.presence-dot-offline {
+  background: #c9c0b0;
 }
 
 .people-picker-chips {
@@ -7416,13 +7482,18 @@ body:has(.modal-backdrop) .install-banner {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
+  column-gap: 8px;
   cursor: pointer;
   display: grid;
-  gap: 2px;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   padding: 8px 12px;
   position: relative;
+  row-gap: 2px;
   text-align: left;
+}
+
+.messages-row-avatar-wrap {
+  grid-row: 1 / 3;
 }
 
 .messages-conversation-row:hover {
@@ -7535,6 +7606,7 @@ body:has(.modal-backdrop) .install-banner {
   align-items: center;
   display: flex;
   gap: 6px;
+  grid-column: 1 / -1;
 }
 
 .messages-unread-badge {
@@ -7888,23 +7960,38 @@ body:has(.modal-backdrop) .install-banner {
 }
 
 .mention-suggestion {
+  align-items: center;
   background: transparent;
   border: none;
   border-radius: 6px;
   cursor: pointer;
   display: flex;
-  flex-direction: column;
   font: inherit;
-  gap: 1px;
+  gap: 8px;
   padding: 6px 8px;
   text-align: left;
 }
 
-.mention-suggestion strong {
+.mention-suggestion-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mention-suggestion-text strong,
+.mention-suggestion-text span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-suggestion-text strong {
   font-size: 13px;
 }
 
-.mention-suggestion span {
+.mention-suggestion-text span {
   color: #756d62;
   font-size: 11px;
 }

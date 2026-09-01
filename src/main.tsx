@@ -2310,9 +2310,8 @@ function App() {
   }
 
   function reloadAdminDirectory(accessToken: string) {
-    Promise.all([loadAllKnownUsers(accessToken), loadAllUserRoles(accessToken), loadAllAdmins(accessToken), loadAllAllowedViews(accessToken)])
-      .then(([users, roles, admins, allowedViews]) => {
-        setKnownUsers(users);
+    Promise.all([loadAllUserRoles(accessToken), loadAllAdmins(accessToken), loadAllAllowedViews(accessToken)])
+      .then(([roles, admins, allowedViews]) => {
         setUserRoleMap(roles);
         setAdminIds(admins);
         setAllowedViewsMap(allowedViews);
@@ -2516,7 +2515,6 @@ function App() {
 
     let cancelled = false;
     setAuthChecksReady(false);
-    void upsertKnownUser(authSession.userId, authSession.email, authSession.accessToken);
 
     Promise.all([
       checkIsAdmin(authSession.userId, authSession.accessToken),
@@ -2582,6 +2580,34 @@ function App() {
     return () => {
       cancelled = true;
     };
+  }, [authSession]);
+
+  // Team directory + a simple presence heartbeat -- E: "Do we have an
+  // online Status anywhere, if not it is a good thing to add now."
+  // app_known_users.last_seen_at already existed and its RLS was already
+  // widened for messaging (migration 094), but the client only ever
+  // touched last_seen_at once, at sign-in, and only ever loaded the
+  // directory itself for admins (moved out of reloadAdminDirectory above)
+  // -- so "online" never had fresh data to work from for anyone. No new
+  // WebSocket/Realtime infra: same polling-based shape as everything
+  // else in this app -- refresh my own last_seen_at and everyone else's
+  // list every 90s while signed in, and treat "seen in the last 5
+  // minutes" as online (isRecentlyActive, below).
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setKnownUsers([]);
+      return;
+    }
+    function reload() {
+      if (!authSession) {
+        return;
+      }
+      void upsertKnownUser(authSession.userId, authSession.email, authSession.accessToken);
+      loadAllKnownUsers(authSession.accessToken).then(setKnownUsers).catch(() => {});
+    }
+    reload();
+    const interval = window.setInterval(reload, 90_000);
+    return () => window.clearInterval(interval);
   }, [authSession]);
 
   async function handleReviewApproval(targetUserId: string, status: ApprovalStatus, expiresAt: string | null) {
@@ -14079,6 +14105,22 @@ function ClientLedger({
 // instead of a new table. Falls back to the email local-part when a
 // person has no roster entry or left fullName blank. Shared by DM threads
 // and group channels alike, not just Messages.
+// A user counts as "online" if we've heard from them (sign-in or the
+// heartbeat in the App-level useEffect above) in the last 5 minutes --
+// same proxy Slack/Teams use, no presence websocket needed since this
+// app is polling-based everywhere else too.
+const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
+function isRecentlyActive(lastSeenAt: string | null | undefined): boolean {
+  if (!lastSeenAt) {
+    return false;
+  }
+  return Date.now() - new Date(lastSeenAt).getTime() < ONLINE_THRESHOLD_MS;
+}
+
+function avatarUrlFor(email: string, teamMembers: TeamMember[]): string {
+  return teamMembers.find((member) => member.email.toLowerCase() === email.toLowerCase())?.avatarUrl ?? "";
+}
+
 function teamDisplayName(email: string, teamMembers: TeamMember[]): string {
   const member = teamMembers.find((entry) => entry.email && entry.email.toLowerCase() === email.toLowerCase());
   const name = member?.fullName?.trim();
@@ -14148,19 +14190,34 @@ function PeoplePicker({
           {matches.length === 0 ? (
             <div className="empty-compact-state">No matches.</div>
           ) : (
-            matches.map((user) => (
-              <button
-                key={user.userId}
-                type="button"
-                className="people-picker-suggestion"
-                onClick={() => {
-                  onSelect(user.userId);
-                  setSearchText("");
-                }}
-              >
-                {teamDisplayName(user.email, teamMembers)}
-              </button>
-            ))
+            matches.map((user) => {
+              const avatarUrl = avatarUrlFor(user.email, teamMembers);
+              const online = isRecentlyActive(user.lastSeenAt);
+              return (
+                <button
+                  key={user.userId}
+                  type="button"
+                  className="people-picker-suggestion"
+                  onClick={() => {
+                    onSelect(user.userId);
+                    setSearchText("");
+                  }}
+                >
+                  <span className="presence-avatar-wrap">
+                    {avatarUrl ? (
+                      <img className="people-picker-avatar" src={avatarUrl} alt="" />
+                    ) : (
+                      <span className="people-picker-avatar people-picker-avatar-placeholder"><User size={12} /></span>
+                    )}
+                    <span className={`presence-dot ${online ? "presence-dot-online" : "presence-dot-offline"}`} />
+                  </span>
+                  <span className="people-picker-suggestion-text">
+                    <span className="people-picker-suggestion-name">{teamDisplayName(user.email, teamMembers)}</span>
+                    <span className="people-picker-suggestion-email">{user.email}</span>
+                  </span>
+                </button>
+              );
+            })
           )}
         </div>
       )}
@@ -14209,7 +14266,7 @@ function MessageThread({
   // gets inserted after the @ (must match resolveMentionEmails' own
   // matching in main.tsx App scope); `label` is the human-readable text
   // shown in the suggestion row when it differs from the token.
-  mentionCandidates?: { token: string; label: string }[];
+  mentionCandidates?: { token: string; label: string; avatarUrl?: string; online?: boolean }[];
 }) {
   const [draftBody, setDraftBody] = useState("");
   const [draftFile, setDraftFile] = useState<File | null>(null);
@@ -14523,8 +14580,20 @@ function MessageThread({
                     insertMention(candidate.token);
                   }}
                 >
-                  <strong>@{candidate.token}</strong>
-                  {candidate.label !== candidate.token && <span>{candidate.label}</span>}
+                  {candidate.avatarUrl !== undefined && (
+                    <span className="presence-avatar-wrap">
+                      {candidate.avatarUrl ? (
+                        <img className="people-picker-avatar" src={candidate.avatarUrl} alt="" />
+                      ) : (
+                        <span className="people-picker-avatar people-picker-avatar-placeholder"><User size={12} /></span>
+                      )}
+                      <span className={`presence-dot ${candidate.online ? "presence-dot-online" : "presence-dot-offline"}`} />
+                    </span>
+                  )}
+                  <span className="mention-suggestion-text">
+                    <strong>@{candidate.token}</strong>
+                    {candidate.label !== candidate.token && <span>{candidate.label}</span>}
+                  </span>
                 </button>
               ))}
             </div>
@@ -14914,11 +14983,19 @@ function ChannelDiscussion({
 
   // Matches resolveMentionEmails' own token resolution in App scope
   // (main.tsx) -- role labels with spaces stripped, people by first name.
+  // People (not roles) carry avatarUrl + online so the @mention dropdown
+  // matches the Slack reference E sent: avatar + name + live status.
+  const lastSeenByEmail = new Map(knownUsers.map((user) => [user.email.toLowerCase(), user.lastSeenAt]));
   const mentionCandidates = [
     ...ROLE_KEY_OPTIONS.map((option) => ({ token: option.label.replace(/\s+/g, ""), label: `${option.label} team` })),
     ...teamMembers
       .filter((member) => member.fullName.trim())
-      .map((member) => ({ token: member.fullName.trim().split(/\s+/)[0], label: member.fullName })),
+      .map((member) => ({
+        token: member.fullName.trim().split(/\s+/)[0],
+        label: member.fullName,
+        avatarUrl: member.avatarUrl ?? "",
+        online: isRecentlyActive(lastSeenByEmail.get(member.email.toLowerCase())),
+      })),
   ];
 
   const CHANNEL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
@@ -15335,7 +15412,15 @@ function Messages({
   // Unified, sortable list: pinned entries always float to the top (E:
   // "Make it so you can PIN usernames to the TOP of the message board"),
   // then real conversations by recency, then not-yet-started roster rows.
-  type MessageRow = { userId: string; email: string; conversationId: string | null; lastMessageAt: string | null; unread: number; pinned: boolean };
+  const lastSeenByUserId = new Map(knownUsers.map((user) => [user.userId, user.lastSeenAt]));
+  type MessageRow = {
+    userId: string;
+    email: string;
+    conversationId: string | null;
+    lastMessageAt: string | null;
+    unread: number;
+    pinned: boolean;
+  };
   const allRows: MessageRow[] = [
     ...conversations.map((conversation) => {
       const partnerId = otherUserId(conversation);
@@ -15373,6 +15458,8 @@ function Messages({
   const otherRows = filteredRows.filter((row) => !row.pinned);
 
   function renderDmRow(row: MessageRow) {
+    const avatarUrl = avatarUrlFor(row.email, teamMembers);
+    const online = isRecentlyActive(lastSeenByUserId.get(row.userId));
     return (
       <button
         key={row.userId}
@@ -15387,6 +15474,14 @@ function Messages({
           }
         }}
       >
+        <span className="presence-avatar-wrap messages-row-avatar-wrap">
+          {avatarUrl ? (
+            <img className="people-picker-avatar" src={avatarUrl} alt="" />
+          ) : (
+            <span className="people-picker-avatar people-picker-avatar-placeholder"><User size={12} /></span>
+          )}
+          <span className={`presence-dot ${online ? "presence-dot-online" : "presence-dot-offline"}`} />
+        </span>
         <span className="messages-conversation-name">
           {displayNameFor(row.email)}
           <span
