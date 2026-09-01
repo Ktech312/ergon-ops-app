@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import {
   AlertTriangle,
   ArrowLeft,
+  AtSign,
   Award,
   Archive,
   BarChart3,
@@ -37,6 +38,7 @@ import {
   Pin,
   Plus,
   Search,
+  Smile,
   Unlock,
   X,
   ShoppingCart,
@@ -44,6 +46,7 @@ import {
   Truck,
   Upload,
   User,
+  UserPlus,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -14085,6 +14088,26 @@ function teamDisplayName(email: string, teamMembers: TeamMember[]): string {
   return member?.roleTitle?.trim() ? `${name} ${member.roleTitle.trim()}` : name;
 }
 
+// "Today" / "Yesterday" / full weekday+date, matching how Teams labels
+// its own date dividers between clusters of messages from different days.
+function formatDateDivider(iso: string): string {
+  const date = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) {
+    return "Today";
+  }
+  if (date.toDateString() === yesterday.toDateString()) {
+    return "Yesterday";
+  }
+  return date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+}
+
+// A small curated emoji set -- not a full picker library, just enough to
+// react/react quickly without leaving the compose box.
+const QUICK_EMOJI = ["\u{1F44D}", "\u{1F44E}", "\u{1F642}", "\u{1F602}", "\u{2764}\u{FE0F}", "\u{1F389}", "\u{1F914}", "\u{1F440}", "\u{1F64C}", "\u{2705}", "\u{1F525}", "\u{1F62E}"];
+
 // Search-as-you-type person picker -- E: "when i have 40 people in here,
 // this cannot be that large" (a checkbox-per-person / button-per-person
 // list doesn't scale) and "when i start to type a name it should fill
@@ -14194,6 +14217,12 @@ function MessageThread({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  // E: "search" -- find-in-thread over whatever's currently loaded
+  // (loadChannelMessages/DMs both cap at recent history, same as the
+  // global message search's own on-demand-query limitation).
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   // E: "it wasn't a pop-up it opened a new window. it should be a
   // pop-up, not full screen." Clicking an inline photo used to be a
   // plain <a target="_blank"> -- an in-app lightbox instead.
@@ -14249,6 +14278,23 @@ function MessageThread({
     requestAnimationFrame(() => {
       composeTextareaRef.current?.focus();
       composeTextareaRef.current?.setSelectionRange(cursorPos, cursorPos);
+    });
+  }
+
+  // Shared by the emoji picker and the "@" quick-mention button -- insert
+  // at the cursor (or the end, if the textarea never had focus yet)
+  // rather than always appending, so it behaves like a normal text editor.
+  function insertAtCursor(text: string) {
+    const textarea = composeTextareaRef.current;
+    const cursor = textarea?.selectionStart ?? draftBody.length;
+    const before = draftBody.slice(0, cursor);
+    const after = draftBody.slice(cursor);
+    const next = `${before}${text}${after}`;
+    setDraftBody(next);
+    const nextCursor = before.length + text.length;
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(nextCursor, nextCursor);
     });
   }
 
@@ -14308,51 +14354,94 @@ function MessageThread({
 
   return (
     <>
+      <div className="messages-thread-toolbar">
+        <button
+          className={`icon-button messages-thread-search-toggle ${searchOpen ? "active" : ""}`}
+          type="button"
+          aria-label="Search in this thread"
+          title="Search in this thread"
+          onClick={() => {
+            setSearchOpen((current) => !current);
+            setSearchTerm("");
+          }}
+        >
+          <Search size={15} />
+        </button>
+        {searchOpen && (
+          <input
+            type="text"
+            className="messages-thread-search-input"
+            placeholder="Find in this thread..."
+            autoFocus
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setSearchOpen(false);
+                setSearchTerm("");
+              }
+            }}
+          />
+        )}
+      </div>
       <div className="messages-thread-scroll">
-        {messages.map((message) => {
+        {messages
+          .filter((message) => !searchTerm.trim() || message.body.toLowerCase().includes(searchTerm.trim().toLowerCase()))
+          .map((message, index, filtered) => {
           const attachmentUrl = message.attachmentStoragePath ? attachmentUrls[message.id] : undefined;
           const isImage = (message.attachmentMimeType ?? "").startsWith("image/");
           const mine = message.senderId === myUserId;
-          const avatarUrl = !mine && senderAvatarFor ? senderAvatarFor(message.senderId) : "";
+          const previous = index > 0 ? filtered[index - 1] : null;
+          const sameDay = previous ? new Date(previous.createdAt).toDateString() === new Date(message.createdAt).toDateString() : false;
+          const showDateDivider = !previous || !sameDay;
+          const showHeader = !previous || previous.senderId !== message.senderId || !sameDay;
+          const avatarUrl = senderAvatarFor ? senderAvatarFor(message.senderId) : "";
+          const displayName = mine ? "You" : (senderNameFor ? senderNameFor(message.senderId) : "");
           return (
-            <div key={message.id} className={`messages-bubble-row ${mine ? "mine" : ""}`}>
-              {!mine && senderAvatarFor && (
-                avatarUrl ? <img className="messages-bubble-avatar" src={avatarUrl} alt="" /> : <span className="messages-bubble-avatar messages-bubble-avatar-placeholder"><User size={13} /></span>
+            <Fragment key={message.id}>
+              {showDateDivider && (
+                <div className="messages-date-divider"><span>{formatDateDivider(message.createdAt)}</span></div>
               )}
-              <div className="messages-bubble">
-                {!mine && senderNameFor && (
-                  <div className="messages-bubble-header">
-                    <span className="messages-bubble-sender">{senderNameFor(message.senderId)}</span>
-                    <span className="messages-bubble-time">{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
-                  </div>
-                )}
-                {message.attachmentStoragePath && (
-                  isImage ? (
-                    attachmentUrl ? (
-                      <button type="button" className="messages-attachment-image-trigger" onClick={() => setLightboxUrl(attachmentUrl)}>
-                        <img src={attachmentUrl} alt={message.attachmentFileName ?? "Attached image"} className="messages-attachment-image" />
-                      </button>
+              <div className="messages-flat-row">
+                <div className="messages-flat-avatar-slot">
+                  {showHeader && (senderAvatarFor || senderNameFor) && (
+                    avatarUrl ? <img className="messages-flat-avatar" src={avatarUrl} alt="" /> : <span className="messages-flat-avatar messages-flat-avatar-placeholder"><User size={13} /></span>
+                  )}
+                </div>
+                <div className="messages-flat-content">
+                  {showHeader && (senderAvatarFor || senderNameFor) && (
+                    <div className="messages-flat-header">
+                      <span className="messages-flat-sender">{displayName}</span>
+                      <span className="messages-flat-time">{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                    </div>
+                  )}
+                  {message.attachmentStoragePath && (
+                    isImage ? (
+                      attachmentUrl ? (
+                        <button type="button" className="messages-attachment-image-trigger" onClick={() => setLightboxUrl(attachmentUrl)}>
+                          <img src={attachmentUrl} alt={message.attachmentFileName ?? "Attached image"} className="messages-attachment-image" />
+                        </button>
+                      ) : (
+                        <div className="messages-attachment-loading">Loading image...</div>
+                      )
                     ) : (
-                      <div className="messages-attachment-loading">Loading image...</div>
+                      <a
+                        className="messages-attachment-file"
+                        href={attachmentUrl ?? undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(event) => { if (!attachmentUrl) event.preventDefault(); }}
+                      >
+                        <FileText size={16} />
+                        <span>{message.attachmentFileName ?? "Attachment"}</span>
+                        <Download size={14} />
+                      </a>
                     )
-                  ) : (
-                    <a
-                      className="messages-attachment-file"
-                      href={attachmentUrl ?? undefined}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(event) => { if (!attachmentUrl) event.preventDefault(); }}
-                    >
-                      <FileText size={16} />
-                      <span>{message.attachmentFileName ?? "Attachment"}</span>
-                      <Download size={14} />
-                    </a>
-                  )
-                )}
-                {message.body && <span>{message.body}</span>}
-                {mine && <small className="messages-bubble-time-mine">{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</small>}
+                  )}
+                  {message.body && <span className="messages-flat-body">{message.body}</span>}
+                </div>
               </div>
-            </div>
+            </Fragment>
           );
         })}
         {messages.length === 0 && <div className="empty-compact-state">{emptyText}</div>}
@@ -14382,6 +14471,45 @@ function MessageThread({
         >
           <Camera size={17} />
         </button>
+        {mentionCandidates && (
+          <button
+            className="messages-inline-icon"
+            type="button"
+            onClick={() => insertAtCursor("@")}
+            aria-label="Mention someone"
+            title="Mention someone"
+          >
+            <AtSign size={17} />
+          </button>
+        )}
+        <div className="messages-emoji-wrap">
+          <button
+            className="messages-inline-icon"
+            type="button"
+            onClick={() => setEmojiPickerOpen((current) => !current)}
+            aria-label="Add an emoji"
+            title="Add an emoji"
+          >
+            <Smile size={17} />
+          </button>
+          {emojiPickerOpen && (
+            <div className="messages-emoji-picker">
+              {QUICK_EMOJI.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  className="messages-emoji-option"
+                  onClick={() => {
+                    insertAtCursor(emoji);
+                    setEmojiPickerOpen(false);
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="messages-compose-input-wrap">
           {mentionMatches.length > 0 && (
             <div className="mention-suggestions">
@@ -14563,7 +14691,36 @@ function ChannelDiscussion({
 }) {
   const [messages, setMessages] = useState<ChannelMessage[]>([]);
   const [status, setStatus] = useState("");
-  const [tab, setTab] = useState<"discussion" | "tasks" | "files" | "canvas">("discussion");
+  const [tab, setTab] = useState<"discussion" | "tasks" | "files" | "canvas" | "photos">("discussion");
+
+  // Photos tab -- E, from the Teams reference: every image ever shared in
+  // this channel's chat, gathered into a grid (distinct from Files above,
+  // which is Project Documents -- unrelated data). Signed URLs resolved
+  // lazily, only once the tab is actually opened, same reasoning as
+  // Canvas below.
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [photosLightboxUrl, setPhotosLightboxUrl] = useState<string | null>(null);
+  const imageMessages = messages.filter((entry) => (entry.attachmentMimeType ?? "").startsWith("image/") && entry.attachmentStoragePath);
+
+  useEffect(() => {
+    if (tab !== "photos" || !accessToken) {
+      return;
+    }
+    let cancelled = false;
+    imageMessages
+      .filter((entry) => !photoUrls[entry.id])
+      .forEach((entry) => {
+        getMessageAttachmentUrl(entry.attachmentStoragePath!, accessToken).then((url) => {
+          if (url && !cancelled) {
+            setPhotoUrls((current) => ({ ...current, [entry.id]: url }));
+          }
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, messages, accessToken]);
 
   const showTasksTab = !!(tasks && taskActivity && projectSites && onCreateTask && onUpdateTask && onDeleteTask && onOpenTasksView) && channelHasTaskSupport(channel);
   const showFilesTab = !!(documents && onDownloadDocument && projectSites && channel.type !== "section");
@@ -14805,10 +14962,16 @@ function ChannelDiscussion({
             {channel.private ? <><Lock size={13} /> Private</> : <><Unlock size={13} /> Visible to everyone</>}
           </span>
           {channel.private && (
-            <button className="secondary-action mini-action" type="button" onClick={handleUnlockChannel}>Unlock (make visible to everyone)</button>
+            <button className="icon-button" type="button" onClick={handleUnlockChannel} aria-label="Unlock -- make visible to everyone" title="Unlock -- make visible to everyone">
+              <Unlock size={15} />
+            </button>
           )}
-          <button className="secondary-action mini-action" type="button" onClick={() => setShowMemberPicker((current) => !current)}>Add people</button>
-          <button className="secondary-action mini-action channel-delete-button" type="button" onClick={handleDeleteChannel}>Delete Channel</button>
+          <button className="icon-button" type="button" onClick={() => setShowMemberPicker((current) => !current)} aria-label="Add people" title="Add people">
+            <UserPlus size={15} />
+          </button>
+          <button className="icon-button channel-delete-button" type="button" onClick={handleDeleteChannel} aria-label="Delete channel" title="Delete channel">
+            <Trash2 size={15} />
+          </button>
           {groupActionStatus && <span className="channel-group-status">{groupActionStatus}</span>}
         </div>
       )}
@@ -14824,6 +14987,7 @@ function ChannelDiscussion({
       <div className="segmented-tabs channel-tabs">
         <button className={tab === "discussion" ? "active" : ""} type="button" onClick={() => setTab("discussion")}>Discussion</button>
         {showFilesTab && <button className={tab === "files" ? "active" : ""} type="button" onClick={() => setTab("files")}>Files</button>}
+        <button className={tab === "photos" ? "active" : ""} type="button" onClick={() => setTab("photos")}>Photos</button>
         {showTasksTab && <button className={tab === "tasks" ? "active" : ""} type="button" onClick={() => setTab("tasks")}>Tasks</button>}
         <button className={tab === "canvas" ? "active" : ""} type="button" onClick={() => setTab("canvas")}>Canvas</button>
       </div>
@@ -14875,6 +15039,31 @@ function ChannelDiscussion({
                 )}
               </div>
             ))
+          )}
+        </div>
+      )}
+      {tab === "photos" && (
+        <div className="channel-photos-grid">
+          {imageMessages.length === 0 ? (
+            <div className="empty-compact-state">No photos shared in this channel yet.</div>
+          ) : (
+            imageMessages.map((entry) =>
+              photoUrls[entry.id] ? (
+                <button key={entry.id} type="button" className="channel-photo-thumb-trigger" onClick={() => setPhotosLightboxUrl(photoUrls[entry.id])}>
+                  <img src={photoUrls[entry.id]} alt="" className="channel-photo-thumb" />
+                </button>
+              ) : (
+                <div key={entry.id} className="channel-photo-thumb-loading" />
+              ),
+            )
+          )}
+          {photosLightboxUrl && (
+            <div className="image-lightbox-backdrop" onClick={() => setPhotosLightboxUrl(null)}>
+              <button className="image-lightbox-close" type="button" onClick={() => setPhotosLightboxUrl(null)} aria-label="Close">
+                <X size={20} />
+              </button>
+              <img src={photosLightboxUrl} alt="" className="image-lightbox-image" onClick={(event) => event.stopPropagation()} />
+            </div>
           )}
         </div>
       )}
@@ -15097,6 +15286,8 @@ function Messages({
     return teamDisplayName(email, teamMembers);
   }
 
+  const [dmFilter, setDmFilter] = useState<"all" | "unread">("all");
+
   const pinStorageKey = `ergon:pinned-messages:${myUserId}`;
   const [pinnedUserIds, setPinnedUserIds] = useState<string[]>(() => {
     try {
@@ -15175,6 +15366,60 @@ function Messages({
 
   const activeConversation = conversations.find((entry) => entry.id === activeConversationId) ?? null;
 
+  // E, from the Teams reference: a "Favorites" section for pinned people,
+  // separate from the regular list, plus an Unread filter chip above it.
+  const filteredRows = dmFilter === "unread" ? allRows.filter((row) => row.unread > 0) : allRows;
+  const favoriteRows = filteredRows.filter((row) => row.pinned);
+  const otherRows = filteredRows.filter((row) => !row.pinned);
+
+  function renderDmRow(row: MessageRow) {
+    return (
+      <button
+        key={row.userId}
+        type="button"
+        className={`messages-conversation-row ${row.conversationId ? "" : "messages-roster-row"} ${row.conversationId === activeConversationId && row.conversationId ? "active" : ""} ${row.pinned ? "pinned" : ""}`}
+        onClick={() => {
+          setActiveChannelId(null);
+          if (row.conversationId) {
+            onSelectConversation(row.conversationId);
+          } else {
+            onStartConversation(row.userId);
+          }
+        }}
+      >
+        <span className="messages-conversation-name">
+          {displayNameFor(row.email)}
+          <span
+            className="messages-inline-icon messages-pin-toggle"
+            role="button"
+            tabIndex={0}
+            aria-label={row.pinned ? "Unpin" : "Pin to top"}
+            title={row.pinned ? "Unpin" : "Pin to top"}
+            onClick={(event) => togglePin(row.userId, event)}
+          >
+            <Pin size={12} fill={row.pinned ? "currentColor" : "none"} />
+          </span>
+        </span>
+        <span className="messages-conversation-meta">
+          <span className="messages-conversation-email">{row.email}</span>
+          <span
+            className="messages-inline-icon messages-copy-email"
+            role="button"
+            tabIndex={0}
+            aria-label="Copy email"
+            title="Copy email"
+            onClick={(event) => copyEmail(row.email, row.userId, event)}
+          >
+            <Copy size={11} />
+          </span>
+          {copiedUserId === row.userId && <span className="messages-copied-flag">Copied</span>}
+          <span className="messages-conversation-time">{row.lastMessageAt ? new Date(row.lastMessageAt).toLocaleString() : "Say hello"}</span>
+        </span>
+        {row.unread > 0 && <span className="messages-unread-badge">{row.unread}</span>}
+      </button>
+    );
+  }
+
   return (
     <>
       {pushPermissionState === "unsubscribed" && (
@@ -15226,52 +15471,28 @@ function Messages({
           </div>
         )}
         {status && <div className="source-file"><span>{status}</span></div>}
+        <div className="dm-filter-chips">
+          <button type="button" className={`dm-filter-chip ${dmFilter === "all" ? "active" : ""}`} onClick={() => setDmFilter("all")}>All</button>
+          <button type="button" className={`dm-filter-chip ${dmFilter === "unread" ? "active" : ""}`} onClick={() => setDmFilter("unread")}>
+            Unread{allRows.some((row) => row.unread > 0) ? ` (${allRows.filter((row) => row.unread > 0).length})` : ""}
+          </button>
+        </div>
         <div className="messages-conversation-list">
-          {allRows.map((row) => (
-            <button
-              key={row.userId}
-              type="button"
-              className={`messages-conversation-row ${row.conversationId ? "" : "messages-roster-row"} ${row.conversationId === activeConversationId && row.conversationId ? "active" : ""} ${row.pinned ? "pinned" : ""}`}
-              onClick={() => {
-                setActiveChannelId(null);
-                if (row.conversationId) {
-                  onSelectConversation(row.conversationId);
-                } else {
-                  onStartConversation(row.userId);
-                }
-              }}
-            >
-              <span className="messages-conversation-name">
-                {displayNameFor(row.email)}
-                <span
-                  className="messages-inline-icon messages-pin-toggle"
-                  role="button"
-                  tabIndex={0}
-                  aria-label={row.pinned ? "Unpin" : "Pin to top"}
-                  title={row.pinned ? "Unpin" : "Pin to top"}
-                  onClick={(event) => togglePin(row.userId, event)}
-                >
-                  <Pin size={12} fill={row.pinned ? "currentColor" : "none"} />
-                </span>
-              </span>
-              <span className="messages-conversation-meta">
-                <span className="messages-conversation-email">{row.email}</span>
-                <span
-                  className="messages-inline-icon messages-copy-email"
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Copy email"
-                  title="Copy email"
-                  onClick={(event) => copyEmail(row.email, row.userId, event)}
-                >
-                  <Copy size={11} />
-                </span>
-                {copiedUserId === row.userId && <span className="messages-copied-flag">Copied</span>}
-                <span className="messages-conversation-time">{row.lastMessageAt ? new Date(row.lastMessageAt).toLocaleString() : "Say hello"}</span>
-              </span>
-              {row.unread > 0 && <span className="messages-unread-badge">{row.unread}</span>}
-            </button>
-          ))}
+          {favoriteRows.length > 0 && (
+            <>
+              <div className="messages-channel-group-label">Favorites</div>
+              {favoriteRows.map(renderDmRow)}
+            </>
+          )}
+          {otherRows.length > 0 && (
+            <>
+              {favoriteRows.length > 0 && <div className="messages-channel-group-label">Chats</div>}
+              {otherRows.map(renderDmRow)}
+            </>
+          )}
+          {filteredRows.length === 0 && dmFilter === "unread" && (
+            <div className="empty-compact-state">No unread conversations.</div>
+          )}
           {allRows.length === 0 && (
             <div className="empty-compact-state">No one else has signed into Ergon yet ({myEmail} is the only known user so far).</div>
           )}

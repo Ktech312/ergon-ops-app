@@ -7382,6 +7382,28 @@ body:has(.modal-backdrop) .install-banner {
   justify-content: flex-end;
 }
 
+.dm-filter-chips {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.dm-filter-chip {
+  background: #fffdf9;
+  border: 1px solid #ded7cb;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.dm-filter-chip.active {
+  background: #a01029;
+  border-color: #a01029;
+  color: white;
+}
+
 .messages-conversation-list {
   display: flex;
   flex-direction: column;
@@ -7558,26 +7580,39 @@ body:has(.modal-backdrop) .install-banner {
   padding: 4px 2px;
 }
 
-.messages-bubble-row {
-  align-items: flex-start;
+/* Flat, left-offset message layout (E, from a real Teams screenshot):
+   no chat bubbles, every message left-aligned regardless of sender,
+   avatar+name shown once per consecutive cluster from the same person
+   rather than repeated on every single message. */
+.messages-date-divider {
+  color: #9a9184;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 14px 0 6px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.messages-flat-row {
   display: flex;
-  gap: 8px;
-  justify-content: flex-start;
+  gap: 10px;
+  padding: 1px 4px;
 }
 
-.messages-bubble-row.mine {
-  justify-content: flex-end;
-}
-
-.messages-bubble-avatar {
-  border-radius: 50%;
+.messages-flat-avatar-slot {
   flex-shrink: 0;
-  height: 26px;
-  object-fit: cover;
-  width: 26px;
+  padding-top: 2px;
+  width: 30px;
 }
 
-.messages-bubble-avatar-placeholder {
+.messages-flat-avatar {
+  border-radius: 50%;
+  height: 30px;
+  object-fit: cover;
+  width: 30px;
+}
+
+.messages-flat-avatar-placeholder {
   align-items: center;
   background: #ede6d9;
   color: #9a9184;
@@ -7585,48 +7620,108 @@ body:has(.modal-backdrop) .install-banner {
   justify-content: center;
 }
 
-.messages-bubble {
-  background: #f8f5ef;
-  border-radius: 12px;
-  max-width: 78%;
-  padding: 8px 12px;
+.messages-flat-content {
+  flex: 1;
+  min-width: 0;
 }
 
-.messages-bubble-row.mine .messages-bubble {
-  background: #f5e3d8;
-}
-
-.messages-bubble-header {
+.messages-flat-header {
   align-items: baseline;
   display: flex;
-  gap: 10px;
-  justify-content: space-between;
-  margin-bottom: 3px;
+  gap: 8px;
 }
 
-.messages-bubble-sender {
-  color: #a01029;
+.messages-flat-sender {
+  color: #2c2620;
   font-size: 13px;
   font-weight: 700;
 }
 
-.messages-bubble-time {
+.messages-flat-time {
   color: #9a9184;
-  flex-shrink: 0;
   font-size: 11px;
 }
 
-.messages-bubble span {
+.messages-flat-body {
   display: block;
   overflow-wrap: break-word;
   white-space: pre-wrap;
 }
 
-.messages-bubble small {
-  color: #9a9184;
-  display: block;
-  font-size: 10px;
-  margin-top: 3px;
+.messages-thread-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+
+.messages-thread-search-toggle.active {
+  background: #f5e3d8;
+}
+
+.messages-thread-search-input {
+  flex: 1;
+  padding: 5px 8px;
+}
+
+.messages-emoji-wrap {
+  position: relative;
+}
+
+.messages-emoji-picker {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  bottom: calc(100% + 4px);
+  box-shadow: 0 12px 32px rgba(107, 50, 18, 0.14);
+  display: grid;
+  gap: 2px;
+  grid-template-columns: repeat(6, 1fr);
+  left: 0;
+  padding: 6px;
+  position: absolute;
+  width: 200px;
+  z-index: 30;
+}
+
+.messages-emoji-option {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px;
+}
+
+.messages-emoji-option:hover {
+  background: #f8f5ef;
+}
+
+.channel-photos-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+}
+
+.channel-photo-thumb-trigger {
+  aspect-ratio: 1;
+  background: none;
+  border: none;
+  cursor: zoom-in;
+  padding: 0;
+}
+
+.channel-photo-thumb {
+  border-radius: 6px;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.channel-photo-thumb-loading {
+  aspect-ratio: 1;
+  background: #ede6d9;
+  border-radius: 6px;
 }
 
 .messages-attachment-image-trigger {
