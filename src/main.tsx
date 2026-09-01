@@ -14083,6 +14083,66 @@ function teamDisplayName(email: string, teamMembers: TeamMember[]): string {
   return member?.roleTitle?.trim() ? `${name} ${member.roleTitle.trim()}` : name;
 }
 
+// Search-as-you-type person picker -- E: "when i have 40 people in here,
+// this cannot be that large" (a checkbox-per-person / button-per-person
+// list doesn't scale) and "when i start to type a name it should fill
+// in the rest." Renders nothing until there's a query, then at most a
+// handful of matches -- same shape regardless of roster size. Shared by
+// the New Channel member picker and Add People (below).
+function PeoplePicker({
+  knownUsers,
+  teamMembers,
+  excludeUserIds,
+  onSelect,
+}: {
+  knownUsers: KnownUser[];
+  teamMembers: TeamMember[];
+  excludeUserIds: string[];
+  onSelect: (userId: string) => void;
+}) {
+  const [searchText, setSearchText] = useState("");
+  const term = searchText.trim().toLowerCase();
+  const matches =
+    term.length === 0
+      ? []
+      : knownUsers
+          .filter((user) => !excludeUserIds.includes(user.userId))
+          .filter((user) => teamDisplayName(user.email, teamMembers).toLowerCase().includes(term) || user.email.toLowerCase().includes(term))
+          .slice(0, 8);
+  return (
+    <div className="people-picker">
+      <input
+        type="text"
+        className="people-picker-input"
+        placeholder="Search people to add..."
+        value={searchText}
+        onChange={(event) => setSearchText(event.target.value)}
+      />
+      {term.length > 0 && (
+        <div className="people-picker-suggestions">
+          {matches.length === 0 ? (
+            <div className="empty-compact-state">No matches.</div>
+          ) : (
+            matches.map((user) => (
+              <button
+                key={user.userId}
+                type="button"
+                className="people-picker-suggestion"
+                onClick={() => {
+                  onSelect(user.userId);
+                  setSearchText("");
+                }}
+              >
+                {teamDisplayName(user.email, teamMembers)}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Shared message-thread UI (scroll history + compose row + attachments) --
 // extracted so DM threads (migration 094/100) and group channels
 // (migration 101, the Slack/ClickUp/Drive roadmap in HANDOFF.md) render
@@ -14109,6 +14169,7 @@ function MessageThread({
   emptyText,
   senderNameFor,
   senderAvatarFor,
+  mentionCandidates,
 }: {
   messages: ThreadMessage[];
   myUserId: string;
@@ -14118,6 +14179,12 @@ function MessageThread({
   senderNameFor?: (senderId: string) => string;
   // Migration 109 -- returns a public avatar URL, or "" for no avatar set.
   senderAvatarFor?: (senderId: string) => string;
+  // @mention autocomplete (migration 108 groundwork) -- E: "when i start
+  // to type a name it should fill in the rest." `token` is what actually
+  // gets inserted after the @ (must match resolveMentionEmails' own
+  // matching in main.tsx App scope); `label` is the human-readable text
+  // shown in the suggestion row when it differs from the token.
+  mentionCandidates?: { token: string; label: string }[];
 }) {
   const [draftBody, setDraftBody] = useState("");
   const [draftFile, setDraftFile] = useState<File | null>(null);
@@ -14125,6 +14192,46 @@ function MessageThread({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  const composeTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [mentionState, setMentionState] = useState<{ start: number; query: string } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+
+  const mentionMatches =
+    mentionCandidates && mentionState
+      ? mentionCandidates.filter((candidate) => candidate.token.toLowerCase().startsWith(mentionState.query.toLowerCase())).slice(0, 6)
+      : [];
+
+  function updateMentionState(value: string, cursor: number) {
+    const uptoCursor = value.slice(0, cursor);
+    const atIndex = uptoCursor.lastIndexOf("@");
+    if (atIndex === -1) {
+      setMentionState(null);
+      return;
+    }
+    const between = uptoCursor.slice(atIndex + 1);
+    if (/\s/.test(between)) {
+      setMentionState(null);
+      return;
+    }
+    setMentionState({ start: atIndex, query: between });
+    setMentionIndex(0);
+  }
+
+  function insertMention(token: string) {
+    if (!mentionState) {
+      return;
+    }
+    const before = draftBody.slice(0, mentionState.start);
+    const after = draftBody.slice(mentionState.start + 1 + mentionState.query.length);
+    const next = `${before}@${token} ${after}`;
+    setDraftBody(next);
+    setMentionState(null);
+    const cursorPos = before.length + token.length + 2;
+    requestAnimationFrame(() => {
+      composeTextareaRef.current?.focus();
+      composeTextareaRef.current?.setSelectionRange(cursorPos, cursorPos);
+    });
+  }
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: "end" });
@@ -14194,7 +14301,12 @@ function MessageThread({
                 avatarUrl ? <img className="messages-bubble-avatar" src={avatarUrl} alt="" /> : <span className="messages-bubble-avatar messages-bubble-avatar-placeholder"><User size={13} /></span>
               )}
               <div className="messages-bubble">
-                {!mine && senderNameFor && <small className="messages-bubble-sender">{senderNameFor(message.senderId)}</small>}
+                {!mine && senderNameFor && (
+                  <div className="messages-bubble-header">
+                    <span className="messages-bubble-sender">{senderNameFor(message.senderId)}</span>
+                    <span className="messages-bubble-time">{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                  </div>
+                )}
                 {message.attachmentStoragePath && (
                   isImage ? (
                     attachmentUrl ? (
@@ -14219,7 +14331,7 @@ function MessageThread({
                   )
                 )}
                 {message.body && <span>{message.body}</span>}
-                <small>{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</small>
+                {mine && <small className="messages-bubble-time-mine">{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</small>}
               </div>
             </div>
           );
@@ -14251,17 +14363,62 @@ function MessageThread({
         >
           <Camera size={17} />
         </button>
-        <textarea
-          value={draftBody}
-          onChange={(event) => setDraftBody(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              submitDraft();
-            }
-          }}
-          placeholder="Write a message... (Enter to send, Shift+Enter for a new line)"
-        />
+        <div className="messages-compose-input-wrap">
+          {mentionMatches.length > 0 && (
+            <div className="mention-suggestions">
+              {mentionMatches.map((candidate, index) => (
+                <button
+                  key={candidate.token}
+                  type="button"
+                  className={`mention-suggestion ${index === mentionIndex ? "active" : ""}`}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    insertMention(candidate.token);
+                  }}
+                >
+                  <strong>@{candidate.token}</strong>
+                  {candidate.label !== candidate.token && <span>{candidate.label}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+          <textarea
+            ref={composeTextareaRef}
+            value={draftBody}
+            onChange={(event) => {
+              setDraftBody(event.target.value);
+              updateMentionState(event.target.value, event.target.selectionStart ?? event.target.value.length);
+            }}
+            onKeyDown={(event) => {
+              if (mentionMatches.length > 0) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setMentionIndex((current) => Math.min(current + 1, mentionMatches.length - 1));
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setMentionIndex((current) => Math.max(current - 1, 0));
+                  return;
+                }
+                if (event.key === "Escape") {
+                  setMentionState(null);
+                  return;
+                }
+                if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey) {
+                  event.preventDefault();
+                  insertMention(mentionMatches[mentionIndex].token);
+                  return;
+                }
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submitDraft();
+              }
+            }}
+            placeholder="Write a message... (Enter to send, Shift+Enter for a new line)"
+          />
+        </div>
         <button className="primary-action" type="button" onClick={submitDraft} disabled={!draftBody.trim() && !draftFile}>Send</button>
       </div>
     </>
@@ -14501,6 +14658,15 @@ function ChannelDiscussion({
     return teamMembers.find((member) => member.email.toLowerCase() === email.toLowerCase())?.avatarUrl ?? "";
   }
 
+  // Matches resolveMentionEmails' own token resolution in App scope
+  // (main.tsx) -- role labels with spaces stripped, people by first name.
+  const mentionCandidates = [
+    ...ROLE_KEY_OPTIONS.map((option) => ({ token: option.label.replace(/\s+/g, ""), label: `${option.label} team` })),
+    ...teamMembers
+      .filter((member) => member.fullName.trim())
+      .map((member) => ({ token: member.fullName.trim().split(/\s+/)[0], label: member.fullName })),
+  ];
+
   const CHANNEL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 
   async function handleSend(body: string, file?: File) {
@@ -14549,20 +14715,17 @@ function ChannelDiscussion({
       )}
       {showMemberPicker && (
         <div className="channel-group-member-picker">
-          {knownUsers.filter((user) => !memberIds.includes(user.userId)).map((user) => (
-            <button key={user.userId} className="secondary-action mini-action" type="button" onClick={() => handleAddMember(user.userId)}>
-              + {teamDisplayName(user.email, teamMembers)}
-            </button>
-          ))}
-          {knownUsers.every((user) => memberIds.includes(user.userId)) && (
+          {knownUsers.every((user) => memberIds.includes(user.userId)) ? (
             <span className="empty-compact-state">Everyone known to Ergon is already a member.</span>
+          ) : (
+            <PeoplePicker knownUsers={knownUsers} teamMembers={teamMembers} excludeUserIds={memberIds} onSelect={handleAddMember} />
           )}
         </div>
       )}
       <div className="segmented-tabs channel-tabs">
         <button className={tab === "discussion" ? "active" : ""} type="button" onClick={() => setTab("discussion")}>Discussion</button>
-        {showTasksTab && <button className={tab === "tasks" ? "active" : ""} type="button" onClick={() => setTab("tasks")}>Tasks</button>}
         {showFilesTab && <button className={tab === "files" ? "active" : ""} type="button" onClick={() => setTab("files")}>Files</button>}
+        {showTasksTab && <button className={tab === "tasks" ? "active" : ""} type="button" onClick={() => setTab("tasks")}>Tasks</button>}
         <button className={tab === "canvas" ? "active" : ""} type="button" onClick={() => setTab("canvas")}>Canvas</button>
       </div>
       {tab === "discussion" && (
@@ -14576,6 +14739,7 @@ function ChannelDiscussion({
             emptyText="No messages yet in this channel -- say hello."
             senderNameFor={senderNameFor}
             senderAvatarFor={senderAvatarFor}
+            mentionCandidates={mentionCandidates}
           />
         </>
       )}
@@ -14940,14 +15104,20 @@ function Messages({
               value={newGroupName}
               onChange={(event) => setNewGroupName(event.target.value)}
             />
-            <div className="messages-create-group-members">
-              {knownUsers.map((user) => (
-                <label key={user.userId} className="messages-create-group-member">
-                  <input type="checkbox" checked={newGroupMemberIds.includes(user.userId)} onChange={() => toggleNewGroupMember(user.userId)} />
-                  {displayNameFor(user.email)}
-                </label>
-              ))}
-            </div>
+            {newGroupMemberIds.length > 0 && (
+              <div className="people-picker-chips">
+                {newGroupMemberIds.map((userId) => {
+                  const user = knownUsers.find((entry) => entry.userId === userId);
+                  return user ? (
+                    <span key={userId} className="people-picker-chip">
+                      {displayNameFor(user.email)}
+                      <button type="button" onClick={() => toggleNewGroupMember(userId)} aria-label={`Remove ${displayNameFor(user.email)}`}>&times;</button>
+                    </span>
+                  ) : null;
+                })}
+              </div>
+            )}
+            <PeoplePicker knownUsers={knownUsers} teamMembers={teamMembers} excludeUserIds={newGroupMemberIds} onSelect={toggleNewGroupMember} />
             <p className="messages-create-group-hint">Private by default -- only you and whoever you add can see it. Unlock it later to make it visible to everyone.</p>
             {createGroupStatus && <div className="source-file"><span>{createGroupStatus}</span></div>}
             <div className="messages-create-group-actions">

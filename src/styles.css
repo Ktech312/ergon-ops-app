@@ -7299,19 +7299,75 @@ body:has(.modal-backdrop) .install-banner {
   padding: 6px 8px;
 }
 
-.messages-create-group-members {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  max-height: 110px;
-  overflow-y: auto;
+.people-picker {
+  position: relative;
 }
 
-.messages-create-group-member {
+.people-picker-input {
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.people-picker-suggestions {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(107, 50, 18, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px;
+  position: absolute;
+  width: 100%;
+  z-index: 30;
+}
+
+.people-picker-suggestion {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.people-picker-suggestion:hover {
+  background: #f8f5ef;
+}
+
+.people-picker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.people-picker-chip {
   align-items: center;
+  background: #f8f5ef;
+  border-radius: 999px;
   display: flex;
   font-size: 13px;
-  gap: 5px;
+  gap: 6px;
+  padding: 4px 6px 4px 12px;
+}
+
+.people-picker-chip button {
+  background: transparent;
+  border: none;
+  color: #756d62;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.people-picker-chip button:hover {
+  color: #a01029;
 }
 
 .messages-create-group-hint {
@@ -7503,9 +7559,9 @@ body:has(.modal-backdrop) .install-banner {
 }
 
 .messages-bubble-row {
-  align-items: flex-end;
+  align-items: flex-start;
   display: flex;
-  gap: 6px;
+  gap: 8px;
   justify-content: flex-start;
 }
 
@@ -7540,12 +7596,24 @@ body:has(.modal-backdrop) .install-banner {
   background: #f5e3d8;
 }
 
+.messages-bubble-header {
+  align-items: baseline;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
 .messages-bubble-sender {
   color: #a01029;
-  display: block;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
-  margin-bottom: 2px;
+}
+
+.messages-bubble-time {
+  color: #9a9184;
+  flex-shrink: 0;
+  font-size: 11px;
 }
 
 .messages-bubble span {
@@ -7639,16 +7707,66 @@ body:has(.modal-backdrop) .install-banner {
   padding-top: 12px;
 }
 
+.messages-compose-input-wrap {
+  flex: 1;
+  position: relative;
+}
+
 .messages-compose-row textarea {
   background: #fffdf9;
   border: 1px solid #ded7cb;
   border-radius: 8px;
-  flex: 1;
   font: inherit;
   max-height: 120px;
   min-height: 42px;
   padding: 8px 10px;
   resize: vertical;
+  width: 100%;
+}
+
+.mention-suggestions {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  bottom: calc(100% + 4px);
+  box-shadow: 0 12px 32px rgba(107, 50, 18, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  left: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 6px;
+  position: absolute;
+  width: min(280px, 100%);
+  z-index: 30;
+}
+
+.mention-suggestion {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 1px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.mention-suggestion strong {
+  font-size: 13px;
+}
+
+.mention-suggestion span {
+  color: #756d62;
+  font-size: 11px;
+}
+
+.mention-suggestion:hover,
+.mention-suggestion.active {
+  background: #f8f5ef;
 }
 
 .messages-empty-thread {
