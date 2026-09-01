@@ -1284,6 +1284,7 @@ type ChannelRow = {
   name: string;
   private?: boolean;
   created_by?: string | null;
+  deleted_at?: string | null;
 };
 
 function mapChannelRow(row: ChannelRow): Channel {
@@ -1315,7 +1316,37 @@ export async function loadChannels(accessToken?: string): Promise<Channel[]> {
     return [];
   }
   const rows = (await response.json()) as ChannelRow[];
-  return rows.map(mapChannelRow);
+  // Filtered client-side, not via a query param -- deleted_at (migration
+  // 112) doesn't exist pre-migration, and a query filter on a missing
+  // column 400s the whole request where a missing-column read just comes
+  // back undefined (falsy) and is included, same as the graceful-*
+  // pattern above.
+  return rows.filter((row) => !row.deleted_at).map(mapChannelRow);
+}
+
+// Migration 112: delete/retire a user-created ("group") channel. E: "No
+// way to delete items or even rooms, Delete or Retire should be the
+// options." Same soft-delete/restore/deletion_log shape as every other
+// entity in this app (migration 088) -- Section/Project/Client channels
+// stay permanent, the UI never offers this for them.
+export async function deleteChannel(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, error: "Not configured." };
+  }
+  const response = await fetch(supabaseUrl(`channels?id=eq.${id}`), {
+    method: "PATCH",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ deleted_by_email: actorEmail || null, deleted_at: new Date().toISOString() }),
+  });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not delete channel") };
+  }
+  const rows = (await response.json().catch(() => [])) as Array<{ id: string }>;
+  if (rows.length === 0) {
+    return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
+  }
+  await logDeletionEvent("channel", id, label, "deleted", actorEmail, accessToken);
+  return { ok: true };
 }
 
 // Freeform group channels (migration 105) -- E: "create group chats that

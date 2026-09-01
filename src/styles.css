@@ -7174,7 +7174,7 @@ body:has(.modal-backdrop) .install-banner {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  height: calc(100vh - 220px);
+  height: calc(100vh - 175px);
   min-height: 480px;
 }
 
@@ -7398,7 +7398,7 @@ body:has(.modal-backdrop) .install-banner {
   display: grid;
   gap: 2px;
   grid-template-columns: 1fr auto;
-  padding: 10px 12px;
+  padding: 8px 12px;
   position: relative;
   text-align: left;
 }
@@ -7629,11 +7629,61 @@ body:has(.modal-backdrop) .install-banner {
   margin-top: 3px;
 }
 
+.messages-attachment-image-trigger {
+  background: none;
+  border: none;
+  cursor: zoom-in;
+  display: block;
+  padding: 0;
+}
+
 .messages-attachment-image {
   border-radius: 8px;
   display: block;
-  max-height: 260px;
-  max-width: 100%;
+  max-height: 180px;
+  max-width: 220px;
+  object-fit: cover;
+  width: auto;
+}
+
+.image-lightbox-backdrop {
+  align-items: center;
+  background: rgba(20, 16, 12, 0.82);
+  cursor: zoom-out;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 40px;
+  position: fixed;
+  z-index: 200;
+}
+
+.image-lightbox-image {
+  border-radius: 6px;
+  cursor: default;
+  max-height: 90vh;
+  max-width: 90vw;
+  object-fit: contain;
+}
+
+.image-lightbox-close {
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  right: 20px;
+  top: 20px;
+  width: 36px;
+}
+
+.image-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .messages-attachment-loading {

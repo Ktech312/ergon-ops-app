@@ -38,6 +38,7 @@ import {
   Plus,
   Search,
   Unlock,
+  X,
   ShoppingCart,
   Trash2,
   Truck,
@@ -231,6 +232,7 @@ import {
   uploadTeamMemberAvatar,
   createGroupChannel,
   unlockChannel,
+  deleteChannel,
   loadChannelMembers,
   addChannelMember,
   searchMessages,
@@ -14192,6 +14194,23 @@ function MessageThread({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  // E: "it wasn't a pop-up it opened a new window. it should be a
+  // pop-up, not full screen." Clicking an inline photo used to be a
+  // plain <a target="_blank"> -- an in-app lightbox instead.
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!lightboxUrl) {
+      return;
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setLightboxUrl(null);
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [lightboxUrl]);
   const composeTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [mentionState, setMentionState] = useState<{ start: number; query: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -14310,9 +14329,9 @@ function MessageThread({
                 {message.attachmentStoragePath && (
                   isImage ? (
                     attachmentUrl ? (
-                      <a href={attachmentUrl} target="_blank" rel="noreferrer">
+                      <button type="button" className="messages-attachment-image-trigger" onClick={() => setLightboxUrl(attachmentUrl)}>
                         <img src={attachmentUrl} alt={message.attachmentFileName ?? "Attached image"} className="messages-attachment-image" />
-                      </a>
+                      </button>
                     ) : (
                       <div className="messages-attachment-loading">Loading image...</div>
                     )
@@ -14421,6 +14440,19 @@ function MessageThread({
         </div>
         <button className="primary-action" type="button" onClick={submitDraft} disabled={!draftBody.trim() && !draftFile}>Send</button>
       </div>
+      {lightboxUrl && (
+        <div className="image-lightbox-backdrop" onClick={() => setLightboxUrl(null)}>
+          <button className="image-lightbox-close" type="button" onClick={() => setLightboxUrl(null)} aria-label="Close">
+            <X size={20} />
+          </button>
+          <img
+            src={lightboxUrl}
+            alt=""
+            className="image-lightbox-image"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      )}
     </>
   );
 }
@@ -14573,6 +14605,27 @@ function ChannelDiscussion({
     }
   }
 
+  // E: "No way to delete items or even rooms, Delete or Retire should
+  // be the options for the chat rooms that are created by people."
+  // Section/Project/Client channels are permanent by design and never
+  // get this button -- only shown for 'group' channels in the render
+  // below.
+  async function handleDeleteChannel() {
+    if (!accessToken) {
+      return;
+    }
+    if (!window.confirm(`Delete "${channel.name}"? This can be undone from Admin > Deletion Log if needed.`)) {
+      return;
+    }
+    const actorEmail = emailByUserId.get(myUserId) ?? "";
+    const result = await deleteChannel(channel.id, channel.name, actorEmail, accessToken);
+    if (!result.ok) {
+      setGroupActionStatus(result.error ?? "Could not delete channel.");
+      return;
+    }
+    onChannelsChanged?.();
+  }
+
   async function handleAddMember(userId: string) {
     if (!accessToken) {
       return;
@@ -14584,6 +14637,50 @@ function ChannelDiscussion({
     } catch (error) {
       setGroupActionStatus(error instanceof Error ? error.message : "Could not add that person.");
     }
+  }
+
+  // E: "I also sent a message to someone not in the room but it didn't
+  // say it added him" / earlier: "add them to a Channel this way if
+  // they aren't already in it." A private channel's mention notification
+  // is useless if the person still can't actually open the channel to
+  // read it -- so for a private group channel specifically, @mentioning
+  // a real person auto-adds them as a member. Role mentions (@Sales) and
+  // non-private channels are left alone -- role mentions don't map to
+  // one person to add, and every other channel type is already broadly
+  // visible so membership doesn't gate access there.
+  function resolveMentionedMemberIds(text: string): string[] {
+    const tokens = [...new Set([...text.matchAll(/@([A-Za-z][A-Za-z0-9_]*)/g)].map((match) => match[1]))];
+    const ids = new Set<string>();
+    for (const token of tokens) {
+      const person = teamMembers.find((member) => member.fullName.trim().split(/\s+/)[0]?.toLowerCase() === token.toLowerCase());
+      const knownUser = person?.email ? knownUsers.find((user) => user.email.toLowerCase() === person.email.toLowerCase()) : undefined;
+      if (knownUser) {
+        ids.add(knownUser.userId);
+      }
+    }
+    return [...ids];
+  }
+
+  async function addMentionedNonMembers(text: string) {
+    if (channel.type !== "group" || !channel.private || !accessToken) {
+      return;
+    }
+    const newIds = resolveMentionedMemberIds(text).filter((id) => id !== myUserId && !memberIds.includes(id));
+    if (newIds.length === 0) {
+      return;
+    }
+    for (const id of newIds) {
+      await addChannelMember(channel.id, id, accessToken).catch(() => {});
+    }
+    setMemberIds((current) => [...current, ...newIds]);
+    onChannelsChanged?.();
+    const names = newIds
+      .map((id) => {
+        const email = knownUsers.find((user) => user.userId === id)?.email;
+        return email ? teamDisplayName(email, teamMembers) : "them";
+      })
+      .join(", ");
+    setStatus(`Added ${names} to this channel so they can see this message.`);
   }
 
   // Canvas (migration 104) -- Slack's per-channel Canvas mapped onto a
@@ -14693,6 +14790,7 @@ function ChannelDiscussion({
       setStatus("");
       if (message.body) {
         onNotifyMentions?.(message.body, "channel_message", message.id, `#${channel.name}`, message.id);
+        await addMentionedNonMembers(message.body);
       }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not send message.");
@@ -14710,6 +14808,7 @@ function ChannelDiscussion({
             <button className="secondary-action mini-action" type="button" onClick={handleUnlockChannel}>Unlock (make visible to everyone)</button>
           )}
           <button className="secondary-action mini-action" type="button" onClick={() => setShowMemberPicker((current) => !current)}>Add people</button>
+          <button className="secondary-action mini-action channel-delete-button" type="button" onClick={handleDeleteChannel}>Delete Channel</button>
           {groupActionStatus && <span className="channel-group-status">{groupActionStatus}</span>}
         </div>
       )}
