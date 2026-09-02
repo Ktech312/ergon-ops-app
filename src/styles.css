@@ -2139,6 +2139,16 @@ td small.quote-ref-tag {
   cursor: not-allowed;
 }
 
+/* Icon-only Send, matching the compose row's other icon buttons (camera/
+   @/emoji) instead of a wide text pill -- E: "Use icons as much as
+   possible... like the send button, both example i gave you did not
+   say send, they had icons" (Slack/Teams both use a bare paper-plane). */
+.messages-send-button {
+  height: 42px;
+  padding: 0;
+  width: 42px;
+}
+
 .action-row {
   display: flex;
   flex-wrap: wrap;
@@ -7646,10 +7656,24 @@ body:has(.modal-backdrop) .install-banner {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 8px;
   min-height: 0;
   overflow-y: auto;
   padding: 4px 2px;
+}
+
+/* A short thread (few messages) used to float at the TOP of the scroll
+   area, leaving a big empty gap above the compose row -- E: "these chat
+   boxes are not lined up cleanly, dead space." `margin-top: auto` on
+   the message-list wrapper pushes it to the bottom when it's shorter
+   than the panel, same as Slack/Teams, without the well-known
+   `justify-content: flex-end` + `overflow-y: auto` clipping bug (it
+   cuts off the top of long, actually-scrolling threads in some
+   browsers). */
+.messages-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
 }
 
 /* Flat, left-offset message layout (E, from a real Teams screenshot):
@@ -7767,6 +7791,99 @@ body:has(.modal-backdrop) .install-banner {
 
 .messages-emoji-option:hover {
   background: #f8f5ef;
+}
+
+.messages-reaction-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.messages-reaction-pill {
+  align-items: center;
+  background: #f8f5ef;
+  border: 1px solid #e8e1d5;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 4px;
+  padding: 1px 7px;
+}
+
+.messages-reaction-pill:hover {
+  background: #f1e9de;
+}
+
+.messages-reaction-pill.mine {
+  background: #f5e3d8;
+  border-color: #cf3f48;
+}
+
+.messages-reaction-add-wrap {
+  position: relative;
+}
+
+.messages-reaction-add-button {
+  color: #c9c0b0;
+  height: 20px;
+  width: 20px;
+}
+
+.messages-reaction-add-button:hover {
+  color: #6b6255;
+}
+
+.messages-reaction-picker {
+  bottom: auto;
+  top: calc(100% + 4px);
+}
+
+.channel-links-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.channel-link-row {
+  align-items: center;
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  color: #413d37;
+  display: flex;
+  gap: 10px;
+  padding: 9px 12px;
+  text-decoration: none;
+}
+
+.channel-link-row:hover {
+  background: #f1e9de;
+}
+
+.channel-link-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.channel-link-row-host {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-link-row-meta {
+  color: #9a9184;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .channel-photos-grid {
@@ -7910,7 +8027,8 @@ body:has(.modal-backdrop) .install-banner {
   width: 32px;
 }
 
-.messages-attach-button {
+.messages-attach-button,
+.messages-compose-icon {
   height: 42px;
   width: 34px;
 }

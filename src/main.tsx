@@ -29,6 +29,7 @@ import {
   Hash,
   Image,
   LayoutDashboard,
+  Link2,
   ListChecks,
   Lock,
   MapPin,
@@ -38,6 +39,7 @@ import {
   Pin,
   Plus,
   Search,
+  Send,
   Smile,
   Unlock,
   X,
@@ -229,6 +231,12 @@ import {
   loadChannels,
   loadChannelMessages,
   sendChannelMessage,
+  loadChannelMessageReactions,
+  addChannelMessageReaction,
+  removeChannelMessageReaction,
+  loadDirectMessageReactions,
+  addDirectMessageReaction,
+  removeDirectMessageReaction,
   loadChannelCanvas,
   saveChannelCanvas,
   buildAvatarStoragePath,
@@ -377,6 +385,7 @@ import {
   type TeamMember,
   type Channel,
   type ChannelMessage,
+  type MessageReaction,
   type MessageSearchResult,
   type Client,
   type SiteHardwareRule,
@@ -1348,6 +1357,7 @@ function App() {
   const [unreadMessageCounts, setUnreadMessageCounts] = useState<Record<string, number>>({});
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [activeConversationMessages, setActiveConversationMessages] = useState<DirectMessage[]>([]);
+  const [activeConversationReactions, setActiveConversationReactions] = useState<MessageReaction[]>([]);
   const [messagesStatus, setMessagesStatus] = useState("");
   const totalUnreadMessages = Object.values(unreadMessageCounts).reduce((sum, count) => sum + count, 0);
   // "unsupported" covers both no Push API in this browser and no VAPID key
@@ -2361,12 +2371,21 @@ function App() {
   useEffect(() => {
     if (!activeConversationId || !authSession) {
       setActiveConversationMessages([]);
+      setActiveConversationReactions([]);
       return;
     }
     const session = authSession;
     const conversationId = activeConversationId;
     function reloadThread() {
-      loadConversationMessages(conversationId, session.accessToken).then(setActiveConversationMessages).catch(() => {});
+      loadConversationMessages(conversationId, session.accessToken).then((rows) => {
+        setActiveConversationMessages(rows);
+        const ids = rows.map((entry) => entry.id);
+        if (ids.length > 0) {
+          loadDirectMessageReactions(ids, session.accessToken).then(setActiveConversationReactions).catch(() => {});
+        } else {
+          setActiveConversationReactions([]);
+        }
+      }).catch(() => {});
     }
     reloadThread();
     markConversationRead(conversationId, session.userId, session.accessToken)
@@ -2375,6 +2394,31 @@ function App() {
     const interval = window.setInterval(reloadThread, 5_000);
     return () => window.clearInterval(interval);
   }, [activeConversationId, authSession]);
+
+  // Reactions (migration 113) -- same toggle shape as the channel side
+  // (ChannelDiscussion's handleToggleReaction), just against the DM
+  // tables/thread state instead.
+  async function handleToggleDirectMessageReaction(messageId: string, emoji: string) {
+    if (!authSession) {
+      return;
+    }
+    const myUserId = authSession.userId;
+    const alreadyReacted = activeConversationReactions.some(
+      (entry) => entry.messageId === messageId && entry.userId === myUserId && entry.emoji === emoji,
+    );
+    if (alreadyReacted) {
+      setActiveConversationReactions((current) =>
+        current.filter((entry) => !(entry.messageId === messageId && entry.userId === myUserId && entry.emoji === emoji)),
+      );
+      await removeDirectMessageReaction(messageId, myUserId, emoji, authSession.accessToken);
+    } else {
+      setActiveConversationReactions((current) => [
+        ...current,
+        { id: `optimistic-${messageId}-${emoji}-${myUserId}`, messageId, userId: myUserId, emoji },
+      ]);
+      await addDirectMessageReaction(messageId, myUserId, emoji, authSession.accessToken);
+    }
+  }
 
   async function handleStartConversation(otherUserId: string) {
     if (!authSession) {
@@ -7633,11 +7677,13 @@ function App() {
             unreadMessageCounts={unreadMessageCounts}
             activeConversationId={activeConversationId}
             activeConversationMessages={activeConversationMessages}
+            activeConversationReactions={activeConversationReactions}
             status={messagesStatus}
             pushPermissionState={pushPermissionState}
             onSelectConversation={setActiveConversationId}
             onStartConversation={handleStartConversation}
             onSendMessage={handleSendDirectMessage}
+            onToggleReaction={handleToggleDirectMessageReaction}
             onSubscribeToPush={handleSubscribeToPush}
             initialChannelId={initialMessagesChannelId}
             tasks={tasks}
@@ -14150,6 +14196,16 @@ function formatDateDivider(iso: string): string {
 // react/react quickly without leaving the compose box.
 const QUICK_EMOJI = ["\u{1F44D}", "\u{1F44E}", "\u{1F642}", "\u{1F602}", "\u{2764}\u{FE0F}", "\u{1F389}", "\u{1F914}", "\u{1F440}", "\u{1F64C}", "\u{2705}", "\u{1F525}", "\u{1F62E}"];
 
+// Powers the Links tab (channel Discussion) -- E, from a real Teams
+// "Shared Resources" screenshot with Canvases/Slides/Links circled: a
+// channel already has Canvas; this derives "Links" the same
+// zero-backend way Photos derives from image attachments -- scan every
+// message body for a URL instead of a separate table to maintain.
+const MESSAGE_URL_REGEX = /https?:\/\/[^\s<>"')]+/gi;
+function extractMessageLinks(body: string): string[] {
+  return [...body.matchAll(MESSAGE_URL_REGEX)].map((match) => match[0].replace(/[.,;:!?)]+$/, ""));
+}
+
 // Search-as-you-type person picker -- E: "when i have 40 people in here,
 // this cannot be that large" (a checkbox-per-person / button-per-person
 // list doesn't scale) and "when i start to type a name it should fill
@@ -14252,6 +14308,8 @@ function MessageThread({
   senderNameFor,
   senderAvatarFor,
   mentionCandidates,
+  reactions,
+  onToggleReaction,
 }: {
   messages: ThreadMessage[];
   myUserId: string;
@@ -14267,6 +14325,13 @@ function MessageThread({
   // matching in main.tsx App scope); `label` is the human-readable text
   // shown in the suggestion row when it differs from the token.
   mentionCandidates?: { token: string; label: string; avatarUrl?: string; online?: boolean }[];
+  // Reactions (migration 113, Slack's signature feature) -- E: "we need
+  // it to be a combination of Teams and Slack features." Omitted
+  // entirely means "not supported here yet" (same optional-prop
+  // convention as senderNameFor/mentionCandidates above) rather than
+  // silently rendering a picker that can never do anything.
+  reactions?: MessageReaction[];
+  onToggleReaction?: (messageId: string, emoji: string) => void;
 }) {
   const [draftBody, setDraftBody] = useState("");
   const [draftFile, setDraftFile] = useState<File | null>(null);
@@ -14274,6 +14339,8 @@ function MessageThread({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  const threadScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastMessageIdRef = useRef<string | null>(null);
   // E: "search" -- find-in-thread over whatever's currently loaded
   // (loadChannelMessages/DMs both cap at recent history, same as the
   // global message search's own on-demand-query limitation).
@@ -14284,6 +14351,21 @@ function MessageThread({
   // pop-up, not full screen." Clicking an inline photo used to be a
   // plain <a target="_blank"> -- an in-app lightbox instead.
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
+  function reactionGroupsFor(messageId: string): { emoji: string; userIds: string[] }[] {
+    const order: string[] = [];
+    const byEmoji: Record<string, string[]> = {};
+    (reactions ?? [])
+      .filter((entry) => entry.messageId === messageId)
+      .forEach((entry) => {
+        if (!byEmoji[entry.emoji]) {
+          byEmoji[entry.emoji] = [];
+          order.push(entry.emoji);
+        }
+        byEmoji[entry.emoji].push(entry.userId);
+      });
+    return order.map((emoji) => ({ emoji, userIds: byEmoji[emoji] }));
+  }
 
   useEffect(() => {
     if (!lightboxUrl) {
@@ -14355,8 +14437,28 @@ function MessageThread({
     });
   }
 
+  // E: "When i scroll down it shift me back up the screen, it actually
+  // keep doing it without me touching anything." Root cause: both the
+  // channel poll (every 5s) and the DM poll rebuild `messages` as a new
+  // array on every tick even when nothing changed, so this effect fired
+  // scrollIntoView on every single poll -- yanking you back to the
+  // bottom every few seconds while you were scrolled up reading
+  // history. Now it only auto-scrolls when the last message actually
+  // changed (a real new message, not a same-content refetch), and even
+  // then only if you were already near the bottom -- same rule Slack/
+  // Teams use so reading old messages is never interrupted.
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ block: "end" });
+    const lastId = messages.length > 0 ? messages[messages.length - 1].id : null;
+    const isNewMessage = lastId !== lastMessageIdRef.current;
+    lastMessageIdRef.current = lastId;
+    if (!isNewMessage) {
+      return;
+    }
+    const container = threadScrollRef.current;
+    const nearBottom = !container || container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+    if (nearBottom) {
+      threadEndRef.current?.scrollIntoView({ block: "end" });
+    }
   }, [messages]);
 
   // Resolve a short-lived signed URL for every attachment as messages load
@@ -14441,7 +14543,8 @@ function MessageThread({
           />
         )}
       </div>
-      <div className="messages-thread-scroll">
+      <div className="messages-thread-scroll" ref={threadScrollRef}>
+        <div className="messages-thread-list">
         {messages
           .filter((message) => !searchTerm.trim() || message.body.toLowerCase().includes(searchTerm.trim().toLowerCase()))
           .map((message, index, filtered) => {
@@ -14496,12 +14599,57 @@ function MessageThread({
                     )
                   )}
                   {message.body && <span className="messages-flat-body">{message.body}</span>}
+                  {onToggleReaction && (
+                    <div className="messages-reaction-row">
+                      {reactionGroupsFor(message.id).map(({ emoji, userIds }) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          className={`messages-reaction-pill ${userIds.includes(myUserId) ? "mine" : ""}`}
+                          onClick={() => onToggleReaction(message.id, emoji)}
+                          title={userIds.includes(myUserId) ? "Remove your reaction" : "React"}
+                        >
+                          <span>{emoji}</span>
+                          <span>{userIds.length}</span>
+                        </button>
+                      ))}
+                      <span className="messages-reaction-add-wrap">
+                        <button
+                          type="button"
+                          className="messages-inline-icon messages-reaction-add-button"
+                          onClick={() => setReactionPickerFor((current) => (current === message.id ? null : message.id))}
+                          aria-label="Add a reaction"
+                          title="Add a reaction"
+                        >
+                          <Smile size={13} />
+                        </button>
+                        {reactionPickerFor === message.id && (
+                          <div className="messages-emoji-picker messages-reaction-picker">
+                            {QUICK_EMOJI.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                className="messages-emoji-option"
+                                onClick={() => {
+                                  onToggleReaction(message.id, emoji);
+                                  setReactionPickerFor(null);
+                                }}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </Fragment>
           );
         })}
         {messages.length === 0 && <div className="empty-compact-state">{emptyText}</div>}
+        </div>
         <div ref={threadEndRef} />
       </div>
       {draftFile && (
@@ -14530,7 +14678,7 @@ function MessageThread({
         </button>
         {mentionCandidates && (
           <button
-            className="messages-inline-icon"
+            className="messages-inline-icon messages-compose-icon"
             type="button"
             onClick={() => insertAtCursor("@")}
             aria-label="Mention someone"
@@ -14541,7 +14689,7 @@ function MessageThread({
         )}
         <div className="messages-emoji-wrap">
           <button
-            className="messages-inline-icon"
+            className="messages-inline-icon messages-compose-icon"
             type="button"
             onClick={() => setEmojiPickerOpen((current) => !current)}
             aria-label="Add an emoji"
@@ -14635,7 +14783,16 @@ function MessageThread({
             placeholder="Write a message... (Enter to send, Shift+Enter for a new line)"
           />
         </div>
-        <button className="primary-action" type="button" onClick={submitDraft} disabled={!draftBody.trim() && !draftFile}>Send</button>
+        <button
+          className="primary-action messages-send-button"
+          type="button"
+          onClick={submitDraft}
+          disabled={!draftBody.trim() && !draftFile}
+          aria-label="Send"
+          title="Send"
+        >
+          <Send size={17} />
+        </button>
       </div>
       {lightboxUrl && (
         <div className="image-lightbox-backdrop" onClick={() => setLightboxUrl(null)}>
@@ -14760,7 +14917,7 @@ function ChannelDiscussion({
 }) {
   const [messages, setMessages] = useState<ChannelMessage[]>([]);
   const [status, setStatus] = useState("");
-  const [tab, setTab] = useState<"discussion" | "tasks" | "files" | "canvas" | "photos">("discussion");
+  const [tab, setTab] = useState<"discussion" | "tasks" | "files" | "canvas" | "photos" | "links">("discussion");
 
   // Photos tab -- E, from the Teams reference: every image ever shared in
   // this channel's chat, gathered into a grid (distinct from Files above,
@@ -14770,6 +14927,12 @@ function ChannelDiscussion({
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [photosLightboxUrl, setPhotosLightboxUrl] = useState<string | null>(null);
   const imageMessages = messages.filter((entry) => (entry.attachmentMimeType ?? "").startsWith("image/") && entry.attachmentStoragePath);
+
+  // Links tab -- every URL ever shared in this channel's chat, newest
+  // first, one row per link (a message with 2 links makes 2 rows).
+  const linkEntries = messages
+    .flatMap((entry) => extractMessageLinks(entry.body).map((url) => ({ id: `${entry.id}:${url}`, url, message: entry })))
+    .reverse();
 
   useEffect(() => {
     if (tab !== "photos" || !accessToken) {
@@ -14955,18 +15118,47 @@ function ChannelDiscussion({
     }
   }
 
+  const [reactions, setReactions] = useState<MessageReaction[]>([]);
+
   useEffect(() => {
     if (!accessToken) {
       setMessages([]);
+      setReactions([]);
       return;
     }
     function reload() {
-      loadChannelMessages(channel.id, accessToken).then(setMessages).catch(() => {});
+      loadChannelMessages(channel.id, accessToken).then((rows) => {
+        setMessages(rows);
+        const ids = rows.map((entry) => entry.id);
+        if (ids.length > 0) {
+          loadChannelMessageReactions(ids, accessToken).then(setReactions).catch(() => {});
+        } else {
+          setReactions([]);
+        }
+      }).catch(() => {});
     }
     reload();
     const interval = window.setInterval(reload, 5_000);
     return () => window.clearInterval(interval);
   }, [channel.id, accessToken]);
+
+  // Reactions (migration 113) -- toggle: add if I haven't reacted with
+  // this emoji yet, remove if I have. Optimistic local update first
+  // (same pattern as everywhere else messages update locally before the
+  // round trip), reconciled by the next 5s poll either way.
+  async function handleToggleReaction(messageId: string, emoji: string) {
+    if (!accessToken) {
+      return;
+    }
+    const alreadyReacted = reactions.some((entry) => entry.messageId === messageId && entry.userId === myUserId && entry.emoji === emoji);
+    if (alreadyReacted) {
+      setReactions((current) => current.filter((entry) => !(entry.messageId === messageId && entry.userId === myUserId && entry.emoji === emoji)));
+      await removeChannelMessageReaction(messageId, myUserId, emoji, accessToken);
+    } else {
+      setReactions((current) => [...current, { id: `optimistic-${messageId}-${emoji}-${myUserId}`, messageId, userId: myUserId, emoji }]);
+      await addChannelMessageReaction(messageId, myUserId, emoji, accessToken);
+    }
+  }
 
   const emailByUserId = new Map(knownUsers.map((user) => [user.userId, user.email]));
   function senderNameFor(senderId: string) {
@@ -15065,6 +15257,7 @@ function ChannelDiscussion({
         <button className={tab === "discussion" ? "active" : ""} type="button" onClick={() => setTab("discussion")}>Discussion</button>
         {showFilesTab && <button className={tab === "files" ? "active" : ""} type="button" onClick={() => setTab("files")}>Files</button>}
         <button className={tab === "photos" ? "active" : ""} type="button" onClick={() => setTab("photos")}>Photos</button>
+        <button className={tab === "links" ? "active" : ""} type="button" onClick={() => setTab("links")}>Links</button>
         {showTasksTab && <button className={tab === "tasks" ? "active" : ""} type="button" onClick={() => setTab("tasks")}>Tasks</button>}
         <button className={tab === "canvas" ? "active" : ""} type="button" onClick={() => setTab("canvas")}>Canvas</button>
       </div>
@@ -15080,6 +15273,8 @@ function ChannelDiscussion({
             senderNameFor={senderNameFor}
             senderAvatarFor={senderAvatarFor}
             mentionCandidates={mentionCandidates}
+            reactions={reactions}
+            onToggleReaction={handleToggleReaction}
           />
         </>
       )}
@@ -15144,6 +15339,34 @@ function ChannelDiscussion({
           )}
         </div>
       )}
+      {tab === "links" && (
+        <div className="channel-links-list">
+          {linkEntries.length === 0 ? (
+            <div className="empty-compact-state">No links shared in this channel yet.</div>
+          ) : (
+            linkEntries.map((entry) => {
+              let host = entry.url;
+              try {
+                host = new URL(entry.url).hostname.replace(/^www\./, "");
+              } catch {
+                // Not a fully-formed URL (rare, e.g. a trailing-punctuation edge case the strip missed) -- fall back to showing it raw.
+              }
+              return (
+                <a key={entry.id} className="channel-link-row" href={entry.url} target="_blank" rel="noreferrer">
+                  <Link2 size={15} />
+                  <span className="channel-link-row-text">
+                    <span className="channel-link-row-host">{host}</span>
+                    <span className="channel-link-row-meta">
+                      {senderNameFor(entry.message.senderId)} - {new Date(entry.message.createdAt).toLocaleString()}
+                    </span>
+                  </span>
+                  <ExternalLink size={13} />
+                </a>
+              );
+            })
+          )}
+        </div>
+      )}
       {tab === "canvas" && (
         <div className="channel-canvas-panel">
           {!canvasLoaded ? (
@@ -15190,11 +15413,13 @@ function Messages({
   unreadMessageCounts,
   activeConversationId,
   activeConversationMessages,
+  activeConversationReactions,
   status,
   pushPermissionState,
   onSelectConversation,
   onStartConversation,
   onSendMessage,
+  onToggleReaction,
   onSubscribeToPush,
   initialChannelId,
   tasks,
@@ -15221,11 +15446,13 @@ function Messages({
   unreadMessageCounts: Record<string, number>;
   activeConversationId: string | null;
   activeConversationMessages: DirectMessage[];
+  activeConversationReactions: MessageReaction[];
   status: string;
   pushPermissionState: "unknown" | "unsupported" | "unsubscribed" | "subscribed";
   onSelectConversation: (conversationId: string | null) => void;
   onStartConversation: (otherUserId: string) => void;
   onSendMessage: (body: string, file?: File) => void;
+  onToggleReaction: (messageId: string, emoji: string) => void;
   onSubscribeToPush: () => void;
   // Global search (main.tsx) needs to open a specific channel here from
   // outside -- token-based like taskFocus/inventorySearchFocus elsewhere
@@ -15623,6 +15850,8 @@ function Messages({
                 const email = emailByUserId.get(senderId);
                 return email ? teamMembers.find((member) => member.email.toLowerCase() === email.toLowerCase())?.avatarUrl ?? "" : "";
               }}
+              reactions={activeConversationReactions}
+              onToggleReaction={onToggleReaction}
             />
           </>
         ) : (

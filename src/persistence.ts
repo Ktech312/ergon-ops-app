@@ -1153,6 +1153,44 @@ export async function sendDirectMessage(
   return mapDirectMessageRow(rows[0]);
 }
 
+// Reactions (migration 113) -- see the channel_message_reactions entry
+// above for the full design note; this is the DM-side mirror.
+export async function loadDirectMessageReactions(messageIds: string[], accessToken?: string): Promise<MessageReaction[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || messageIds.length === 0) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`direct_message_reactions?message_id=in.(${messageIds.join(",")})&select=id,message_id,user_id,emoji`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as MessageReactionRow[];
+  return rows.map(mapMessageReactionRow);
+}
+
+export async function addDirectMessageReaction(messageId: string, userId: string, emoji: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl("direct_message_reactions"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=ignore-duplicates" },
+    body: JSON.stringify({ message_id: messageId, user_id: userId, emoji }),
+  });
+}
+
+export async function removeDirectMessageReaction(messageId: string, userId: string, emoji: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(
+    supabaseUrl(`direct_message_reactions?message_id=eq.${messageId}&user_id=eq.${userId}&emoji=eq.${encodeURIComponent(emoji)}`),
+    { method: "DELETE", headers: supabaseHeaders(accessToken) },
+  );
+}
+
 // Message attachments (migration 100) -- private per-conversation bucket,
 // storage path prefixed with the conversation id so the bucket's own RLS
 // (see the migration) can restrict access to just the two participants,
@@ -1575,6 +1613,55 @@ export async function sendChannelMessage(
     throw new Error("Message didn't send -- you may not have permission.");
   }
   return mapChannelMessageRow(rows[0]);
+}
+
+// Reactions (migration 113) -- Slack's signature feature, mirrored the
+// same way channel_message_reactions/direct_message_reactions mirror
+// channel_messages/direct_messages themselves. `(message_id, user_id,
+// emoji)` is unique, so "react" is add-if-absent / remove-if-present
+// (a toggle), never a duplicate row for the same person+emoji.
+export type MessageReaction = { id: string; messageId: string; userId: string; emoji: string };
+
+type MessageReactionRow = { id: string; message_id: string; user_id: string; emoji: string };
+
+function mapMessageReactionRow(row: MessageReactionRow): MessageReaction {
+  return { id: row.id, messageId: row.message_id, userId: row.user_id, emoji: row.emoji };
+}
+
+export async function loadChannelMessageReactions(messageIds: string[], accessToken?: string): Promise<MessageReaction[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || messageIds.length === 0) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`channel_message_reactions?message_id=in.(${messageIds.join(",")})&select=id,message_id,user_id,emoji`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as MessageReactionRow[];
+  return rows.map(mapMessageReactionRow);
+}
+
+export async function addChannelMessageReaction(messageId: string, userId: string, emoji: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(supabaseUrl("channel_message_reactions"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=ignore-duplicates" },
+    body: JSON.stringify({ message_id: messageId, user_id: userId, emoji }),
+  });
+}
+
+export async function removeChannelMessageReaction(messageId: string, userId: string, emoji: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  await fetch(
+    supabaseUrl(`channel_message_reactions?message_id=eq.${messageId}&user_id=eq.${userId}&emoji=eq.${encodeURIComponent(emoji)}`),
+    { method: "DELETE", headers: supabaseHeaders(accessToken) },
+  );
 }
 
 // Canvas (migration 104) -- Slack's per-channel Canvas tab, mapped onto a
