@@ -1,6 +1,6 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-09-01
+Last updated: 2026-09-02
 
 Purpose: carry context between chat sessions. Read this first in any new session before making changes.
 
@@ -176,7 +176,96 @@ E's stated direction, from an overnight planning conversation (research → clar
 4. Clients as a real entity (with the manual reconciliation pass) + per-client channels + Client Ledger becomes client-grouped
 5. (Later, unscoped) Google Drive auto-backup; HubSpot two-way sync for billing/status — each needs its own scoping pass when E is ready
 
-## Recent work log (most recent first — 2026-09-01)
+## Recent work log (most recent first — 2026-09-02)
+- **⚠️ MIGRATION 113 NEEDS TO BE RUN -- reactions are built and shipped but 404 until then.** E sent Ergon/Teams/Slack screenshots overnight: "these chat boxes are not lined up cleanly, dead space" / "When i scroll down it shift me back up the screen, it keeps doing it without me touching anything" / "Use icons as much as possible... like the send button" / "we need it to be a combination of Teams and Slack features... pull this off or very close to it while i sleep." Worked through the night while E slept -- listing what was captured here since E wasn't online to confirm the list first (the usual practice this session), same as always checked in code/build before shipping.
+  1. **Scroll-hijack bug, found and fixed (real root cause, not a guess).** `MessageThread`'s auto-scroll effect (`main.tsx`) fired on every `messages` change -- but both the channel poll (5s) and DM poll (5s) rebuild `messages` as a brand-new array reference on *every* tick, even when nothing actually changed. That re-triggered `scrollIntoView` every single poll, yanking anyone scrolled up reading history back to the bottom every few seconds -- exactly what E described. Fixed with a ref tracking the last message's id: only scroll when it actually changes (a real new message), and even then only if you were already near the bottom (150px), matching how Slack/Teams behave. **Live-verified**: posted 10 filler messages to force real overflow, scrolled to the top, waited 12+ seconds (2+ poll cycles) via a direct `scrollTop` check -- stayed at 0, did not snap back.
+  2. **Compose row misalignment, real root cause found.** The camera/attach button was explicitly sized 42x34px; the @ and emoji-toggle buttons had no size at all (just icon + 2px padding, ~21px tall) -- bottom-aligned in the same flex row, they visibly sat shorter than the camera button and the textarea. New shared `.messages-compose-icon` class gives @ and emoji the same 42x34 box. Confirmed visually after deploy -- all four controls (camera/@/emoji/send) now line up cleanly.
+  3. **Dead space above the compose box on short threads, real root cause found.** `.messages-thread-scroll` (a flex column) top-aligns its content by default -- a 1-message thread left a big empty gap between the message and the compose row instead of sitting just above it like Slack/Teams. Wrapped the message list in `.messages-thread-list` with `margin-top: auto` so it bottom-anchors when shorter than the panel (deliberately not `justify-content: flex-end` on the scroll container itself -- that has a well-known browser bug that clips the top of a thread once it actually overflows and needs to scroll). **Live-verified**: a 1-message channel now shows the message sitting directly above the compose row, no gap.
+  4. **Send button is now icon-only** (a bare `Send` paper-plane icon, `.messages-send-button`, 42x42px matching the other compose icons) -- E: "both example i gave you did not say send, they had icons." Matches Slack/Teams exactly.
+  5. **New Links tab per channel** (Discussion/Photos/**Links**/Tasks/Canvas) -- from the real Teams "Shared Resources" screenshot (Canvases/Slides/Links circled). Zero new backend: scans every loaded message's body for a URL (`extractMessageLinks`, a shared regex) and lists them newest-first with hostname, sender, and timestamp -- exact same "derive from existing message data" approach the Photos tab already used for images, so it shipped and works immediately, no migration needed. **Live-verified**: posted a message with a real URL, opened the Links tab, confirmed it listed the hostname + sender + timestamp correctly.
+  6. **Message reactions (migration 113, NOT YET RUN) -- the single most recognizable Slack feature this app was missing.** Hover-free, always-visible small "add reaction" icon under each message; click opens the same `QUICK_EMOJI` grid the compose box already uses; clicking an emoji adds a reaction pill (emoji + count), clicking your own pill removes it -- a real toggle, not a one-way action. Two mirrored tables (`channel_message_reactions` / `direct_message_reactions`), same "channel mirrors DM" convention this schema has kept since migration 094/101, with RLS scoped identically to each side's own message-visibility rules (private-group membership for channels, conversation participancy for DMs) -- a reaction can never leak visibility the message itself wouldn't already give a reader. **Live-verified end to end EXCEPT persistence**: clicking a message's reaction button opens the picker correctly, clicking an emoji fires the right POST to `channel_message_reactions` -- confirmed via a real network-request check, which also confirmed the table genuinely doesn't exist yet (`404` on both the GET and POST, exactly as expected pre-migration). No console errors, nothing crashes -- `load*MessageReactions` already returns `[]` on a non-OK response (same defensive pattern every other loader in this file uses), so a reaction will visually flash on click then quietly disappear on the next 5s poll until the migration below is run. **Run this before using reactions for real:**
+     ```sql
+     create table if not exists channel_message_reactions (
+       id uuid primary key default gen_random_uuid(),
+       message_id uuid not null references channel_messages(id) on delete cascade,
+       user_id uuid not null references auth.users(id) on delete cascade,
+       emoji text not null check (char_length(emoji) between 1 and 8),
+       created_at timestamptz not null default now(),
+       unique (message_id, user_id, emoji)
+     );
+     create index if not exists idx_channel_message_reactions_message on channel_message_reactions(message_id);
+     alter table channel_message_reactions enable row level security;
+     drop policy if exists "authenticated read channel_message_reactions" on channel_message_reactions;
+     create policy "authenticated read channel_message_reactions" on channel_message_reactions for select to authenticated
+       using (
+         exists (
+           select 1 from public.channel_messages m
+           join public.channels c on c.id = m.channel_id
+           where m.id = channel_message_reactions.message_id
+             and (
+               c.type in ('section', 'project', 'client')
+               or (c.type = 'group' and c.private = false)
+               or exists (select 1 from public.channel_members cm where cm.channel_id = c.id and cm.user_id = auth.uid())
+             )
+         )
+       );
+     drop policy if exists "authenticated add own channel_message_reactions" on channel_message_reactions;
+     create policy "authenticated add own channel_message_reactions" on channel_message_reactions for insert to authenticated
+       with check (
+         user_id = auth.uid()
+         and exists (
+           select 1 from public.channel_messages m
+           join public.channels c on c.id = m.channel_id
+           where m.id = channel_message_reactions.message_id
+             and (
+               c.type in ('section', 'project', 'client')
+               or (c.type = 'group' and c.private = false)
+               or exists (select 1 from public.channel_members cm where cm.channel_id = c.id and cm.user_id = auth.uid())
+             )
+         )
+       );
+     drop policy if exists "authenticated remove own channel_message_reactions" on channel_message_reactions;
+     create policy "authenticated remove own channel_message_reactions" on channel_message_reactions for delete to authenticated
+       using (user_id = auth.uid());
+
+     create table if not exists direct_message_reactions (
+       id uuid primary key default gen_random_uuid(),
+       message_id uuid not null references direct_messages(id) on delete cascade,
+       user_id uuid not null references auth.users(id) on delete cascade,
+       emoji text not null check (char_length(emoji) between 1 and 8),
+       created_at timestamptz not null default now(),
+       unique (message_id, user_id, emoji)
+     );
+     create index if not exists idx_direct_message_reactions_message on direct_message_reactions(message_id);
+     alter table direct_message_reactions enable row level security;
+     drop policy if exists "participants read direct_message_reactions" on direct_message_reactions;
+     create policy "participants read direct_message_reactions" on direct_message_reactions for select to authenticated
+       using (
+         exists (
+           select 1 from public.direct_messages dm
+           join public.conversations c on c.id = dm.conversation_id
+           where dm.id = direct_message_reactions.message_id
+             and (c.participant_a_id = auth.uid() or c.participant_b_id = auth.uid())
+         )
+       );
+     drop policy if exists "participants add own direct_message_reactions" on direct_message_reactions;
+     create policy "participants add own direct_message_reactions" on direct_message_reactions for insert to authenticated
+       with check (
+         user_id = auth.uid()
+         and exists (
+           select 1 from public.direct_messages dm
+           join public.conversations c on c.id = dm.conversation_id
+           where dm.id = direct_message_reactions.message_id
+             and (c.participant_a_id = auth.uid() or c.participant_b_id = auth.uid())
+         )
+       );
+     drop policy if exists "participants remove own direct_message_reactions" on direct_message_reactions;
+     create policy "participants remove own direct_message_reactions" on direct_message_reactions for delete to authenticated
+       using (user_id = auth.uid());
+     ```
+  - **Not done tonight, deliberately scoped out rather than half-built:** typing indicators (real infra risk -- presence broadcast is a different shape than everything else in this app, which is all polling-based; didn't want to ship something flaky overnight with no one awake to catch a bug) and pinned messages (a real Slack/Teams feature, straightforward to add the same way reactions were, just ran out of scope for one night -- good next request). Also didn't touch the two real Teams screenshots' broader sidebar/header circling beyond what's listed above -- most of what they showed (favorites/chats split, chat header, tab row, compose row) was already built in the prior Teams-redesign pass; re-read those screenshots against the live app before assuming anything else in them is still missing.
+  - Test messages (10 "filler message N" + 1 "verifying scroll+links fix" post) are sitting in the real Inventory & Purchasing channel from tonight's live verification -- left in place since **there is still no message-delete capability in this app** (channel_messages/direct_messages both lack a DELETE RLS policy, a known gap flagged in an earlier entry, not fixed since it's never been asked for). Fine to ignore or manually delete via Supabase Studio if they bother you.
+  - `tsc --noEmit` and `npm run build` both clean. Pushed and deployed (`25df74b`). Live-verified everything except reaction persistence (blocked on the migration above).
 - **(no migration -- pure frontend, live-verified) Fixed `knownUsers` being broken for everyone, added real online/offline status.** E, from a real Slack screenshot of the `@` mention dropdown showing avatar + name + username + colored status per person: "When adding a person to a chat and i only type a couple letters, all these come up with a small Avatar and their online Status or not. Second part of that is, Do we have a online Status anywhere, if not it is a good thing to add now overall."
   - **Found while researching the ask, not requested but load-bearing for it**: `knownUsers` -- the directory that powers DM conversations, the People Picker, and @mention autocomplete -- was only ever populated by `reloadAdminDirectory()`, which only runs `if (adminFlag)`. Migration 094 had already widened `app_known_users`' RLS specifically so every signed-in user could read it for messaging (`create policy "authenticated read app_known_users for messaging" ... using (true)`), but the client never actually consumed that for non-admins -- every non-admin user's messaging directory has been silently empty this whole session. Fixed by moving the load out of `reloadAdminDirectory()` into its own unconditional `useEffect`, gated only on `authSession` existing, not on admin status.
   - **Presence heartbeat**: same new effect now also calls `upsertKnownUser` (updates `app_known_users.last_seen_at`) and reloads the directory every 90s while signed in -- previously `last_seen_at` was only ever touched once, at sign-in, so there was no live data an "online" indicator could have used even for admins. `isRecentlyActive()` (new helper, main.tsx) treats "seen in the last 5 minutes" as online -- same proxy Slack/Teams use, no new websocket/Realtime infrastructure, consistent with how every other live-ish thing in this app already polls.
