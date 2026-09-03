@@ -2548,6 +2548,25 @@ function App() {
     }
   }
 
+  // E: "the message page is refreshing on its own and taking me out of
+  // the chat i was in" -- while just sitting there watching, no
+  // backgrounding involved. Root cause: `authSession` gets a NEW object
+  // every time the proactive token-refresh timer fires (roughly
+  // hourly), which re-runs this whole effect -- and this effect flips
+  // `authChecksReady` back to `false` at the start of every run. The
+  // render gate below (`!authChecksReady`) is a full top-level early
+  // return that swaps the ENTIRE app for a "Checking your account..."
+  // screen, so every background token refresh briefly unmounted
+  // everything, including Messages' own locally-held
+  // activeConversationId/activeChannelId -- remounting fresh landed
+  // back on "no conversation selected." Exactly the "flash and reset"
+  // reported, on a session that had been open long enough to hit a
+  // token refresh. This ref lets the background re-checks (still
+  // valuable -- e.g. catching a mid-session admin/approval change)
+  // keep running exactly as before, without ever blocking the UI again
+  // after the very first real sign-in check completes.
+  const hasCompletedInitialAuthCheckRef = useRef(false);
+
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setIsAdmin(false);
@@ -2558,7 +2577,9 @@ function App() {
     }
 
     let cancelled = false;
-    setAuthChecksReady(false);
+    if (!hasCompletedInitialAuthCheckRef.current) {
+      setAuthChecksReady(false);
+    }
 
     Promise.all([
       checkIsAdmin(authSession.userId, authSession.accessToken),
@@ -2601,6 +2622,7 @@ function App() {
       setOwnAllowedViews(allowedViews);
       setUserApprovalStatus(status);
       setAuthChecksReady(true);
+      hasCompletedInitialAuthCheckRef.current = true;
       if (adminFlag) {
         reloadAdminDirectory(authSession.accessToken);
       }
@@ -6909,6 +6931,7 @@ function App() {
       setConfirmNewPassword("");
       await signOut(passwordResetSession);
       setAuthSession(null);
+      hasCompletedInitialAuthCheckRef.current = false;
       setAuthEmail(passwordResetSession.email);
       setAuthStatus("Password updated. Sign in with the new password.");
       setSyncStatus("auth");
@@ -6938,6 +6961,7 @@ function App() {
   async function handleSignOut() {
     await signOut(authSession);
     setAuthSession(null);
+    hasCompletedInitialAuthCheckRef.current = false;
     setAuthStatus("Signed out. Local browser cache remains visible until cloud sign in.");
     setSyncStatus(isRemotePersistenceConfigured() ? "auth" : "local");
   }
@@ -6998,7 +7022,7 @@ function App() {
     );
   }
 
-  if (authSession && isRemotePersistenceConfigured() && !authChecksReady) {
+  if (authSession && isRemotePersistenceConfigured() && !authChecksReady && !hasCompletedInitialAuthCheckRef.current) {
     return (
       <div className="auth-gate">
         <div className="auth-gate-card">
