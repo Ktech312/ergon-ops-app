@@ -1435,6 +1435,24 @@ export async function unlockChannel(channelId: string, accessToken?: string): Pr
   }
 }
 
+// E: "once i unlock it, i cant lock it again from inside the chat" --
+// unlock only ever went one way. Existing channel_members are untouched
+// by either direction -- locking just re-restricts who can newly see
+// it, it doesn't remove anyone already in it.
+export async function lockChannel(channelId: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl(`channels?id=eq.${channelId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ private: true }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not lock channel"));
+  }
+}
+
 export type ChannelMember = {
   channelId: string;
   userId: string;

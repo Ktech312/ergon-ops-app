@@ -244,6 +244,7 @@ import {
   uploadTeamMemberAvatar,
   createGroupChannel,
   unlockChannel,
+  lockChannel,
   deleteChannel,
   loadChannelMembers,
   addChannelMember,
@@ -15033,6 +15034,20 @@ function ChannelDiscussion({
     }
   }
 
+  // E: "once i unlock it, i cant lock it again from inside the chat" --
+  // unlock only ever went one way.
+  async function handleLockChannel() {
+    if (!accessToken) {
+      return;
+    }
+    try {
+      await lockChannel(channel.id, accessToken);
+      onChannelsChanged?.();
+    } catch (error) {
+      setGroupActionStatus(error instanceof Error ? error.message : "Could not lock channel.");
+    }
+  }
+
   // E: "No way to delete items or even rooms, Delete or Retire should
   // be the options for the chat rooms that are created by people."
   // Section/Project/Client channels are permanent by design and never
@@ -15269,9 +15284,13 @@ function ChannelDiscussion({
           <span className="channel-group-lock-status">
             {channel.private ? <><Lock size={13} /> Private</> : <><Unlock size={13} /> Visible to everyone</>}
           </span>
-          {channel.private && (
+          {channel.private ? (
             <button className="icon-button" type="button" onClick={handleUnlockChannel} aria-label="Unlock -- make visible to everyone" title="Unlock -- make visible to everyone">
               <Unlock size={15} />
+            </button>
+          ) : (
+            <button className="icon-button" type="button" onClick={handleLockChannel} aria-label="Lock -- make private again" title="Lock -- make private again">
+              <Lock size={15} />
             </button>
           )}
           <button
