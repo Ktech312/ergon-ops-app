@@ -7184,7 +7184,14 @@ body:has(.modal-backdrop) .install-banner {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  height: calc(100vh - 175px);
+  /* E: "no reason i should have to scroll down... move it all slightly
+     up." Real measured chrome above this box (top-nav 102px + .main's
+     own 28px top/bottom padding + .page-heading ~81px incl. margin) is
+     ~239px, not 175 -- that stale constant left the shell taller than
+     the actual remaining viewport, forcing a page-level scroll to see
+     the bottom of the compose row. Measured live via getBoundingClientRect,
+     not guessed. */
+  height: calc(100vh - 240px);
   min-height: 480px;
 }
 
