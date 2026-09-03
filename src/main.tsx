@@ -49,6 +49,7 @@ import {
   Upload,
   User,
   UserPlus,
+  Users,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -14623,7 +14624,7 @@ function MessageThread({
                     )
                   )}
                   {message.body && <span className="messages-flat-body">{message.body}</span>}
-                  {onToggleReaction && (
+                  {onToggleReaction && reactionGroupsFor(message.id).length > 0 && (
                     <div className="messages-reaction-row">
                       {reactionGroupsFor(message.id).map(({ emoji, userIds }) => (
                         <button
@@ -14637,37 +14638,47 @@ function MessageThread({
                           <span>{userIds.length}</span>
                         </button>
                       ))}
-                      <span className="messages-reaction-add-wrap">
-                        <button
-                          type="button"
-                          className="messages-inline-icon messages-reaction-add-button"
-                          onClick={() => setReactionPickerFor((current) => (current === message.id ? null : message.id))}
-                          aria-label="Add a reaction"
-                          title="Add a reaction"
-                        >
-                          <Smile size={13} />
-                        </button>
-                        {reactionPickerFor === message.id && (
-                          <div className="messages-emoji-picker messages-reaction-picker">
-                            {QUICK_EMOJI.map((emoji) => (
-                              <button
-                                key={emoji}
-                                type="button"
-                                className="messages-emoji-option"
-                                onClick={() => {
-                                  onToggleReaction(message.id, emoji);
-                                  setReactionPickerFor(null);
-                                }}
-                              >
-                                {emoji}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </span>
                     </div>
                   )}
                 </div>
+                {onToggleReaction && (
+                  // E: "why are emojis taking up multiple lines" / "message
+                  // icons are cleaner and lined up better, not wasting
+                  // space" (real Slack reference). Slack only shows the
+                  // "add a reaction" trigger on hover, never a permanently
+                  // reserved row -- floating and absolutely positioned so
+                  // it costs zero layout height until you actually hover
+                  // the message, matching that instead of the old
+                  // always-visible full-width row.
+                  <span className="messages-reaction-add-wrap messages-reaction-add-wrap-floating">
+                    <button
+                      type="button"
+                      className="messages-inline-icon messages-reaction-add-button"
+                      onClick={() => setReactionPickerFor((current) => (current === message.id ? null : message.id))}
+                      aria-label="Add a reaction"
+                      title="Add a reaction"
+                    >
+                      <Smile size={13} />
+                    </button>
+                    {reactionPickerFor === message.id && (
+                      <div className="messages-emoji-picker messages-reaction-picker">
+                        {QUICK_EMOJI.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            className="messages-emoji-option"
+                            onClick={() => {
+                              onToggleReaction(message.id, emoji);
+                              setReactionPickerFor(null);
+                            }}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </span>
+                )}
               </div>
             </Fragment>
           );
@@ -14995,6 +15006,10 @@ function ChannelDiscussion({
   // always broadly visible and never show this UI.
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [showMemberPicker, setShowMemberPicker] = useState(false);
+  // E, from a real Slack screenshot: "does not tell me who is in the
+  // chat" -- Add People existed, but nothing showed who's already in a
+  // private group channel.
+  const [showMemberList, setShowMemberList] = useState(false);
   const [groupActionStatus, setGroupActionStatus] = useState("");
 
   useEffect(() => {
@@ -15259,6 +15274,15 @@ function ChannelDiscussion({
               <Unlock size={15} />
             </button>
           )}
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => setShowMemberList((current) => !current)}
+            aria-label={`View members (${memberIds.length})`}
+            title={`View members (${memberIds.length})`}
+          >
+            <Users size={15} />
+          </button>
           <button className="icon-button" type="button" onClick={() => setShowMemberPicker((current) => !current)} aria-label="Add people" title="Add people">
             <UserPlus size={15} />
           </button>
@@ -15266,6 +15290,35 @@ function ChannelDiscussion({
             <Trash2 size={15} />
           </button>
           {groupActionStatus && <span className="channel-group-status">{groupActionStatus}</span>}
+        </div>
+      )}
+      {showMemberList && (
+        <div className="channel-group-member-picker channel-group-member-list">
+          {memberIds.length === 0 ? (
+            <span className="empty-compact-state">No members yet.</span>
+          ) : (
+            memberIds.map((userId) => {
+              const email = emailByUserId.get(userId) ?? "";
+              const avatarUrl = email ? avatarUrlFor(email, teamMembers) : "";
+              const online = isRecentlyActive(lastSeenByEmail.get(email.toLowerCase()));
+              return (
+                <div key={userId} className="channel-member-row">
+                  <span className="presence-avatar-wrap">
+                    {avatarUrl ? (
+                      <img className="people-picker-avatar" src={avatarUrl} alt="" />
+                    ) : (
+                      <span className="people-picker-avatar people-picker-avatar-placeholder"><User size={12} /></span>
+                    )}
+                    <span className={`presence-dot ${online ? "presence-dot-online" : "presence-dot-offline"}`} />
+                  </span>
+                  <span className="channel-member-row-text">
+                    <span>{email ? teamDisplayName(email, teamMembers) : "Unknown user"}</span>
+                    {email && <span className="channel-member-row-email">{email}</span>}
+                  </span>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
       {showMemberPicker && (
@@ -15702,6 +15755,44 @@ function Messages({
 
   const activeConversation = conversations.find((entry) => entry.id === activeConversationId) ?? null;
 
+  // Photos + Links for a DM thread -- E, from a real Slack screenshot of
+  // a person-to-person conversation with its own Files & links tab:
+  // "No way to add pictures / No way to add links" (channels already
+  // had both; DMs didn't). Same zero-extra-backend derivation as
+  // ChannelDiscussion's own Photos/Links tabs -- scan whatever's
+  // already loaded in activeConversationMessages.
+  const [dmTab, setDmTab] = useState<"discussion" | "photos" | "links">("discussion");
+  useEffect(() => {
+    setDmTab("discussion");
+  }, [activeConversationId]);
+  const dmImageMessages = activeConversationMessages.filter(
+    (entry) => (entry.attachmentMimeType ?? "").startsWith("image/") && entry.attachmentStoragePath,
+  );
+  const dmLinkEntries = activeConversationMessages
+    .flatMap((entry) => extractMessageLinks(entry.body).map((url) => ({ id: `${entry.id}:${url}`, url, message: entry })))
+    .reverse();
+  const [dmPhotoUrls, setDmPhotoUrls] = useState<Record<string, string>>({});
+  const [dmPhotosLightboxUrl, setDmPhotosLightboxUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (dmTab !== "photos" || !accessToken) {
+      return;
+    }
+    let cancelled = false;
+    dmImageMessages
+      .filter((entry) => !dmPhotoUrls[entry.id])
+      .forEach((entry) => {
+        getMessageAttachmentUrl(entry.attachmentStoragePath!, accessToken).then((url) => {
+          if (url && !cancelled) {
+            setDmPhotoUrls((current) => ({ ...current, [entry.id]: url }));
+          }
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dmTab, activeConversationMessages, accessToken]);
+
   // E, from the Teams reference: a "Favorites" section for pinned people,
   // separate from the regular list, plus an Unread filter chip above it.
   const filteredRows = dmFilter === "unread" ? allRows.filter((row) => row.unread > 0) : allRows;
@@ -15864,19 +15955,79 @@ function Messages({
               <button className="icon-button messages-back-button" type="button" onClick={() => onSelectConversation(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
               <strong>{(() => { const email = emailByUserId.get(otherUserId(activeConversation)); return email ? displayNameFor(email) : "Unknown user"; })()}</strong>
             </div>
-            <MessageThread
-              messages={activeConversationMessages}
-              myUserId={myUserId}
-              accessToken={accessToken}
-              onSend={onSendMessage}
-              emptyText="No messages yet -- say hello."
-              senderAvatarFor={(senderId) => {
-                const email = emailByUserId.get(senderId);
-                return email ? teamMembers.find((member) => member.email.toLowerCase() === email.toLowerCase())?.avatarUrl ?? "" : "";
-              }}
-              reactions={activeConversationReactions}
-              onToggleReaction={onToggleReaction}
-            />
+            <div className="segmented-tabs channel-tabs">
+              <button className={dmTab === "discussion" ? "active" : ""} type="button" onClick={() => setDmTab("discussion")}>Messages</button>
+              <button className={dmTab === "photos" ? "active" : ""} type="button" onClick={() => setDmTab("photos")}>Photos</button>
+              <button className={dmTab === "links" ? "active" : ""} type="button" onClick={() => setDmTab("links")}>Links</button>
+            </div>
+            {dmTab === "discussion" && (
+              <MessageThread
+                messages={activeConversationMessages}
+                myUserId={myUserId}
+                accessToken={accessToken}
+                onSend={onSendMessage}
+                emptyText="No messages yet -- say hello."
+                senderAvatarFor={(senderId) => {
+                  const email = emailByUserId.get(senderId);
+                  return email ? teamMembers.find((member) => member.email.toLowerCase() === email.toLowerCase())?.avatarUrl ?? "" : "";
+                }}
+                reactions={activeConversationReactions}
+                onToggleReaction={onToggleReaction}
+              />
+            )}
+            {dmTab === "photos" && (
+              <div className="channel-photos-grid">
+                {dmImageMessages.length === 0 ? (
+                  <div className="empty-compact-state">No photos shared yet.</div>
+                ) : (
+                  dmImageMessages.map((entry) =>
+                    dmPhotoUrls[entry.id] ? (
+                      <button key={entry.id} type="button" className="channel-photo-thumb-trigger" onClick={() => setDmPhotosLightboxUrl(dmPhotoUrls[entry.id])}>
+                        <img src={dmPhotoUrls[entry.id]} alt="" className="channel-photo-thumb" />
+                      </button>
+                    ) : (
+                      <div key={entry.id} className="channel-photo-thumb-loading" />
+                    ),
+                  )
+                )}
+                {dmPhotosLightboxUrl && (
+                  <div className="image-lightbox-backdrop" onClick={() => setDmPhotosLightboxUrl(null)}>
+                    <button className="image-lightbox-close" type="button" onClick={() => setDmPhotosLightboxUrl(null)} aria-label="Close">
+                      <X size={20} />
+                    </button>
+                    <img src={dmPhotosLightboxUrl} alt="" className="image-lightbox-image" onClick={(event) => event.stopPropagation()} />
+                  </div>
+                )}
+              </div>
+            )}
+            {dmTab === "links" && (
+              <div className="channel-links-list">
+                {dmLinkEntries.length === 0 ? (
+                  <div className="empty-compact-state">No links shared yet.</div>
+                ) : (
+                  dmLinkEntries.map((entry) => {
+                    let host = entry.url;
+                    try {
+                      host = new URL(entry.url).hostname.replace(/^www\./, "");
+                    } catch {
+                      // Not a fully-formed URL -- fall back to showing it raw.
+                    }
+                    return (
+                      <a key={entry.id} className="channel-link-row" href={entry.url} target="_blank" rel="noreferrer">
+                        <Link2 size={15} />
+                        <span className="channel-link-row-text">
+                          <span className="channel-link-row-host">{host}</span>
+                          <span className="channel-link-row-meta">
+                            {entry.message.senderId === myUserId ? "You" : displayNameFor(emailByUserId.get(entry.message.senderId) ?? "")} - {new Date(entry.message.createdAt).toLocaleString()}
+                          </span>
+                        </span>
+                        <ExternalLink size={13} />
+                      </a>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </>
         ) : (
           <div className="empty-compact-state messages-empty-thread">Select a conversation, or start a new one.</div>

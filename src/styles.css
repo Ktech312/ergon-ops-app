@@ -7301,6 +7301,35 @@ body:has(.modal-backdrop) .install-banner {
   margin-bottom: 8px;
 }
 
+.channel-group-member-list {
+  background: #fffdf9;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+}
+
+.channel-member-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  padding: 5px 6px;
+}
+
+.channel-member-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.channel-member-row-email {
+  color: #9a9184;
+  font-size: 11px;
+}
+
 .messages-create-group {
   background: #fffdf9;
   border: 1px solid #ded7cb;
@@ -7697,9 +7726,15 @@ body:has(.modal-backdrop) .install-banner {
 }
 
 .messages-flat-row {
+  border-radius: 6px;
   display: flex;
   gap: 10px;
   padding: 1px 4px;
+  position: relative;
+}
+
+.messages-flat-row:hover {
+  background: #faf7f1;
 }
 
 .messages-flat-avatar-slot {
@@ -7831,6 +7866,30 @@ body:has(.modal-backdrop) .install-banner {
 
 .messages-reaction-add-wrap {
   position: relative;
+}
+
+/* Zero-height until hovered -- E: "why are emojis taking up multiple
+   lines" / a real Slack screenshot showing the reaction trigger only
+   ever appears on hover, never as a permanently reserved row. Absolute
+   + opacity keeps it completely out of normal flow when hidden. */
+.messages-reaction-add-wrap-floating {
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 6px;
+  top: 1px;
+}
+
+.messages-flat-row:hover .messages-reaction-add-wrap-floating,
+.messages-reaction-add-wrap-floating:has(.messages-reaction-picker) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.messages-reaction-add-wrap-floating .messages-reaction-add-button {
+  background: white;
+  border: 1px solid #e8e1d5;
+  border-radius: 5px;
 }
 
 .messages-reaction-add-button {
