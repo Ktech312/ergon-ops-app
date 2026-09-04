@@ -1357,7 +1357,31 @@ function App() {
   // user, not just admins.
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [unreadMessageCounts, setUnreadMessageCounts] = useState<Record<string, number>>({});
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  // E: "this need to keep me in the same chat every time i come back
+  // this is very annoying" -- neither the active DM nor the active
+  // channel survived a reload, always dumping back to "Select a
+  // conversation." One shared localStorage key (type-tagged so a
+  // channel and a DM never both try to claim it) restores whichever
+  // was actually on screen last.
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(() => {
+    try {
+      const last = JSON.parse(window.localStorage.getItem("ergon:last-thread") ?? "null");
+      return last?.type === "conversation" ? last.id : null;
+    } catch {
+      return null;
+    }
+  });
+  function selectConversation(conversationId: string | null) {
+    setActiveConversationId(conversationId);
+    try {
+      window.localStorage.setItem(
+        "ergon:last-thread",
+        conversationId ? JSON.stringify({ type: "conversation", id: conversationId }) : "null",
+      );
+    } catch {
+      // Best-effort -- a private window or full storage just means the last-open thread doesn't survive reload.
+    }
+  }
   const [activeConversationMessages, setActiveConversationMessages] = useState<DirectMessage[]>([]);
   const [activeConversationReactions, setActiveConversationReactions] = useState<MessageReaction[]>([]);
   const [messagesStatus, setMessagesStatus] = useState("");
@@ -2429,7 +2453,7 @@ function App() {
     try {
       const conversation = await getOrCreateConversation(authSession.userId, otherUserId, authSession.accessToken);
       setConversations((current) => (current.some((entry) => entry.id === conversation.id) ? current : [conversation, ...current]));
-      setActiveConversationId(conversation.id);
+      selectConversation(conversation.id);
       setMessagesStatus("");
     } catch (error) {
       setMessagesStatus(error instanceof Error ? error.message : "Could not start conversation.");
@@ -5762,9 +5786,9 @@ function App() {
   function handleSelectSearchMessage(result: MessageSearchResult) {
     if (result.kind === "dm" && result.conversationId) {
       setInitialMessagesChannelId(null);
-      setActiveConversationId(result.conversationId);
+      selectConversation(result.conversationId);
     } else if (result.kind === "channel" && result.channelId) {
-      setActiveConversationId(null);
+      selectConversation(null);
       setInitialMessagesChannelId({ channelId: result.channelId, token: Date.now() });
     }
     navigateToView("messages");
@@ -7706,7 +7730,7 @@ function App() {
             activeConversationReactions={activeConversationReactions}
             status={messagesStatus}
             pushPermissionState={pushPermissionState}
-            onSelectConversation={setActiveConversationId}
+            onSelectConversation={selectConversation}
             onStartConversation={handleStartConversation}
             onSendMessage={handleSendDirectMessage}
             onToggleReaction={handleToggleDirectMessageReaction}
@@ -15570,16 +15594,36 @@ function Messages({
   // living only inside each section/project page, so anything can be
   // reached from one place. activeChannelId and activeConversationId are
   // mutually exclusive -- selecting one clears the other.
-  const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
+  // E: "this need to keep me in the same chat every time i come back" --
+  // same shared, type-tagged `ergon:last-thread` key the DM side
+  // (selectConversation, top-level App) writes to, so whichever of a
+  // channel or a DM was actually on screen last restores after a reload.
+  const [activeChannelId, setActiveChannelId] = useState<string | null>(() => {
+    try {
+      const last = JSON.parse(window.localStorage.getItem("ergon:last-thread") ?? "null");
+      return last?.type === "channel" ? last.id : null;
+    } catch {
+      return null;
+    }
+  });
+  function persistLastChannel(channelId: string | null) {
+    try {
+      window.localStorage.setItem("ergon:last-thread", channelId ? JSON.stringify({ type: "channel", id: channelId }) : "null");
+    } catch {
+      // Best-effort -- a private window or full storage just means the last-open thread doesn't survive reload.
+    }
+  }
   useEffect(() => {
     if (initialChannelId) {
       setActiveChannelId(initialChannelId.channelId);
+      persistLastChannel(initialChannelId.channelId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialChannelId?.token]);
   const activeChannel = channels.find((entry) => entry.id === activeChannelId) ?? null;
   function selectChannel(channelId: string) {
     setActiveChannelId(channelId);
+    persistLastChannel(channelId);
     onSelectConversation(null);
   }
   const sectionChannels = channels.filter((entry) => entry.type === "section").sort((a, b) => a.name.localeCompare(b.name));
@@ -15843,10 +15887,18 @@ function Messages({
           )}
           <span className={`presence-dot ${online ? "presence-dot-online" : "presence-dot-offline"}`} />
         </span>
-        <span className="messages-conversation-name">
+        <span className="messages-conversation-name" title={row.email}>
           {displayNameFor(row.email)}
+        </span>
+        {copiedUserId === row.userId ? (
+          <span className="messages-copied-flag">Copied</span>
+        ) : (
+          <span className="messages-conversation-time">{row.lastMessageAt ? new Date(row.lastMessageAt).toLocaleDateString() : "Say hello"}</span>
+        )}
+        {row.unread > 0 && <span className="messages-unread-badge">{row.unread}</span>}
+        <span className="messages-conversation-row-actions">
           <span
-            className="messages-inline-icon messages-pin-toggle"
+            className={`messages-inline-icon messages-pin-toggle ${row.pinned ? "messages-pin-toggle-visible" : ""}`}
             role="button"
             tabIndex={0}
             aria-label={row.pinned ? "Unpin" : "Pin to top"}
@@ -15855,23 +15907,17 @@ function Messages({
           >
             <Pin size={12} fill={row.pinned ? "currentColor" : "none"} />
           </span>
-        </span>
-        <span className="messages-conversation-meta">
-          <span className="messages-conversation-email">{row.email}</span>
           <span
             className="messages-inline-icon messages-copy-email"
             role="button"
             tabIndex={0}
             aria-label="Copy email"
-            title="Copy email"
+            title={`Copy email (${row.email})`}
             onClick={(event) => copyEmail(row.email, row.userId, event)}
           >
             <Copy size={11} />
           </span>
-          {copiedUserId === row.userId && <span className="messages-copied-flag">Copied</span>}
-          <span className="messages-conversation-time">{row.lastMessageAt ? new Date(row.lastMessageAt).toLocaleString() : "Say hello"}</span>
         </span>
-        {row.unread > 0 && <span className="messages-unread-badge">{row.unread}</span>}
       </button>
     );
   }
@@ -15963,7 +16009,17 @@ function Messages({
         {activeChannel ? (
           <>
             <div className="messages-thread-header">
-              <button className="icon-button messages-back-button" type="button" onClick={() => setActiveChannelId(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
+              <button
+                className="icon-button messages-back-button"
+                type="button"
+                onClick={() => {
+                  setActiveChannelId(null);
+                  persistLastChannel(null);
+                }}
+                aria-label="Back to conversations"
+              >
+                <ArrowLeft size={18} />
+              </button>
               <strong>{activeChannel.type === "group" && activeChannel.private ? <Lock size={15} /> : <Hash size={15} />}{activeChannel.name}</strong>
             </div>
             <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={documents} onDownloadDocument={onDownloadDocument} onChannelsChanged={onChannelsChanged} onNotifyMentions={onNotifyMentions} />
