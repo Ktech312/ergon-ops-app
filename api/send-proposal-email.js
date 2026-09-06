@@ -5,6 +5,7 @@
 
 import { sendEmail } from "./_lib/mailer.js";
 import { requireAuth } from "./_lib/requireAuth.js";
+import { isAllowedAppUrl } from "./_lib/validateUrl.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -19,6 +20,15 @@ export default async function handler(req, res) {
 
   if (!clientEmail || !shareUrl) {
     res.status(400).json({ sent: false, error: "clientEmail and shareUrl are required." });
+    return;
+  }
+  // Security review, 2026-09-06: this legitimately emails an arbitrary
+  // external client address (that's the feature) -- shareUrl is the
+  // real risk, since an attacker-controlled link would ride on this
+  // app's own trusted sender identity straight into a real client's
+  // inbox.
+  if (!isAllowedAppUrl(shareUrl)) {
+    res.status(400).json({ sent: false, error: "shareUrl must point back to this app." });
     return;
   }
 

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import formidable from "formidable";
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import { requireAuth } from "./_lib/requireAuth.js";
+import { requireRole } from "./_lib/requireRole.js";
 
 export const config = {
   api: {
@@ -360,7 +361,16 @@ export default async function handler(req, res) {
     res.status(405).json({ error: "Use POST with a sales quote PDF." });
     return;
   }
-  if (!(await requireAuth(req, res))) {
+  const user = await requireAuth(req, res);
+  if (!user) {
+    return;
+  }
+  // Security review, 2026-09-06: this can trigger a real, paid OpenAI
+  // call once OPENAI_API_KEY is set (currently unset in production --
+  // see HANDOFF.md #61 -- so this is dormant cost risk, not live, but
+  // worth closing before that key is ever added) -- restricted to the
+  // roles that actually work sales quotes.
+  if (!(await requireRole(req, res, user, ["sales", "pm", "manager"]))) {
     return;
   }
 

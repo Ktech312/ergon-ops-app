@@ -21,13 +21,50 @@
 
 import webpush from "web-push";
 import { requireAuth } from "./_lib/requireAuth.js";
+import { isAllowedAppUrl } from "./_lib/validateUrl.js";
+
+// Security review, 2026-09-06 -- the most serious finding in this
+// audit. This route uses the Supabase SERVICE-ROLE key to bypass RLS
+// and push to ANY user's real device, and had no check on `userId` at
+// all beyond "truthy" -- any signed-in account (including a brand-new,
+// not-yet-approved one) could push fabricated title/body to any real
+// teammate's phone. Fixed to require the target actually be a real
+// signed-in Ergon user (app_known_users, checked with the CALLER'S OWN
+// token so this validation step never uses elevated access), and caps
+// content length. This still trusts "any real Ergon teammate can
+// notify any other" the same way DMs/@mentions already do -- it closes
+// the "arbitrary/fabricated recipient" hole, not internal messaging
+// itself. See HANDOFF.md's Questions/Decisions Needed for the tighter
+// "only through a validated application event" alternative if E wants
+// that instead.
+async function isKnownErgonUserId(userId, accessToken) {
+  const supabaseUrl = (process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    return false;
+  }
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/app_known_users?user_id=eq.${encodeURIComponent(userId)}&select=user_id`,
+      { headers: { apikey: anonKey, authorization: `Bearer ${accessToken}` } },
+    );
+    if (!response.ok) {
+      return false;
+    }
+    const rows = await response.json();
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST to send a push notification." });
     return;
   }
-  if (!(await requireAuth(req, res))) {
+  const user = await requireAuth(req, res);
+  if (!user) {
     return;
   }
 
@@ -35,6 +72,20 @@ export default async function handler(req, res) {
 
   if (!userId || !title) {
     res.status(400).json({ sent: false, error: "userId and title are required." });
+    return;
+  }
+  if (typeof title !== "string" || title.length > 200 || (typeof body === "string" && body.length > 2000)) {
+    res.status(400).json({ sent: false, error: "title or body is too long." });
+    return;
+  }
+  if (url && !isAllowedAppUrl(typeof url === "string" && url.startsWith("/") ? `https://${req.headers.host}${url}` : url)) {
+    res.status(400).json({ sent: false, error: "url must point back to this app." });
+    return;
+  }
+  const authHeader = req.headers.authorization || "";
+  const callerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  if (!(await isKnownErgonUserId(userId, callerToken))) {
+    res.status(403).json({ sent: false, error: "That user isn't a real signed-in Ergon account." });
     return;
   }
 

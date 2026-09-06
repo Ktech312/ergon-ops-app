@@ -397,6 +397,7 @@ import {
   type UserRoles,
   type UserStatus,
 } from "./persistence";
+import { DataLoadErrorBanner } from "./components/DataLoadErrorBanner";
 import "./styles.css";
 
 type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "messages" | "search" | "profile";
@@ -477,6 +478,14 @@ const ALL_ROLE_KEYS: RoleMode[] = ["warehouse", "purchasing", "pm", "manager", "
 
 const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "messages"];
 
+// Plain-language labels for criticalLoadErrors so a real failure names
+// the actual screen it affects (in the sync pill's tooltip and each
+// panel's own inline banner) instead of a raw key or a stack trace.
+const CRITICAL_DOMAIN_LABELS: Record<string, string> = {
+  inventoryMovements: "Inventory Movement Ledger",
+  projectDocuments: "Project Documents",
+};
+
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
   purchasing: "Procurement",
@@ -525,7 +534,15 @@ const ROLE_QUICK_ACTION: Record<RoleMode, { view: View; label: string }> = {
   warehouse: { view: "inventory", label: "Inventory" },
   purchasing: { view: "purchasing", label: "Procurement" },
   pm: { view: "projects", label: "Projects" },
-  manager: { view: "dashboard", label: "Dashboard" },
+  // E, via an audit request: the center "+" button pointed straight at
+  // Dashboard for managers, labeled "Dashboard" -- an exact duplicate
+  // of the adjacent Dashboard tab, since Dashboard is always in a
+  // manager's own primary tab set. Tasks is the most conservative
+  // useful alternative (a manager's own daily "what needs doing"
+  // check, not already one of the other primary tabs) -- see
+  // HANDOFF.md's Questions/Decisions Needed if a more specific action
+  // (e.g. straight into Admin > Pending Approvals) is wanted instead.
+  manager: { view: "tasks", label: "Tasks" },
   sales: { view: "sales", label: "New Sale" },
   engineering: { view: "projects", label: "Projects" },
   product_development: { view: "projects", label: "Projects" },
@@ -1275,6 +1292,30 @@ function App() {
   // Allocation History no longer live in the local/blob state -- they're
   // always loaded fresh from the real tables (see the effect below).
   const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>([]);
+  // E, via an audit request: "A failed request must not render as zero,
+  // 'no records,' or another normal empty state... the user should be
+  // able to identify which area failed without opening browser
+  // developer tools." One shared registry of {domain: message} for the
+  // handful of loaders where a silent [] used to be indistinguishable
+  // from a genuinely empty table (this was real: it's exactly how
+  // migrations 070/068/095 being unapplied went unnoticed for days --
+  // Reports > Activity Ledger looked like an honest empty ledger).
+  // Cleared the moment a retry succeeds; the top-nav sync pill and each
+  // affected panel both read from this same source of truth.
+  const [criticalLoadErrors, setCriticalLoadErrors] = useState<Record<string, string>>({});
+  function setCriticalLoadError(domain: string, message: string | null) {
+    setCriticalLoadErrors((current) => {
+      if (message === null) {
+        if (!(domain in current)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[domain];
+        return next;
+      }
+      return { ...current, [domain]: message };
+    });
+  }
   const [buildTransactions, setBuildTransactions] = useState<BuildTransaction[]>([]);
   const [projectAllocations, setProjectAllocations] = useState<ProjectAllocationHistory[]>([]);
   // Phase 10a: Purchase Requests no longer lives in the local/blob state --
@@ -1761,12 +1802,23 @@ function App() {
   // (resolved by build_number) and allocations depend on knowing movement
   // ids (resolved by legacy_id), so saveMovementsBuildsAllocations always
   // saves builds, then movements, then allocations, in that order.
+  function reloadInventoryMovements(accessToken: string) {
+    loadInventoryMovements(accessToken)
+      .then((rows) => {
+        setInventoryMovements(rows);
+        setCriticalLoadError("inventoryMovements", null);
+      })
+      .catch((error) => {
+        setCriticalLoadError("inventoryMovements", error instanceof Error ? error.message : "Could not load inventory movements.");
+      });
+  }
+
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
       return;
     }
     loadBuildTransactions(authSession.accessToken).then(setBuildTransactions).catch(() => {});
-    loadInventoryMovements(authSession.accessToken).then(setInventoryMovements).catch(() => {});
+    reloadInventoryMovements(authSession.accessToken);
     loadProjectAllocations(authSession.accessToken).then(setProjectAllocations).catch(() => {});
   }, [authSession]);
 
@@ -1869,11 +1921,22 @@ function App() {
 
   // Phase 10b: Project Documents now lives in its own real table, loaded and
   // saved independently of the blob-based state above.
+  function reloadProjectDocumentsCritical(accessToken: string) {
+    loadProjectDocuments(accessToken)
+      .then((rows) => {
+        setProjectDocuments(rows);
+        setCriticalLoadError("projectDocuments", null);
+      })
+      .catch((error) => {
+        setCriticalLoadError("projectDocuments", error instanceof Error ? error.message : "Could not load project documents.");
+      });
+  }
+
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
       return;
     }
-    loadProjectDocuments(authSession.accessToken).then(setProjectDocuments).catch(() => {});
+    reloadProjectDocumentsCritical(authSession.accessToken);
   }, [authSession]);
 
   // Purchase Orders (migration 032): loaded fresh from the real table, same
@@ -7101,6 +7164,11 @@ function App() {
     : ((ownAllowedViews && ownAllowedViews.length > 0 ? ownAllowedViews : effectiveRoleDefaultTabs) as View[]);
   const isManagerRole = authChecksReady && (roleMode === "manager" || ownRoleKeys.includes("manager"));
   const canReviewApprovals = isAdmin || isManagerRole;
+  const criticalLoadErrorDomains = Object.keys(criticalLoadErrors);
+  const hasCriticalLoadErrors = criticalLoadErrorDomains.length > 0;
+  const criticalLoadErrorSummary = criticalLoadErrorDomains
+    .map((domain) => `${CRITICAL_DOMAIN_LABELS[domain] ?? domain}: ${criticalLoadErrors[domain]}`)
+    .join("\n");
 
   if (authSession && isRemotePersistenceConfigured() && userApprovalStatus && !userApprovalStatus.hasSeenWelcome) {
     return (
@@ -7150,8 +7218,25 @@ function App() {
             {allowedTabs.includes("messages") && <NavButton icon={<MessageCircle size={16} />} label="Messages" iconOnly active={view === "messages"} onClick={() => navigateToView("messages")} hasUnread={totalUnreadMessages > 0} />}
           </nav>
           <div className="top-nav-actions">
-            <div className={`sync-status ${syncStatus}`} title={syncStatus === "error" ? authStatus : undefined}>
-              <span>{syncStatus === "local" ? "Setup required" : syncStatus === "auth" ? "Sign in required" : syncStatus === "loading" ? "Cloud loading" : syncStatus === "saving" ? "Saving" : syncStatus === "synced" ? "Cloud synced" : "Sync issue"}</span>
+            <div
+              className={`sync-status ${hasCriticalLoadErrors && syncStatus === "synced" ? "error" : syncStatus}`}
+              title={syncStatus === "error" ? authStatus : hasCriticalLoadErrors ? criticalLoadErrorSummary : undefined}
+            >
+              <span>
+                {hasCriticalLoadErrors && syncStatus === "synced"
+                  ? `Sync issue (${criticalLoadErrorDomains.length})`
+                  : syncStatus === "local"
+                    ? "Setup required"
+                    : syncStatus === "auth"
+                      ? "Sign in required"
+                      : syncStatus === "loading"
+                        ? "Cloud loading"
+                        : syncStatus === "saving"
+                          ? "Saving"
+                          : syncStatus === "synced"
+                            ? "Cloud synced"
+                            : "Sync issue"}
+              </span>
             </div>
             {pendingPhotoCount > 0 && (
               <div className="sync-status error" title="Captured while offline -- uploads automatically once you're back online">
@@ -7564,7 +7649,26 @@ function App() {
             )}
           </div>
         )}
-        {view === "dashboard" && allowedTabs.includes("dashboard") && <Dashboard roleMode={roleMode} projectSites={projectSites} lowStock={lowStock} inventoryValue={inventoryValue} allocatedForProjectsValue={allocatedForProjectsValue} openPoValue={openPoValue} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} />}
+        {view === "dashboard" && allowedTabs.includes("dashboard") && (
+          <Dashboard
+            roleMode={roleMode}
+            projectSites={projectSites}
+            lowStock={lowStock}
+            inventoryValue={inventoryValue}
+            allocatedForProjectsValue={allocatedForProjectsValue}
+            openPoValue={openPoValue}
+            buildTransactions={buildTransactions}
+            inventoryMovements={inventoryMovements}
+            projectAllocations={projectAllocations}
+            purchaseRequests={purchaseRequests}
+            purchaseOrders={purchaseOrders}
+            inventoryMovementsError={criticalLoadErrors.inventoryMovements ?? null}
+            onRetryInventoryMovements={() => authSession && reloadInventoryMovements(authSession.accessToken)}
+            unreadMessageTotal={totalUnreadMessages}
+            tasks={tasks}
+            onNavigateToView={navigateToView}
+          />
+        )}
         {(view === "purchasing" || view === "inventory" || view === "vendors") && (
           <>
             <div className="segmented-tabs operations-subtabs">
@@ -7770,7 +7874,25 @@ function App() {
             focusTask={taskFocus}
           />
         )}
-        {view === "reports" && allowedTabs.includes("reports") && <Reports inventoryItems={inventoryItems} deviceRecipes={deviceRecipes} inventoryValue={inventoryValue} openPoValue={openPoValue} inventoryMovements={inventoryMovements} buildTransactions={buildTransactions} projectAllocations={projectAllocations} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} projectDocuments={projectDocuments} searchFocus={reportsSearchFocus} />}
+        {view === "reports" && allowedTabs.includes("reports") && (
+          <Reports
+            inventoryItems={inventoryItems}
+            deviceRecipes={deviceRecipes}
+            inventoryValue={inventoryValue}
+            openPoValue={openPoValue}
+            inventoryMovements={inventoryMovements}
+            buildTransactions={buildTransactions}
+            projectAllocations={projectAllocations}
+            purchaseRequests={purchaseRequests}
+            purchaseOrders={purchaseOrders}
+            projectDocuments={projectDocuments}
+            searchFocus={reportsSearchFocus}
+            inventoryMovementsError={criticalLoadErrors.inventoryMovements ?? null}
+            projectDocumentsError={criticalLoadErrors.projectDocuments ?? null}
+            onRetryInventoryMovements={() => authSession && reloadInventoryMovements(authSession.accessToken)}
+            onRetryProjectDocuments={() => authSession && reloadProjectDocumentsCritical(authSession.accessToken)}
+          />
+        )}
         {view === "saas_calendar" && allowedTabs.includes("saas_calendar") && <SaasCalendar projectSites={projectSites} />}
         {view === "library" && <LibraryPage onBack={() => navigateToView("dashboard")} />}
         {view === "admin" && canReviewApprovals && (
@@ -8148,6 +8270,11 @@ function Dashboard({
   projectAllocations,
   purchaseRequests,
   purchaseOrders,
+  inventoryMovementsError,
+  onRetryInventoryMovements,
+  unreadMessageTotal,
+  tasks,
+  onNavigateToView,
 }: {
   roleMode: RoleMode;
   projectSites: ProjectSite[];
@@ -8160,6 +8287,14 @@ function Dashboard({
   projectAllocations: ProjectAllocationHistory[];
   purchaseRequests: PurchaseRequest[];
   purchaseOrders: PurchaseOrder[];
+  // E, via an audit request: "Recent Activity" is directly derived from
+  // inventoryMovements -- a failed load must show up here too, not just
+  // silently drop those entries out of the feed.
+  inventoryMovementsError?: string | null;
+  onRetryInventoryMovements?: () => void;
+  unreadMessageTotal?: number;
+  tasks?: EOTask[];
+  onNavigateToView?: (view: View) => void;
 }) {
   const importedLines = purchaseOrders.reduce((sum, order) => sum + order.lines.length, 0);
   const heldOrders = purchaseOrders.filter((order) => order.status === "On Hold");
@@ -8169,13 +8304,20 @@ function Dashboard({
   const recentReceipts = inventoryMovements.filter((movement) => movement.type === "receive").slice(0, 3);
   const recentTransfers = inventoryMovements.filter((movement) => movement.type === "transfer").slice(0, 3);
   const activityFeed = [
-    ...purchaseRequests.map((request) => ({
-      id: request.id,
-      date: request.createdAt,
-      kind: "Purchase",
-      title: `${request.requestNumber} - ${request.itemName}`,
-      detail: `${request.status} - ${Math.max(0, request.quantity - (request.receivedQuantity ?? 0))} remaining`,
-    })),
+    // E: "Recent Activity is dominated by old cancelled purchase
+    // records" -- a cancelled request isn't something that happened
+    // recently in any useful sense, it's a dead end; excluding it (not
+    // deleting the underlying data, just this feed) keeps the timeline
+    // focused on things that actually moved.
+    ...purchaseRequests
+      .filter((request) => request.status !== "Cancelled")
+      .map((request) => ({
+        id: request.id,
+        date: request.createdAt,
+        kind: "Purchase",
+        title: `${request.requestNumber} - ${request.itemName}`,
+        detail: `${request.status} - ${Math.max(0, request.quantity - (request.receivedQuantity ?? 0))} remaining`,
+      })),
     ...inventoryMovements.map((movement) => ({
       id: movement.id,
       date: movement.createdAt,
@@ -8198,6 +8340,10 @@ function Dashboard({
       detail: `${allocation.action} ${allocation.quantity} from ${allocation.sku}`,
     })),
   ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  const today = new Date().toISOString().slice(0, 10);
+  const overdueProjects = projectSites.filter((project) => project.status !== "Closed" && project.due && !Number.isNaN(Date.parse(project.due)) && project.due < today);
+  const overdueTasks = (tasks ?? []).filter((task) => task.status !== "done" && !task.deletedAt && task.dueDate && task.dueDate < today);
+  const urgentTasks = (tasks ?? []).filter((task) => task.status !== "done" && !task.deletedAt && task.priority === "urgent");
   const roleFocus = {
     warehouse: {
       title: "Warehouse Focus",
@@ -8228,9 +8374,9 @@ function Dashboard({
     },
     manager: {
       title: "Manager Focus",
-      label: "Today: inventory value, procurement exposure, and manufacturing flow",
+      label: "Today: procurement exposure and manufacturing flow (see the KPI row above for inventory value)",
       cards: [
-        { label: "Inventory value", value: money(inventoryValue), note: "Current stock value" },
+        { label: "Held orders", value: String(heldOrders.length), note: heldOrders[0] ? `${heldOrders[0].vendor} ${heldOrders[0].number}` : "None on hold" },
         { label: "Request exposure", value: money(requestExposure), note: "Open purchase request estimate" },
         { label: "Build transactions", value: String(buildTransactions.length), note: `${plannedBuilds.length} planned` },
       ],
@@ -8241,7 +8387,7 @@ function Dashboard({
       cards: [
         { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
         { label: "Open requests", value: String(activePurchaseRequests.length), note: activePurchaseRequests[0]?.itemName ?? "No queued purchase requests" },
-        { label: "Inventory value", value: money(inventoryValue), note: "Current stock value" },
+        { label: "Overdue projects", value: String(overdueProjects.length), note: overdueProjects[0]?.name ?? "Nothing overdue" },
       ],
     },
     engineering: {
@@ -8285,12 +8431,68 @@ function Dashboard({
       label: "Today: overall account and project activity",
       cards: [
         { label: "Active projects", value: String(projectSites.length), note: projectSites[0]?.name ?? "No projects yet" },
-        { label: "Inventory value", value: money(inventoryValue), note: "Current stock value" },
+        { label: "Overdue projects", value: String(overdueProjects.length), note: overdueProjects[0]?.name ?? "Nothing overdue" },
         { label: "Build transactions", value: String(buildTransactions.length), note: `${plannedBuilds.length} planned` },
       ],
     },
   } satisfies Record<RoleMode, { title: string; label: string; cards: { label: string; value: string; note: string }[] }>;
   const activeFocus = roleFocus[roleMode];
+
+  // "Needs Attention" -- E asked the Dashboard to answer "what needs
+  // attention today," pulling real exceptions that were previously
+  // scattered across several panels (or not surfaced at all) into one
+  // prioritized place at the top. Every entry is derived from data
+  // already loaded elsewhere on this page -- nothing invented.
+  const attentionItems: { key: string; label: string; count: number; note: string; onClick?: () => void }[] = [
+    {
+      key: "sync",
+      label: "Data sync issue",
+      count: inventoryMovementsError ? 1 : 0,
+      note: inventoryMovementsError ?? "",
+    },
+    {
+      key: "heldOrders",
+      label: "Held purchase orders",
+      count: heldOrders.length,
+      note: heldOrders[0] ? `${heldOrders[0].vendor} ${heldOrders[0].number}` : "",
+      onClick: () => onNavigateToView?.("purchasing"),
+    },
+    {
+      key: "lowStock",
+      label: "Inventory shortages",
+      count: lowStock.length,
+      note: lowStock[0]?.name ?? "",
+      onClick: () => onNavigateToView?.("inventory"),
+    },
+    {
+      key: "overdueProjects",
+      label: "Overdue projects",
+      count: overdueProjects.length,
+      note: overdueProjects[0]?.name ?? "",
+      onClick: () => onNavigateToView?.("projects"),
+    },
+    {
+      key: "overdueTasks",
+      label: "Overdue tasks",
+      count: overdueTasks.length,
+      note: overdueTasks[0]?.title ?? "",
+      onClick: () => onNavigateToView?.("tasks"),
+    },
+    {
+      key: "urgentTasks",
+      label: "Urgent tasks",
+      count: urgentTasks.length,
+      note: urgentTasks[0]?.title ?? "",
+      onClick: () => onNavigateToView?.("tasks"),
+    },
+    {
+      key: "unreadMessages",
+      label: "Unread messages",
+      count: unreadMessageTotal ?? 0,
+      note: "",
+      onClick: () => onNavigateToView?.("messages"),
+    },
+  ].filter((item) => item.count > 0);
 
   return (
     <div className="content-grid">
@@ -8301,6 +8503,27 @@ function Dashboard({
         <Metric icon={<FileText size={20} />} label="Imported Line Items" value={String(importedLines)} />
         <Metric icon={<Truck size={20} />} label="Active Projects" value={String(projectSites.length)} />
       </section>
+
+      {attentionItems.length > 0 && (
+        <section className="panel wide attention-panel">
+          <PanelHeader title="Needs Attention" label="Real exceptions pulled from across the app -- click any item to go there" />
+          <div className="attention-grid">
+            {attentionItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`attention-item ${item.key === "sync" ? "attention-item-error" : ""}`}
+                onClick={item.onClick}
+                disabled={!item.onClick}
+              >
+                <strong>{item.count}</strong>
+                <span>{item.label}</span>
+                {item.note && <small>{item.note}</small>}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="panel wide">
         <PanelHeader title={activeFocus.title} label={activeFocus.label} />
@@ -9803,7 +10026,20 @@ function Inventory({
   });
   const adjustItem = inventoryItems.find((part) => part.ref === adjustDraft.partRef);
   const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
-  const selectedBuildRecipe = deviceRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? deviceRecipes.find((recipe) => !recipe.retired) ?? deviceRecipes[0];
+  // A brand-new company (or the brief window before the async load
+  // finishes) has zero device recipes -- all three fallbacks below then
+  // resolve to undefined, and this component used to crash outright on
+  // render (TypeError reading .components of undefined) before the user
+  // could ever reach the "Create new equipment" option in the dropdown
+  // below. Fall back to an inert placeholder recipe instead so the panel
+  // renders normally and that option stays reachable.
+  const selectedBuildRecipe = deviceRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? deviceRecipes.find((recipe) => !recipe.retired) ?? deviceRecipes[0] ?? {
+    name: "",
+    outputName: "No equipment types yet",
+    description: "",
+    components: [],
+    retired: true,
+  };
   const buildComponentRows = selectedBuildRecipe.components.map((component) => {
     const part = inventoryItems.find((item) => item.name === component.itemName);
     const required = component.qty * Math.max(1, Math.round(Number(buildDraft.qty) || 1));
@@ -11642,7 +11878,13 @@ function Projects({
 }) {
   const initialProjectSlug = window.location.hash.startsWith("#projects/") ? window.location.hash.split("/")[1] : "";
   const initialProject = projectSites.find((project) => projectSlug(project.name) === initialProjectSlug);
-  const [selectedProjectName, setSelectedProjectName] = useState(initialProject?.name ?? projects[0].name);
+  // Was `?? projects[0].name`, falling back to the hardcoded demo seed
+  // array's first entry (a fake "NNSB 37th Street" project) instead of a
+  // real one -- for a company with zero real projects that name matched
+  // nothing in projectSites and crashed the render below (see
+  // selectedProject). projectSites[0] is the real fallback; "" is safe
+  // (the guard on selectedProject below covers the truly-empty case).
+  const [selectedProjectName, setSelectedProjectName] = useState(initialProject?.name ?? projectSites[0]?.name ?? "");
   const [projectMode, setProjectMode] = useState<"list" | "detail">(initialProject ? "detail" : "list");
   const [showDeletedProjectItems, setShowDeletedProjectItems] = useState(false);
   const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
@@ -11704,7 +11946,28 @@ function Projects({
   // so the actual value isn't silently lost against a blank/mismatched
   // <select>.
   const [bomItemMode, setBomItemMode] = useState<"select" | "custom">("select");
-  const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0];
+  // A brand-new company has zero real projects -- both fallbacks above
+  // then resolve to undefined and every `selectedProject.*` read below
+  // (there's no single guarded access point; it's used throughout this
+  // ~2000-line component) used to crash the render outright. Match the
+  // same fix as selectedBuildRecipe in Inventory: an inert placeholder
+  // instead of undefined, so the list/empty state can actually render.
+  const selectedProject = projectSites.find((project) => project.name === selectedProjectName) ?? projectSites[0] ?? {
+    ref: "",
+    name: "",
+    client: "",
+    type: "Parking Garage",
+    address: "",
+    owner: "",
+    status: "Draft",
+    due: "",
+    package: "",
+    cameras: 0,
+    allocated: 0,
+    siteNotes: "",
+    sow: blankSow,
+    bom: [],
+  };
   const selectedProjectDocuments = projectDocuments.filter((doc) => doc.project === selectedProject.name || doc.project === selectedProject.ref);
   const selectedProjectId = selectedProject.id;
   const projectChannel = channels.find((entry) => entry.type === "project" && entry.projectId === selectedProjectId);
@@ -16213,6 +16476,10 @@ function Reports({
   purchaseOrders,
   projectDocuments,
   searchFocus,
+  inventoryMovementsError,
+  projectDocumentsError,
+  onRetryInventoryMovements,
+  onRetryProjectDocuments,
 }: {
   inventoryItems: Part[];
   deviceRecipes: BuildRecipe[];
@@ -16225,6 +16492,13 @@ function Reports({
   purchaseOrders: PurchaseOrder[];
   projectDocuments: UploadedDoc[];
   searchFocus?: { term: string; token: number } | null;
+  // E, via an audit request: a failed load must never render as an
+  // honest "no records" empty state -- these carry the real error
+  // message up so the panel can show it plus a Retry action instead.
+  inventoryMovementsError?: string | null;
+  projectDocumentsError?: string | null;
+  onRetryInventoryMovements?: () => void;
+  onRetryProjectDocuments?: () => void;
 }) {
   const [reportTab, setReportTab] = useState<"purchasing" | "inventory" | "manufacturing" | "activity" | "projects" | "documents">("purchasing");
   const [reportFilters, setReportFilters] = useState({ search: "", project: "All", vendor: "All", from: "", to: "" });
@@ -16639,24 +16913,30 @@ function Reports({
       </section>}
       {reportTab === "activity" && <section className="panel wide">
         <PanelHeader title="Inventory Activity Ledger" label="Chronological stock movements across receiving, transfers, builds, adjustments, retirements, and undo actions" />
-        <div className="snapshot-grid">
-          <Metric icon={<ClipboardList size={20} />} label="Movements" value={String(filteredInventoryMovements.length)} />
-          <Metric icon={<Truck size={20} />} label="Receipts" value={String(filteredInventoryMovements.filter((movement) => movement.type === "receive").length)} />
-          <Metric icon={<Boxes size={20} />} label="Build Actions" value={String(filteredInventoryMovements.filter((movement) => movement.type.startsWith("build")).length)} />
-        </div>
-        <div className="report-table compact-report-table">
-          <div className="report-table-head"><span>Date</span><span>Movement</span><span>SKU / Item</span><span>Qty</span><span>Reference</span></div>
-          {filteredInventoryMovements.slice(0, 24).map((movement) => (
-            <div className="report-table-row" key={movement.id}>
-              <span data-label="Date">{new Date(movement.createdAt).toLocaleString()}{movement.createdByEmail && <small>{movement.createdByEmail}</small>}</span>
-              <span data-label="Movement"><strong>{movement.type.replace("_", " ")}</strong><small>{movement.source}</small></span>
-              <span data-label="SKU / Item">{movement.sku}<small>{movement.itemName}</small></span>
-              <span data-label="Qty">{movement.quantity}<small>{movement.quantityBefore} to {movement.quantityAfter}</small></span>
-              <span data-label="Reference">{movement.projectName ?? movement.buildNumber ?? movement.poNumber ?? "No reference"}<small>{movement.notes}</small></span>
+        {inventoryMovementsError ? (
+          <DataLoadErrorBanner message={inventoryMovementsError} onRetry={onRetryInventoryMovements} />
+        ) : (
+          <>
+            <div className="snapshot-grid">
+              <Metric icon={<ClipboardList size={20} />} label="Movements" value={String(filteredInventoryMovements.length)} />
+              <Metric icon={<Truck size={20} />} label="Receipts" value={String(filteredInventoryMovements.filter((movement) => movement.type === "receive").length)} />
+              <Metric icon={<Boxes size={20} />} label="Build Actions" value={String(filteredInventoryMovements.filter((movement) => movement.type.startsWith("build")).length)} />
             </div>
-          ))}
-          {filteredInventoryMovements.length === 0 && <div className="empty-compact-state">No inventory movements match the current filters.</div>}
-        </div>
+            <div className="report-table compact-report-table">
+              <div className="report-table-head"><span>Date</span><span>Movement</span><span>SKU / Item</span><span>Qty</span><span>Reference</span></div>
+              {filteredInventoryMovements.slice(0, 24).map((movement) => (
+                <div className="report-table-row" key={movement.id}>
+                  <span data-label="Date">{new Date(movement.createdAt).toLocaleString()}{movement.createdByEmail && <small>{movement.createdByEmail}</small>}</span>
+                  <span data-label="Movement"><strong>{movement.type.replace("_", " ")}</strong><small>{movement.source}</small></span>
+                  <span data-label="SKU / Item">{movement.sku}<small>{movement.itemName}</small></span>
+                  <span data-label="Qty">{movement.quantity}<small>{movement.quantityBefore} to {movement.quantityAfter}</small></span>
+                  <span data-label="Reference">{movement.projectName ?? movement.buildNumber ?? movement.poNumber ?? "No reference"}<small>{movement.notes}</small></span>
+                </div>
+              ))}
+              {filteredInventoryMovements.length === 0 && <div className="empty-compact-state">No inventory movements match the current filters.</div>}
+            </div>
+          </>
+        )}
       </section>}
       {reportTab === "projects" && <section className="panel wide">
         <PanelHeader title="Project Allocation History" label="Every SKU movement tied to a project" />
@@ -16676,24 +16956,30 @@ function Reports({
       </section>}
       {reportTab === "documents" && <section className="panel wide">
         <PanelHeader title="Document Storage Report" label="Project files, review status, and backup destination" />
-        <div className="snapshot-grid">
-          <Metric icon={<FileText size={20} />} label="Documents" value={String(projectDocuments.length)} />
-          <Metric icon={<FolderOpen size={20} />} label="Backed Up" value={String(projectDocuments.filter((doc) => doc.status === "Backed up").length)} />
-          <Metric icon={<Upload size={20} />} label="Needs Review" value={String(projectDocuments.filter((doc) => doc.status === "Uploaded" || doc.status === "Ready to review").length)} />
-        </div>
-        <div className="report-table compact-report-table">
-          <div className="report-table-head"><span>Project</span><span>Document</span><span>Type</span><span>Status</span><span>Uploaded</span></div>
-          {filteredProjectDocuments.slice(0, 16).map((doc) => (
-            <div className="report-table-row" key={`${doc.id}-${doc.name}`}>
-              <span data-label="Project">{doc.project}</span>
-              <span><strong>{doc.name}</strong><small>{doc.size ? formatBytes(doc.size) : "No file size saved"} - {doc.storage ?? "Browser"}</small></span>
-              <span data-label="Type">{doc.type ?? "Project"}</span>
-              <span data-label="Status">{doc.status}</span>
-              <span data-label="Uploaded">{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : "No timestamp"}<small>{doc.uploadedByEmail || "Uploader not saved"}</small></span>
+        {projectDocumentsError ? (
+          <DataLoadErrorBanner message={projectDocumentsError} onRetry={onRetryProjectDocuments} />
+        ) : (
+          <>
+            <div className="snapshot-grid">
+              <Metric icon={<FileText size={20} />} label="Documents" value={String(projectDocuments.length)} />
+              <Metric icon={<FolderOpen size={20} />} label="Backed Up" value={String(projectDocuments.filter((doc) => doc.status === "Backed up").length)} />
+              <Metric icon={<Upload size={20} />} label="Needs Review" value={String(projectDocuments.filter((doc) => doc.status === "Uploaded" || doc.status === "Ready to review").length)} />
             </div>
-          ))}
-          {filteredProjectDocuments.length === 0 && <div className="empty-compact-state">No project documents match the current filters.</div>}
-        </div>
+            <div className="report-table compact-report-table">
+              <div className="report-table-head"><span>Project</span><span>Document</span><span>Type</span><span>Status</span><span>Uploaded</span></div>
+              {filteredProjectDocuments.slice(0, 16).map((doc) => (
+                <div className="report-table-row" key={`${doc.id}-${doc.name}`}>
+                  <span data-label="Project">{doc.project}</span>
+                  <span><strong>{doc.name}</strong><small>{doc.size ? formatBytes(doc.size) : "No file size saved"} - {doc.storage ?? "Browser"}</small></span>
+                  <span data-label="Type">{doc.type ?? "Project"}</span>
+                  <span data-label="Status">{doc.status}</span>
+                  <span data-label="Uploaded">{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : "No timestamp"}<small>{doc.uploadedByEmail || "Uploader not saved"}</small></span>
+                </div>
+              ))}
+              {filteredProjectDocuments.length === 0 && <div className="empty-compact-state">No project documents match the current filters.</div>}
+            </div>
+          </>
+        )}
       </section>}
     </div>
   );
@@ -19858,7 +20144,7 @@ function CameraCaptureModal({
       const fileName = `${sanitizePhotoNameSegment(locationName)} - ${namedSegment}${photo.extension || ".jpg"}`;
       const fileType = photo.blob.type || "image/jpeg";
       const file = new File([photo.blob], fileName, { type: fileType });
-      let ok = false;
+      let ok: boolean;
       try {
         ok = await onSavePhoto(file, photo.name.trim(), coordsRef.current);
       } catch (error) {
@@ -24621,6 +24907,12 @@ function TaskMiniPanel({
   );
 }
 
+// Shared inline error state for the handful of critical loaders where a
+// failed request must never look like an honest empty table (E, via an
+// audit request). Deliberately distinct from `.empty-compact-state` --
+// this always carries the real error text and a Retry action, and a
+// panel should render ONLY this (not also its normal empty-state
+// message) when the load actually failed.
 function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return <section className="metric"><div>{icon}</div><span>{label}</span><strong>{value}</strong></section>;
 }

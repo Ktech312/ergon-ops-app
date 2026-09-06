@@ -1534,6 +1534,66 @@ td small.quote-ref-tag {
   white-space: nowrap;
 }
 
+/* Dashboard "Needs Attention" -- E: "Redesign the Dashboard to answer:
+   what needs attention today." Distinct from the neutral .role-focus-*
+   cards below it (broad KPIs) -- this is exceptions only, and only
+   renders when there's at least one, so a clean day shows nothing
+   here rather than a row of empty zeros. */
+.attention-panel {
+  border-color: #e8c9a0;
+}
+
+.attention-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.attention-item {
+  background: #fff8ef;
+  border: 1px solid #e8c9a0;
+  border-radius: 8px;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 3px;
+  padding: 12px;
+  text-align: left;
+}
+
+.attention-item:disabled {
+  cursor: default;
+}
+
+.attention-item strong {
+  color: #a0651a;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.attention-item span {
+  color: #413d37;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.attention-item small {
+  color: #9a9184;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attention-item-error {
+  background: #fdecea;
+  border-color: #f0b8b3;
+}
+
+.attention-item-error strong {
+  color: #a01029;
+}
+
 .role-focus-grid {
   display: grid;
   gap: 10px;
@@ -4482,6 +4542,31 @@ td.empty-compact-state {
   max-width: none;
 }
 
+/* A failed load (E, via an audit request: "must not render as zero,
+   'no records,' or another normal empty state") -- red-toned, distinct
+   from the neutral dashed .empty-compact-state above, always paired
+   with a Retry action. */
+.data-load-error-banner {
+  align-items: center;
+  background: #fdecea;
+  border: 1px solid #f0b8b3;
+  border-radius: 8px;
+  color: #7a231b;
+  display: flex;
+  font-size: 13px;
+  gap: 10px;
+  padding: 10px 14px;
+}
+
+.data-load-error-banner svg {
+  color: #a01029;
+  flex-shrink: 0;
+}
+
+.data-load-error-banner span {
+  flex: 1;
+}
+
 .tag-picker-grid {
   display: flex;
   flex-wrap: wrap;
@@ -5813,9 +5898,17 @@ td.empty-compact-state {
     padding: 8px 12px;
   }
 
+  /* E: "the desktop navigation remains visible as a horizontally
+     clipped strip [and] a second bottom navigation is shown
+     simultaneously" -- confirmed real: this rule only reordered/widened
+     the desktop tab strip, never actually hid it, so it sat in the
+     header competing with the real mobile nav (.mobile-bottom-nav)
+     below. The bottom nav is the single primary mobile nav now --
+     essential header items (logo, sync status, notifications, account,
+     search) stay, per the requirement that those remain reachable
+     without crowding. */
   .nav-list {
-    order: 3;
-    width: 100%;
+    display: none;
   }
 
   .top-nav-actions {
@@ -6588,7 +6681,13 @@ body:has(.modal-backdrop) .install-banner {
 
 @media (max-width: 760px) {
   .install-banner {
-    bottom: calc(var(--bottomnav-h) + max(env(safe-area-inset-bottom, 0px), 8px) + 12px);
+    /* The center "+" tab (.mobile-nav-center) is deliberately raised
+       above the bar via a negative margin-top, so its top edge sits
+       ~22px above var(--bottomnav-h) -- clearing only the flat bar
+       height left the banner's bottom corner clipping that button.
+       Measured live at 390x844: bar height 64px, FAB top ~22px above
+       the bar's own top edge, so clear both plus a real gap. */
+    bottom: calc(var(--bottomnav-h) + 22px + max(env(safe-area-inset-bottom, 0px), 8px) + 14px);
   }
 }
 

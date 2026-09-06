@@ -4615,17 +4615,23 @@ export async function loadProjectDocuments(accessToken?: string): Promise<Projec
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok && response.status === 400) {
+    // Self-healing fallback for migration 068 not being applied yet
+    // (uploaded_by_email/purchase_order_id/purchase_request_id missing)
+    // -- deliberately kept, this degrades gracefully rather than
+    // failing outright. But if the FALLBACK itself also fails, that's
+    // a real error (permissions, outage, a different missing column),
+    // not "no documents" -- throw instead of masking it as empty.
     const fallbackResponse = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,file_url&order=uploaded_at.desc"), {
       headers: supabaseHeaders(accessToken),
     });
     if (!fallbackResponse.ok) {
-      return [];
+      throw new Error(await readSupabaseError(fallbackResponse, "Could not load project documents"));
     }
     const fallbackRows = (await fallbackResponse.json()) as Array<Omit<ProjectDocumentRow, "uploaded_by_email" | "purchase_order_id" | "purchase_request_id">>;
     return fallbackRows.map((row) => mapProjectDocumentRow({ ...row, uploaded_by_email: null, purchase_order_id: null, purchase_request_id: null }));
   }
   if (!response.ok) {
-    return [];
+    throw new Error(await readSupabaseError(response, "Could not load project documents"));
   }
   const rows = (await response.json()) as ProjectDocumentRow[];
   return rows.map(mapProjectDocumentRow);
@@ -5697,6 +5703,14 @@ function mapInventoryMovementRow(row: InventoryMovementRow): InventoryMovement {
   };
 }
 
+// E, via an audit request: "loadInventoryMovements currently returns []
+// when the REST request fails, which makes a database or permission
+// error look like an honest empty ledger." Confirmed real -- this is
+// exactly the shape of bug that hid migration 070 being unapplied for
+// days (Reports > Activity Ledger showed "No inventory movements match
+// the current filters," which read as genuinely empty data). Throws
+// now instead of swallowing, so a real failure surfaces as a real
+// failure at the call site instead of masquerading as zero rows.
 export async function loadInventoryMovements(accessToken?: string): Promise<InventoryMovement[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
@@ -5706,7 +5720,7 @@ export async function loadInventoryMovements(accessToken?: string): Promise<Inve
     { headers: supabaseHeaders(accessToken) },
   );
   if (!response.ok) {
-    return [];
+    throw new Error(await readSupabaseError(response, "Could not load inventory movements"));
   }
   const rows = (await response.json()) as InventoryMovementRow[];
   return rows.map(mapInventoryMovementRow);

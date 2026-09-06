@@ -26,19 +26,51 @@
 
 import { requireAuth } from "./_lib/requireAuth.js";
 
+// Security review, 2026-09-06 -- `slackUserId` used to go straight to
+// Slack's chat.postMessage `channel` param with no check at all: any
+// signed-in user could DM (or post into) any Slack channel/user the
+// bot can reach, with arbitrary content, not just a real Ergon
+// teammate's own DM. Now it must match a real team_members.slack_user_id
+// on file (migration 099), queried with the caller's own access token.
+async function isKnownSlackId(slackUserId, accessToken) {
+  const supabaseUrl = (process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    return false;
+  }
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/team_members?slack_user_id=eq.${encodeURIComponent(slackUserId)}&select=id`,
+      { headers: { apikey: anonKey, authorization: `Bearer ${accessToken}` } },
+    );
+    if (!response.ok) {
+      return false;
+    }
+    const rows = await response.json();
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST to send a Slack/Teams notification." });
     return;
   }
-  if (!(await requireAuth(req, res))) {
+  const user = await requireAuth(req, res);
+  if (!user) {
     return;
   }
 
   const { title, body, slackUserId } = req.body || {};
 
-  if (!title) {
-    res.status(400).json({ sent: false, error: "title is required." });
+  if (!title || typeof title !== "string" || title.length > 300) {
+    res.status(400).json({ sent: false, error: "title is required and must be reasonably short." });
+    return;
+  }
+  if (typeof body === "string" && body.length > 10000) {
+    res.status(400).json({ sent: false, error: "body is too long." });
     return;
   }
 
@@ -46,6 +78,12 @@ export default async function handler(req, res) {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
 
   if (botToken && slackUserId) {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    if (!(await isKnownSlackId(slackUserId, token))) {
+      res.status(403).json({ sent: false, error: "That Slack ID isn't on file for a real Ergon teammate." });
+      return;
+    }
     try {
       const response = await fetch("https://slack.com/api/chat.postMessage", {
         method: "POST",

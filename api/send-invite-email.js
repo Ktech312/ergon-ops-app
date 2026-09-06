@@ -5,13 +5,21 @@
 
 import { sendEmail } from "./_lib/mailer.js";
 import { requireAuth } from "./_lib/requireAuth.js";
+import { requireRole } from "./_lib/requireRole.js";
+import { isAllowedAppUrl } from "./_lib/validateUrl.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST to send an invite email." });
     return;
   }
-  if (!(await requireAuth(req, res))) {
+  const user = await requireAuth(req, res);
+  if (!user) {
+    return;
+  }
+  // Inviting someone creates their access to this app -- admin-only,
+  // same trust level as the rest of Admin's user-management actions.
+  if (!(await requireRole(req, res, user, []))) {
     return;
   }
 
@@ -19,6 +27,14 @@ export default async function handler(req, res) {
 
   if (!email || !inviteUrl) {
     res.status(400).json({ sent: false, error: "email and inviteUrl are required." });
+    return;
+  }
+  if (typeof email !== "string" || email.length > 320 || !email.includes("@")) {
+    res.status(400).json({ sent: false, error: "That doesn't look like a valid email address." });
+    return;
+  }
+  if (!isAllowedAppUrl(inviteUrl)) {
+    res.status(400).json({ sent: false, error: "inviteUrl must point back to this app." });
     return;
   }
 

@@ -6,6 +6,10 @@ scratch/
 .env
 .env.*
 !.env.example
+# Dummy Supabase values only, for `npm test` -- see the comment in the
+# file itself. Never a real credential; safe (and necessary) to commit
+# so a fresh clone/CI can actually run the test suite.
+!.env.test
 
 # Dependencies/build output
 node_modules/
@@ -17,7 +21,13 @@ coverage/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+vitest.config.js
+vitest.config.d.ts
 dev-server.log
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 
 # Logs
 *.log
