@@ -104,7 +104,7 @@ export default async function handler(req, res) {
   if (!user) {
     return;
   }
-  if (!checkRateLimit(`push:${user.id}`, 40, 60_000)) {
+  if (!(await checkRateLimit(`push:${user.id}`, 40, 60_000))) {
     res.status(429).json({ sent: false, error: "Too many push notifications sent -- please slow down." });
     return;
   }

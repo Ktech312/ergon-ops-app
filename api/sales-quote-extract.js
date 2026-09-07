@@ -387,7 +387,7 @@ export default async function handler(req, res) {
   if (!(await requireRole(req, res, user, ["sales", "pm", "manager"]))) {
     return;
   }
-  if (!checkRateLimit(`quote-extract:${user.id}`, 10, 60_000)) {
+  if (!(await checkRateLimit(`quote-extract:${user.id}`, 10, 60_000))) {
     res.status(429).json({ error: "Too many extraction requests -- please slow down." });
     return;
   }

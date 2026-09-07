@@ -51,7 +51,7 @@ export default async function handler(req, res) {
   if (!user) {
     return;
   }
-  if (!checkRateLimit(`notification-email:${user.id}`, 30, 60_000)) {
+  if (!(await checkRateLimit(`notification-email:${user.id}`, 30, 60_000))) {
     res.status(429).json({ sent: false, error: "Too many notification emails sent -- please slow down." });
     return;
   }

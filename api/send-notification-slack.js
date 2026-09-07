@@ -65,7 +65,7 @@ export default async function handler(req, res) {
   if (!user) {
     return;
   }
-  if (!checkRateLimit(`notification-slack:${user.id}`, 30, 60_000)) {
+  if (!(await checkRateLimit(`notification-slack:${user.id}`, 30, 60_000))) {
     res.status(429).json({ sent: false, error: "Too many Slack notifications sent -- please slow down." });
     return;
   }

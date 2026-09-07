@@ -35,7 +35,7 @@ export default async function handler(req, res) {
   if (!(await requireRole(req, res, user, ["pm"]))) {
     return;
   }
-  if (!checkRateLimit(`submittal-email:${user.id}`, 20, 60_000)) {
+  if (!(await checkRateLimit(`submittal-email:${user.id}`, 20, 60_000))) {
     res.status(429).json({ sent: false, error: "Too many submittal emails sent -- please slow down." });
     return;
   }

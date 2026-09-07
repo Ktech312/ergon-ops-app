@@ -59,7 +59,7 @@ export default async function handler(req, res) {
   if (!user) {
     return;
   }
-  if (!checkRateLimit(`create-notification:${user.id}`, 60, 60_000)) {
+  if (!(await checkRateLimit(`create-notification:${user.id}`, 60, 60_000))) {
     res.status(429).json({ error: "Too many notification-creation requests -- please slow down." });
     return;
   }

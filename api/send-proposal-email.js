@@ -37,7 +37,7 @@ export default async function handler(req, res) {
   if (!(await requireRole(req, res, user, ["sales", "pm", "manager"]))) {
     return;
   }
-  if (!checkRateLimit(`proposal-email:${user.id}`, 20, 60_000)) {
+  if (!(await checkRateLimit(`proposal-email:${user.id}`, 20, 60_000))) {
     res.status(429).json({ sent: false, error: "Too many proposal emails sent -- please slow down." });
     return;
   }

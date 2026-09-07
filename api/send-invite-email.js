@@ -23,7 +23,7 @@ export default async function handler(req, res) {
   if (!(await requireRole(req, res, user, []))) {
     return;
   }
-  if (!checkRateLimit(`invite-email:${user.id}`, 20, 60_000)) {
+  if (!(await checkRateLimit(`invite-email:${user.id}`, 20, 60_000))) {
     res.status(429).json({ sent: false, error: "Too many invites sent -- please slow down." });
     return;
   }
