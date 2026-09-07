@@ -8,7 +8,7 @@ vi.mock("web-push", () => ({
   },
 }));
 
-const handler = (await import("./send-push.js")).default;
+const handler = (await import("../../api/send-push.js")).default;
 const webpush = (await import("web-push")).default;
 
 const SUPABASE_URL = "https://test.supabase.co";
@@ -185,7 +185,6 @@ describe("send-push: rate limiting", () => {
       { match: "/auth/v1/user", respond: () => jsonResponse(200, { id: "rate-limit-test-user", email: "spammer@ergon.test" }) },
       { match: "/rest/v1/notifications", respond: () => jsonResponse(200, []) },
     ]));
-    const res = createMockRes();
     let lastStatus;
     for (let i = 0; i < 45; i += 1) {
       const req = createMockReq({ body: { notificationId: "n1" }, token: "spammer-token" });

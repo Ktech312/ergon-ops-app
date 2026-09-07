@@ -29,6 +29,15 @@ export default tseslint.config(
     },
   },
   {
+    // Vitest-run Node tests for the api/*.js serverless routes -- real
+    // Node globals (process, global), not browser ones.
+    files: ["tests/api/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: { ...globals.node, ...globals.vitest },
+    },
+  },
+  {
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       ecmaVersion: 2020,

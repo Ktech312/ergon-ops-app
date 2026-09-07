@@ -1,5 +1,7 @@
-// Shared by api/**/*.test.js -- not matched by vitest's test-file glob
-// itself (no ".test." in the name), just an importable helper.
+// Shared by tests/api/*.test.js -- not matched by vitest's test-file
+// glob itself (no ".test." in the name), just an importable helper.
+// Lives outside api/ itself, same reason the *.test.js files do -- see
+// the comment in vitest.config.ts.
 
 export function createMockRes() {
   return {

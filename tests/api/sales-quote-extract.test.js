@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMockRes, mockFetchRouter, jsonResponse } from "./_test-helpers.js";
 
-const handler = (await import("./sales-quote-extract.js")).default;
+const handler = (await import("../../api/sales-quote-extract.js")).default;
 
 const CALLER = { id: "caller-uuid", email: "caller@ergon.test" };
 

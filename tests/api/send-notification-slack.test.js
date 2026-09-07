@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMockReq, createMockRes, mockFetchRouter, jsonResponse } from "./_test-helpers.js";
 
-const handler = (await import("./send-notification-slack.js")).default;
+const handler = (await import("../../api/send-notification-slack.js")).default;
 
 const CALLER = { id: "caller-uuid", email: "caller@ergon.test" };
 

@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMockReq, createMockRes, mockFetchRouter, jsonResponse } from "./_test-helpers.js";
 
-vi.mock("./_lib/mailer.js", () => ({
+vi.mock("../../api/_lib/mailer.js", () => ({
   sendEmail: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
-const handler = (await import("./send-invite-email.js")).default;
-const { sendEmail } = await import("./_lib/mailer.js");
+const handler = (await import("../../api/send-invite-email.js")).default;
+const { sendEmail } = await import("../../api/_lib/mailer.js");
 
 const CALLER = { id: "caller-uuid", email: "caller@ergon.test" };
 const ALLOWED_INVITE_URL = "https://ergon-ops-app.vercel.app/?invite=abc123";
