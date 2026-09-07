@@ -33,6 +33,20 @@ async function insertNotification(supabaseUrl, serviceRoleKey, row) {
     body: JSON.stringify(row),
   });
   if (!response.ok) {
+    // Live-verified 2026-09-08: a retried run against an already-notified
+    // task genuinely 409s here -- `Prefer: resolution=ignore-duplicates`
+    // only takes effect when the request also names its target via an
+    // `on_conflict=<columns>` query param (PostgREST's documented
+    // behavior); without one, a duplicate against idx_notifications_dedupe
+    // (migration 024, a UNIQUE index but not the primary key) is a genuine
+    // constraint violation, not a silent no-op. The dedupe guarantee still
+    // holds either way -- the unique index itself is what blocks the
+    // second row, this function just discards the failed insert instead of
+    // PostgREST discarding it first -- so this is expected, routine
+    // behavior on every retried event, not a failure worth alerting on.
+    if (response.status === 409) {
+      return null;
+    }
     // A per-task insert failure used to be silently dropped -- it just
     // wasn't counted, with nothing in Vercel's function logs to explain
     // why a given assignee never got their overdue notification. Now at

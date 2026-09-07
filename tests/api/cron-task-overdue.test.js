@@ -74,7 +74,8 @@ describe("cron/task-overdue", () => {
     expect(res.body).toEqual({ scanned: 0, created: 0 });
   });
 
-  it("a second run for the same overdue task on the same day creates zero new notifications (dedupe holds)", async () => {
+  it("a second run for the same overdue task on the same day creates zero new notifications (dedupe holds), and does not log it as a failure", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     global.fetch = vi.fn(
       mockFetchRouter([
         {
@@ -84,10 +85,14 @@ describe("cron/task-overdue", () => {
               { id: "t1", title: "Overdue Task", due_date: "2026-01-01", assignee_email: "person@ergon.test" },
             ]),
         },
-        // Simulates PostgREST's resolution=ignore-duplicates: a repeat
-        // insert against an existing dedupe_key returns 201 with an EMPTY
-        // array, not an error and not a second row.
-        { match: "/rest/v1/notifications", respond: () => jsonResponse(201, []) },
+        // Live-verified 2026-09-08 against real production: without an
+        // explicit on_conflict=<columns> query param, PostgREST does NOT
+        // silently no-op a duplicate against a non-primary-key unique
+        // index (idx_notifications_dedupe, migration 024) just because
+        // `Prefer: resolution=ignore-duplicates` was sent -- a retried
+        // insert against an already-used dedupe_key genuinely 409s. The
+        // unique index is still what blocks the duplicate row either way.
+        { match: "/rest/v1/notifications", respond: () => jsonResponse(409, { code: "23505", message: "duplicate key value violates unique constraint" }) },
       ]),
     );
     const res = createMockRes();
@@ -95,6 +100,37 @@ describe("cron/task-overdue", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.scanned).toBe(1);
     expect(res.body.created).toBe(0);
+    // A 409 here is dedupe working as intended, not a failure -- must not
+    // show up in Vercel's error logs and cause false alarms on every
+    // routine retried day.
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("a genuine (non-409) per-task insert failure IS logged clearly, distinct from routine dedupe", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    global.fetch = vi.fn(
+      mockFetchRouter([
+        {
+          match: "/rest/v1/tasks",
+          respond: () =>
+            jsonResponse(200, [
+              { id: "t1", title: "Overdue Task", due_date: "2026-01-01", assignee_email: "person@ergon.test" },
+            ]),
+        },
+        { match: "/rest/v1/notifications", respond: () => jsonResponse(503, { error: "service unavailable" }) },
+      ]),
+    );
+    const res = createMockRes();
+    await handler(createMockReq({ token: "test-cron-secret" }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.created).toBe(0);
+    expect(errorSpy).toHaveBeenCalled();
+    const loggedText = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(loggedText).toContain("t1");
+    expect(loggedText).toContain("503");
+    expect(loggedText).not.toContain("test-cron-secret");
+    errorSpy.mockRestore();
   });
 
   it("logs a clear failure when the overdue-task query itself fails, without ever logging the secret", async () => {
