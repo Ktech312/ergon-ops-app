@@ -108,7 +108,28 @@ describe("send-push: direct-message mode", () => {
     const payload = JSON.parse(payloadJson);
     expect(payload.title).toBe(`New message from ${SENDER.email}`);
     expect(payload.body).toBe("the real message body");
-    expect(payload.url).toBe("/#messages");
+    // HANDOFF Questions/Decisions item 12: deep-links into the real
+    // conversation (c1, from the real direct_messages row) rather than
+    // just the Messages hub -- and the id comes from the stored message,
+    // not from anything the request body could name.
+    expect(payload.url).toBe("/#messages/c1");
+  });
+
+  it("deep-links to the real conversation id even when the request tries to name a different one via a stray `conversationId` field", async () => {
+    global.fetch = vi.fn(routerFor({
+      messageRows: [{ id: "m1", conversation_id: "real-conversation", sender_id: SENDER.id, body: "hi" }],
+      conversationRows: [{ participant_a_id: SENDER.id, participant_b_id: "recipient-uuid" }],
+      subscriptions: [{ id: "sub1", endpoint: "https://fcm.example/1", p256dh: "p", auth_key: "a" }],
+    }));
+    const req = createMockReq({
+      body: { directMessageId: "m1", conversationId: "attacker-picked-conversation" },
+      token: "sender-token",
+    });
+    const res = createMockRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    const payload = JSON.parse(webpush.sendNotification.mock.calls[0][1]);
+    expect(payload.url).toBe("/#messages/real-conversation");
   });
 });
 

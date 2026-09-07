@@ -83,7 +83,16 @@ async function resolveDirectMessagePush(req, res, user, directMessageId, supabas
   }
   const title = `New message from ${resolved.senderEmail}`;
   const body = (resolved.body || (resolved.attachmentFileName ? `Sent a file: ${resolved.attachmentFileName}` : "")).slice(0, 200);
-  return { recipientId: resolved.recipientId, title, body, url: "/#messages" };
+  // HANDOFF Questions/Decisions item 12: deep-link straight into the real
+  // conversation instead of the Messages hub's default view. The service
+  // worker's notificationclick handler already navigates to whatever url
+  // this payload names (public/sw.js) -- the only piece that was missing
+  // was naming the conversation at all. Mirrors the existing
+  // `#projects/<slug>` route pattern (main.tsx); the client-side route
+  // effect that reads this segment lives in main.tsx next to
+  // selectConversation().
+  const url = `/#messages/${resolved.conversationId}`;
+  return { recipientId: resolved.recipientId, title, body, url };
 }
 
 export default async function handler(req, res) {

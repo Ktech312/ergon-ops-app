@@ -6,9 +6,10 @@
 // read the row at all). Extracted 2026-09-08 so this verification logic
 // exists in exactly one place instead of being duplicated per route.
 //
-// Returns { ok: true, recipientId, senderEmail, body, attachmentFileName }
-// on success, or { ok: false, status, error } on any failure -- the
-// caller decides how to respond, this never touches `res` itself.
+// Returns { ok: true, recipientId, senderEmail, body, attachmentFileName,
+// conversationId } on success, or { ok: false, status, error } on any
+// failure -- the caller decides how to respond, this never touches `res`
+// itself.
 export async function resolveDirectMessage(req, user, directMessageId, supabaseUrl, anonKey) {
   const authHeader = req.headers.authorization || "";
   const callerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
@@ -53,5 +54,6 @@ export async function resolveDirectMessage(req, user, directMessageId, supabaseU
     senderEmail: user.email || "a teammate",
     body: message.body || "",
     attachmentFileName: message.attachment_file_name || null,
+    conversationId: message.conversation_id,
   };
 }

@@ -2483,6 +2483,32 @@ function App() {
     return () => window.clearInterval(interval);
   }, [activeConversationId, authSession]);
 
+  // DM push deep-linking (HANDOFF Questions/Decisions item 12) -- a DM
+  // push's url is now `/#messages/<conversationId>` (api/send-push.js),
+  // mirroring the existing `#projects/<slug>` route pattern
+  // (handleProjectRoute below). Runs on mount (covers a cold app-open from
+  // clients.openWindow()) and on hashchange (covers client.navigate() on
+  // an already-open tab, and a plain in-app link). Only acts when the hash
+  // actually names a conversation -- clicking the Messages nav tab sets a
+  // bare `#messages` (navigateToView), which must NOT force-clear whatever
+  // conversation the "remember last thread" localStorage key already
+  // restored. No extra authorization check needed here: activeConversation
+  // (Messages component) looks the id up in `conversations`, which is
+  // already scoped server-side to the real signed-in participant (RLS) --
+  // an unauthorized/bogus id just renders the existing "no conversation
+  // selected" state, same as it already does today for any bad id.
+  useEffect(() => {
+    function handleMessagesRoute() {
+      const match = window.location.hash.match(/^#messages\/(.+)$/);
+      if (match) {
+        selectConversation(decodeURIComponent(match[1]));
+      }
+    }
+    handleMessagesRoute();
+    window.addEventListener("hashchange", handleMessagesRoute);
+    return () => window.removeEventListener("hashchange", handleMessagesRoute);
+  }, []);
+
   // Reactions (migration 113) -- same toggle shape as the channel side
   // (ChannelDiscussion's handleToggleReaction), just against the DM
   // tables/thread state instead.
