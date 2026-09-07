@@ -1,21 +1,18 @@
-# Ergon Productization — Phase 1 Implementation Plan (Revision 2)
+# Ergon Productization — Phase 1 Implementation Plan (Revision 3)
 
-Status: **Plan for review — Phase 1 is not yet approved for implementation.** No migration file has been created, no SQL has been run against any database, no RLS policy has changed, no server route or frontend file has been edited. This revision responds to E's review of Revision 1 and corrects eight specific issues before migration 115 is created.
-Created: 2026-09-08 · Revised: 2026-09-08 (Revision 2, following E's structural/security review)
-Builds on: `PRODUCT_TENANCY_AUDIT.md` (the audit and its §10 working decisions), of which this plan implements Phase 1 of the 8-phase staged approach in §9.
+Status: **Plan for review — Phase 1 is not yet approved for implementation.** No migration file has been created, no SQL has been run against any database, no RLS policy has changed, no server route or frontend file has been edited. This revision is a final hardening pass requested by E before implementation approval — Revision 2 was approved conceptually (separated membership/role tables, slug `ensight`, no fallback role, manual Studio deployment, empty `platform_admins`, out-of-band bootstrap); this revision hardens the security-definer functions, replaces identifier-returning helpers, makes every test transaction-safe, adds preflight data checks, and fixes the `company_branding`-fallback edge case.
+Created: 2026-09-08 · Revision 2: 2026-09-08 · Revision 3: 2026-09-08 (final hardening pass)
+Builds on: `PRODUCT_TENANCY_AUDIT.md` (§8 architecture, §9 staged approach, §10 working decisions).
 
-## What changed in this revision, and why
+## What changed in Revision 3, and why
 
-E's review of Revision 1 found eight real issues before implementation — each is addressed below, not just acknowledged:
-
-1. **Membership and operational roles were conflated in one table.** Revision 1's `workspace_members` mixed "is this person part of the workspace, and are they an admin" with "what operational role(s) do they hold" in a single row. Split into `workspace_members` (membership + admin flag only) and `workspace_member_roles` (role assignments, separate table).
-2. **A fallback `'manager'` role was wrongly assigned to an admin with no operational role.** A workspace administrator is a real, valid state with zero operational roles — removed the fallback insert entirely; such an admin now correctly gets a `workspace_members` row and simply no `workspace_member_roles` rows.
-3. **"One primary role" was not actually enforced.** Revision 1 copied `app_user_roles`' own admitted gap (migration `040_role_expansion_multi_role.sql:24-29` states its primary-role uniqueness is "enforced at the application layer... rather than a DB constraint"). Revision 2 uses a real `unique` partial index, which Postgres does enforce at the database level for any writer, not just the app.
-4. **SQL statement order was wrong.** Revision 1 interleaved table creation, RLS policies, and the helper functions those policies call — a policy would have referenced a function that didn't exist yet at that point in the script. Revision 2 is strictly ordered: all tables, then all functions, then RLS enable + policies, then triggers, then data migration.
-5. **A policy on `workspace_members` queried `workspace_members` directly** (`exists (select 1 from workspace_members admin_row where ...)` inside a policy defined *on* `workspace_members`) — a self-referencing RLS pattern with real recursion risk. Redesigned around `security definer` helper functions for every cross-row check, exactly mirroring the one pattern already proven safe in this codebase (`is_app_admin()` is called from within `app_admins`' own RLS policies today, and works because of how Postgres handles `security definer` function ownership — see "Why this avoids recursion" below, and Test F for how to directly confirm it).
-6. **No bootstrap/recovery procedure was defined for `platform_admins`.** Documented explicitly below — same out-of-band, direct-SQL pattern this codebase already uses for `app_admins` (there was never an in-app way to create the first admin either). `platform_admins` stays empty in Phase 1.
-7. **Workspace slug was left as an open question.** Settled: `'ensight'` — Ergon is the product; Ensight is the first customer workspace.
-8. **No executable verification was provided for the specific access-control claims this design makes.** Eight SQL test blocks added, one per scenario E named, written to run in Supabase Studio's SQL editor using Supabase's own documented JWT-simulation convention.
+1. **Every `security definer` function now sets `search_path = ''` and fully schema-qualifies every table reference** (`public.workspace_members`, `public.platform_admins`, etc.), closing the search-path-injection class of vulnerability these functions were otherwise exposed to (a user able to create an object earlier in an unqualified search path could otherwise redirect what the function actually reads). Every function also has its default `PUBLIC` execute grant explicitly revoked, with execute re-granted only to `authenticated` — no function is anonymously callable, and none carries the Postgres default of "everyone can call this" that even the codebase's own pre-existing `is_app_admin()`/`has_role()` currently have.
+2. **`get_workspace_member_owner()` and `get_workspace_member_workspace()` — both of which returned a raw UUID to the caller — are replaced with boolean-only helpers**: `is_workspace_member_owner(member_id, user_id)` and `can_manage_workspace_member(member_id, acting_user_id)`. Neither leaks any identifier; both return only a yes/no answer to the exact question the calling policy needs answered.
+3. **Every executable test is now a self-contained, transaction-wrapped script** that creates its own second-workspace/membership/role/platform-admin fixtures inside the transaction and ends in `rollback` — no test requires a pre-existing fixture, and none leaves anything behind, including the one test that grants a temporary platform-admin row (the rollback undoes it before it could ever matter). The one test that expects a real error (Test G, the primary-role constraint) uses a PL/pgSQL exception handler — the standard, documented Postgres pattern for "expect and confirm one specific error without aborting the surrounding script" — verified against Postgres's actual documented behavior for exception blocks (they establish an implicit savepoint), not just described.
+4. **Three preflight queries are added**, to be run against production *before* migration 115 is ever created: they check for the exact conditions that would make the new constraints reject existing data, with a clear instruction to stop and resolve rather than run the migration if any of them return rows.
+5. **The workspace-seeding statement is restructured** so it always creates exactly one `ensight` workspace even if `company_branding` has zero rows — Revision 2's version would have silently inserted nothing in that case (a real, if unlikely, edge case, and it's now closed at the SQL level rather than assumed away).
+6. **A "transitional limitation" note is added** documenting that the fixed 10-value `role_key` list must become workspace-configurable before a second company can define its own roles — explicitly not expanded in Phase 1, since doing so now would be scope creep with no current use.
+7. **A forward requirement is recorded** for `resolveActiveWorkspace()`: once it is actually wired into a route (a later phase), it must reject a resolved workspace whose `status` is `'suspended'`. Not applicable in Phase 1 (the function isn't wired in yet, and no workspace is ever suspended in Phase 1), but written down now so it isn't lost by the time it matters.
 
 ---
 
@@ -25,17 +22,66 @@ E's review of Revision 1 found eight real issues before implementation — each 
 
 Behind the scenes, Phase 1:
 
-1. **Creates four new, currently-unused database tables** (`workspaces`, `workspace_members`, `workspace_member_roles`, `platform_admins`) that don't yet connect to anything else in the app.
-2. **Records that Ensight Technologies is the first workspace**, and copies (never moves or alters) your team's existing admin status and operational role assignments into the new tables as that workspace's membership records.
-3. **Leaves `platform_admins` completely empty.** No account — not even the existing admin account — is made a platform admin by this migration. That is a separate, later decision.
+1. **Creates four new, currently-unused database tables** (`workspaces`, `workspace_members`, `workspace_member_roles`, `platform_admins`), six new helper functions used only by those tables' own security rules, and explicit permission grants so only genuinely signed-in users (never anonymous visitors) can even call those functions.
+2. **Records that Ensight Technologies is the first workspace**, and copies (never moves or alters) your team's existing admin status and operational role assignments into the new tables.
+3. **Leaves `platform_admins` completely empty.** No account is made a platform admin by this migration.
 
-After Phase 1, every existing table, security rule, page, and API route works exactly as it does today. Nothing existing is touched — this plan changes only what the four new tables contain.
+Every existing table, security rule, page, and API route works exactly as it does today. Nothing existing is touched.
+
+---
+
+## Preflight checks — run these against production *before* migration 115 is created
+
+These check for the specific data conditions that would make the new tables' constraints reject existing rows during the one-time data migration. **If any of these return rows, stop — do not create or run migration 115 until the underlying data is resolved.** Read-only; safe to run any time.
+
+```sql
+-- PREFLIGHT 1: any user with more than one app_user_roles row marked
+-- is_primary. app_user_roles' own primary-role uniqueness was never a
+-- real database constraint (migration 040's own comment admits it is
+-- "enforced at the application layer... rather than a DB constraint") --
+-- so it is possible, if unlikely, for this to have drifted. The new
+-- workspace_member_roles table's unique partial index would reject the
+-- second such row outright during migration.
+select user_id, count(*) as primary_count
+from app_user_roles
+where is_primary
+group by user_id
+having count(*) > 1;
+-- EXPECTED: zero rows. If any user appears here, decide (manually, not
+-- automatically) which of their roles should remain primary and update
+-- app_user_roles accordingly before proceeding.
+
+-- PREFLIGHT 2: any role_key value not in the list workspace_member_roles'
+-- check constraint will accept. app_user_roles has its own matching check
+-- constraint already, so this should be structurally impossible today --
+-- this check exists to catch drift (e.g. a role added to one constraint
+-- but not mirrored to the other) rather than an expected finding.
+select distinct role_key from app_user_roles
+where role_key not in (
+  'warehouse', 'purchasing', 'pm', 'manager',
+  'sales', 'engineering', 'product_development', 'implementation', 'support', 'marketing'
+);
+-- EXPECTED: zero rows. If any appear, add the missing value to
+-- workspace_member_roles' check constraint (Section 1) before migrating,
+-- or investigate why an unrecognized role_key exists at all.
+
+-- PREFLIGHT 3: every user referenced by app_user_roles/app_admins
+-- actually exists in auth.users. Already guaranteed by both tables' own
+-- `references auth.users(id) on delete cascade` foreign keys -- this is a
+-- sanity check confirming that guarantee holds, not an expected finding.
+select user_id, 'app_user_roles' as source from app_user_roles aur
+where not exists (select 1 from auth.users au where au.id = aur.user_id)
+union
+select user_id, 'app_admins' as source from app_admins aa
+where not exists (select 1 from auth.users au where au.id = aa.user_id);
+-- EXPECTED: zero rows, always. A non-empty result here would indicate
+-- database corruption outside this migration's scope -- stop and
+-- investigate rather than proceeding.
+```
 
 ---
 
 ## Corrected schema (for review — not created as a migration file, not run)
-
-Organized in the order it would actually execute: all tables, then all functions, then RLS + policies, then triggers, then the one-time data migration. This ordering is itself one of the corrections from Revision 1.
 
 ### Section 1 — Tables
 
@@ -43,7 +89,7 @@ Organized in the order it would actually execute: all tables, then all functions
 -- Proposed migration 115_workspaces_foundation.sql (NOT YET CREATED)
 -- Fully additive: no existing table, column, policy, or function is altered.
 
-create table if not exists workspaces (
+create table if not exists public.workspaces (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   slug text not null unique,
@@ -53,11 +99,11 @@ create table if not exists workspaces (
 );
 
 -- One row per (workspace, user) -- membership and admin status ONLY.
--- Operational roles live in workspace_member_roles, not here, so a
--- workspace admin can exist with zero operational roles (see Section 5).
-create table if not exists workspace_members (
+-- Operational roles live in workspace_member_roles, so a workspace admin
+-- can validly exist with zero operational roles.
+create table if not exists public.workspace_members (
   id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references workspaces(id) on delete cascade,
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   is_workspace_admin boolean not null default false,
   created_at timestamptz not null default now(),
@@ -66,13 +112,20 @@ create table if not exists workspace_members (
 );
 
 -- One row per (workspace_member, role) -- mirrors app_user_roles'
--- existing shape (migration 040: one row per user per role_key, an
--- is_primary flag) but scoped to a workspace_members row instead of a
--- bare user_id, and with primary-role uniqueness actually enforced this
--- time (see the partial unique index below).
-create table if not exists workspace_member_roles (
+-- existing shape (one row per user per role_key, an is_primary flag),
+-- scoped to a workspace_members row instead of a bare user_id.
+--
+-- TRANSITIONAL LIMITATION, documented on purpose: this role_key list is
+-- copied verbatim from app_user_roles' own existing constraint. It must
+-- become workspace-configurable before a second company can define its
+-- own role vocabulary -- but expanding or generalizing it now would be
+-- scope creep with no current use, since only one workspace (Ensight)
+-- exists and it already uses exactly this vocabulary. Left as a fixed
+-- list deliberately for Phase 1; revisit in the phase that actually
+-- onboards a second company (PRODUCT_TENANCY_AUDIT.md §9).
+create table if not exists public.workspace_member_roles (
   id uuid primary key default gen_random_uuid(),
-  workspace_member_id uuid not null references workspace_members(id) on delete cascade,
+  workspace_member_id uuid not null references public.workspace_members(id) on delete cascade,
   role_key text not null check (role_key in (
     'warehouse', 'purchasing', 'pm', 'manager',
     'sales', 'engineering', 'product_development', 'implementation', 'support', 'marketing'
@@ -83,210 +136,262 @@ create table if not exists workspace_member_roles (
 );
 
 -- A REAL, database-enforced constraint (unlike app_user_roles' own
--- non-unique idx_app_user_roles_primary, migration 040:29, which its own
--- comment admits is app-layer-only) -- Postgres rejects any second insert/
--- update that would set is_primary = true for a workspace_member_id that
--- already has one. Enforced for every writer, not just this app's code.
+-- non-unique idx_app_user_roles_primary, migration 040:29) -- Postgres
+-- rejects any second insert/update setting is_primary = true for a
+-- workspace_member_id that already has one primary role. Enforced for
+-- every writer, not just this app's code. See Test G for a direct,
+-- transaction-safe confirmation.
 create unique index if not exists idx_workspace_member_roles_one_primary
-  on workspace_member_roles(workspace_member_id) where is_primary;
+  on public.workspace_member_roles(workspace_member_id) where is_primary;
 
--- Deliberately small and separate from workspace_members -- platform-admin
--- access is a distinct, more sensitive concept from workspace
+-- Deliberately small and separate from workspace_members -- platform-
+-- admin access is a distinct, more sensitive concept from workspace
 -- administration (working decision #2). No rows are inserted by this
 -- migration; see "Platform-admin bootstrap and recovery" below.
-create table if not exists platform_admins (
+create table if not exists public.platform_admins (
   user_id uuid primary key references auth.users(id) on delete cascade,
   created_at timestamptz not null default now()
 );
 ```
 
-### Section 2 — Helper functions (all referenced tables now exist)
+### Section 2 — Helper functions (hardened: `search_path = ''`, fully schema-qualified, boolean-only)
 
-Every RLS policy below calls one of these functions instead of embedding a raw subquery against `workspace_members`/`workspace_member_roles` directly. This is the fix for issue #5 (recursion) — see "Why this avoids recursion" immediately after.
+Every function below is `security definer` with `set search_path = ''` — meaning no schema is implicitly searched, so every table reference must be (and is) written with its full `public.` or `auth.` prefix. This is the standard, documented Postgres mitigation for search-path injection in `security definer` functions, and it means these functions are hardened beyond what this codebase's existing `is_app_admin()`/`has_role()` currently do — not a new, unproven technique, just a stricter version of the same tool.
 
 ```sql
-create or replace function is_platform_admin(check_user_id uuid)
+create or replace function public.is_platform_admin(check_user_id uuid)
 returns boolean
 language sql
 security definer
 stable
-as $$
-  select exists (select 1 from platform_admins where user_id = check_user_id);
-$$;
-
-create or replace function is_workspace_admin(check_workspace_id uuid, check_user_id uuid)
-returns boolean
-language sql
-security definer
-stable
+set search_path = ''
 as $$
   select exists (
-    select 1 from workspace_members
-    where workspace_id = check_workspace_id
-      and user_id = check_user_id
-      and is_workspace_admin
+    select 1 from public.platform_admins pa where pa.user_id = check_user_id
   );
 $$;
 
-create or replace function is_workspace_member(check_workspace_id uuid, check_user_id uuid)
+create or replace function public.is_workspace_admin(check_workspace_id uuid, check_user_id uuid)
 returns boolean
 language sql
 security definer
 stable
+set search_path = ''
 as $$
   select exists (
-    select 1 from workspace_members
-    where workspace_id = check_workspace_id and user_id = check_user_id
+    select 1 from public.workspace_members wm
+    where wm.workspace_id = check_workspace_id
+      and wm.user_id = check_user_id
+      and wm.is_workspace_admin
   );
 $$;
 
--- Used by workspace_member_roles' policies so they never need a raw
--- subquery against workspace_members either.
-create or replace function get_workspace_member_owner(check_workspace_member_id uuid)
-returns uuid
+create or replace function public.is_workspace_member(check_workspace_id uuid, check_user_id uuid)
+returns boolean
 language sql
 security definer
 stable
+set search_path = ''
 as $$
-  select user_id from workspace_members where id = check_workspace_member_id;
+  select exists (
+    select 1 from public.workspace_members wm
+    where wm.workspace_id = check_workspace_id and wm.user_id = check_user_id
+  );
 $$;
 
-create or replace function get_workspace_member_workspace(check_workspace_member_id uuid)
-returns uuid
+-- Replaces Revision 2's get_workspace_member_owner() (which returned a
+-- raw user_id). Answers exactly the question the calling policy needs:
+-- "is this specific member row owned by this specific user?" -- nothing
+-- more is ever exposed.
+create or replace function public.is_workspace_member_owner(check_member_id uuid, check_user_id uuid)
+returns boolean
 language sql
 security definer
 stable
+set search_path = ''
 as $$
-  select workspace_id from workspace_members where id = check_workspace_member_id;
+  select exists (
+    select 1 from public.workspace_members wm
+    where wm.id = check_member_id and wm.user_id = check_user_id
+  );
+$$;
+
+-- Replaces Revision 2's get_workspace_member_workspace() (which returned
+-- a raw workspace_id, requiring the caller to then separately call
+-- is_workspace_admin() with it). Folds both steps into one boolean
+-- answer, so no workspace identifier is ever handed back to a policy
+-- that only needed a yes/no.
+create or replace function public.can_manage_workspace_member(check_member_id uuid, acting_user_id uuid)
+returns boolean
+language sql
+security definer
+stable
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.workspace_members target
+    join public.workspace_members admin_row
+      on admin_row.workspace_id = target.workspace_id
+    where target.id = check_member_id
+      and admin_row.user_id = acting_user_id
+      and admin_row.is_workspace_admin
+  );
 $$;
 
 -- Convenience helper for the future resolveActiveWorkspace() server
--- pattern (Section 6) -- not called by any existing code yet.
-create or replace function current_user_workspace_ids()
+-- pattern (see below) -- not called by any existing code yet.
+create or replace function public.current_user_workspace_ids()
 returns setof uuid
 language sql
 security definer
 stable
+set search_path = ''
 as $$
-  select workspace_id from workspace_members where user_id = auth.uid();
+  select workspace_id from public.workspace_members where user_id = auth.uid();
 $$;
+```
 
-create or replace function set_workspace_updated_at()
+**Not `security definer`, and out of scope for this hardening pass**: `set_workspace_updated_at()` (the timestamp trigger) touches no schema-qualified object — it only reads/writes `new.updated_at`, a record field, and calls `now()`, a built-in that resolves via `pg_catalog` regardless of `search_path` — so it carries none of the risk this hardening addresses and is left as a plain trigger function, defined in Section 4.
+
+### Section 2b — Explicit grants (must come after the functions exist; must come before RLS policies call them)
+
+Postgres grants `EXECUTE` to `PUBLIC` automatically on function creation. Every function above has that default grant explicitly revoked, then re-granted only to `authenticated` — no function is callable by an anonymous visitor, and none is left at Postgres's permissive default.
+
+```sql
+revoke execute on function public.is_platform_admin(uuid) from public;
+revoke execute on function public.is_workspace_admin(uuid, uuid) from public;
+revoke execute on function public.is_workspace_member(uuid, uuid) from public;
+revoke execute on function public.is_workspace_member_owner(uuid, uuid) from public;
+revoke execute on function public.can_manage_workspace_member(uuid, uuid) from public;
+revoke execute on function public.current_user_workspace_ids() from public;
+
+grant execute on function public.is_platform_admin(uuid) to authenticated;
+grant execute on function public.is_workspace_admin(uuid, uuid) to authenticated;
+grant execute on function public.is_workspace_member(uuid, uuid) to authenticated;
+grant execute on function public.is_workspace_member_owner(uuid, uuid) to authenticated;
+grant execute on function public.can_manage_workspace_member(uuid, uuid) to authenticated;
+grant execute on function public.current_user_workspace_ids() to authenticated;
+```
+
+**Confirming these still work when called from RLS policies**: every policy in Section 3 below is evaluated for queries running as the `authenticated` role (the role Supabase's PostgREST layer connects as for any signed-in request) — exactly the role each function above is granted to. If a grant were missing, every policy calling that function would fail outright with "permission denied for function," not silently misbehave — a loud, obvious failure mode. Tests A-F below exercise every one of these policies end-to-end as the `authenticated` role; if any grant were wrong, those tests would fail immediately and unambiguously, not pass by accident.
+
+### Section 3 — RLS enable + policies (all referenced functions and grants now exist)
+
+```sql
+alter table public.workspaces enable row level security;
+
+create policy "members and platform admins read workspaces"
+  on public.workspaces for select to authenticated
+  using (public.is_platform_admin(auth.uid()) or public.is_workspace_member(id, auth.uid()));
+
+create policy "platform admins manage workspaces"
+  on public.workspaces for all to authenticated
+  using (public.is_platform_admin(auth.uid()))
+  with check (public.is_platform_admin(auth.uid()));
+
+alter table public.workspace_members enable row level security;
+
+create policy "users read their own membership"
+  on public.workspace_members for select to authenticated
+  using (auth.uid() = user_id);
+
+create policy "workspace admins read memberships in their own workspace"
+  on public.workspace_members for select to authenticated
+  using (public.is_workspace_admin(workspace_id, auth.uid()));
+
+create policy "platform admins read all memberships"
+  on public.workspace_members for select to authenticated
+  using (public.is_platform_admin(auth.uid()));
+
+create policy "workspace admins manage memberships in their own workspace"
+  on public.workspace_members for all to authenticated
+  using (public.is_workspace_admin(workspace_id, auth.uid()))
+  with check (public.is_workspace_admin(workspace_id, auth.uid()));
+
+create policy "platform admins manage all memberships"
+  on public.workspace_members for all to authenticated
+  using (public.is_platform_admin(auth.uid()))
+  with check (public.is_platform_admin(auth.uid()));
+
+alter table public.workspace_member_roles enable row level security;
+
+create policy "users read their own role rows"
+  on public.workspace_member_roles for select to authenticated
+  using (public.is_workspace_member_owner(workspace_member_id, auth.uid()));
+
+create policy "workspace admins manage role rows in their own workspace"
+  on public.workspace_member_roles for all to authenticated
+  using (public.can_manage_workspace_member(workspace_member_id, auth.uid()))
+  with check (public.can_manage_workspace_member(workspace_member_id, auth.uid()));
+
+create policy "platform admins manage all role rows"
+  on public.workspace_member_roles for all to authenticated
+  using (public.is_platform_admin(auth.uid()))
+  with check (public.is_platform_admin(auth.uid()));
+
+alter table public.platform_admins enable row level security;
+
+create policy "platform admins read platform admin list"
+  on public.platform_admins for select to authenticated
+  using (public.is_platform_admin(auth.uid()));
+
+create policy "platform admins manage platform admin list"
+  on public.platform_admins for all to authenticated
+  using (public.is_platform_admin(auth.uid()))
+  with check (public.is_platform_admin(auth.uid()));
+```
+
+No policy above contains a raw subquery against an RLS-protected table — every cross-row check goes through a Section 2 function. This rule is applied uniformly, not just to the one policy Revision 2 got wrong, so a future edit to any of these can't accidentally reintroduce self-referencing recursion.
+
+### Section 4 — Triggers
+
+```sql
+create or replace function public.set_workspace_updated_at()
 returns trigger as $$
 begin
   new.updated_at = now();
   return new;
 end;
 $$ language plpgsql;
-```
 
-**Why this avoids recursion.** A `security definer` function executes with the privileges of the function's *owner*, not the calling user. In this schema (as with every existing `security definer` function — `is_app_admin`, `has_role`, `get_users_by_role`, etc.), the owner is whichever role runs the migration in Supabase Studio, which is also the table owner. Postgres does not apply a table's own row-level-security policies to that table's owner unless `FORCE ROW LEVEL SECURITY` is explicitly set (it is not, here or anywhere else in this schema). So when a policy on `workspace_members` calls `is_workspace_admin(...)`, the query *inside* that function runs as the owning role and bypasses `workspace_members`' RLS entirely for that one internal lookup — it never re-triggers the policy that called it. This is not a new assumption; it is the exact mechanism `is_app_admin()` already relies on today, called from within `app_admins`' own RLS policies, in production, without issue. Every policy below uses this pattern — no policy anywhere in this design contains a raw subquery against the table it is defined on, or against any table whose own policies could call back into it. Test F below is the concrete, executable confirmation of this claim, not just the architectural argument for it.
-
-### Section 3 — RLS enable + policies (all referenced functions now exist)
-
-```sql
-alter table workspaces enable row level security;
-
--- Members of a workspace can see its name; platform admins see all of
--- them. No one can see a workspace they are not part of.
-create policy "members and platform admins read workspaces"
-  on workspaces for select to authenticated
-  using (is_platform_admin(auth.uid()) or is_workspace_member(id, auth.uid()));
-
--- Only platform admins create/edit workspaces in Phase 1 -- a workspace
--- admin's own settings UI for renaming their workspace is later-phase
--- work, not Phase 1.
-create policy "platform admins manage workspaces"
-  on workspaces for all to authenticated
-  using (is_platform_admin(auth.uid()))
-  with check (is_platform_admin(auth.uid()));
-
-alter table workspace_members enable row level security;
-
-create policy "users read their own membership"
-  on workspace_members for select to authenticated
-  using (auth.uid() = user_id);
-
-create policy "workspace admins read memberships in their own workspace"
-  on workspace_members for select to authenticated
-  using (is_workspace_admin(workspace_id, auth.uid()));
-
-create policy "platform admins read all memberships"
-  on workspace_members for select to authenticated
-  using (is_platform_admin(auth.uid()));
-
-create policy "workspace admins manage memberships in their own workspace"
-  on workspace_members for all to authenticated
-  using (is_workspace_admin(workspace_id, auth.uid()))
-  with check (is_workspace_admin(workspace_id, auth.uid()));
-
-create policy "platform admins manage all memberships"
-  on workspace_members for all to authenticated
-  using (is_platform_admin(auth.uid()))
-  with check (is_platform_admin(auth.uid()));
-
-alter table workspace_member_roles enable row level security;
-
-create policy "users read their own role rows"
-  on workspace_member_roles for select to authenticated
-  using (get_workspace_member_owner(workspace_member_id) = auth.uid());
-
-create policy "workspace admins manage role rows in their own workspace"
-  on workspace_member_roles for all to authenticated
-  using (is_workspace_admin(get_workspace_member_workspace(workspace_member_id), auth.uid()))
-  with check (is_workspace_admin(get_workspace_member_workspace(workspace_member_id), auth.uid()));
-
-create policy "platform admins manage all role rows"
-  on workspace_member_roles for all to authenticated
-  using (is_platform_admin(auth.uid()))
-  with check (is_platform_admin(auth.uid()));
-
-alter table platform_admins enable row level security;
-
-create policy "platform admins read platform admin list"
-  on platform_admins for select to authenticated
-  using (is_platform_admin(auth.uid()));
-
-create policy "platform admins manage platform admin list"
-  on platform_admins for all to authenticated
-  using (is_platform_admin(auth.uid()))
-  with check (is_platform_admin(auth.uid()));
-```
-
-Note the deliberate absence of any `exists (select 1 from workspace_members ...)` or `exists (select 1 from workspace_member_roles ...)` written directly inside a policy body anywhere above — every cross-row check goes through Section 2's functions. This is a stricter, more auditable rule than "just fix the one recursive policy Revision 1 had" — it applies uniformly so a future edit to any of these policies can't accidentally reintroduce the same class of bug.
-
-### Section 4 — Triggers
-
-```sql
-drop trigger if exists workspaces_set_updated_at on workspaces;
+drop trigger if exists workspaces_set_updated_at on public.workspaces;
 create trigger workspaces_set_updated_at
-  before update on workspaces
-  for each row execute function set_workspace_updated_at();
+  before update on public.workspaces
+  for each row execute function public.set_workspace_updated_at();
 
-drop trigger if exists workspace_members_set_updated_at on workspace_members;
+drop trigger if exists workspace_members_set_updated_at on public.workspace_members;
 create trigger workspace_members_set_updated_at
-  before update on workspace_members
-  for each row execute function set_workspace_updated_at();
+  before update on public.workspace_members
+  for each row execute function public.set_workspace_updated_at();
 ```
 
-### Section 5 — Data migration (seed the first workspace, carry over existing data)
+### Section 5 — Data migration (robust to a missing `company_branding` row)
 
 ```sql
--- 1. Seed the one workspace, named from today's company_branding, slug
---    "ensight" (settled: Ergon is the product, Ensight is the first
---    customer workspace).
-insert into workspaces (name, slug)
-select coalesce(company_name, 'Ensight Technologies'), 'ensight'
-from company_branding
-where id = true
+-- 1. Seed the one workspace. Uses a scalar subquery inside VALUES, not an
+-- INSERT ... SELECT ... FROM company_branding -- the earlier form would
+-- silently insert NOTHING if company_branding had zero rows (an
+-- INSERT...SELECT with an empty FROM result inserts zero rows; coalesce
+-- inside that SELECT only helps when the row exists but the column is
+-- null, not when the row is entirely absent). A scalar subquery used as
+-- a plain value expression evaluates to NULL when it matches no rows --
+-- well-defined SQL behavior -- so coalesce correctly falls back to the
+-- literal default name either way, and exactly one workspace row is
+-- always created.
+insert into public.workspaces (name, slug)
+values (
+  coalesce((select company_name from public.company_branding where id = true), 'Ensight Technologies'),
+  'ensight'
+)
 on conflict (slug) do nothing;
 
 -- 2. One workspace_members row for every distinct user who has EITHER an
---    existing app_admins row OR an app_user_roles row (the union of both
---    sets) -- so an admin with no operational role still becomes a real
---    member, and is_workspace_admin is set directly from app_admins with
---    NO fallback role assigned to anyone.
-insert into workspace_members (workspace_id, user_id, is_workspace_admin)
+--    existing app_admins row OR an app_user_roles row -- so an admin with
+--    no operational role still becomes a real member, with
+--    is_workspace_admin set directly from app_admins and NO fallback role
+--    assigned to anyone.
+insert into public.workspace_members (workspace_id, user_id, is_workspace_admin)
 select
   w.id,
   u.user_id,
@@ -296,45 +401,42 @@ from (
   union
   select user_id from app_admins
 ) u
-cross join (select id from workspaces where slug = 'ensight') w
+cross join (select id from public.workspaces where slug = 'ensight') w
 on conflict (workspace_id, user_id) do nothing;
 
--- 3. Carry over every existing (user, role) assignment into
---    workspace_member_roles. An admin with no app_user_roles row simply
---    gets no rows here -- correct and intentional, not a gap to fill.
-insert into workspace_member_roles (workspace_member_id, role_key, is_primary)
+-- 3. Carry over every existing (user, role) assignment. An admin with no
+--    app_user_roles row gets no rows here -- correct and intentional.
+insert into public.workspace_member_roles (workspace_member_id, role_key, is_primary)
 select wm.id, aur.role_key, aur.is_primary
 from app_user_roles aur
-join workspace_members wm
+join public.workspace_members wm
   on wm.user_id = aur.user_id
-  and wm.workspace_id = (select id from workspaces where slug = 'ensight')
+  and wm.workspace_id = (select id from public.workspaces where slug = 'ensight')
 on conflict (workspace_member_id, role_key) do nothing;
 ```
 
-No fallback insert exists for an admin with no `app_user_roles` row — that gap in Revision 1 is fully removed, not just narrowed. Verified against production 2026-09-08: the one existing admin, `eck1679@gmail.com`, will get exactly one `workspace_members` row (`is_workspace_admin = true`); how many `workspace_member_roles` rows (zero or more) they get depends entirely on whatever `app_user_roles` rows already exist for that account today, carried over as-is.
-
 ---
 
-## Platform-admin bootstrap and recovery procedure
+## Platform-admin bootstrap and recovery procedure (unchanged from Revision 2, approved conceptually)
 
-`platform_admins` has RLS requiring `is_platform_admin(auth.uid())` to insert or manage rows — which means, by design, there is no in-app way to create the *first* platform admin (the same chicken-and-egg shape `app_admins` already has: `PRODUCT_TENANCY_AUDIT.md` §2 confirms admin bootstrapping for `app_admins` was never done via migration either — it happened out-of-band).
+`platform_admins` requires an existing platform admin to insert or manage rows via its own RLS — by design, there is no in-app way to create the first one, mirroring exactly how `app_admins` was originally bootstrapped (never via migration; always out-of-band).
 
-**Bootstrap procedure**: when E decides to grant platform-admin status to a specifically approved account, run this directly in Supabase Studio's SQL editor (the same manual-migration channel every other schema change in this project already goes through):
+**Bootstrap**: when E approves granting platform-admin status to a specific account, run directly in Supabase Studio:
 
 ```sql
-insert into platform_admins (user_id)
+insert into public.platform_admins (user_id)
 values ('<the approved account''s auth.users id>');
 ```
 
-**Recovery procedure**: if every platform-admin account were ever lost (e.g., an account deactivated), the same direct SQL insert, run by E as the Supabase project owner, is the recovery path — no in-app "become platform admin" flow, no email-based invite for this specific role. This is a deliberate minimization of the attack surface for the platform's most sensitive permission, consistent with working decision #2 ("granted only to specifically approved designated Ergon product operators").
+**Recovery**: the same direct SQL insert, run by E as the Supabase project owner, if every platform admin were ever lost. No in-app flow, no email-based invite for this role — a deliberate minimization of the attack surface for the platform's most sensitive permission.
 
-**Phase 1 explicitly does not run this insert for anyone**, including the existing admin account. `platform_admins` ships empty. Verified after migration (Test E below, and the production verification checklist) that it stays that way until a separate, explicit decision is made.
+**Phase 1 explicitly does not run this insert for anyone.** `platform_admins` ships empty and stays empty until a separate, explicit decision names who gets it.
 
 ---
 
-## `resolveActiveWorkspace()` — the server-side resolution pattern (design only, unchanged from Revision 1)
+## `resolveActiveWorkspace()` — server-side resolution pattern (design only)
 
-Per working decision #4 ("the server must resolve the active workspace from authenticated workspace membership; never trust a browser-provided workspace ID without validating membership"):
+Unchanged core design from Revision 2, with one addition: a recorded future requirement.
 
 ```js
 // PROPOSED DESIGN -- not implemented, not wired into any route in Phase 1.
@@ -353,6 +455,11 @@ export async function resolveActiveWorkspace(req, res, user, supabaseUrl, servic
       res.status(403).json({ error: "You are not a member of that workspace." });
       return null;
     }
+    // FUTURE REQUIREMENT, recorded now, not implemented in Phase 1 (no
+    // route calls this function yet, and no workspace is ever suspended
+    // in Phase 1): once this function is actually wired into a route,
+    // it must also look up the resolved workspace's `status` and reject
+    // with 403 if it is 'suspended', not just confirm membership.
     return requestedId;
   }
   if (memberIds.length === 1) return memberIds[0];
@@ -365,179 +472,296 @@ export async function resolveActiveWorkspace(req, res, user, supabaseUrl, servic
 }
 ```
 
-Documented for review per working decision #4; not wired into any route in Phase 1, since no existing table has a `workspace_id` column yet.
-
 ---
 
 ## Rollback plan
 
-Reverse creation order — child tables and their dependents before parents, functions last:
-
 ```sql
 -- Rollback for migration 115 (if ever needed)
-drop trigger if exists workspace_members_set_updated_at on workspace_members;
-drop trigger if exists workspaces_set_updated_at on workspaces;
+drop trigger if exists workspace_members_set_updated_at on public.workspace_members;
+drop trigger if exists workspaces_set_updated_at on public.workspaces;
 
-drop policy if exists "platform admins manage platform admin list" on platform_admins;
-drop policy if exists "platform admins read platform admin list" on platform_admins;
-drop policy if exists "platform admins manage all role rows" on workspace_member_roles;
-drop policy if exists "workspace admins manage role rows in their own workspace" on workspace_member_roles;
-drop policy if exists "users read their own role rows" on workspace_member_roles;
-drop policy if exists "platform admins manage all memberships" on workspace_members;
-drop policy if exists "workspace admins manage memberships in their own workspace" on workspace_members;
-drop policy if exists "platform admins read all memberships" on workspace_members;
-drop policy if exists "workspace admins read memberships in their own workspace" on workspace_members;
-drop policy if exists "users read their own membership" on workspace_members;
-drop policy if exists "platform admins manage workspaces" on workspaces;
-drop policy if exists "members and platform admins read workspaces" on workspaces;
+drop policy if exists "platform admins manage platform admin list" on public.platform_admins;
+drop policy if exists "platform admins read platform admin list" on public.platform_admins;
+drop policy if exists "platform admins manage all role rows" on public.workspace_member_roles;
+drop policy if exists "workspace admins manage role rows in their own workspace" on public.workspace_member_roles;
+drop policy if exists "users read their own role rows" on public.workspace_member_roles;
+drop policy if exists "platform admins manage all memberships" on public.workspace_members;
+drop policy if exists "workspace admins manage memberships in their own workspace" on public.workspace_members;
+drop policy if exists "platform admins read all memberships" on public.workspace_members;
+drop policy if exists "workspace admins read memberships in their own workspace" on public.workspace_members;
+drop policy if exists "users read their own membership" on public.workspace_members;
+drop policy if exists "platform admins manage workspaces" on public.workspaces;
+drop policy if exists "members and platform admins read workspaces" on public.workspaces;
 
-drop function if exists set_workspace_updated_at();
-drop function if exists current_user_workspace_ids();
-drop function if exists get_workspace_member_workspace(uuid);
-drop function if exists get_workspace_member_owner(uuid);
-drop function if exists is_workspace_member(uuid, uuid);
-drop function if exists is_workspace_admin(uuid, uuid);
-drop function if exists is_platform_admin(uuid);
+drop function if exists public.set_workspace_updated_at();
+drop function if exists public.current_user_workspace_ids();
+drop function if exists public.can_manage_workspace_member(uuid, uuid);
+drop function if exists public.is_workspace_member_owner(uuid, uuid);
+drop function if exists public.is_workspace_member(uuid, uuid);
+drop function if exists public.is_workspace_admin(uuid, uuid);
+drop function if exists public.is_platform_admin(uuid);
 
-drop table if exists platform_admins;
-drop table if exists workspace_member_roles;
-drop table if exists workspace_members;
-drop table if exists workspaces;
+drop table if exists public.platform_admins;
+drop table if exists public.workspace_member_roles;
+drop table if exists public.workspace_members;
+drop table if exists public.workspaces;
 ```
 
-No existing table, column, policy, or function is referenced by anything above outside a plain `select` during the one-time data migration (Section 5) — rollback removes only what Phase 1 added, with zero risk to any existing row anywhere.
+No existing table, column, policy, or function is referenced by anything above outside a plain `select` during the one-time data migration — rollback removes only what Phase 1 added, with zero risk to any existing row anywhere. `DROP FUNCTION` automatically removes any grants on it, so no explicit `revoke` is needed in rollback.
 
 ---
 
 ## Security analysis
 
-- **Recursion**: eliminated by construction (Section 2/3's uniform "policies call functions, never raw subqueries against RLS-protected tables" rule) and directly tested (Test F). The mechanism relied on — table owners/`security definer` function owners bypass their own table's RLS — is the same one this codebase's existing `is_app_admin()`/`has_role()` functions already depend on in production; this plan extends an already-validated pattern rather than introducing a new one.
-- **Privilege escalation**: a non-admin cannot grant themselves `is_workspace_admin` (Test C) because `workspace_members`' `UPDATE`/`INSERT` policies require `is_workspace_admin(workspace_id, auth.uid())` or `is_platform_admin(auth.uid())` to already be true for the *acting* user — there is no policy path that lets a plain member modify their own or anyone else's admin flag.
-- **Cross-workspace containment**: a workspace admin's write access is always scoped by `workspace_id` inside `is_workspace_admin()` — they cannot manage a membership row in a workspace they do not administer (Test B).
-- **Platform-admin containment**: `platform_admins` itself requires an existing platform admin to modify — see the bootstrap procedure above for how the first one is ever created, deliberately out-of-band rather than through any in-app mechanism.
-- **Primary-role integrity**: enforced by a real partial unique index (Test G), not application discipline alone — this is a genuine improvement over the pre-existing `app_user_roles` pattern, not just parity with it.
-- **No change to any existing security boundary**: every existing table's RLS, every existing route's `requireAuth`/`requireRole` check, and every existing Storage policy is completely untouched by this migration (Test H).
-- **Known, accepted limitation carried over from Revision 1, unchanged**: the `security definer` recursion-avoidance mechanism depends on these functions being owned by a role that bypasses RLS on these specific tables (the table-owning/migration-running role). If this project ever runs migrations under a different, non-owning role in the future, this assumption would need re-verification — not a concern for E's current manual-Studio-run process, but worth remembering if that process ever changes.
+- **Search-path injection**: closed. Every `security definer` function sets `search_path = ''` and fully qualifies every table reference (`public.x`, `auth.users`) — nothing is resolved implicitly, so there is no schema-precedence trick available to redirect what these functions read.
+- **Default over-permissive execution**: closed. Every function's automatic `PUBLIC` execute grant is explicitly revoked and re-granted only to `authenticated`. `anon` cannot call any of them. This is stricter than the codebase's own pre-existing `is_app_admin()`/`has_role()`, which currently carry Postgres's default `PUBLIC` grant — worth a note for a possible future retrofit of those, but out of scope for touching existing functions in Phase 1.
+- **Recursion**: eliminated by construction (no policy anywhere contains a raw subquery against an RLS-protected table) and directly tested (Test F). The underlying mechanism — a `security definer` function's owner bypassing that table's own RLS — is the same one `is_app_admin()` already relies on safely in production; this plan extends an already-validated pattern rather than introducing a new one.
+- **Information exposure through directly callable RPCs**: minimized, not eliminated, and the residual exposure is stated plainly rather than glossed over. Because every function above lives in the `public` schema, Supabase's PostgREST layer exposes each as a callable `POST /rest/v1/rpc/<name>` endpoint to any `authenticated` caller (per the grants above) — this is unavoidable for any function meant to be called from an RLS policy, and is exactly as true of the existing `is_app_admin(uuid)` today. What Revision 3 does reduce: (a) no function returns a raw identifier (UUID) to the caller anymore — every one of them answers only a yes/no question about a caller-supplied pair of ids; (b) `anon` cannot call any of them at all, only `authenticated`. What remains, and is accepted as a reasonable trade-off matching the existing codebase's own pattern: an authenticated caller can call e.g. `can_manage_workspace_member(<some member id>, <some other user's id>)` directly and learn a true/false fact about a workspace-admin relationship between two arbitrary ids they supply — never the underlying data itself, just a boolean about a relationship. If this residual is ever judged unacceptable, the fix would be to drop the `check_user_id`/`acting_user_id` parameters entirely and hard-code `auth.uid()` inside each function body — not done here, to keep these functions reusable for the exact verification tests below, which need to check the relationship for a specific test-fixture user, not only "the current session's own user."
+- **Primary-role integrity**: enforced by a real unique partial index (Test G), not application discipline — a genuine improvement over `app_user_roles`' own admitted gap, not just parity with it.
+- **Cross-workspace containment**: a workspace admin's write access is always scoped by `workspace_id` inside `is_workspace_admin()`/`can_manage_workspace_member()` — Test B confirms an admin cannot reach into a workspace they don't administer.
+- **Platform-admin containment**: `platform_admins` requires an existing platform admin to modify; the bootstrap procedure is the only way to create the first one, deliberately out-of-band.
+- **No change to any existing security boundary**: every existing table's RLS, every existing route's auth check, and every existing Storage policy is completely untouched (Test H).
+- **Known, carried-over limitation**: the recursion-avoidance mechanism depends on these functions being owned by a role that bypasses RLS on these tables (the table-owning/migration-running role in Supabase Studio). Not a concern for E's current manual-run process; worth re-verifying if that process ever changes.
+- **Transitional limitation, documented not fixed**: the fixed `role_key` list must become workspace-configurable before a second company can define its own roles. Explicitly deferred past Phase 1 (see Section 1's inline comment) — expanding it now would be unused scope, since only one workspace exists.
 
 ---
 
 ## Executable verification SQL
 
-Run these in Supabase Studio's SQL editor, after migration 115 and its data migration have both run, using Supabase's own documented pattern for simulating a signed-in user in the SQL editor (`set local role authenticated; set local request.jwt.claims to '{"sub": "<uuid>", "role": "authenticated"}';`). Replace every placeholder UUID with a real one from your own data before running. Each block ends with `reset role;` so it doesn't leak into the next block or your own session.
+Every test below is self-contained: it creates whatever workspaces/memberships/roles/platform-admin rows it needs *inside its own transaction*, using **real, existing `auth.users` ids you already have** (a rolled-back transaction has zero lasting effect on a real user, so any real id is safe to reference here — do not fabricate a fake id; the foreign keys require a real one to exist). Every test ends in `rollback` — nothing here requires a permanent test record, and nothing here can leave a `platform_admins` row behind, including Test E.
+
+Replace every `<REPLACE-...>` placeholder with a real `auth.users` id before running. Run each block on its own in Supabase Studio's SQL editor.
 
 ```sql
 -- TEST A: an ordinary member reads only their own membership
-set local role authenticated;
-set local request.jwt.claims to '{"sub": "<non-admin-user-uuid>", "role": "authenticated"}';
-select * from workspace_members;
--- EXPECTED: exactly one row, user_id = the tested user. No other member's row visible.
-reset role;
+begin;
+do $$
+declare
+  ws_id uuid;
+  u1 uuid := '<REPLACE-WITH-REAL-USER-ID-1>';
+  u2 uuid := '<REPLACE-WITH-REAL-USER-ID-2>';
+begin
+  insert into public.workspaces (name, slug) values ('Test Workspace A', 'test-workspace-a') returning id into ws_id;
+  insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws_id, u1, false);
+  insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws_id, u2, false);
+end $$;
 
+set local role authenticated;
+set local request.jwt.claims to '{"sub": "<REPLACE-WITH-REAL-USER-ID-1>", "role": "authenticated"}';
+select user_id from public.workspace_members
+where workspace_id = (select id from public.workspaces where slug = 'test-workspace-a');
+-- EXPECTED: exactly one row, user_id = REAL-USER-ID-1. User 2's row is NOT visible.
+rollback;
+```
+
+```sql
 -- TEST B: a workspace admin manages members only in their own workspace
-set local role authenticated;
-set local request.jwt.claims to '{"sub": "<workspace-admin-uuid>", "role": "authenticated"}';
-select workspace_id, user_id from workspace_members;
--- EXPECTED: every row's workspace_id matches this admin's own workspace(s) only.
-update workspace_members set is_workspace_admin = true
-  where workspace_id = '<a-different-workspace-id>' and user_id = '<some-user-uuid>';
--- EXPECTED: 0 rows updated (blocked by RLS, not an error) -- confirms containment.
-reset role;
+begin;
+do $$
+declare
+  ws_admin uuid;
+  ws_other uuid;
+  admin_user uuid := '<REPLACE-WITH-REAL-USER-ID-ADMIN>';
+  other_user uuid := '<REPLACE-WITH-REAL-USER-ID-OTHER>';
+begin
+  insert into public.workspaces (name, slug) values ('Test Workspace B Admin', 'test-workspace-b-admin') returning id into ws_admin;
+  insert into public.workspaces (name, slug) values ('Test Workspace B Other', 'test-workspace-b-other') returning id into ws_other;
+  insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws_admin, admin_user, true);
+  insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws_other, other_user, false);
+end $$;
 
+set local role authenticated;
+set local request.jwt.claims to '{"sub": "<REPLACE-WITH-REAL-USER-ID-ADMIN>", "role": "authenticated"}';
+
+select workspace_id, user_id from public.workspace_members
+where workspace_id in (select id from public.workspaces where slug in ('test-workspace-b-admin', 'test-workspace-b-other'));
+-- EXPECTED: only the row in test-workspace-b-admin is visible.
+
+update public.workspace_members set is_workspace_admin = true
+where workspace_id = (select id from public.workspaces where slug = 'test-workspace-b-other')
+  and user_id = '<REPLACE-WITH-REAL-USER-ID-OTHER>';
+-- EXPECTED: 0 rows updated -- blocked by RLS, confirms containment.
+rollback;
+```
+
+```sql
 -- TEST C: a non-admin cannot manage memberships
+begin;
+do $$
+declare
+  ws_id uuid;
+  plain_user uuid := '<REPLACE-WITH-REAL-USER-ID-PLAIN>';
+begin
+  insert into public.workspaces (name, slug) values ('Test Workspace C', 'test-workspace-c') returning id into ws_id;
+  insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws_id, plain_user, false);
+end $$;
+
 set local role authenticated;
-set local request.jwt.claims to '{"sub": "<non-admin-user-uuid>", "role": "authenticated"}';
-update workspace_members set is_workspace_admin = true where user_id = '<non-admin-user-uuid>';
+set local request.jwt.claims to '{"sub": "<REPLACE-WITH-REAL-USER-ID-PLAIN>", "role": "authenticated"}';
+update public.workspace_members set is_workspace_admin = true
+where user_id = '<REPLACE-WITH-REAL-USER-ID-PLAIN>'
+  and workspace_id = (select id from public.workspaces where slug = 'test-workspace-c');
 -- EXPECTED: 0 rows updated -- a non-admin cannot even self-promote.
-reset role;
+rollback;
+```
 
--- TEST D: a user belonging to multiple workspaces sees exactly those rows
---   (requires seeding a second workspace + membership row for this test user first)
+```sql
+-- TEST D: a user belonging to multiple workspaces sees exactly those
+begin;
+do $$
+declare
+  ws1 uuid;
+  ws2 uuid;
+  wm1 uuid;
+  wm2 uuid;
+  multi_user uuid := '<REPLACE-WITH-REAL-USER-ID-MULTI>';
+begin
+  insert into public.workspaces (name, slug) values ('Test Workspace D1', 'test-workspace-d1') returning id into ws1;
+  insert into public.workspaces (name, slug) values ('Test Workspace D2', 'test-workspace-d2') returning id into ws2;
+  insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws1, multi_user, false) returning id into wm1;
+  insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws2, multi_user, false) returning id into wm2;
+  insert into public.workspace_member_roles (workspace_member_id, role_key, is_primary) values (wm1, 'sales', true);
+  insert into public.workspace_member_roles (workspace_member_id, role_key, is_primary) values (wm2, 'pm', true);
+end $$;
+
 set local role authenticated;
-set local request.jwt.claims to '{"sub": "<multi-workspace-user-uuid>", "role": "authenticated"}';
-select workspace_id from workspace_members;
--- EXPECTED: one row per workspace that user actually belongs to -- no more, no fewer.
-select wmr.* from workspace_member_roles wmr
-  join workspace_members wm on wm.id = wmr.workspace_member_id;
--- EXPECTED: role rows for that user's own memberships across both workspaces only.
-reset role;
+set local request.jwt.claims to '{"sub": "<REPLACE-WITH-REAL-USER-ID-MULTI>", "role": "authenticated"}';
+select workspace_id from public.workspace_members where user_id = '<REPLACE-WITH-REAL-USER-ID-MULTI>';
+-- EXPECTED: exactly two rows -- test-workspace-d1's and test-workspace-d2's ids.
+select wmr.role_key, wm.workspace_id from public.workspace_member_roles wmr
+  join public.workspace_members wm on wm.id = wmr.workspace_member_id
+  where wm.user_id = '<REPLACE-WITH-REAL-USER-ID-MULTI>';
+-- EXPECTED: 'sales' paired with d1's workspace_id, 'pm' paired with d2's.
+rollback;
+```
 
--- TEST E: a platform admin's intended access (requires one bootstrapped
---   test platform admin -- see the bootstrap procedure; do not run this
---   against eck1679@gmail.com unless platform-admin status has been
---   separately, explicitly approved for that account)
+```sql
+-- TEST E: a platform admin's intended access. The platform_admins row
+-- inserted here is created and used entirely inside this transaction --
+-- rollback guarantees it never persists, so this test cannot leave a
+-- real platform-admin grant behind.
+begin;
+do $$
+declare
+  platform_admin_user uuid := '<REPLACE-WITH-REAL-USER-ID-PLATFORM>';
+begin
+  insert into public.platform_admins (user_id) values (platform_admin_user);
+end $$;
+
 set local role authenticated;
-set local request.jwt.claims to '{"sub": "<platform-admin-uuid>", "role": "authenticated"}';
-select count(*) from workspace_members;
--- EXPECTED: total count across ALL workspaces, not just one.
-select * from workspaces;
--- EXPECTED: every workspace visible, not only ones this account is a member of.
-reset role;
+set local request.jwt.claims to '{"sub": "<REPLACE-WITH-REAL-USER-ID-PLATFORM>", "role": "authenticated"}';
+select count(*) from public.workspaces;
+-- EXPECTED: every workspace visible (including the real "ensight"
+-- workspace, once migration 115 has run), not scoped to just one.
+select count(*) from public.workspace_members;
+-- EXPECTED: total membership count across ALL workspaces.
+rollback;
+```
 
+```sql
 -- TEST F: no RLS recursion
+begin;
 set local role authenticated;
-set local request.jwt.claims to '{"sub": "<any-real-user-uuid>", "role": "authenticated"}';
-select * from workspace_members;
-select * from workspace_member_roles;
-select * from workspaces;
--- EXPECTED: every query returns normally and quickly. The concrete failure
--- mode of real recursion is a "stack depth limit exceeded" error or a
--- multi-second hang -- neither should occur. Optionally prefix each select
--- with `explain analyze` to confirm no runaway plan.
-reset role;
+set local request.jwt.claims to '{"sub": "<REPLACE-WITH-ANY-REAL-USER-ID>", "role": "authenticated"}';
+select * from public.workspace_members;
+select * from public.workspace_member_roles;
+select * from public.workspaces;
+-- EXPECTED: every query returns normally and quickly. The concrete
+-- failure mode of real recursion is a "stack depth limit exceeded" error
+-- or a multi-second hang -- neither should occur. Optionally prefix each
+-- select with `explain analyze` to also confirm no runaway plan.
+rollback;
+```
 
--- TEST G: only one primary role per member is enforced by the database itself
-insert into workspace_member_roles (workspace_member_id, role_key, is_primary)
-values ('<a-real-workspace-member-id>', 'sales', true);
-insert into workspace_member_roles (workspace_member_id, role_key, is_primary)
-values ('<the-same-workspace-member-id>', 'manager', true);
--- EXPECTED: the second insert FAILS with a unique_violation on
--- idx_workspace_member_roles_one_primary. Roll back both test rows after
--- confirming (`delete from workspace_member_roles where workspace_member_id = '<...>' and role_key in ('sales');`).
+```sql
+-- TEST G: only one primary role per member, enforced by the database
+-- itself. Uses a PL/pgSQL exception handler -- the standard, documented
+-- Postgres pattern for catching one specific expected error inside a
+-- block without aborting the surrounding transaction (an exception
+-- handler in a DO/function block implicitly creates its own savepoint).
+-- This test intentionally does NOT switch to the authenticated role,
+-- since it is testing the raw database constraint, not RLS -- it runs as
+-- whichever role Supabase Studio's SQL editor connects as by default
+-- (which bypasses RLS entirely as the table owner), isolating exactly
+-- what is being tested.
+begin;
+do $$
+declare
+  ws_id uuid;
+  test_user uuid := '<REPLACE-WITH-REAL-USER-ID-G>';
+  member_id uuid;
+begin
+  insert into public.workspaces (name, slug) values ('Test Workspace G', 'test-workspace-g') returning id into ws_id;
+  insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws_id, test_user, false) returning id into member_id;
 
--- TEST H: existing Ergon behavior is unchanged
--- Run once BEFORE migration 115 and once AFTER; every number must match.
+  insert into public.workspace_member_roles (workspace_member_id, role_key, is_primary)
+  values (member_id, 'sales', true);
+
+  begin
+    insert into public.workspace_member_roles (workspace_member_id, role_key, is_primary)
+    values (member_id, 'manager', true);
+    raise exception 'TEST G FAILED: a second primary role was allowed -- the constraint did not fire.';
+  exception
+    when unique_violation then
+      raise notice 'TEST G PASSED: second primary role correctly rejected by idx_workspace_member_roles_one_primary.';
+  end;
+end $$;
+rollback;
+-- EXPECTED output: a NOTICE reading "TEST G PASSED: ...". If instead you
+-- see an ERROR reading "TEST G FAILED: ...", the constraint did not work
+-- as designed -- do not proceed with the migration.
+```
+
+```sql
+-- TEST H: existing Ergon behavior is unchanged. Pure read-only SELECTs --
+-- there is nothing to roll back here, and no transaction wrapper is
+-- needed for a query that writes nothing. Run once BEFORE migration 115
+-- and once AFTER; every number must match exactly.
 select count(*) from app_admins;
 select count(*) from app_user_roles;
 select count(*) from projects;
 select count(*) from tasks;
 select count(*) from sales_quotes;
--- EXPECTED: identical counts before and after -- Phase 1 never writes to,
--- and (apart from one-time SELECTs during the data migration) never even
--- reads from, any existing table's data path outside this verification.
+-- EXPECTED: identical counts before and after -- Phase 1 never writes to
+-- any existing table, and only ever reads from them during the one-time
+-- data migration (Section 5), never as part of ordinary operation.
 ```
 
 ---
 
 ## Production verification checklist
 
-1. Confirm exactly one row exists in `workspaces`, `slug = 'ensight'`, `name` matching `company_branding.company_name` at migration time.
-2. Confirm `workspace_members` has exactly one row per distinct user across `app_user_roles` ∪ `app_admins` (a simple `select count(distinct user_id) from (select user_id from app_user_roles union select user_id from app_admins) u;` compared against `select count(*) from workspace_members;`).
+1. Confirm exactly one row exists in `workspaces`, `slug = 'ensight'`, `name` matching `company_branding.company_name` at migration time (or the literal fallback `'Ensight Technologies'` if that table had no row).
+2. Confirm `workspace_members` has exactly one row per distinct user across `app_user_roles` ∪ `app_admins`.
 3. Confirm `workspace_member_roles`'s row count equals the pre-migration `app_user_roles` row count exactly.
 4. Confirm the existing admin (`eck1679@gmail.com`) has a `workspace_members` row with `is_workspace_admin = true`.
 5. Confirm `platform_admins` has **zero** rows.
-6. Run Test H's before/after row-count comparison on every existing table you consider load-bearing.
-7. Run Tests A-G above against real (or deliberately seeded test) accounts.
-8. Spot-check the live app: sign in, confirm the dashboard, tasks, projects, and Admin panel all look and behave exactly as before — expected: zero visible difference.
+6. Run Test H's before/after row-count comparison.
+7. Run Tests A-G above (each is self-contained and self-cleaning).
+8. Spot-check the live app: sign in, confirm the dashboard, tasks, projects, and Admin panel all look and behave exactly as before.
+9. Confirm the three preflight checks (above) were run *before* the migration and returned zero rows each.
 
 ---
 
 ## Deployment process
 
-Per this repo's standing process (no CI; migrations are applied manually), once this plan is approved: the exact SQL from Sections 1-5 above is handed to E in full (as this document already does), E runs it in Supabase Studio, and the production verification checklist above is completed together before this phase is considered done — the same pattern every prior migration in `HANDOFF.md` has followed.
+Per this repo's standing process (no CI; migrations are applied manually): once this plan is approved, the exact SQL from the Preflight and Sections 1-5 above is handed to E in full, E runs the preflight checks first, then (only if all three return zero rows) runs the migration in Supabase Studio, and the production verification checklist is completed together — the same pattern every prior migration in `HANDOFF.md` has followed.
 
 ---
 
 ## Decisions still needed before this plan is approved for implementation
 
-1. **Approve or amend the corrected schema, functions, and policies above.**
-2. **Approve the platform-admin bootstrap/recovery procedure** — direct SQL insert by E in Supabase Studio, no in-app mechanism. If a different mechanism is wanted, specify it.
-3. **Confirm no one is bootstrapped as a platform admin during Phase 1** — this plan assumes `platform_admins` ships and stays empty; a future, separate decision names who (if anyone) gets platform-admin status.
-4. **Explicit go-ahead to create migration 115 and hand it to E to run.** This document remains a plan for review until that go-ahead is given.
+1. **Approve or amend the hardened schema, functions, grants, and policies above.**
+2. **Confirm the preflight-check remediation approach** — this plan recommends stopping and manually resolving any data issue found (never auto-resolving, e.g. never auto-picking a "winning" primary role) — confirm this is the right default.
+3. **Explicit go-ahead to create migration 115 and hand it to E to run.** This document remains a plan for review until that go-ahead is given.
+
+Everything else from Revision 2's decision list is now settled (schema shape, bootstrap procedure, no Phase-1 platform-admin assignment, slug).
 
 ---
 
 ## Cross-references
 
-- `PRODUCT_TENANCY_AUDIT.md` — §8 (proposed architecture), §9 (the full 8-phase staged approach), §10 (the twelve working decisions this plan builds against).
+- `PRODUCT_TENANCY_AUDIT.md` — §8 (proposed architecture), §9 (staged approach), §10 (working decisions).
 - `PRODUCT_PLAN.md` / `PRODUCT_START_PLAN.md` — product direction and discovery approach.
 - `HANDOFF.md` — will record the actual migration once (and if) it is approved and run.
