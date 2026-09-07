@@ -122,6 +122,16 @@ export default async function handler(req, res) {
     const payload = JSON.stringify({ title, body: body || "", url: url || "/" });
     let sentCount = 0;
     const deadSubscriptionIds = [];
+    // Delivery-test finding, 2026-09-07: this used to only record 404/410
+    // ("subscription gone") and silently drop every other failure --
+    // exactly the same silent-failure shape this whole task started with,
+    // just moved server-side. A wrong VAPID key pair, a malformed payload,
+    // or FCM/browser push-service errors would all report success-shaped
+    // {sent:false or true, count:N} with zero way to tell what actually
+    // went wrong. Now every non-fatal send failure is captured with its
+    // real status/message so a future "push isn't arriving" report is
+    // debuggable from the response instead of a black box.
+    const failures = [];
 
     await Promise.all(
       subscriptions.map(async (sub) => {
@@ -134,11 +144,15 @@ export default async function handler(req, res) {
         } catch (error) {
           // 404/410 means the browser/OS dropped this subscription (e.g.
           // uninstalled, permission revoked) -- clean it up so it stops
-          // getting tried forever. Any other error is left alone; it
-          // might be transient.
+          // getting tried forever.
           if (error && (error.statusCode === 404 || error.statusCode === 410)) {
             deadSubscriptionIds.push(sub.id);
           }
+          failures.push({
+            subscriptionId: sub.id,
+            statusCode: error && error.statusCode ? error.statusCode : null,
+            message: error instanceof Error ? error.message : String(error),
+          });
         }
       }),
     );
@@ -153,7 +167,7 @@ export default async function handler(req, res) {
       });
     }
 
-    res.status(200).json({ sent: sentCount > 0, count: sentCount, removed: deadSubscriptionIds.length });
+    res.status(200).json({ sent: sentCount > 0, count: sentCount, removed: deadSubscriptionIds.length, failures });
   } catch (error) {
     res.status(500).json({ sent: false, error: error instanceof Error ? error.message : "Could not send push notification." });
   }
