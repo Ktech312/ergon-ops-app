@@ -3261,42 +3261,18 @@ export async function loadNotifications(email: string, accessToken?: string): Pr
   return rows.map(mapNotificationRow);
 }
 
-// Returns the created row's id, or null if nothing was actually inserted
-// (Supabase's resolution=ignore-duplicates silently skips a row whose
-// dedupe_key already exists rather than erroring -- that's used below by
-// notify() to avoid re-sending the same email twice for the same event).
-export async function createNotification(
-  notification: { recipientEmail: string; eventType: string; title: string; body: string; relatedEntityType?: string; relatedEntityId?: string; dedupeKey?: string },
-  accessToken?: string,
-): Promise<{ id: string } | null> {
-  if (!isRemotePersistenceConfigured() || !accessToken || !notification.recipientEmail) {
-    return null;
-  }
-
-  const response = await fetch(supabaseUrl("notifications"), {
-    method: "POST",
-    headers: {
-      ...supabaseHeaders(accessToken),
-      prefer: "return=representation,resolution=ignore-duplicates",
-    },
-    body: JSON.stringify({
-      recipient_email: notification.recipientEmail,
-      event_type: notification.eventType,
-      title: notification.title,
-      body: notification.body,
-      related_entity_type: notification.relatedEntityType ?? null,
-      related_entity_id: notification.relatedEntityId ?? null,
-      dedupe_key: notification.dedupeKey ?? null,
-    }),
-  });
-
-  if (!response.ok) {
-    return null;
-  }
-
-  const rows = (await response.json()) as Array<{ id: string }>;
-  return rows[0] ? { id: rows[0].id } : null;
-}
+// createNotification() (a direct client-token POST to `notifications`)
+// was removed 2026-09-08 -- HANDOFF Questions/Decisions #9. It was the
+// exact hole that let any signed-in user insert a `notifications` row
+// addressed to anyone, with any event_type/title/body, protected only by
+// an INSERT policy of `with check (true)`. All notification creation now
+// goes through the server-controlled POST /api/create-notification
+// (main.tsx's triggerNotification()), which independently re-derives
+// recipient(s) and content from real stored data per event type -- see
+// api/_lib/notificationEvents.js. Deliberately not kept around as a
+// "fallback": migration 114 removes the direct-insert RLS policy this
+// function relied on, so keeping the function would just be dead code
+// pointing at a write path that no longer works.
 
 // Audit trail for non-in-app delivery attempts (migration 024's
 // notification_deliveries table) -- one row per channel per notification,

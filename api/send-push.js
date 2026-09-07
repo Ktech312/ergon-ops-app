@@ -53,6 +53,7 @@ import { requireAuth } from "./_lib/requireAuth.js";
 import { isAllowedAppUrl } from "./_lib/validateUrl.js";
 import { loadNotificationById, hasExistingDelivery } from "./_lib/notificationLookup.js";
 import { checkRateLimit } from "./_lib/rateLimit.js";
+import { resolveDirectMessage } from "./_lib/directMessage.js";
 
 async function userIdForKnownEmail(email, supabaseUrl, serviceRoleKey) {
   try {
@@ -70,56 +71,19 @@ async function userIdForKnownEmail(email, supabaseUrl, serviceRoleKey) {
   }
 }
 
-// Resolves a real direct-message push: verifies the caller is the
-// message's own recorded sender using their own token (never elevated
-// access for this identity check), then derives the recipient from the
-// conversation's other participant. Returns null (with the response
-// already written) on any failure.
+// Resolves a real direct-message push using the shared api/_lib/
+// directMessage.js verification, then shapes it into the title/body/url
+// this route sends. Returns null (with the response already written) on
+// any failure.
 async function resolveDirectMessagePush(req, res, user, directMessageId, supabaseUrl, anonKey) {
-  const authHeader = req.headers.authorization || "";
-  const callerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-  const headers = { apikey: anonKey, authorization: `Bearer ${callerToken}` };
-
-  const messageResponse = await fetch(
-    `${supabaseUrl.replace(/\/$/, "")}/rest/v1/direct_messages?id=eq.${encodeURIComponent(directMessageId)}&select=id,conversation_id,sender_id,body,attachment_file_name`,
-    { headers },
-  );
-  if (!messageResponse.ok) {
-    res.status(502).json({ sent: false, error: "Could not look up that message." });
+  const resolved = await resolveDirectMessage(req, user, directMessageId, supabaseUrl, anonKey);
+  if (!resolved.ok) {
+    res.status(resolved.status).json({ sent: false, error: resolved.error });
     return null;
   }
-  const messageRows = await messageResponse.json();
-  const message = messageRows[0];
-  if (!message) {
-    // Either it doesn't exist, or RLS hid it because the caller isn't a
-    // participant -- either way, nothing to notify from.
-    res.status(404).json({ sent: false, error: "That message doesn't exist." });
-    return null;
-  }
-  if (message.sender_id !== user.id) {
-    res.status(403).json({ sent: false, error: "You can only trigger a push for a message you sent." });
-    return null;
-  }
-
-  const conversationResponse = await fetch(
-    `${supabaseUrl.replace(/\/$/, "")}/rest/v1/conversations?id=eq.${encodeURIComponent(message.conversation_id)}&select=participant_a_id,participant_b_id`,
-    { headers },
-  );
-  if (!conversationResponse.ok) {
-    res.status(502).json({ sent: false, error: "Could not look up that conversation." });
-    return null;
-  }
-  const conversationRows = await conversationResponse.json();
-  const conversation = conversationRows[0];
-  if (!conversation) {
-    res.status(404).json({ sent: false, error: "That conversation doesn't exist." });
-    return null;
-  }
-  const recipientId = conversation.participant_a_id === user.id ? conversation.participant_b_id : conversation.participant_a_id;
-
-  const title = `New message from ${user.email || "a teammate"}`;
-  const body = (message.body || (message.attachment_file_name ? `Sent a file: ${message.attachment_file_name}` : "")).slice(0, 200);
-  return { recipientId, title, body, url: "/#messages" };
+  const title = `New message from ${resolved.senderEmail}`;
+  const body = (resolved.body || (resolved.attachmentFileName ? `Sent a file: ${resolved.attachmentFileName}` : "")).slice(0, 200);
+  return { recipientId: resolved.recipientId, title, body, url: "/#messages" };
 }
 
 export default async function handler(req, res) {

@@ -67,7 +67,6 @@ import {
   bulkCreateCatalogItems,
   createCatalogItem,
   createHandover,
-  createNotification,
   createPresalesRule,
   addSalesQuoteLocation,
   deleteSalesQuoteLocation,
@@ -2006,7 +2005,7 @@ function App() {
           // Reuses the existing purchase-request-status-changed notification
           // (requester + Purchasing team) -- this is exactly "let the PM
           // know their order has been started", no separate mechanism needed.
-          notifyPurchaseRequestStatusChanged({ ...sourceRequest, status: nextStatus }, nextStatus);
+          void triggerNotification("purchase_request_status_changed", sourceRequest.id);
           syncBomLineStatusFromRequest(sourceRequest, nextStatus);
         }
       }
@@ -2555,21 +2554,14 @@ function App() {
           .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)),
       );
       setMessagesStatus("");
-      // Routed through the same notify()/notification_rules engine every
-      // other event uses (migration 095 seeds this event push-only) --
-      // deliberately no dedupeKey, every message is its own notification.
-      const conversation = conversations.find((entry) => entry.id === activeConversationId);
-      const partnerId = conversation ? (conversation.participantAId === authSession.userId ? conversation.participantBId : conversation.participantAId) : null;
-      const partnerEmail = partnerId ? knownUsers.find((user) => user.userId === partnerId)?.email : undefined;
-      if (partnerEmail) {
-        const notifyBody = body.trim() || (attachment ? `Sent a file: ${attachment.fileName}` : "");
-        // directMessageId (the real message row just created) is what
-        // lets /api/send-push independently verify the caller is this
-        // message's actual sender and derive the recipient from the
-        // conversation itself, instead of trusting partnerEmail here --
-        // see notify()'s own comment and api/send-push.js.
-        void notify("direct_message_received", partnerEmail, `New message from ${authSession.email}`, notifyBody.slice(0, 200), "conversation", activeConversationId, undefined, message.id);
-      }
+      // Routed through the same triggerNotification()/notification_rules
+      // engine every other event uses (migration 095 seeds this event
+      // push-only). directMessageId (the real message row just created)
+      // is what lets api/create-notification.js and api/send-push.js
+      // independently verify the caller is this message's actual sender
+      // and derive the recipient from the conversation itself -- the
+      // client no longer resolves or supplies a recipient at all.
+      void triggerNotification("direct_message_received", message.id, { directMessageId: message.id });
     } catch (error) {
       setMessagesStatus(error instanceof Error ? error.message : "Could not send message.");
     }
@@ -2684,22 +2676,11 @@ function App() {
         if (isNewSignup) {
           // Brand-new pending sign-up -- previously nothing surfaced this
           // except an admin happening to check Admin -> Pending Approvals.
-          // Fire-and-forget: notify every admin so it shows up as an alert.
-          loadAdminEmails(authSession.accessToken)
-            .then((admins) => {
-              admins.forEach((admin) => {
-                notify(
-                  "user_signup_pending",
-                  admin.email,
-                  "New sign-up needs approval",
-                  `${authSession.email ?? "A new user"} just signed up and is waiting for approval in Admin -> Pending Approvals.`,
-                  "app_user_status",
-                  authSession.userId,
-                  `user_signup_pending:${authSession.userId}`,
-                );
-              });
-            })
-            .catch(() => undefined);
+          // Fire-and-forget: server re-verifies a real pending
+          // app_user_status row exists for this exact caller before
+          // notifying every admin -- see notificationEvents.js's
+          // user_signup_pending handler.
+          void triggerNotification("user_signup_pending", authSession.userId);
         }
         return loadOwnApprovalStatus(authSession.userId, authSession.accessToken);
       }),
@@ -3054,20 +3035,9 @@ function App() {
       );
       if (created) {
         setCatalogPriceChangeRequests((current) => [created, ...current]);
+        void triggerNotification("catalog_price_change_requested", created.id);
       }
       setCatalogPriceChangeStatus("Price change submitted for manager approval.");
-      const item = catalogItems.find((entry) => entry.id === catalogItemId);
-      const members = await loadUsersByRole("manager", authSession.accessToken).catch(() => []);
-      for (const member of members) {
-        await notify(
-          "catalog_price_change_requested",
-          member.email,
-          "Catalog price change needs approval",
-          `${authSession.email} proposed changing ${fieldChanged.replace(/_/g, " ")} on "${item?.productName ?? "a catalog item"}" from ${previousValue} to ${requestedValue}.${reason ? ` Reason: ${reason}` : ""}`,
-          "catalog_price_change_request",
-          created?.id ?? catalogItemId,
-        );
-      }
     } catch (error) {
       setCatalogPriceChangeStatus(error instanceof Error ? error.message : "Could not submit price change request.");
     }
@@ -3097,14 +3067,7 @@ function App() {
         }),
       );
       setCatalogPriceChangeStatus("Price change approved and applied to the catalog.");
-      await notify(
-        "catalog_price_change_reviewed",
-        request.requestedByEmail,
-        "Your catalog price change was approved",
-        `${authSession.email} approved your request to change ${request.fieldChanged.replace(/_/g, " ")} to ${request.requestedValue}.`,
-        "catalog_price_change_request",
-        request.id,
-      );
+      void triggerNotification("catalog_price_change_reviewed", request.id);
     } catch (error) {
       setCatalogPriceChangeStatus(error instanceof Error ? error.message : "Could not approve that price change.");
     }
@@ -3120,14 +3083,7 @@ function App() {
         current.map((entry) => (entry.id === request.id ? { ...entry, status: "rejected", reviewedByEmail: authSession.email ?? "", reviewedAt: new Date().toISOString() } : entry)),
       );
       setCatalogPriceChangeStatus("Price change rejected.");
-      await notify(
-        "catalog_price_change_reviewed",
-        request.requestedByEmail,
-        "Your catalog price change was rejected",
-        `${authSession.email} rejected your request to change ${request.fieldChanged.replace(/_/g, " ")} to ${request.requestedValue}.`,
-        "catalog_price_change_request",
-        request.id,
-      );
+      void triggerNotification("catalog_price_change_reviewed", request.id);
     } catch (error) {
       setCatalogPriceChangeStatus(error instanceof Error ? error.message : "Could not reject that price change.");
     }
@@ -4441,13 +4397,11 @@ function App() {
       setTasks((current) => [created, ...current]);
       setTaskStatusMessage(`${created.title} added.`);
       logTaskActivityLocally(created.id, "Created the task.");
-      if (created.assigneeEmail) {
-        notify("task_assigned", created.assigneeEmail, "New task assigned", `"${created.title}" was assigned to you.`, "task", created.id, `task_assigned:${created.id}:${created.assigneeEmail}`);
-      } else if (created.assignedRoleKey) {
-        notifyRoleAssignment(created.assignedRoleKey, "New task for your team", created.id, created.title);
+      if (created.assigneeEmail || created.assignedRoleKey) {
+        void triggerNotification("task_assigned", created.id);
       }
       if (created.description) {
-        notifyMentions(created.description, "task", created.id, `the task "${created.title}"`, created.id);
+        void triggerNotification("mentioned", created.id, { relatedEntityType: "task" });
       }
       return true;
     } catch (error) {
@@ -4482,41 +4436,18 @@ function App() {
       if (previous) {
         logTaskActivityLocally(id, describeTaskChanges(previous, updated));
       }
-      if (updated.assigneeEmail && updated.assigneeEmail !== previous?.assigneeEmail) {
-        notify("task_assigned", updated.assigneeEmail, "Task assigned", `"${updated.title}" was assigned to you.`, "task", updated.id, `task_assigned:${updated.id}:${updated.assigneeEmail}`);
-      } else if (updated.assignedRoleKey && updated.assignedRoleKey !== previous?.assignedRoleKey) {
-        notifyRoleAssignment(updated.assignedRoleKey, "Task assigned to your team", updated.id, updated.title);
+      if ((updated.assigneeEmail && updated.assigneeEmail !== previous?.assigneeEmail) || (updated.assignedRoleKey && updated.assignedRoleKey !== previous?.assignedRoleKey)) {
+        void triggerNotification("task_assigned", updated.id);
       }
       if (task.description !== undefined && task.description !== previous?.description && updated.description) {
-        notifyMentions(updated.description, "task", updated.id, `the task "${updated.title}"`, updated.description.slice(0, 60));
+        void triggerNotification("mentioned", updated.id, { relatedEntityType: "task" });
       }
       if (previous && updated.status !== previous.status) {
-        const statusLabel = TASK_STATUS_OPTIONS.find((option) => option.value === updated.status)?.label ?? updated.status;
-        notifyCurrentTaskAssignees(
-          updated,
-          "task_status_changed",
-          "Task status changed",
-          `"${updated.title}" moved to ${statusLabel}.`,
-          updated.status,
-        );
-        // Creator gets told too, not just whoever it's currently assigned
-        // to -- skip if they're also the assignee (already covered above)
-        // or if they're the one who just made the change themselves.
-        const actingEmail = authSession.email?.toLowerCase() ?? "";
-        const creatorEmail = updated.createdByEmail?.toLowerCase() ?? "";
-        const assigneeEmail = updated.assigneeEmail?.toLowerCase() ?? "";
-        if (creatorEmail && creatorEmail !== actingEmail && creatorEmail !== assigneeEmail) {
-          const today = new Date().toISOString().slice(0, 10);
-          notify(
-            "task_status_changed",
-            updated.createdByEmail,
-            "Task status changed",
-            `"${updated.title}" moved to ${statusLabel}.`,
-            "task",
-            updated.id,
-            `task_status_changed:${updated.id}:${updated.createdByEmail}:${updated.status}:${today}`,
-          );
-        }
+        // Recipients (current assignee/role, plus the task's creator) are
+        // now all derived server-side from the just-updated task row in
+        // one call -- see api/_lib/notificationEvents.js's
+        // task_status_changed handler.
+        void triggerNotification("task_status_changed", updated.id);
       }
       if (updated.status === "in_progress" && previous?.status !== "in_progress") {
         runTaskHardwareAutomation(updated);
@@ -4680,21 +4611,32 @@ function App() {
     return Boolean(rule?.isActive && rule.channels.includes(channel));
   }
 
-  // Security review, 2026-09-07: the three delivery routes below used to
-  // receive the recipient/title/body/slackUserId directly from this
-  // function -- a second, independently-trusted payload alongside
-  // whatever createNotification() had just written to the `notifications`
-  // table for the same event. Now they take only `notificationId` and
-  // load the recipient/content themselves (service-role key, since the
-  // caller usually isn't that notification's own recipient and can't
-  // read it back with their own token) -- see
-  // api/_lib/notificationLookup.js. `directMessageId` is the one
-  // exception: a real DM push derives its recipient from the message's
-  // own conversation, verified against the caller's own token, and never
-  // goes through the notificationId path at all -- see
-  // handleSendDirectMessage below and api/send-push.js.
-  async function notify(eventType: string, recipientEmail: string, title: string, body: string, relatedEntityType: string, relatedEntityId: string, dedupeKey?: string, directMessageId?: string) {
-    if (!authSession || !recipientEmail) {
+  // Security review, 2026-09-08 (HANDOFF Questions/Decisions #9): this
+  // used to write directly to `notifications` (createNotification, the
+  // caller's own token) with a fully client-supplied recipient/title/
+  // body -- protected only by an INSERT policy of `with check (true)`.
+  // Any signed-in user could address a notification to anyone, with any
+  // content, regardless of whether the underlying event was real. Now
+  // the ONLY thing sent is an eventType + a real entity id (or, for a
+  // direct message, the real message id) -- api/create-notification.js
+  // independently re-derives who should be notified and what they
+  // should see from the actual stored data, and is the only remaining
+  // path that can write a `notifications` row at all (see
+  // backend/supabase/migrations/114_trusted_notification_creation.sql,
+  // which removes the direct-insert policy once this is confirmed
+  // deployed and working). This one function replaces the old notify()
+  // plus every one of its former per-event wrapper helpers
+  // (notifyRoleAssignment, notifyCurrentTaskAssignees, notifyMentions,
+  // resolveMentionEmails, notifyPurchaseRequestStatusChanged,
+  // notifyBuildStageChanged, notifyLowStockReached) -- role/mention
+  // fan-out now happens server-side in one request instead of the
+  // client looping and calling notify() once per recipient.
+  async function triggerNotification(
+    eventType: string,
+    relatedEntityId: string,
+    options?: { relatedEntityType?: string; stage?: string; directMessageId?: string },
+  ) {
+    if (!authSession) {
       return;
     }
     const inAppActive = ruleActive(eventType, "in_app");
@@ -4704,224 +4646,77 @@ function App() {
     if (!inAppActive && !emailActive && !slackActive && !pushActive) {
       return;
     }
-    const created = await createNotification({ recipientEmail, eventType, title, body, relatedEntityType, relatedEntityId, dedupeKey }, authSession.accessToken).catch(() => null);
-    if (recipientEmail.toLowerCase() === authSession.email?.toLowerCase()) {
-      reloadNotifications(authSession.email, authSession.accessToken);
-    }
-    // created is null if this exact event was already recorded (dedupe_key
-    // collision) or the insert failed -- either way, don't send a
-    // duplicate/orphaned delivery.
-    if (!created) {
+    let created: Array<{ id: string; recipientEmail: string }>;
+    try {
+      const response = await fetch("/api/create-notification", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
+        body: JSON.stringify(
+          options?.directMessageId
+            ? { directMessageId: options.directMessageId }
+            : { eventType, relatedEntityId, relatedEntityType: options?.relatedEntityType, stage: options?.stage },
+        ),
+      });
+      const result = (await response.json()) as { created?: Array<{ id: string; recipientEmail: string }> };
+      created = result.created || [];
+    } catch {
       return;
     }
-    if (emailActive) {
-      try {
-        const response = await fetch("/api/send-notification-email", {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({ notificationId: created.id }),
-        });
-        const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
-        await recordNotificationDelivery(created.id, "email", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
-      } catch (error) {
-        await recordNotificationDelivery(created.id, "email", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
+    if (created.some((row) => row.recipientEmail.toLowerCase() === authSession.email?.toLowerCase())) {
+      reloadNotifications(authSession.email!, authSession.accessToken);
+    }
+    for (const row of created) {
+      if (emailActive) {
+        try {
+          const response = await fetch("/api/send-notification-email", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
+            body: JSON.stringify({ notificationId: row.id }),
+          });
+          const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
+          await recordNotificationDelivery(row.id, "email", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
+        } catch (error) {
+          await recordNotificationDelivery(row.id, "email", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
+        }
       }
-    }
-    if (slackActive) {
-      try {
-        const response = await fetch("/api/send-notification-slack", {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({ notificationId: created.id }),
-        });
-        const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
-        await recordNotificationDelivery(created.id, "slack", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
-      } catch (error) {
-        await recordNotificationDelivery(created.id, "slack", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
+      if (slackActive) {
+        try {
+          const response = await fetch("/api/send-notification-slack", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
+            body: JSON.stringify({ notificationId: row.id }),
+          });
+          const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
+          await recordNotificationDelivery(row.id, "slack", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
+        } catch (error) {
+          await recordNotificationDelivery(row.id, "slack", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
+        }
       }
-    }
-    if (pushActive) {
-      try {
-        const response = await fetch("/api/send-push", {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify(directMessageId ? { directMessageId } : { notificationId: created.id }),
-        });
-        const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
-        await recordNotificationDelivery(created.id, "push", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
-      } catch (error) {
-        await recordNotificationDelivery(created.id, "push", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
-      }
-    }
-  }
-
-  // "if it's engineering, all the engineers should receive the request" --
-  // looks up everyone currently holding the role and fires the same
-  // task_assigned notification to each of them individually, instead of
-  // picking one person.
-  async function notifyRoleAssignment(roleKey: string, title: string, taskId: string, taskTitle: string) {
-    if (!authSession) {
-      return;
-    }
-    const members = await loadUsersByRole(roleKey, authSession.accessToken).catch(() => []);
-    for (const member of members) {
-      await notify("task_assigned", member.email, title, `"${taskTitle}" was assigned to the ${roleLabelFor(roleKey)} team.`, "task", taskId, `task_assigned:${taskId}:${member.email}`);
-    }
-  }
-
-  // Whoever a task is currently assigned to -- one person, or every member
-  // of a role/group -- should hear about things that happen to it, not just
-  // about being assigned in the first place. Used for task_status_changed;
-  // reusable for any other future per-task event. Skips notifying whoever
-  // just made the change themselves -- no one needs to be told about their
-  // own edit.
-  async function notifyCurrentTaskAssignees(task: EOTask, eventType: string, title: string, body: string, dedupeSuffix: string) {
-    if (!authSession) {
-      return;
-    }
-    const actingEmail = authSession.email?.toLowerCase() ?? "";
-    // Date-scoped, same convention as task_overdue: at most one of these per
-    // recipient per task per day, so a task flip-flopping between two
-    // statuses several times in a row doesn't spam, but a genuine repeat
-    // transition on a later day still notifies.
-    const today = new Date().toISOString().slice(0, 10);
-    if (task.assigneeEmail) {
-      if (task.assigneeEmail.toLowerCase() !== actingEmail) {
-        await notify(eventType, task.assigneeEmail, title, body, "task", task.id, `${eventType}:${task.id}:${task.assigneeEmail}:${dedupeSuffix}:${today}`);
-      }
-      return;
-    }
-    if (task.assignedRoleKey) {
-      const members = await loadUsersByRole(task.assignedRoleKey, authSession.accessToken).catch(() => []);
-      for (const member of members) {
-        if (member.email.toLowerCase() !== actingEmail) {
-          await notify(eventType, member.email, title, body, "task", task.id, `${eventType}:${task.id}:${member.email}:${dedupeSuffix}:${today}`);
+      if (pushActive) {
+        try {
+          const response = await fetch("/api/send-push", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
+            body: JSON.stringify(options?.directMessageId ? { directMessageId: options.directMessageId } : { notificationId: row.id }),
+          });
+          const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
+          await recordNotificationDelivery(row.id, "push", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
+        } catch (error) {
+          await recordNotificationDelivery(row.id, "push", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
         }
       }
     }
   }
 
-  // @mentions (migration 108) -- E: "I need to be able alert people, so
-  // tag them @Sales or @Ehren so it would send me an Alert." @RoleLabel
-  // (spaces stripped, e.g. @ProductDevelopment) resolves to everyone
-  // currently holding that role, the same loadUsersByRole() lookup
-  // role-assigned tasks already use above; anything else is matched
-  // against a team member's first name. Best-effort, not a hard
-  // directory lookup -- an unmatched @token just stays plain text in the
-  // message, same as Slack before a mention resolves.
-  async function resolveMentionEmails(text: string): Promise<string[]> {
-    if (!authSession) {
-      return [];
-    }
-    const tokens = [...new Set([...text.matchAll(/@([A-Za-z][A-Za-z0-9_]*)/g)].map((match) => match[1]))];
-    if (tokens.length === 0) {
-      return [];
-    }
-    const emails = new Set<string>();
-    for (const token of tokens) {
-      const roleOption = ROLE_KEY_OPTIONS.find((option) => option.label.replace(/\s+/g, "").toLowerCase() === token.toLowerCase());
-      if (roleOption) {
-        const members = await loadUsersByRole(roleOption.value, authSession.accessToken).catch(() => []);
-        members.forEach((member) => emails.add(member.email.toLowerCase()));
-        continue;
-      }
-      const person = teamMembers.find((member) => member.fullName.trim().split(/\s+/)[0]?.toLowerCase() === token.toLowerCase());
-      if (person?.email) {
-        emails.add(person.email.toLowerCase());
-      }
-    }
-    emails.delete(authSession.email?.toLowerCase() ?? "");
-    return [...emails];
-  }
-
-  async function notifyMentions(text: string, relatedEntityType: string, relatedEntityId: string, sourceLabel: string, dedupeSuffix: string) {
-    const emails = await resolveMentionEmails(text);
-    for (const email of emails) {
-      await notify(
-        "mentioned",
-        email,
-        `You were mentioned in ${sourceLabel}`,
-        `${authSession?.email ?? "Someone"}: ${text.slice(0, 200)}`,
-        relatedEntityType,
-        relatedEntityId,
-        `mentioned:${relatedEntityType}:${relatedEntityId}:${email}:${dedupeSuffix}`,
-      );
-    }
-  }
-
-  // Purchase request status change -> the person who requested it, plus the
-  // whole Purchasing/Procurement team (they're the ones acting on it day to
-  // day, not just the one requester). Per E: "Both."
-  async function notifyPurchaseRequestStatusChanged(request: PurchaseRequest, newStatus: PurchaseRequest["status"]) {
-    if (!authSession) {
-      return;
-    }
-    const actingEmail = authSession.email?.toLowerCase() ?? "";
-    const title = "Purchase request status changed";
-    const body = `"${request.itemName}" (${request.requestNumber}) moved to ${newStatus}.`;
-    const dedupeKey = (recipient: string) => `purchase_request_status_changed:${request.id}:${recipient}:${newStatus}`;
-    if (request.requestedByEmail && request.requestedByEmail.toLowerCase() !== actingEmail) {
-      await notify("purchase_request_status_changed", request.requestedByEmail, title, body, "purchase_request", request.id, dedupeKey(request.requestedByEmail));
-    }
-    const purchasingTeam = await loadUsersByRole("purchasing", authSession.accessToken).catch(() => []);
-    for (const member of purchasingTeam) {
-      if (member.email.toLowerCase() !== actingEmail && member.email.toLowerCase() !== request.requestedByEmail?.toLowerCase()) {
-        await notify("purchase_request_status_changed", member.email, title, body, "purchase_request", request.id, dedupeKey(member.email));
-      }
-    }
-  }
-
-  // Build stage change -> the Warehouse team, who runs the physical
-  // kitting/assembly/testing workflow. Per E: "a role."
-  async function notifyBuildStageChanged(build: BuildTransaction, newStage: NonNullable<BuildTransaction["stage"]>) {
-    if (!authSession) {
-      return;
-    }
-    const actingEmail = authSession.email?.toLowerCase() ?? "";
-    const stageLabel = newStage.charAt(0).toUpperCase() + newStage.slice(1);
-    const warehouseTeam = await loadUsersByRole("warehouse", authSession.accessToken).catch(() => []);
-    for (const member of warehouseTeam) {
-      if (member.email.toLowerCase() !== actingEmail) {
-        await notify(
-          "build_stage_changed",
-          member.email,
-          "Build stage changed",
-          `${build.buildNumber} (${build.equipmentName}) moved to ${stageLabel}.`,
-          "build",
-          build.id,
-          `build_stage_changed:${build.id}:${member.email}:${newStage}`,
-        );
-      }
-    }
-  }
-
-  // Low stock -> Purchasing, Warehouse, and every Admin. Per E: both
-  // "Purchasing" and "Warehouse/Admin" were selected. Date-scoped dedupe
-  // (like task_overdue) so a part sitting below its reorder point through
-  // many small movements in one day only notifies once per person per item
-  // per day, not on every single pull/adjustment.
-  async function notifyLowStockReached(part: Part) {
-    if (!authSession) {
-      return;
-    }
-    const actingEmail = authSession.email?.toLowerCase() ?? "";
-    const today = new Date().toISOString().slice(0, 10);
-    const title = "Low stock reached";
-    const body = `${part.name} (${part.ref}) is at ${part.stock}, at or below its reorder point of ${part.reorderPoint}.`;
-    const [purchasingTeam, warehouseTeam, admins] = await Promise.all([
-      loadUsersByRole("purchasing", authSession.accessToken).catch(() => []),
-      loadUsersByRole("warehouse", authSession.accessToken).catch(() => []),
-      loadAdminEmails(authSession.accessToken).catch(() => []),
-    ]);
-    const seen = new Set<string>();
-    for (const recipient of [...purchasingTeam, ...warehouseTeam, ...admins]) {
-      const email = recipient.email.toLowerCase();
-      if (email === actingEmail || seen.has(email)) {
-        continue;
-      }
-      seen.add(email);
-      await notify("low_stock_reached", recipient.email, title, body, "inventory_item", part.ref, `low_stock_reached:${part.ref}:${email}:${today}`);
-    }
+  // Thin compatibility wrapper -- keeps the ChannelDiscussion/task-create/
+  // task-update call sites and the onNotifyMentions prop type completely
+  // unchanged. `text`/`sourceLabel`/`dedupeSuffix` are no longer used:
+  // api/create-notification.js's "mentioned" handler re-fetches the real
+  // task/message/canvas row by relatedEntityId and re-parses @mentions
+  // from ITS content server-side, instead of trusting the text a caller
+  // hands it here (see api/_lib/notificationEvents.js).
+  function notifyMentions(_text: string, relatedEntityType: string, relatedEntityId: string, _sourceLabel?: string, _dedupeSuffix?: string) {
+    void triggerNotification("mentioned", relatedEntityId, { relatedEntityType });
   }
 
   async function handleMarkNotificationRead(id: string) {
@@ -4961,29 +4756,16 @@ function App() {
     }
   }
 
-  // Daily-deduped overdue-task check: runs client-side whenever tasks load
-  // or change, no cron/service key needed. Each overdue task fires at most
-  // once per day per assignee thanks to the dedupe_key unique index.
-  useEffect(() => {
-    if (!authSession || tasks.length === 0 || notificationRules.length === 0 || !ruleActive("task_overdue", "in_app")) {
-      return;
-    }
-    const today = new Date().toISOString().slice(0, 10);
-    tasks
-      .filter((task) => task.status !== "done" && task.dueDate && task.dueDate < today && task.assigneeEmail)
-      .forEach((task) => {
-        notify(
-          "task_overdue",
-          task.assigneeEmail,
-          "Task overdue",
-          `"${task.title}" was due ${task.dueDate}.`,
-          "task",
-          task.id,
-          `task_overdue:${task.id}:${today}`,
-        );
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, notificationRules, authSession]);
+  // task_overdue used to be a client-side check here: whenever tasks
+  // loaded/changed, in EVERY signed-in user's browser, scanning whatever
+  // tasks happened to be loaded and writing directly to `notifications`.
+  // There was no real "acting user" concept -- any signed-in user's tab
+  // could effectively trigger a notification about any other user's
+  // overdue task, and it only ran at all if someone had the app open.
+  // Moved server-side (HANDOFF Questions/Decisions #9) as a real
+  // scheduled job instead -- see api/cron/task-overdue.js and
+  // vercel.json's daily cron schedule. Nothing replaces this effect
+  // client-side; there is intentionally no client-side fallback.
 
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
@@ -5890,7 +5672,7 @@ function App() {
     recordMovements([movement]);
     const availableAfter = part.stock - allocatedAfter;
     if (part.trackReorder && availableAfter <= part.reorderPoint) {
-      notifyLowStockReached({ ...part, stock: availableAfter });
+      void triggerNotification("low_stock_reached", part.ref);
     }
 
     if (projectName) {
@@ -5945,7 +5727,7 @@ function App() {
     );
     recordMovements([movement]);
     if (part.trackReorder && movement.quantityAfter <= part.reorderPoint) {
-      notifyLowStockReached({ ...part, stock: movement.quantityAfter });
+      void triggerNotification("low_stock_reached", part.ref);
     }
   }
 
@@ -6216,7 +5998,7 @@ function App() {
     recordMovements([movement]);
     const availableAfterAdjust = adjustedQty - (part.allocated ?? 0);
     if (part.trackReorder && availableAfterAdjust <= part.reorderPoint) {
-      notifyLowStockReached({ ...part, stock: availableAfterAdjust });
+      void triggerNotification("low_stock_reached", part.ref);
     }
     });
   }
@@ -6246,7 +6028,7 @@ function App() {
     recordMovements([movement]);
     const availableAfterTransfer = movement.quantityAfter - (part.allocated ?? 0);
     if (part.trackReorder && availableAfterTransfer <= part.reorderPoint) {
-      notifyLowStockReached({ ...part, stock: availableAfterTransfer });
+      void triggerNotification("low_stock_reached", part.ref);
     }
     setProjectAllocations((current) => [
       {
@@ -6342,7 +6124,7 @@ function App() {
     for (const movement of componentMovements) {
       const part = inventoryItems.find((item) => item.ref === movement.sku);
       if (part && part.trackReorder && movement.quantityAfter <= part.reorderPoint) {
-        notifyLowStockReached({ ...part, stock: movement.quantityAfter });
+        void triggerNotification("low_stock_reached", part.ref);
       }
     }
 
@@ -6487,7 +6269,7 @@ function App() {
     const previous = buildTransactions.find((build) => build.id === buildId);
     setBuildTransactions((current) => current.map((build) => (build.id === buildId ? { ...build, stage } : build)));
     if (previous && previous.stage !== stage) {
-      notifyBuildStageChanged({ ...previous, stage }, stage);
+      void triggerNotification("build_stage_changed", previous.id, { stage });
     }
   }
 
@@ -6698,7 +6480,7 @@ function App() {
       }
     }
     if (existing && existing.status !== status) {
-      notifyPurchaseRequestStatusChanged({ ...existing, status }, status);
+      void triggerNotification("purchase_request_status_changed", existing.id);
       syncBomLineStatusFromRequest(existing, status);
     }
   }
@@ -6758,7 +6540,7 @@ function App() {
       }
     }
     if (existing.status !== nextStatus) {
-      notifyPurchaseRequestStatusChanged({ ...existing, status: nextStatus }, nextStatus);
+      void triggerNotification("purchase_request_status_changed", existing.id);
       syncBomLineStatusFromRequest(existing, nextStatus);
     }
   }
@@ -6841,7 +6623,7 @@ function App() {
       }
     }
     if (request.status !== nextStatus) {
-      notifyPurchaseRequestStatusChanged({ ...request, receivedQuantity: nextReceived, status: nextStatus }, nextStatus);
+      void triggerNotification("purchase_request_status_changed", request.id);
       syncBomLineStatusFromRequest(request, nextStatus);
     }
   }
