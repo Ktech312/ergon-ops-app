@@ -243,7 +243,7 @@ E's stated direction, from an overnight planning conversation (research → clar
 
 ## Recent work log (most recent first — 2026-09-08)
 
-- **(pending commit) Durable (Upstash Redis) rate limiting, replacing the in-memory-only limiter (HANDOFF Questions/Decisions item 11) + item 10 formally closed.** E: "Keep PM access to sales-quote-extract... Mark HANDOFF Questions/Decisions item 10 resolved with that decision. Next, replace the in-memory rate limiter with durable rate limiting so protection survives serverless cold starts and multiple Vercel instances. Prioritize paid AI extraction, invitations, and outbound email/Slack/push routes."
+- **(`3f3da20`) Durable (Upstash Redis) rate limiting, replacing the in-memory-only limiter (HANDOFF Questions/Decisions item 11) + item 10 formally closed.** E: "Keep PM access to sales-quote-extract... Mark HANDOFF Questions/Decisions item 10 resolved with that decision. Next, replace the in-memory rate limiter with durable rate limiting so protection survives serverless cold starts and multiple Vercel instances. Prioritize paid AI extraction, invitations, and outbound email/Slack/push routes."
 
   **Item 10**: no code change -- the role list (`sales`/`pm`/`manager`+admin) was already correct from the 2026-09-06/07 passes. E's message is the final decision closing the open question; HANDOFF's item 10 updated to reflect that directly.
 
