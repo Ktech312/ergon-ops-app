@@ -2,6 +2,12 @@
 
 Lightweight operations app for purchasing, inventory, project transfers, and reporting.
 
+## Product direction
+
+- `PRODUCT_PLAN.md` defines Ergon's approved end-to-end product direction, from Marketing through Sales, Billing, Engineering, Projects, Closeout, and Service/Support.
+- `PRODUCT_START_PLAN.md` defines the discovery, design, user-validation, and staged delivery approach. Material business-process changes require discussion before implementation.
+- `HANDOFF.md` remains the source of truth for current implementation, migrations, verification, and open technical work.
+
 Initial build focus:
 
 - Purchasing
