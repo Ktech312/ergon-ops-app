@@ -239,7 +239,7 @@ E's stated direction, from an overnight planning conversation (research → clar
 
 ## Recent work log (most recent first — 2026-09-08)
 
-- **(pending commit) Trusted notification-creation path — closes the `notifications` INSERT gap for good (HANDOFF Questions/Decisions #9).** E: "Close the open notifications INSERT-policy gap... Design and implement a trusted notification-creation path... Audit every current createNotification() call site and migrate it to the trusted path. Do not leave a hidden client-side fallback."
+- **(`f4b877f`) Trusted notification-creation path — closes the `notifications` INSERT gap for good (HANDOFF Questions/Decisions #9).** E: "Close the open notifications INSERT-policy gap... Design and implement a trusted notification-creation path... Audit every current createNotification() call site and migrate it to the trusted path. Do not leave a hidden client-side fallback."
 
   **Permission matrix — every event type, what it checks, where recipients come from:**
 
