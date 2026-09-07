@@ -9,7 +9,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "api/**/*.test.js"],
     pool: "threads",
     // Real Supabase env values (dummy, see .env.test) come from that
     // file, loaded automatically by Vite for mode "test" -- confirmed

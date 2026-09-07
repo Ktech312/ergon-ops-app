@@ -7,6 +7,7 @@ import { sendEmail } from "./_lib/mailer.js";
 import { requireAuth } from "./_lib/requireAuth.js";
 import { requireRole } from "./_lib/requireRole.js";
 import { isAllowedAppUrl } from "./_lib/validateUrl.js";
+import { checkRateLimit } from "./_lib/rateLimit.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -20,6 +21,10 @@ export default async function handler(req, res) {
   // Inviting someone creates their access to this app -- admin-only,
   // same trust level as the rest of Admin's user-management actions.
   if (!(await requireRole(req, res, user, []))) {
+    return;
+  }
+  if (!checkRateLimit(`invite-email:${user.id}`, 20, 60_000)) {
+    res.status(429).json({ sent: false, error: "Too many invites sent -- please slow down." });
     return;
   }
 

@@ -3,6 +3,7 @@ import formidable from "formidable";
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import { requireAuth } from "./_lib/requireAuth.js";
 import { requireRole } from "./_lib/requireRole.js";
+import { checkRateLimit } from "./_lib/rateLimit.js";
 
 export const config = {
   api: {
@@ -370,7 +371,24 @@ export default async function handler(req, res) {
   // see HANDOFF.md #61 -- so this is dormant cost risk, not live, but
   // worth closing before that key is ever added) -- restricted to the
   // roles that actually work sales quotes.
+  //
+  // Security review, 2026-09-07: the user-provided "recommended default"
+  // for this route is sales/manager/admin only (no pm) -- deliberately
+  // NOT applied as-is here. The upload button lives on the Projects
+  // detail page ("Build Sales BOM and Scope"), which pm has in its
+  // default tab set and sales does NOT -- pm is the role that actually
+  // encounters this button in normal use today, and cutting it off
+  // would break a currently-working flow with no UI change to match
+  // ("Preserve existing working UI behavior" was also explicit). Kept
+  // pm here and flagged this exact tension in HANDOFF.md's Questions/
+  // Decisions Needed rather than silently picking one instruction over
+  // the other -- revert to ["sales","manager"] there if the literal
+  // recommended default was actually intended despite the UI mismatch.
   if (!(await requireRole(req, res, user, ["sales", "pm", "manager"]))) {
+    return;
+  }
+  if (!checkRateLimit(`quote-extract:${user.id}`, 10, 60_000)) {
+    res.status(429).json({ error: "Too many extraction requests -- please slow down." });
     return;
   }
 

@@ -18,44 +18,108 @@
 // (VITE_SUPABASE_URL is already set for the client build and is reused
 // here as-is -- Vercel serverless functions can read any project env var
 // regardless of its VITE_ prefix.)
+//
+// Security review, 2026-09-06 -- the most serious finding in that audit.
+// This route used the service-role key to bypass RLS and push to ANY
+// user's real device, with no check on `userId` beyond "truthy": any
+// signed-in account (including a brand-new, not-yet-approved one) could
+// push fabricated title/body to any real teammate's phone.
+//
+// Security review, 2026-09-07 -- closed the deeper gap: even after
+// requiring a real recipient, the caller still supplied `title`/`body`/
+// `url` directly, and for a DM push specifically, chose who to notify
+// (a client-side lookup, never verified server-side). Now there are two
+// modes, both of which derive the recipient and content from stored
+// data instead of trusting the request body for either:
+//
+//   1. `{ directMessageId }` -- a real direct-message push. The message
+//      row is read with the CALLER'S OWN access token (direct_messages'
+//      own RLS -- migration 094 -- only lets a participant read it at
+//      all), confirmed `sender_id === caller`, and the conversation's
+//      OTHER participant becomes the recipient. The caller cannot name
+//      an arbitrary recipient this way even in principle -- it's always
+//      whoever is actually the other side of that specific message's
+//      conversation.
+//   2. `{ notificationId }` -- every other event type (task assigned,
+//      mentioned, status changes, ...), routed through main.tsx's
+//      notify()/createNotification() same as before. See
+//      api/_lib/notificationLookup.js for why this reads the recipient/
+//      title/body from the already-created `notifications` row via the
+//      service-role key rather than trusting a second, independently
+//      supplied payload in the same request.
 
 import webpush from "web-push";
 import { requireAuth } from "./_lib/requireAuth.js";
 import { isAllowedAppUrl } from "./_lib/validateUrl.js";
+import { loadNotificationById, hasExistingDelivery } from "./_lib/notificationLookup.js";
+import { checkRateLimit } from "./_lib/rateLimit.js";
 
-// Security review, 2026-09-06 -- the most serious finding in this
-// audit. This route uses the Supabase SERVICE-ROLE key to bypass RLS
-// and push to ANY user's real device, and had no check on `userId` at
-// all beyond "truthy" -- any signed-in account (including a brand-new,
-// not-yet-approved one) could push fabricated title/body to any real
-// teammate's phone. Fixed to require the target actually be a real
-// signed-in Ergon user (app_known_users, checked with the CALLER'S OWN
-// token so this validation step never uses elevated access), and caps
-// content length. This still trusts "any real Ergon teammate can
-// notify any other" the same way DMs/@mentions already do -- it closes
-// the "arbitrary/fabricated recipient" hole, not internal messaging
-// itself. See HANDOFF.md's Questions/Decisions Needed for the tighter
-// "only through a validated application event" alternative if E wants
-// that instead.
-async function isKnownErgonUserId(userId, accessToken) {
-  const supabaseUrl = (process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
-    return false;
-  }
+async function userIdForKnownEmail(email, supabaseUrl, serviceRoleKey) {
   try {
     const response = await fetch(
-      `${supabaseUrl}/rest/v1/app_known_users?user_id=eq.${encodeURIComponent(userId)}&select=user_id`,
-      { headers: { apikey: anonKey, authorization: `Bearer ${accessToken}` } },
+      `${supabaseUrl.replace(/\/$/, "")}/rest/v1/app_known_users?email=ilike.${encodeURIComponent(email)}&select=user_id`,
+      { headers: { apikey: serviceRoleKey, authorization: `Bearer ${serviceRoleKey}` } },
     );
     if (!response.ok) {
-      return false;
+      return null;
     }
     const rows = await response.json();
-    return rows.length > 0;
+    return rows[0]?.user_id || null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+// Resolves a real direct-message push: verifies the caller is the
+// message's own recorded sender using their own token (never elevated
+// access for this identity check), then derives the recipient from the
+// conversation's other participant. Returns null (with the response
+// already written) on any failure.
+async function resolveDirectMessagePush(req, res, user, directMessageId, supabaseUrl, anonKey) {
+  const authHeader = req.headers.authorization || "";
+  const callerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const headers = { apikey: anonKey, authorization: `Bearer ${callerToken}` };
+
+  const messageResponse = await fetch(
+    `${supabaseUrl.replace(/\/$/, "")}/rest/v1/direct_messages?id=eq.${encodeURIComponent(directMessageId)}&select=id,conversation_id,sender_id,body,attachment_file_name`,
+    { headers },
+  );
+  if (!messageResponse.ok) {
+    res.status(502).json({ sent: false, error: "Could not look up that message." });
+    return null;
+  }
+  const messageRows = await messageResponse.json();
+  const message = messageRows[0];
+  if (!message) {
+    // Either it doesn't exist, or RLS hid it because the caller isn't a
+    // participant -- either way, nothing to notify from.
+    res.status(404).json({ sent: false, error: "That message doesn't exist." });
+    return null;
+  }
+  if (message.sender_id !== user.id) {
+    res.status(403).json({ sent: false, error: "You can only trigger a push for a message you sent." });
+    return null;
+  }
+
+  const conversationResponse = await fetch(
+    `${supabaseUrl.replace(/\/$/, "")}/rest/v1/conversations?id=eq.${encodeURIComponent(message.conversation_id)}&select=participant_a_id,participant_b_id`,
+    { headers },
+  );
+  if (!conversationResponse.ok) {
+    res.status(502).json({ sent: false, error: "Could not look up that conversation." });
+    return null;
+  }
+  const conversationRows = await conversationResponse.json();
+  const conversation = conversationRows[0];
+  if (!conversation) {
+    res.status(404).json({ sent: false, error: "That conversation doesn't exist." });
+    return null;
+  }
+  const recipientId = conversation.participant_a_id === user.id ? conversation.participant_b_id : conversation.participant_a_id;
+
+  const title = `New message from ${user.email || "a teammate"}`;
+  const body = (message.body || (message.attachment_file_name ? `Sent a file: ${message.attachment_file_name}` : "")).slice(0, 200);
+  return { recipientId, title, body, url: "/#messages" };
 }
 
 export default async function handler(req, res) {
@@ -67,34 +131,24 @@ export default async function handler(req, res) {
   if (!user) {
     return;
   }
+  if (!checkRateLimit(`push:${user.id}`, 40, 60_000)) {
+    res.status(429).json({ sent: false, error: "Too many push notifications sent -- please slow down." });
+    return;
+  }
 
-  const { userId, title, body, url } = req.body || {};
-
-  if (!userId || !title) {
-    res.status(400).json({ sent: false, error: "userId and title are required." });
-    return;
-  }
-  if (typeof title !== "string" || title.length > 200 || (typeof body === "string" && body.length > 2000)) {
-    res.status(400).json({ sent: false, error: "title or body is too long." });
-    return;
-  }
-  if (url && !isAllowedAppUrl(typeof url === "string" && url.startsWith("/") ? `https://${req.headers.host}${url}` : url)) {
-    res.status(400).json({ sent: false, error: "url must point back to this app." });
-    return;
-  }
-  const authHeader = req.headers.authorization || "";
-  const callerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-  if (!(await isKnownErgonUserId(userId, callerToken))) {
-    res.status(403).json({ sent: false, error: "That user isn't a real signed-in Ergon account." });
+  const { directMessageId, notificationId, url: rawUrl } = req.body || {};
+  if (!directMessageId && !notificationId) {
+    res.status(400).json({ sent: false, error: "directMessageId or notificationId is required." });
     return;
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
   const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
 
-  if (!supabaseUrl || !serviceRoleKey || !vapidPublicKey || !vapidPrivateKey) {
+  if (!supabaseUrl || !anonKey || !serviceRoleKey || !vapidPublicKey || !vapidPrivateKey) {
     res.status(200).json({
       sent: false,
       reason: "Push delivery isn't configured yet (VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY/SUPABASE_SERVICE_ROLE_KEY not all set in Vercel), so nothing was sent.",
@@ -102,11 +156,79 @@ export default async function handler(req, res) {
     return;
   }
 
+  let recipientId;
+  let title;
+  let body;
+  let url;
+
+  if (directMessageId) {
+    if (typeof directMessageId !== "string") {
+      res.status(400).json({ sent: false, error: "directMessageId must be a string." });
+      return;
+    }
+    const resolved = await resolveDirectMessagePush(req, res, user, directMessageId, supabaseUrl, anonKey);
+    if (!resolved) {
+      return; // response already written
+    }
+    // No replay-guard lookup here (unlike the notificationId path below):
+    // a direct message has no corresponding `notifications.id` to key a
+    // notification_deliveries check on (that table's related_entity_id
+    // for this event stores the conversation, not the message, and
+    // notification_deliveries.notification_id has a real FK to
+    // notifications.id -- there's nothing valid to check against). Each
+    // real message send legitimately warrants exactly one push; the
+    // per-caller rate limit above is this path's actual abuse guard.
+    ({ recipientId, title, body, url } = resolved);
+  } else {
+    if (typeof notificationId !== "string") {
+      res.status(400).json({ sent: false, error: "notificationId must be a string." });
+      return;
+    }
+    const notification = await loadNotificationById(notificationId, supabaseUrl, serviceRoleKey);
+    if (!notification) {
+      res.status(404).json({ sent: false, error: "That notification doesn't exist." });
+      return;
+    }
+    if (typeof notification.title !== "string" || notification.title.length > 200 || (typeof notification.body === "string" && notification.body.length > 2000)) {
+      res.status(400).json({ sent: false, error: "That notification's title or body is too long to push." });
+      return;
+    }
+    if (await hasExistingDelivery(notificationId, "push", supabaseUrl, serviceRoleKey)) {
+      res.status(200).json({ sent: false, reason: "Already delivered." });
+      return;
+    }
+    const knownRecipientId = await userIdForKnownEmail(notification.recipient_email, supabaseUrl, serviceRoleKey);
+    if (!knownRecipientId) {
+      res.status(200).json({ sent: false, reason: "Recipient has never signed into Ergon -- no push subscription possible." });
+      return;
+    }
+    recipientId = knownRecipientId;
+    title = notification.title;
+    body = notification.body || "";
+    url =
+      notification.related_entity_type === "task"
+        ? "/#tasks"
+        : notification.related_entity_type === "channel_message" || notification.related_entity_type === "canvas" || notification.related_entity_type === "conversation"
+          ? "/#messages"
+          : "/#dashboard";
+  }
+
+  // rawUrl is accepted but only ever used as an already-validated
+  // fallback -- both derivation paths above always produce a safe,
+  // in-app url, so this is really just belt-and-suspenders against a
+  // future code path that forgets to set one, not something a caller
+  // can steer.
+  if (!url && rawUrl) {
+    const absolute = typeof rawUrl === "string" && rawUrl.startsWith("/") ? `https://${req.headers.host}${rawUrl}` : rawUrl;
+    url = isAllowedAppUrl(absolute) ? rawUrl : "/dashboard";
+  }
+  url = url || "/dashboard";
+
   webpush.setVapidDetails("mailto:support@ensight-technologies.com", vapidPublicKey, vapidPrivateKey);
 
   try {
     const lookupResponse = await fetch(
-      `${supabaseUrl.replace(/\/$/, "")}/rest/v1/push_subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=id,endpoint,p256dh,auth_key`,
+      `${supabaseUrl.replace(/\/$/, "")}/rest/v1/push_subscriptions?user_id=eq.${encodeURIComponent(recipientId)}&select=id,endpoint,p256dh,auth_key`,
       { headers: { apikey: serviceRoleKey, authorization: `Bearer ${serviceRoleKey}` } },
     );
     if (!lookupResponse.ok) {
@@ -119,7 +241,7 @@ export default async function handler(req, res) {
       return;
     }
 
-    const payload = JSON.stringify({ title, body: body || "", url: url || "/" });
+    const payload = JSON.stringify({ title, body: body || "", url });
     let sentCount = 0;
     const deadSubscriptionIds = [];
     // Delivery-test finding, 2026-09-07: this used to only record 404/410

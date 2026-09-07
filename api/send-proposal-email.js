@@ -5,41 +5,98 @@
 
 import { sendEmail } from "./_lib/mailer.js";
 import { requireAuth } from "./_lib/requireAuth.js";
+import { requireRole } from "./_lib/requireRole.js";
 import { isAllowedAppUrl } from "./_lib/validateUrl.js";
+import { checkRateLimit } from "./_lib/rateLimit.js";
 
+// Security review, 2026-09-07 -- this had no role check at all (any
+// signed-in user, any role) and trusted clientEmail/clientName/siteName/
+// quoteRef exactly as sent, independent of the real sales_quote_proposals
+// row the client had just created moments earlier. Sales quotes/
+// proposals have no per-user "assigned to" field to check against
+// (sales_quotes' own RLS is deliberately open to any authenticated user
+// -- "no single role owns this workflow," see migration 033's comment)
+// -- so "roles permitted to manage the related sales quote" is enforced
+// as the roles that actually work quotes day to day (sales/pm/manager),
+// same set sales-quote-extract already used. clientName/clientEmail/
+// siteName/quoteRef now come from the proposal row itself (via the
+// caller's own token -- proposals are readable by any authenticated
+// user, same open-workflow trust boundary as quotes) instead of a
+// second, independently supplied payload -- shareUrl is still validated
+// separately since it legitimately isn't stored plainly anywhere to
+// re-derive from.
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST to send a proposal email." });
     return;
   }
-  if (!(await requireAuth(req, res))) {
+  const user = await requireAuth(req, res);
+  if (!user) {
+    return;
+  }
+  if (!(await requireRole(req, res, user, ["sales", "pm", "manager"]))) {
+    return;
+  }
+  if (!checkRateLimit(`proposal-email:${user.id}`, 20, 60_000)) {
+    res.status(429).json({ sent: false, error: "Too many proposal emails sent -- please slow down." });
     return;
   }
 
-  const { clientEmail, clientName, siteName, quoteRef, shareUrl } = req.body || {};
-
-  if (!clientEmail || !shareUrl) {
-    res.status(400).json({ sent: false, error: "clientEmail and shareUrl are required." });
+  const { proposalId, shareUrl } = req.body || {};
+  if (!proposalId || typeof proposalId !== "string" || !shareUrl) {
+    res.status(400).json({ sent: false, error: "proposalId and shareUrl are required." });
     return;
   }
-  // Security review, 2026-09-06: this legitimately emails an arbitrary
-  // external client address (that's the feature) -- shareUrl is the
-  // real risk, since an attacker-controlled link would ride on this
-  // app's own trusted sender identity straight into a real client's
-  // inbox.
   if (!isAllowedAppUrl(shareUrl)) {
     res.status(400).json({ sent: false, error: "shareUrl must point back to this app." });
     return;
   }
 
-  const subjectSite = siteName || "your project";
+  const supabaseUrl = (process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    res.status(200).json({ sent: false, reason: "Not configured." });
+    return;
+  }
+  const authHeader = req.headers.authorization || "";
+  const callerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+
+  let proposal;
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/sales_quote_proposals?id=eq.${encodeURIComponent(proposalId)}&select=quote_id,client_name,client_email,content_snapshot`,
+      { headers: { apikey: anonKey, authorization: `Bearer ${callerToken}` } },
+    );
+    if (!response.ok) {
+      res.status(502).json({ sent: false, error: "Could not look up that proposal." });
+      return;
+    }
+    const rows = await response.json();
+    proposal = rows[0];
+  } catch {
+    res.status(502).json({ sent: false, error: "Could not look up that proposal." });
+    return;
+  }
+  if (!proposal) {
+    res.status(404).json({ sent: false, error: "That proposal doesn't exist." });
+    return;
+  }
+  if (!proposal.client_email) {
+    res.status(400).json({ sent: false, error: "That proposal has no client email on file." });
+    return;
+  }
+
+  const clientEmail = proposal.client_email;
+  const clientName = proposal.client_name || "there";
+  const siteName = proposal.content_snapshot?.siteName || "your project";
+  const quoteRef = proposal.quote_id ? proposal.quote_id.slice(0, 8).toUpperCase() : "";
 
   const result = await sendEmail({
     to: clientEmail,
-    subject: `Proposal for ${subjectSite}${quoteRef ? ` (${quoteRef})` : ""}`,
+    subject: `Proposal for ${siteName}${quoteRef ? ` (${quoteRef})` : ""}`,
     html: `
-      <p>Hi ${clientName || "there"},</p>
-      <p>Please review your proposal for <strong>${subjectSite}</strong>${quoteRef ? ` (${quoteRef})` : ""}.</p>
+      <p>Hi ${clientName},</p>
+      <p>Please review your proposal for <strong>${siteName}</strong>${quoteRef ? ` (${quoteRef})` : ""}.</p>
       <p><a href="${shareUrl}">Review and respond to the proposal</a></p>
       <p>Thanks,<br/>Ergon Ops</p>
     `,

@@ -2563,7 +2563,12 @@ function App() {
       const partnerEmail = partnerId ? knownUsers.find((user) => user.userId === partnerId)?.email : undefined;
       if (partnerEmail) {
         const notifyBody = body.trim() || (attachment ? `Sent a file: ${attachment.fileName}` : "");
-        void notify("direct_message_received", partnerEmail, `New message from ${authSession.email}`, notifyBody.slice(0, 200), "conversation", activeConversationId);
+        // directMessageId (the real message row just created) is what
+        // lets /api/send-push independently verify the caller is this
+        // message's actual sender and derive the recipient from the
+        // conversation itself, instead of trusting partnerEmail here --
+        // see notify()'s own comment and api/send-push.js.
+        void notify("direct_message_received", partnerEmail, `New message from ${authSession.email}`, notifyBody.slice(0, 200), "conversation", activeConversationId, undefined, message.id);
       }
     } catch (error) {
       setMessagesStatus(error instanceof Error ? error.message : "Could not send message.");
@@ -4675,7 +4680,20 @@ function App() {
     return Boolean(rule?.isActive && rule.channels.includes(channel));
   }
 
-  async function notify(eventType: string, recipientEmail: string, title: string, body: string, relatedEntityType: string, relatedEntityId: string, dedupeKey?: string) {
+  // Security review, 2026-09-07: the three delivery routes below used to
+  // receive the recipient/title/body/slackUserId directly from this
+  // function -- a second, independently-trusted payload alongside
+  // whatever createNotification() had just written to the `notifications`
+  // table for the same event. Now they take only `notificationId` and
+  // load the recipient/content themselves (service-role key, since the
+  // caller usually isn't that notification's own recipient and can't
+  // read it back with their own token) -- see
+  // api/_lib/notificationLookup.js. `directMessageId` is the one
+  // exception: a real DM push derives its recipient from the message's
+  // own conversation, verified against the caller's own token, and never
+  // goes through the notificationId path at all -- see
+  // handleSendDirectMessage below and api/send-push.js.
+  async function notify(eventType: string, recipientEmail: string, title: string, body: string, relatedEntityType: string, relatedEntityId: string, dedupeKey?: string, directMessageId?: string) {
     if (!authSession || !recipientEmail) {
       return;
     }
@@ -4701,7 +4719,7 @@ function App() {
         const response = await fetch("/api/send-notification-email", {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({ to: recipientEmail, subject: title, body, companyName: branding.companyName }),
+          body: JSON.stringify({ notificationId: created.id }),
         });
         const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
         await recordNotificationDelivery(created.id, "email", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
@@ -4711,16 +4729,10 @@ function App() {
     }
     if (slackActive) {
       try {
-        // Per-person Slack DM groundwork (E: "as close as possible without
-        // linking the account yet") -- team_members.slack_user_id, when an
-        // admin has filled it in, resolves to a real recipient here. The
-        // endpoint prefers a bot-token DM to this ID, and only falls back
-        // to the older single-channel webhook if no bot token is set.
-        const slackUserId = teamMembers.find((member) => member.email.toLowerCase() === recipientEmail.toLowerCase())?.slackUserId || undefined;
         const response = await fetch("/api/send-notification-slack", {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({ title, body, slackUserId }),
+          body: JSON.stringify({ notificationId: created.id }),
         });
         const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
         await recordNotificationDelivery(created.id, "slack", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
@@ -4729,25 +4741,16 @@ function App() {
       }
     }
     if (pushActive) {
-      // Push needs a real auth.users id, not an email -- resolve it from
-      // the known-users directory (migration 094/095). No entry means
-      // this person has never signed in, so there's nothing to push to;
-      // skip quietly rather than logging a confusing "failed" delivery.
-      const recipientUserId = knownUsers.find((user) => user.email.toLowerCase() === recipientEmail.toLowerCase())?.userId;
-      if (!recipientUserId) {
-        await recordNotificationDelivery(created.id, "push", "skipped", "Recipient has never signed into Ergon -- no push subscription possible.", authSession.accessToken).catch(() => {});
-      } else {
-        try {
-          const response = await fetch("/api/send-push", {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-            body: JSON.stringify({ userId: recipientUserId, title, body, url: relatedEntityType === "task" ? "#tasks" : "#dashboard" }),
-          });
-          const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
-          await recordNotificationDelivery(created.id, "push", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
-        } catch (error) {
-          await recordNotificationDelivery(created.id, "push", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
-        }
+      try {
+        const response = await fetch("/api/send-push", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
+          body: JSON.stringify(directMessageId ? { directMessageId } : { notificationId: created.id }),
+        });
+        const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
+        await recordNotificationDelivery(created.id, "push", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
+      } catch (error) {
+        await recordNotificationDelivery(created.id, "push", "failed", error instanceof Error ? error.message : "Unknown error", authSession.accessToken).catch(() => {});
       }
     }
   }
@@ -5187,7 +5190,7 @@ function App() {
         const emailResponse = await fetch("/api/send-submittal-email", {
           method: "POST",
           headers: { "Content-Type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({ clientEmail, clientName, projectName: project.name, projectRef: project.ref, shareUrl }),
+          body: JSON.stringify({ submittalId: created.id, shareUrl }),
         });
         const emailResult = (await emailResponse.json()) as { sent: boolean; reason?: string; error?: string };
         if (emailResult.sent) {
@@ -5274,13 +5277,7 @@ function App() {
         const emailResponse = await fetch("/api/send-proposal-email", {
           method: "POST",
           headers: { "Content-Type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({
-            clientEmail: quote.clientEmail,
-            clientName: quote.clientName,
-            siteName: quote.siteName,
-            quoteRef: snapshot.quoteRef,
-            shareUrl,
-          }),
+          body: JSON.stringify({ proposalId: created.id, shareUrl }),
         });
         const emailResult = (await emailResponse.json()) as { sent: boolean; reason?: string; error?: string };
         if (emailResult.sent) {

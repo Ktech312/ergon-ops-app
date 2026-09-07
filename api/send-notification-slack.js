@@ -4,10 +4,9 @@
 //
 //   1. Per-person Slack DM (preferred, when configured) -- uses a real
 //      Slack Bot Token to post directly to one person's Slack DM via
-//      chat.postMessage. Needs the caller to resolve the recipient's
-//      Slack member ID first (team_members.slack_user_id, migration 099)
-//      and send it as `slackUserId`; the client does this by matching
-//      recipientEmail against the already-loaded team_members list.
+//      chat.postMessage. The recipient's Slack member ID
+//      (team_members.slack_user_id, migration 099) is resolved here from
+//      the notification's own recipient_email, not supplied by the caller.
 //   2. Shared-channel webhook (fallback, original behavior) -- posts a
 //      plain { text } payload to one fixed channel. Used when there's no
 //      bot token yet, or the recipient has no Slack ID on file.
@@ -25,31 +24,35 @@
 //   SLACK_WEBHOOK_URL - an incoming webhook URL from Slack or Teams
 
 import { requireAuth } from "./_lib/requireAuth.js";
+import { loadNotificationById, hasExistingDelivery } from "./_lib/notificationLookup.js";
+import { checkRateLimit } from "./_lib/rateLimit.js";
 
 // Security review, 2026-09-06 -- `slackUserId` used to go straight to
 // Slack's chat.postMessage `channel` param with no check at all: any
 // signed-in user could DM (or post into) any Slack channel/user the
 // bot can reach, with arbitrary content, not just a real Ergon
-// teammate's own DM. Now it must match a real team_members.slack_user_id
-// on file (migration 099), queried with the caller's own access token.
-async function isKnownSlackId(slackUserId, accessToken) {
-  const supabaseUrl = (process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
-    return false;
-  }
+// teammate's own DM.
+//
+// Security review, 2026-09-07 -- even after requiring a known Slack ID,
+// `title`/`body` were still whatever the caller sent, independent of
+// what was actually recorded in `notifications` for the same event, and
+// the caller chose which Slack ID to target. Now takes only a
+// `notificationId`: the recipient (and therefore their Slack ID) and the
+// message content both come from that already-created row via the
+// service-role key -- see api/_lib/notificationLookup.js.
+async function slackUserIdForEmail(email, supabaseUrl, serviceRoleKey) {
   try {
     const response = await fetch(
-      `${supabaseUrl}/rest/v1/team_members?slack_user_id=eq.${encodeURIComponent(slackUserId)}&select=id`,
-      { headers: { apikey: anonKey, authorization: `Bearer ${accessToken}` } },
+      `${supabaseUrl.replace(/\/$/, "")}/rest/v1/team_members?email=ilike.${encodeURIComponent(email)}&select=slack_user_id`,
+      { headers: { apikey: serviceRoleKey, authorization: `Bearer ${serviceRoleKey}` } },
     );
     if (!response.ok) {
-      return false;
+      return null;
     }
     const rows = await response.json();
-    return rows.length > 0;
+    return rows[0]?.slack_user_id || null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -62,28 +65,44 @@ export default async function handler(req, res) {
   if (!user) {
     return;
   }
-
-  const { title, body, slackUserId } = req.body || {};
-
-  if (!title || typeof title !== "string" || title.length > 300) {
-    res.status(400).json({ sent: false, error: "title is required and must be reasonably short." });
-    return;
-  }
-  if (typeof body === "string" && body.length > 10000) {
-    res.status(400).json({ sent: false, error: "body is too long." });
+  if (!checkRateLimit(`notification-slack:${user.id}`, 30, 60_000)) {
+    res.status(429).json({ sent: false, error: "Too many Slack notifications sent -- please slow down." });
     return;
   }
 
+  const { notificationId } = req.body || {};
+  if (!notificationId || typeof notificationId !== "string") {
+    res.status(400).json({ sent: false, error: "notificationId is required." });
+    return;
+  }
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
+    res.status(200).json({ sent: false, reason: "Slack/Teams delivery isn't fully configured yet." });
+    return;
+  }
+
+  const notification = await loadNotificationById(notificationId, supabaseUrl, serviceRoleKey);
+  if (!notification) {
+    res.status(404).json({ sent: false, error: "That notification doesn't exist." });
+    return;
+  }
+  if (typeof notification.title !== "string" || notification.title.length > 300 || (typeof notification.body === "string" && notification.body.length > 10000)) {
+    res.status(400).json({ sent: false, error: "That notification's title or body is too long to post." });
+    return;
+  }
+  if (await hasExistingDelivery(notificationId, "slack", supabaseUrl, serviceRoleKey)) {
+    res.status(200).json({ sent: false, reason: "Already delivered." });
+    return;
+  }
+
+  const { title, body } = notification;
   const botToken = process.env.SLACK_BOT_TOKEN;
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+  const slackUserId = botToken ? await slackUserIdForEmail(notification.recipient_email, supabaseUrl, serviceRoleKey) : null;
 
   if (botToken && slackUserId) {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-    if (!(await isKnownSlackId(slackUserId, token))) {
-      res.status(403).json({ sent: false, error: "That Slack ID isn't on file for a real Ergon teammate." });
-      return;
-    }
     try {
       const response = await fetch("https://slack.com/api/chat.postMessage", {
         method: "POST",
