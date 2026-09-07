@@ -239,7 +239,7 @@ E's stated direction, from an overnight planning conversation (research → clar
 
 ## Recent work log (most recent first — 2026-09-07)
 
-- **(pending commit) Server-side authorization hardening for every outbound notification/communication route -- a deeper pass than 2026-09-06's, closing gaps that pass explicitly left open.** E: "Authentication alone is insufficient. Enforce appropriate permissions server-side," with explicit recommended defaults and a required test matrix. Full permission matrix, what changed, and why:
+- **(`e890698`) Server-side authorization hardening for every outbound notification/communication route -- a deeper pass than 2026-09-06's, closing gaps that pass explicitly left open.** E: "Authentication alone is insufficient. Enforce appropriate permissions server-side," with explicit recommended defaults and a required test matrix. Full permission matrix, what changed, and why:
 
   | Route | Before this pass | After this pass |
   |---|---|---|
