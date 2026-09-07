@@ -241,7 +241,7 @@ E's stated direction, from an overnight planning conversation (research → clar
 
 ## Recent work log (most recent first — 2026-09-08)
 
-- **(pending commit) DM push deep-linking to the exact conversation (HANDOFF Questions/Decisions item 12).** E, after confirming migration 114's success: "move on to the next product improvement: make DM push notifications open the exact conversation instead of only opening the Messages hub... preserve authorization and deduplication."
+- **(`f0465de`) DM push deep-linking to the exact conversation (HANDOFF Questions/Decisions item 12).** E, after confirming migration 114's success: "move on to the next product improvement: make DM push notifications open the exact conversation instead of only opening the Messages hub... preserve authorization and deduplication."
 
   **What shipped**: a DM push's `url` is now `/#messages/<conversationId>` instead of the generic `/#messages`. Three small, minimal changes, no new infrastructure:
   - `api/_lib/directMessage.js` -- `resolveDirectMessage()` already loaded the real `direct_messages` row (to verify the caller is its real sender) and already had `conversation_id` in hand from that same query; it just wasn't being returned. Now it is (`conversationId` added to the success return shape).
