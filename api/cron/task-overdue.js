@@ -17,6 +17,10 @@
 
 const TASK_STATUS_LABEL_DONE = "done";
 
+// Every console.error below logs only the task id and an HTTP status/
+// error message -- never req.headers, the Authorization header, or
+// process.env.CRON_SECRET itself. Keep it that way if this function is
+// ever touched again.
 async function insertNotification(supabaseUrl, serviceRoleKey, row) {
   const response = await fetch(`${supabaseUrl}/rest/v1/notifications`, {
     method: "POST",
@@ -29,6 +33,12 @@ async function insertNotification(supabaseUrl, serviceRoleKey, row) {
     body: JSON.stringify(row),
   });
   if (!response.ok) {
+    // A per-task insert failure used to be silently dropped -- it just
+    // wasn't counted, with nothing in Vercel's function logs to explain
+    // why a given assignee never got their overdue notification. Now at
+    // least visible for whoever next checks the logs (task id + status
+    // only -- the row itself already excludes anything secret).
+    console.error(`[cron/task-overdue] Failed to insert notification for task ${row.related_entity_id}: HTTP ${response.status}`);
     return null;
   }
   const rows = await response.json();
@@ -39,6 +49,12 @@ export default async function handler(req, res) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization || "";
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    // Deliberately no console.error here: a missing/wrong secret is
+    // routine, expected traffic (a stray probe, or CRON_SECRET simply
+    // not configured yet) -- logging every rejected attempt would be
+    // noise, not signal, and there is no safe way to log "what was sent"
+    // without risking the secret itself ending up in the log. The 401
+    // response is the correct, sufficient signal for this case.
     res.status(401).json({ error: "Unauthorized." });
     return;
   }
@@ -46,6 +62,7 @@ export default async function handler(req, res) {
   const supabaseUrl = (process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceRoleKey) {
+    console.error("[cron/task-overdue] Not configured -- VITE_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.");
     res.status(200).json({ created: 0, reason: "Not configured." });
     return;
   }
@@ -60,11 +77,13 @@ export default async function handler(req, res) {
       { headers },
     );
     if (!response.ok) {
+      console.error(`[cron/task-overdue] Could not load overdue tasks: HTTP ${response.status}`);
       res.status(502).json({ error: "Could not load overdue tasks." });
       return;
     }
     tasks = await response.json();
   } catch (error) {
+    console.error("[cron/task-overdue] Could not load overdue tasks:", error instanceof Error ? error.message : error);
     res.status(500).json({ error: error instanceof Error ? error.message : "Could not load overdue tasks." });
     return;
   }
@@ -85,5 +104,9 @@ export default async function handler(req, res) {
     }
   }
 
+  // One clean summary line per real run -- the only way to confirm from
+  // Vercel's logs alone (without opening Supabase) that a given day's
+  // cron actually scanned what it should have.
+  console.log(`[cron/task-overdue] scanned=${tasks.length} created=${created}`);
   res.status(200).json({ scanned: tasks.length, created });
 }
