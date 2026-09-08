@@ -81,6 +81,46 @@ describe("send-proposal-email", () => {
     expect(call.html).not.toContain("SPOOFED");
   });
 
+  it("uses the real quote_ref from the proposal's own content_snapshot, not a fabricated one derived from quote_id", async () => {
+    global.fetch = vi.fn(routerFor({
+      roleKeys: ["sales"],
+      proposalRows: [{
+        quote_id: "11112222-3333-4444-5555-666677778888",
+        client_name: "Real Client",
+        client_email: "real-client@external.test",
+        content_snapshot: { siteName: "Real Site", quoteRef: "SQ-2026-0042" },
+      }],
+    }));
+    const res = createMockRes();
+    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    expect(res.statusCode).toBe(200);
+    const call = sendEmail.mock.calls[0][0];
+    expect(call.subject).toContain("SQ-2026-0042");
+    expect(call.html).toContain("SQ-2026-0042");
+    // The old, fixed 2026-09-08 bug fabricated a ref from quote_id.slice(0, 8).toUpperCase() --
+    // for this quote_id that would render as "11112222", which must never appear.
+    expect(call.subject).not.toContain("11112222");
+    expect(call.html).not.toContain("11112222");
+  });
+
+  it("omits the ref entirely (no parenthetical) when an older proposal's content_snapshot has no quoteRef", async () => {
+    global.fetch = vi.fn(routerFor({
+      roleKeys: ["sales"],
+      proposalRows: [{
+        quote_id: "11112222-3333-4444-5555-666677778888",
+        client_name: "Real Client",
+        client_email: "real-client@external.test",
+        content_snapshot: { siteName: "Real Site" },
+      }],
+    }));
+    const res = createMockRes();
+    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    expect(res.statusCode).toBe(200);
+    const call = sendEmail.mock.calls[0][0];
+    expect(call.subject).toBe("Proposal for Real Site");
+    expect(call.html).not.toContain("11112222");
+  });
+
   it("manager role is also authorized", async () => {
     global.fetch = vi.fn(routerFor({
       roleKeys: ["manager"],

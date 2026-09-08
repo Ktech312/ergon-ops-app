@@ -126,10 +126,8 @@ function buildBom(text) {
 
 export function extractQuoteData(text, sourceFile, projectRef = "") {
   const normalized = text.replace(/\r/g, "\n");
-  const lower = normalized.toLowerCase();
-  const isEmeraldQueen = lower.includes("emerald queen");
   const projectTitle = clean(normalized.split("\n").find((line) => line.trim().length > 8) ?? "New Sales Quote Project");
-  const client = isEmeraldQueen ? "Emerald Queen Casino & Hotel" : preparedFor(normalized, "Client from sales quote");
+  const client = preparedFor(normalized, "Client from sales quote");
   const hardwareTotal = moneyValue(normalized, [/System Hardware and Technology Investment Total\s+(\$[\d,]+\.\d{2})/i]);
   const sssaTotal = moneyValue(normalized, [/Annual Software and Support Services Agreement \(SSSA\) Total:\s*(\$[\d,]+\.\d{2})/i]);
   const bom = buildBom(normalized);
@@ -148,8 +146,8 @@ export function extractQuoteData(text, sourceFile, projectRef = "") {
   const assumptions = sectionBetween(normalized, /Assumptions:/i, [/Exclusions:/i, /Warranty/i]);
   const exclusions = sectionBetween(normalized, /Exclusions:/i, [/Warranty/i, /Payment Terms/i, /--\s*\d+\s+of/i]);
 
-  const name = isEmeraldQueen ? "Emerald Queen Tacoma - New Garage" : projectTitle;
-  const address = isEmeraldQueen ? "Tacoma, WA - new parking garage" : "Client location TBD";
+  const name = projectTitle;
+  const address = "Client location TBD";
   const summary = firstMatch(
     normalized,
     [/Executive Summary\s+([\s\S]*?)Project Plan And Performance/i, /Executive Summary\s+([\s\S]*?)Base Bid Included/i],
@@ -157,7 +155,7 @@ export function extractQuoteData(text, sourceFile, projectRef = "") {
   );
 
   return {
-    confidence: isEmeraldQueen ? "high" : "draft",
+    confidence: "draft",
     mode: "pdf-text-rules",
     project: {
       ref: projectRef,
@@ -168,9 +166,7 @@ export function extractQuoteData(text, sourceFile, projectRef = "") {
       owner: "Projects / Implementation",
       status: "Planning",
       due: "TBD",
-      package: isEmeraldQueen
-        ? "Occupancy management, guidance signage, LPR, level counting, portal, and support services"
-        : "Sales quote imported for PM review",
+      package: "Sales quote imported for PM review",
       cameras: cameraQty,
       allocated: hardwareTotal + sssaTotal,
       siteNotes: `Extracted from ${sourceFile}. ${cameraQty} camera-related units and ${matrixSignQty} matrix signs detected. Review all fields before creating purchase requests.`,

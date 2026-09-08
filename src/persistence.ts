@@ -21,6 +21,26 @@ export type AuthSession = {
   authFlow?: string;
 };
 
+// Client-side "PRJ-<year>-####" reference generator for the manual "add
+// blank project" flow (main.tsx's nextProjectRef -- no server-side trigger
+// or counter table backs this one, unlike sales_quotes.quote_ref). Fixed
+// 2026-09-08: previously hardcoded the literal year 2026 in both the match
+// pattern and the generated prefix, so it would have kept minting
+// "PRJ-2026-####" refs forever after the calendar actually rolled over to
+// 2027, instead of starting a fresh 0001 sequence for the new year the way
+// the server-side quote_ref counter already does (migration 066's
+// assign_sales_quote_ref(), keyed by extract(year from now())). Pulled out
+// as a pure, exported function specifically so the year-boundary behavior
+// is unit-testable without needing to render the Projects component.
+export function computeNextProjectRef(existingRefs: string[], year: number): string {
+  const yearPattern = new RegExp(`^PRJ-${year}-(\\d+)$`);
+  const maxRef = existingRefs.reduce((currentMax, ref) => {
+    const match = ref.match(yearPattern);
+    return match ? Math.max(currentMax, Number(match[1])) : currentMax;
+  }, 0);
+  return `PRJ-${year}-${String(maxRef + 1).padStart(4, "0")}`;
+}
+
 const LOCAL_STATE_KEY = "ergon:app-state:v1";
 const AUTH_SESSION_KEY = "ergon:auth-session:v1";
 const WORKSPACE_KEY = "default";

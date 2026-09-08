@@ -89,7 +89,14 @@ export default async function handler(req, res) {
   const clientEmail = proposal.client_email;
   const clientName = proposal.client_name || "there";
   const siteName = proposal.content_snapshot?.siteName || "your project";
-  const quoteRef = proposal.quote_id ? proposal.quote_id.slice(0, 8).toUpperCase() : "";
+  // The real quote_ref (e.g. "SQ-2026-0001"), read from this proposal's own
+  // frozen content_snapshot rather than re-derived from quote_id -- fixed
+  // 2026-09-08, previously fabricated a fake ref from quote_id.slice(0, 8).
+  // Reading from the snapshot (instead of joining sales_quotes fresh) is
+  // deliberate: it always displays whatever ref that specific proposal was
+  // actually sent with, matching what the customer sees on the public
+  // proposal page, and never touches historical content_snapshot rows.
+  const quoteRef = proposal.content_snapshot?.quoteRef || "";
 
   const result = await sendEmail({
     to: clientEmail,

@@ -395,6 +395,7 @@ import {
   type PublicInviteView,
   type UserRoles,
   type UserStatus,
+  computeNextProjectRef,
 } from "./persistence";
 import { DataLoadErrorBanner } from "./components/DataLoadErrorBanner";
 import "./styles.css";
@@ -862,22 +863,31 @@ const blankSow: ScopeOfWork = {
   exclusions: "Tax, permits, major infrastructure work, and third-party rework are outside the base scope unless added.",
 };
 
-const emeraldQueenImportedProject: ProjectSite = {
-  ref: "PRJ-2026-0004",
-  name: "Emerald Queen Tacoma - New Garage",
-  client: "Emerald Queen Casino & Hotel",
+// Fictional sample-data fallback for local testing of the "Build Sales BOM
+// and Scope" PDF-import flow when the real /api/sales-quote-extract call
+// isn't available (e.g. no local dev API). Fixed 2026-09-08: this object
+// used to be seeded from a real Ensight customer proposal (real client
+// name, address, contact, and dollar figures) -- replaced with clearly
+// fictional content of the same shape so no real client data ships as
+// hard-coded source. Trigger mechanism, field shape, and call sites are
+// unchanged (see applySalesQuoteToCurrentProject / the "sample demo"
+// filename check below) -- only the data itself is fictional now.
+const sampleDemoImportedProject: ProjectSite = {
+  ref: "PRJ-0000-DEMO",
+  name: "Sample Demo Garage - New Construction",
+  client: "Sample Demo Client",
   type: "Parking Garage",
-  address: "Tacoma, WA - new construction parking garage",
-  owner: "Steven Oakes / Sales",
+  address: "123 Sample Street, Demo City, ST 00000",
+  owner: "Demo Sales Rep / Sales",
   status: "Planning",
   due: "TBD",
   package: "Total occupancy guidance system with full matrix signage",
   cameras: 11,
-  allocated: 307225,
-  salesQuoteFile: "EnSight - New Garage - Emerald Queen Tacoma Casino & Hotel - Parking Occupancy Management & Guidance Proposal - February 11th, 2026.pdf",
-  siteNotes: "Imported from sales proposal dated February 11, 2026. Includes occupancy management, guidance signage, LPR, level counting, and software/support scope.",
+  allocated: 250000,
+  salesQuoteFile: "EnSight - New Garage - Sample Demo Client - Parking Occupancy Management & Guidance Proposal - Sample Date.pdf",
+  siteNotes: "Fictional sample data for local testing of the PDF-import flow. Includes occupancy management, guidance signage, LPR, level counting, and software/support scope.",
   sow: {
-    summary: "Provide a parking occupancy management and guidance system for the new Emerald Queen parking garage with real-time occupancy/utilization data, entrance and interior full matrix signs, LPR at entrance/exit points, level counting cameras, and EnSightful portal reporting.",
+    summary: "Provide a parking occupancy management and guidance system for the new sample demo parking garage with real-time occupancy/utilization data, entrance and interior full matrix signs, LPR at entrance/exit points, level counting cameras, and EnSightful portal reporting.",
     preparation: "Agree on functional specification and use cases, then order equipment. Equipment is received at the EnSight office for programming and factory acceptance testing before installation scheduling.",
     infrastructure: "Cat6 conduit and cable paths are needed to each camera, sign, and onsite server. Signage requires 120VAC before installation. Client-provided network equipment is excluded from the base quote.",
     installation: "Client electrician/installation team installs the EnSight system. Proposal estimates approximately 4-6 weeks for a project of this size.",
@@ -899,114 +909,9 @@ const emeraldQueenImportedProject: ProjectSite = {
     { item: "On-site commissioning and go-live support", qty: 56, status: "Need Quote", requestSpeed: "Standard", notes: "40 commissioning hours plus 16 go-live support hours" },
     { item: "Travel and related expenses", qty: 1, status: "Need Quote", requestSpeed: "Standard" },
     { item: "Shipping", qty: 1, status: "Need Quote", requestSpeed: "Standard" },
-    { item: "Annual SSSA", qty: 1, status: "Need Quote", requestSpeed: "Future", notes: "$18,325 annual software and support services agreement" },
+    { item: "Annual SSSA", qty: 1, status: "Need Quote", requestSpeed: "Future", notes: "$15,000 annual software and support services agreement" },
   ],
 };
-
-const projects: ProjectSite[] = [
-  {
-    ref: "PRJ-2026-0001",
-    name: "NNSB 37th Street",
-    client: "Newport News Shipbuilding",
-    type: "Parking Garage",
-    address: "37th Street garage, Newport News, VA",
-    owner: "Projects / Implementation",
-    status: "Procurement",
-    due: "Aug 09",
-    package: "Garage camera + single space sensor rollout",
-    cameras: 90,
-    allocated: 48250,
-    siteNotes: "Large garage install with cameras, VPU hardware, outdoor PoE boxes, UPS units, sign controllers, VMS signs, and sensor field equipment.",
-    sow: {
-      ...blankSow,
-      summary: "Garage camera and single-space sensor rollout for Newport News Shipbuilding with field networking, UPS, signage, and sensor equipment.",
-      infrastructure: "Outdoor PoE boxes, UPS, managed switching, sign posts, and sensor base stations need to be planned before purchasing.",
-    },
-    bom: [
-      { item: "Single Lens Camera", qty: 90, status: "Ordered", requestSpeed: "ASAP", po: "#1225", notes: "Camera coverage for garage lanes and zones" },
-      { item: "VPU", qty: 6, status: "Need Quote", requestSpeed: "ASAP", notes: "Video processing units for garage deployment" },
-      { item: "Outdoor PoE switch with enclosure", qty: 20, status: "Need Quote", requestSpeed: "ASAP", notes: "Field network boxes for camera/sensor runs" },
-      { item: "Outdoor UPS for PoE boxes", qty: 20, status: "Need Quote", requestSpeed: "ASAP", notes: "Power backup at distributed PoE locations" },
-      { item: "Parksol RGB single space sensor", qty: 73, status: "Need Quote", requestSpeed: "ASAP", notes: "Sensor count from PM hardware tracker" },
-      { item: "VMS display signage", qty: 126, status: "Ordered", requestSpeed: "Standard", notes: "Mixed 8x57, 15x57, and monument signs" },
-    ],
-  },
-  {
-    ref: "PRJ-2026-0002",
-    name: "Straub Medical HI",
-    client: "Straub Medical",
-    type: "Parking Garage",
-    address: "10225 Prospect Ave, Santee CA 92071",
-    owner: "Chris Scheppmann",
-    status: "Procurement",
-    due: "Jul 30",
-    package: "Garage server, camera, sign, and UPS package",
-    cameras: 63,
-    allocated: 28650,
-    siteNotes: "Current purchasing reference for the NeweggBusiness orders. Hardware includes servers, storage, GPUs, camera coverage, sign equipment, and UPS support.",
-    sow: {
-      ...blankSow,
-      summary: "Parking garage deployment for Straub Medical with camera coverage, server/VPU hardware, UPS support, and sign equipment.",
-      infrastructure: "Confirm rack, UPS, switch, sign power, and camera cabling requirements before releasing remaining orders.",
-    },
-    bom: [
-      { item: "Dual Lens Camera", qty: 33, status: "Ordered", requestSpeed: "ASAP", po: "1222" },
-      { item: "Single Lens Camera", qty: 30, status: "Ordered", requestSpeed: "ASAP", po: "1222" },
-      { item: "VPU", qty: 11, status: "Need Quote", requestSpeed: "ASAP" },
-      { item: "Server UPS", qty: 11, status: "Need Quote", requestSpeed: "ASAP" },
-      { item: "Switch UPS / rack mounted booster", qty: 9, status: "Need Quote", requestSpeed: "ASAP" },
-      { item: "Interior signs and wall brackets", qty: 48, status: "Not started", requestSpeed: "Standard" },
-    ],
-  },
-  {
-    ref: "PRJ-2026-0003",
-    name: "East Central Garage",
-    client: "East Central",
-    type: "Parking Garage",
-    address: "133 S. 40th Street, Springdale, AR 72762",
-    owner: "Projects / Implementation",
-    status: "Staging",
-    due: "Aug 15",
-    package: "Garage camera, VPU, sign controller, and sensor package",
-    cameras: 7,
-    allocated: 12400,
-    siteNotes: "Several items completed or shipped. Keep as a good example of PM hardware request turning into purchasing and inventory movement.",
-    sow: {
-      ...blankSow,
-      summary: "Garage deployment with cameras, VPU, sign controllers, Parksol sensors, PoE switch, UPS, and server rack.",
-      commissioning: "Completed hardware lines should move toward inventory receiving, staging, and commissioning closeout.",
-    },
-    bom: [
-      { item: "Single Lens Camera", qty: 7, status: "Completed", requestSpeed: "ASAP", notes: "Not ordered in source tracker" },
-      { item: "PoE Switch", qty: 1, status: "Completed", requestSpeed: "ASAP" },
-      { item: "Server UPS", qty: 1, status: "Completed", requestSpeed: "ASAP", notes: "Ship date 2/27/2026" },
-      { item: "Server Rack", qty: 1, status: "Completed", requestSpeed: "ASAP", notes: "Ship date 2/28/2026" },
-      { item: "Single Space Sensors - Parksol", qty: 20, status: "Completed", requestSpeed: "ASAP" },
-      { item: "Sign Controller", qty: 3, status: "Completed", requestSpeed: "ASAP" },
-    ],
-  },
-  {
-    ref: "PRJ-2026-0005",
-    name: "Lakeside Gate",
-    client: "Demo Client",
-    type: "Surface Lot",
-    address: "TBD site address",
-    owner: "Project Management",
-    status: "Staging",
-    due: "Jul 30",
-    package: "Constant Power + WiFi",
-    cameras: 2,
-    allocated: 1740,
-    siteNotes: "Small surface lot project for the standard package matrix.",
-    sow: blankSow,
-    bom: [
-      { item: "FLI Edge VPI", qty: 1, status: "From Inventory", requestSpeed: "Standard" },
-      { item: "Camera", qty: 2, status: "Need Quote", requestSpeed: "Standard" },
-      { item: "Network Switch", qty: 1, status: "Need Quote", requestSpeed: "Standard" },
-      { item: "Power Junction Box", qty: 1, status: "Need Quote", requestSpeed: "Standard" },
-    ],
-  },
-];
 
 function money(value: number) {
   return value.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -5025,7 +4930,7 @@ function App() {
       clientName: quote.clientName,
       siteName: quote.siteName,
       city: quote.city,
-      quoteRef: quote.id.slice(0, 8).toUpperCase(),
+      quoteRef: quote.quoteRef,
       proposalSummary: quote.proposalSummary,
       bom: quote.bomLines.map((line) => {
         const linked = line.catalogItemId ? catalogItems.find((item) => item.id === line.catalogItemId) : undefined;
@@ -11870,12 +11775,10 @@ function Projects({
   const selectedInventoryItem = inventoryItems.find((part) => part.name === bomDraft.item);
 
   function nextProjectRef() {
-    const maxRef = projectSites.reduce((currentMax, project) => {
-      const match = project.ref.match(/^PRJ-2026-(\d+)$/);
-      return match ? Math.max(currentMax, Number(match[1])) : currentMax;
-    }, 0);
-
-    return `PRJ-2026-${String(maxRef + 1).padStart(4, "0")}`;
+    return computeNextProjectRef(
+      projectSites.map((project) => project.ref),
+      new Date().getFullYear(),
+    );
   }
 
   useEffect(() => {
@@ -12300,9 +12203,9 @@ function Projects({
       const extraction = (await response.json()) as SalesQuoteExtractResponse;
       applyExtractedQuoteToProject(projectName, projectRef, extraction);
     } catch (error) {
-      if (file.name.toLowerCase().includes("emerald queen")) {
+      if (file.name.toLowerCase().includes("sample demo")) {
         applySalesQuoteToCurrentProject(file.name);
-        setActionStatus(`${projectRef} used the seeded Emerald Queen extraction because the live API was not available locally.`);
+        setActionStatus(`${projectRef} used the seeded sample demo extraction because the live API was not available locally.`);
         return;
       }
 
@@ -12312,9 +12215,9 @@ function Projects({
     }
   }
 
-  function applySalesQuoteToCurrentProject(sourceFile = emeraldQueenImportedProject.salesQuoteFile) {
+  function applySalesQuoteToCurrentProject(sourceFile = sampleDemoImportedProject.salesQuoteFile) {
     const importedProject = {
-      ...emeraldQueenImportedProject,
+      ...sampleDemoImportedProject,
       ref: selectedProject.ref,
       salesQuoteFile: sourceFile,
     };
