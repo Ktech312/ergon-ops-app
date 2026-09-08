@@ -643,6 +643,136 @@ renamed triggers again, a broken order fails the insert immediately and visibly 
 silently producing a wrongly-scoped or null-keyed counter row. §11 includes a dedicated test that
 verifies this ordering empirically, not just by reading the SQL.
 
+### 7.3 Exact current names — verified against the real migration files, not assumed
+
+Checked directly against `066_sales_quote_ref_and_closed_at.sql` and `102_clients.sql` tonight
+(2026-09-08), not reconstructed from memory or an earlier draft:
+
+| Object | Exact current name | Source |
+|---|---|---|
+| `sales_quote_ref_counters` primary key | `sales_quote_ref_counters_pkey` (Postgres default naming for a bare `year integer primary key` column) | `066_sales_quote_ref_and_closed_at.sql:15` |
+| `sales_quotes.quote_ref` unique constraint | `sales_quotes_quote_ref_unique` (explicitly named) | `066_sales_quote_ref_and_closed_at.sql:90` |
+| `sales_quotes` ref-assignment trigger | `sales_quotes_assign_ref` | `066_sales_quote_ref_and_closed_at.sql:59` |
+| `clients.name` unique constraint | `clients_name_key` (Postgres default naming for a bare `name text not null unique` column) | `102_clients.sql:34` |
+| `sales_quotes` ownership trigger (from 117) | `sales_quotes_guard_workspace_id` | `117_clients_sales_quote_workspace_ownership.sql` |
+| `clients` ownership trigger (from 117) | `clients_guard_workspace_id` | `117_clients_sales_quote_workspace_ownership.sql` |
+
+The `alter trigger ... rename to` and `alter table ... drop constraint` statements throughout this
+section use these exact, verified names — not guesses.
+
+### 7.4 Concurrency-safe numbering
+
+The `insert ... on conflict (workspace_id, year) do update set next_seq = ... + 1 returning next_seq - 1`
+pattern (§7.2, step 2) is the same atomic upsert-increment shape already used by the *existing,
+unmodified* `assign_sales_quote_ref()` in migration 066 — migration 119 only adds `workspace_id`
+to the conflict target and the returned row, it doesn't change the underlying safety mechanism.
+Two concurrent quote-creation transactions targeting the same `(workspace_id, year)` serialize
+correctly because the `on conflict do update` clause takes a row-level lock on the counter row for
+the duration of the increment — the second transaction blocks until the first commits or rolls
+back, then sees the already-incremented value. This is the same pattern this codebase's own
+standing rule requires for any "re-acquired by key" table (`HANDOFF.md`: *"must use an atomic
+upsert-reclaim RPC, not a plain INSERT"*) — migration 119 doesn't introduce a new risk here, it
+extends an already-correct mechanism to a composite key.
+
+### 7.5 Preservation guarantees, stated explicitly
+
+- **Existing `quote_ref` values are never touched.** Migration 119 alters the counter table and the
+  assignment trigger's *future* behavior only — no `update sales_quotes set quote_ref = ...`
+  statement exists anywhere in this design. Every quote's current ref stays exactly as it is.
+- **A deliberately supplied non-null `quote_ref` is still preserved.** §7.2's redefined
+  `assign_sales_quote_ref()` keeps the original `if new.quote_ref is not null then return new;`
+  early return from migration 066, verbatim, before touching the counter table at all — re-checked
+  tonight against the live migration 066 source (§7.2's code block) to confirm this wasn't
+  dropped when the function was redesigned for the workspace dimension.
+
+### 7.6 Active/suspended workspace behavior — inherited for free from migration 117
+
+Migration 119 does not need its own active/suspended check on quote-ref assignment. By the time
+`assign_sales_quote_ref()` fires on a `sales_quotes` insert, `new.workspace_id` was already
+stamped by migration 117's `guard_workspace_id_mutation()` trigger, which only ever succeeds by
+calling `resolve_caller_workspace_id()` — and that function already rejects any caller whose only
+workspace is suspended (§4.1), *before the row is even created*. So a `sales_quotes` row can only
+ever reach the ref-assignment trigger already carrying an active workspace's id. This is a real
+example of the layered design paying off: migration 119 gets a correctness guarantee for free from
+a constraint migration 117 already established, rather than needing to re-implement it.
+
+### 7.7 Preflight and transaction-safe tests for migration 119 (designed now, not run)
+
+**Preflight** (run before 119, confirm the starting state):
+```sql
+select count(*) as sales_quote_ref_counters_row_count from public.sales_quote_ref_counters;
+select conname from pg_constraint where conrelid = 'public.sales_quote_ref_counters'::regclass;
+select conname from pg_constraint where conrelid = 'public.clients'::regclass and contype = 'u';
+select conname from pg_constraint where conrelid = 'public.sales_quotes'::regclass and contype = 'u';
+-- Expected: sales_quote_ref_counters_pkey, clients_name_key, sales_quotes_quote_ref_unique
+-- exist exactly as named in §7.3, confirming nothing else has renamed or replaced them since.
+```
+
+**Transaction-safe test scenarios** (to design as an executable script, same `begin;`/`rollback;`
+pattern as §11.1a, when 119 is actually drafted — listed here so the design is complete, not
+deferred to a future session with no plan):
+- Two quotes created back-to-back for the same workspace in the same year get sequential,
+  non-duplicate refs (extends existing Test G).
+- A quote created for a second, throwaway workspace in the same year gets its own independent
+  `0001` sequence, proving the counter is genuinely per-workspace, not accidentally still global.
+- Supplying a non-null `quote_ref` explicitly on insert is preserved unchanged, and does **not**
+  increment the counter table (proves §7.5's guarantee empirically, not just by reading the code).
+- Simulate the trigger-order guard firing: temporarily attempt an insert with `guard_workspace_id_mutation`'s
+  trigger disabled (superuser-only, inside the rolled-back transaction) to confirm
+  `assign_sales_quote_ref()` raises its own `workspace_id must be set before quote_ref assignment`
+  exception rather than silently succeeding with a null-keyed counter row.
+- `clients.name` and `sales_quotes.quote_ref` per-workspace uniqueness: two different workspaces
+  can each have a client named identically / are never expected to collide on quote_ref anyway
+  since it's now workspace-scoped; the *same* workspace still cannot create two clients with the
+  same name (regression test for existing behavior, not just new behavior).
+
+### 7.8 Production verification for migration 119 (designed now, not run)
+
+```sql
+-- Confirm the new constraint/column shape.
+select conname, pg_get_constraintdef(oid) from pg_constraint
+where conrelid in ('public.clients'::regclass, 'public.sales_quotes'::regclass, 'public.sales_quote_ref_counters'::regclass)
+  and contype in ('u', 'p');
+
+-- Confirm every existing sales_quote_ref_counters row was backfilled to the Ergon Test Workspace
+-- and no row has a null workspace_id.
+select count(*) from public.sales_quote_ref_counters where workspace_id is null;
+
+-- Confirm a freshly created quote (via the real app UI, not a direct insert) gets a correctly
+-- scoped, sequential quote_ref with no visible behavior change for today's single workspace.
+```
+
+### 7.9 Rollback limitations — cross-referenced from §9
+
+See §9's "Rollback of migration 118" section (which already covers 119's rollback caveats under
+its prior numbering) for the honest limitation: if a second workspace has already created quotes
+under the new per-workspace counter scheme by the time a rollback is needed, collapsing
+`sales_quote_ref_counters` back to a single `(year)` key is lossy for counter *granularity* (two
+workspaces' sequences would need to be merged/renumbered), though every `quote_ref` value already
+stamped on a `sales_quotes` row is unaffected either way. Given §13's confirmed decision that no
+second workspace exists until Phase 3's isolation and an active-workspace selector are built, this
+scenario cannot actually arise before migration 119 is long since stable in production.
+
+### 7.10 In plain language — what changes for a real user
+
+**What changes, invisibly:** nothing about how a quote gets its reference number changes in
+appearance — a new quote still gets `SQ-2026-0043` (or whatever the next number is) the instant
+it's created, exactly as today. Under the hood, that number now comes from a counter that's
+scoped to the workspace instead of a single global counter, but since only one workspace
+(Ergon Test Workspace) exists in production, the sequence of numbers a user actually sees does
+not change or skip. The same is true for adding a new client with the same name as an existing
+one — today that's rejected outright; after 119, it's still rejected within the same workspace
+(no behavior change visible to any current user), and would only be *allowed* if a second,
+different company's workspace existed, which it doesn't yet.
+
+**What a user should never notice:** any lag, error, or visible difference in the "New Quote" or
+"Add Client" flows. If they do, that's a bug, not an intended consequence of this migration.
+
+**What this migration does *not* do:** it does not let one company see another company's quotes
+or clients — that access-control guarantee is Phase 3's job (§8.1), not this one's. It does not
+change who can create, edit, or delete a quote or client — RLS on both tables stays exactly as
+open as it is today.
+
 ---
 
 ## 8. What Phase 2 guarantees about ownership integrity — and what it explicitly does not
