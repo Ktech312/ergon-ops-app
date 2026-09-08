@@ -755,6 +755,14 @@ verified clean (no residual hits for the real names/addresses anywhere in `src/`
    JS bundle, readable by anyone via browser dev tools. Recommend the same treatment as the array
    already removed.
 
+   **Resolved, 2026-09-08 (later the same week):** independently re-verified dead (a fresh,
+   exhaustive grep confirming every `.parts`/`parts` hit elsewhere in the file is unrelated — see
+   commit message for the full breakdown), then removed. `tsc`/`vite build`/`eslint`/`vitest` all
+   clean; the rebuilt `dist/` bundle scanned directly for every real vendor name and cost figure
+   the array contained — none ship. Held as a local, unpushed commit alongside the migration 119
+   frontend fix (both wait on the same "migration 119 has been run" confirmation before pushing) —
+   see `HANDOFF.md`'s latest entry for the exact commit hash once pushed.
+
 2. **`support@ensight-technologies.com` hardcoded as the Web Push VAPID contact**
    (`api/send-push.js:200`). Ergon's own real domain, not a leak — but a singleton, non-
    configurable value. The VAPID contact is conventionally the entity operating the push

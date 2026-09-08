@@ -247,6 +247,86 @@ E's stated direction, from an overnight planning conversation (research → clar
 
 ## Recent work log (most recent first — 2026-09-08)
 
+- **(migration `119_secure_quote_proposal_response.sql` created, NOT run; matching frontend fix + a second dead-array removal committed locally, NOT pushed) Live proposal-token replay vulnerability fixed and prioritized ahead of the per-workspace uniqueness work, per E's explicit instruction.**
+
+  **Renumbering**: the per-workspace uniqueness migration (`clients.name`/`sales_quotes.quote_ref`,
+  previously "migration 119" throughout `PRODUCT_PHASE2_PLAN.md`) is renumbered to **migration
+  120** -- pure renumbering, no design content changed. See that document's Revision 6 note.
+
+  **The vulnerability** (found during the 2026-09-08 overnight audit,
+  `PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md` Part A3): `respond_to_quote_proposal()` had no
+  server-side status-transition guard. Anyone holding a proposal share token -- which never
+  expires and can't be revoked, both deliberately untouched by this fix, see below -- could call
+  the RPC directly and repeatedly flip an already-approved/rejected/revision-requested proposal,
+  silently overwriting the recorded `responded_at`/`approval_name`/`approval_ip`/`response_notes`/
+  `approval_content_hash`.
+
+  **The fix, designed then implemented, self-tested via a written transaction-safe SQL script
+  before being presented** (full detail in `PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md`'s "A3
+  resolution" section): `respond_to_quote_proposal()` now does a single atomic
+  `update ... where status = 'sent'` -- safe against concurrent responses under Postgres's own
+  MVCC/row-locking, no explicit lock needed -- and returns a distinguishable outcome
+  (`success`/`already_responded`/`invalid_token`) instead of `void`, so the first valid response
+  wins and every later attempt leaves the row completely unchanged. The notification insert only
+  runs on the winning transition, so a replay or concurrency-loser can never create a duplicate.
+  `get_quote_proposal_by_token()` gains `responded_at`/`approval_name` columns so the public page
+  can show "This proposal was already approved on [date]" with real data. Both functions hardened
+  to `security definer` + `search_path=''` + fully schema-qualified table references (they
+  predate that discipline, established in migration 115) and their grants narrowed to `anon` only
+  -- confirmed by re-reading every call site that `authenticated` was unused by any real path, the
+  same minimal-surface principle migration 118 already established. **Token expiration
+  (`expires_at` never set, Part A2) and revocation (Part A4) are deliberately NOT touched** --
+  explicit instruction, kept as separate, undiscussed product decisions.
+
+  **Terminology note**: the fix requirements' "pending" status maps to this schema's real
+  `status = 'sent'` value -- there is no `'pending'` value in `sales_quote_proposals`, and adding
+  one was considered and rejected as unnecessary schema churn.
+
+  **Tested via a self-contained, transaction-safe SQL script** (`begin;`/`rollback;`, never
+  commits, full text in the audit doc) covering all 9 required scenarios: first approval succeeds;
+  replaying the same approval fails safely with the original state preserved; a different later
+  status also fails safely; `revision_requested` locks its own proposal version too; invalid and
+  expired tokens both return `invalid_token`; the sequential-replay test doubles as the "two
+  competing responses, one winner" proof (with an honest note that a literal two-connection race
+  wasn't run, and why the sequential proof is adequate for this specific atomic-UPDATE pattern);
+  exactly one notification exists despite two replay attempts; an already-responded proposal
+  remains fully viewable via its original token; `content_snapshot` is provably unchanged. **Not
+  yet run against production** -- migration 119 is created, reviewed, and ready, per E's explicit
+  instruction not to run it without review first.
+
+  **Deployment-ordering hazard identified and handled deliberately**: the frontend
+  (`src/persistence.ts`/`src/main.tsx`) needed real code changes to consume the new RPC return
+  shapes -- deploying that code before migration 119 actually runs would break the live proposal
+  response flow entirely (the production RPC would still be the old `void`-shaped one), which is
+  strictly worse than the vulnerability being fixed. That commit (`74f2d24`) is made **locally
+  only, deliberately not pushed** -- `ProposalPublicPage` now distinguishes an invalid/expired
+  token from a genuine load/submit failure, and on a lost race reloads and displays the
+  authoritative recorded outcome instead of a generic error, with 11 new mocked-fetch unit tests
+  (`src/proposal-response.test.ts`) covering every outcome mapping. tsc/build/lint/vitest all
+  clean (113/113 tests).
+
+  **Second dead array found last night, removed tonight** (`PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md`
+  Part C1, deferred there per that session's own scope limit): `const parts: Part[]`
+  (`main.tsx:649-760`, real Ergon/EnSight vendor names and internal cost data) independently
+  re-verified dead via a fresh, exhaustive grep, then removed (commit `1e35bf3`, **also held
+  locally, not pushed** -- see below). tsc/build/lint/vitest clean; the rebuilt `dist/` bundle
+  scanned directly for every real vendor name/cost figure the array contained -- none ship. No
+  database record touched, per the explicit limit.
+
+  **Current git state**: `origin/main` is at `b9e9d4a` (migration 119 file + design docs --
+  pushed, safe, doesn't change any live behavior since the migration hasn't run). Local `main` is
+  2 commits ahead, **not pushed**: `74f2d24` (frontend proposal-response fix) then `1e35bf3` (dead
+  array removal, sequenced after simply to avoid git-history complexity, not because it depends on
+  the security fix). **Action needed from E**: (1) review and run migration 119 in Supabase
+  Studio, using the preflight/verification blocks in `PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md`;
+  (2) run the transaction-safe test script there and confirm `ALL MIGRATION 119 TESTS PASSED`; (3)
+  once confirmed, tell the next session (or run `git push origin main` directly) to push the two
+  held commits -- both are already fully checked and ready, just intentionally not deployed ahead
+  of the migration they depend on.
+
+  Per explicit instruction: Phase 3 RLS was not started, no second workspace was created, and the
+  migration was not run.
+
 - **Morning report — overnight autonomous work session, 2026-09-08.** Run per E's explicit authorization: a 61-item, 9-priority safe-work queue with hard limits (no migration 119, no RLS/Storage-policy changes, no second workspace, no platform-admin assignment, no business-process changes, no customer communication, no real record mutation, no billing/paid-service configuration, no secret exposure, no broad dependency upgrades). Every item below stayed inside those limits. Full detail for each deliverable lives in its own commit/document, cited below -- this entry is the summary E should read first.
 
   **Work completed, in priority order:**
