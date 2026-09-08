@@ -1,7 +1,7 @@
 # Ergon Productization — Phase 1 Implementation Plan (Revision 4 — Final, plus naming correction)
 
-Status: **✅ PHASE 1 COMPLETE AND LIVE-VERIFIED IN PRODUCTION (2026-09-08).** E ran migration `115_workspaces_foundation.sql` directly in Supabase Studio ("Success. No rows returned"). Live verification below confirms every expected outcome, with zero deviation. `platform_admins` is confirmed empty by a direct Studio query (bypasses RLS, fully authoritative: `select count(*) from platform_admins;` → `0`). No existing table, policy, route, or frontend file was touched; every existing row count matches its pre-migration value exactly. **Naming correction pending**: migration `116_rename_first_workspace_to_ergon_test.sql` has been created (renames the workspace from "Ergon"/`ensight` to "Ergon Test Workspace"/`ergon-test`) but has **not yet been run** — see "Post-Phase-1 naming correction" below for the full request, the dependency check, and what still needs to happen.
-Created: 2026-09-08 · Revision 2: 2026-09-08 · Revision 3: 2026-09-08 · Revision 4 (final): 2026-09-08 · Live-verified: 2026-09-08 · Naming correction requested and migration 116 created: 2026-09-08 (not yet run)
+Status: **✅ PHASE 1 CLOSED — COMPLETE AND LIVE-VERIFIED IN PRODUCTION, INCLUDING THE NAMING CORRECTION (2026-09-08).** E ran migration `115_workspaces_foundation.sql`, then `116_rename_first_workspace_to_ergon_test.sql`, both directly in Supabase Studio. Both are fully live-verified below with zero deviation. The workspace now reads `name: "Ergon Test Workspace"`, `slug: "ergon-test"`, `status: "active"` — same `id` and `created_at` as originally created, `updated_at` correctly bumped by the rename. `platform_admins` is confirmed empty by two independent direct Studio queries (one after each migration, both bypassing RLS, fully authoritative: `select count(*) from platform_admins;` → `0` both times). No existing table, policy, route, or frontend file was ever touched by either migration; every existing row count matches its pre-migration value exactly, both times it was checked.
+Created: 2026-09-08 · Revision 2: 2026-09-08 · Revision 3: 2026-09-08 · Revision 4 (final): 2026-09-08 · Live-verified: 2026-09-08 · Naming correction requested, migration 116 created, run, and live-verified: 2026-09-08 · **Phase 1 closed: 2026-09-08**
 Builds on: `PRODUCT_TENANCY_AUDIT.md` (§8 architecture, §9 staged approach, §10 working decisions).
 
 ## Post-Phase-1 naming correction (2026-09-08)
@@ -24,7 +24,28 @@ Idempotent (a second run matches zero rows once the first has applied). Per this
 
 **This workspace holds real operational data — documented explicitly, not just implied**: renaming it "Ergon Test Workspace" changes only its *label* for general product-development and testing purposes. It does **not** make the underlying data fictional — this workspace contains Ergon/Ensight's real vendors, real clients, real projects, real financial figures, and real employee accounts, carried over unchanged by migration 115. **It must never be presented, seeded with demo content, or exposed as a safe public-facing demo.** A future public or sales-facing demo requires one of: (a) a wholly separate, isolated demo workspace seeded only with fictional data once Phase 2+ makes multi-workspace data isolation real, or (b) a from-scratch fictional dataset — never a mix with this workspace's real data. This requirement is recorded here and in `PRODUCT_TENANCY_AUDIT.md` so it isn't lost by the time a demo is actually requested.
 
-**Re-verification (pending E running migration 116)**: once run, the same four tables get re-checked — `workspaces` (name/slug updated, same `id`, same `status`), `workspace_members` (unchanged: still 3 rows, same `is_workspace_admin` flags), `workspace_member_roles` (unchanged: still 8 rows, same primary-role assignments), `platform_admins` (still empty) — plus a live app spot-check to confirm zero regression, exactly like Phase 1's own original verification. Results will be recorded here and in `HANDOFF.md` once complete.
+**Re-verification: ✅ complete, 2026-09-08.** E ran migration 116 in Supabase Studio; the returned row showed `name: "Ergon Test Workspace"`, `slug: "ergon-test"`, `status: "active"` exactly as expected. Full re-verification (live REST queries with the admin's own token, plus one direct Studio query for `platform_admins`) confirmed every other value untouched by the rename:
+
+| Check | Expected | Actual | Result |
+|---|---|---|---|
+| `workspaces.id` | unchanged (`afaeb5a7-eb2f-424d-9c7a-1a5937aee220`) | unchanged | ✅ |
+| `workspaces.created_at` | unchanged | unchanged | ✅ |
+| `workspaces.name` | `"Ergon Test Workspace"` | `"Ergon Test Workspace"` | ✅ |
+| `workspaces.slug` | `"ergon-test"` | `"ergon-test"` | ✅ |
+| `workspaces.status` | `"active"` (unchanged) | `"active"` | ✅ |
+| `workspaces.updated_at` | bumped by the rename | bumped — confirms the update trigger fired correctly | ✅ |
+| `workspace_members` count | 3, unchanged | 3 | ✅ |
+| `is_workspace_admin = true` count | 1, unchanged | 1 | ✅ |
+| `workspace_member_roles` count | 8, unchanged | 8 | ✅ |
+| `platform_admins` count | 0 | 0, confirmed directly in Supabase Studio (bypasses RLS) | ✅ |
+| `app_admins` count | 1, unchanged | 1 | ✅ |
+| `app_user_roles` count | 8, unchanged | 8 | ✅ |
+| `projects` count | 5, unchanged | 5 | ✅ |
+| `tasks` count | 5, unchanged | 5 | ✅ |
+| Console errors | none | none | ✅ |
+| App regression | none | Tasks page loaded and refreshed normally throughout | ✅ |
+
+**Phase 1, including the naming correction, is closed.** The workspace correctly reads as a general Ergon product-development/testing environment rather than a permanent Ensight-branded identity, while still honestly holding the real underlying operational data it always held — nothing about the data itself changed, only its label.
 
 ## Live verification results (2026-09-08, Phase 1 as originally run — workspace since renamed, see above)
 
@@ -780,9 +801,9 @@ select count(*) from sales_quotes;
 
 Then run Tests A-G (self-contained, self-cleaning) and spot-check the live app (sign in, confirm dashboard/tasks/projects/Admin all look and behave exactly as before).
 
-## Post-rename verification (copy-paste block — run after migration 116)
+## Post-rename verification (copy-paste block — already run; results recorded in "Re-verification" above, 2026-09-08)
 
-Confirms the rename applied correctly and, just as importantly, that nothing *else* about the workspace or its membership moved.
+Confirms the rename applied correctly and, just as importantly, that nothing *else* about the workspace or its membership moved. Kept here as the reusable reference block; the actual results from running it are in the table above, not repeated here.
 
 ```sql
 -- 1. The rename applied, and only the two intended columns changed.
@@ -822,7 +843,7 @@ Per this repo's standing process (no CI; migrations are applied manually): E run
 
 ## Remaining decisions
 
-Phase 1 itself is fully approved and live-verified — nothing remains open there. One item is outstanding from the naming correction: **E needs to run `116_rename_first_workspace_to_ergon_test.sql` in Supabase Studio** (on E's own schedule), after which the post-rename verification block above should be run and its results recorded here and in `HANDOFF.md`.
+None. Phase 1 — including migration 115, the naming correction (migration 116), and full live verification of both — is complete and closed. The next open item is scoping Phase 2 (see `PRODUCT_TENANCY_AUDIT.md` §9 and the recommended starting scope discussed with E), not yet begun.
 
 ---
 
