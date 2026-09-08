@@ -72,6 +72,571 @@ banner. **This is a UI-only gate** — calling the RPC directly (anyone with the
 of the PostgREST `rpc/respond_to_quote_proposal` endpoint) bypasses it entirely, since the RPC
 itself performs no server-side idempotency/status check. Genuine reuse gap, not theoretical.
 
+#### A3 resolution — status as of 2026-09-08, later the same week
+
+**Status: fix designed, migration file created, NOT run.** Prioritized ahead of Phase 2's own
+per-workspace-uniqueness migration per E's explicit instruction — see
+`PRODUCT_PHASE2_PLAN.md`'s Revision 6 renumbering note. Full design below; exact SQL, rollback,
+and test script live in `backend/supabase/migrations/119_secure_quote_proposal_response.sql`
+(created, not run) and are reproduced in this section for review.
+
+**Terminology note**: the schema's real "awaiting response" status value is `'sent'`
+(`sales_quote_proposals.status` check constraint: `'draft', 'sent', 'approved', 'rejected',
+'revision_requested'`) — there is no `'pending'` value in this schema. Everywhere the fix
+requirements say "pending," this design reads that as `status = 'sent'`. Introducing a new,
+separate `'pending'` status value was considered and rejected — it would be a materially larger
+schema change for no behavioral benefit, since `'sent'` already means exactly "awaiting a
+customer response" today.
+
+**Design: atomic, single-statement transition guard, no explicit row lock needed.**
+
+```sql
+update sales_quote_proposals
+set status = new_status, responded_at = now(), ...
+where id = target_id and status = 'sent'
+returning status, responded_at, approval_name, version into ...;
+```
+
+A plain conditional `UPDATE ... WHERE id = ... AND status = 'sent'` is already safe against two
+concurrent responses without an explicit `SELECT ... FOR UPDATE`: Postgres's own MVCC/row-locking
+behavior means if two transactions race to update the same row, the first to commit wins, and the
+second transaction's `UPDATE` statement — which must wait for the first transaction's row lock to
+release before it can proceed — re-evaluates its `WHERE` clause against the *just-committed* row
+under `READ COMMITTED` (Postgres's default isolation level). Since the row's `status` is no longer
+`'sent'` by the time the second `UPDATE` gets to run, it matches zero rows. This is the standard,
+textbook-correct pattern for exactly this problem — not a novel mechanism, and not weaker than an
+explicit lock for this specific single-statement case.
+
+**Distinguishing outcomes, returned as data, not exceptions, for the three "expected" cases:**
+`respond_to_quote_proposal` is redefined to `returns table (outcome text, status text, responded_at
+timestamptz, approval_name text, version integer)` instead of `returns void`. Exactly one row
+comes back on every well-formed call:
+- `outcome = 'invalid_token'` — token doesn't resolve to a live, unexpired proposal (same check
+  already used by `get_quote_proposal_by_token`, preserved verbatim, per requirement 8: not
+  touching expiration defaults). `status`/`responded_at`/`approval_name`/`version` are all null.
+- `outcome = 'already_responded'` — the conditional `UPDATE` matched zero rows because the
+  proposal was no longer `'sent'` (a genuine concurrency loser, or the customer/support staff
+  reopening an already-answered link and somehow still POSTing a response). The four state fields
+  are populated from a **fresh re-`SELECT` of the row after the failed `UPDATE`**, not from the
+  function's own earlier pre-`UPDATE` read — this matters: the pre-`UPDATE` read could itself be
+  stale relative to a concurrent winner's commit, so trusting it would risk reporting the wrong
+  "already responded" state under real concurrency. Re-reading after the fact is always correct
+  regardless of timing.
+- `outcome = 'success'` — this call's `UPDATE` was the one that matched and changed the row. The
+  four state fields are populated straight from the `UPDATE ... RETURNING` clause.
+
+A genuine unexpected server failure (a real Postgres error — constraint violation, connection
+issue, etc.) is deliberately **not** folded into this three-way `outcome` enum — it still surfaces
+as a real thrown exception (PostgREST 500), so the frontend can tell "the RPC ran to completion
+and is telling you what happened" (any 200 response) apart from "something actually broke" (a
+non-200 response), satisfying the four-way distinction (invalid/expired token; already responded;
+valid first response; unexpected server failure) with a two-tier design (HTTP status tier, then
+an `outcome` field within the success tier).
+
+**Notification fires exactly once, only on the winning transition** — the notification-insert
+block only runs inside the `outcome = 'success'` branch, after the conditional `UPDATE` has
+already confirmed this call was the one that changed the row. A concurrency loser or a stale
+resubmission never reaches that code at all. The existing `dedupe_key`
+(`'quote_proposal_responded:' || target_id || ':' || new_status`) is kept as a second,
+belt-and-suspenders layer, but the real fix is that the losing branch can't reach the insert
+statement in the first place.
+
+**Historical access preserved, no code change needed for this part**: `get_quote_proposal_by_token`
+does not filter by `status`, so an already-responded proposal's link keeps resolving and keeps
+returning the proposal's current (finalized) state — this was already true before this fix and
+remains true after. What's added: `responded_at` and `approval_name` are now included in its
+return columns too (previously only returned by nothing — the frontend had no way to show *when*
+or *by whom* a proposal was finalized), so the "This proposal was approved on [date]" wording the
+frontend requirement asks for has real data to render. The response form's visibility is already
+gated on `status === "sent"` client-side; that gate is unchanged, just now backed by a real
+server-side guarantee instead of only a client-side convention.
+
+**Hardening applied to both `get_quote_proposal_by_token` and `respond_to_quote_proposal`**:
+`security definer`, `set search_path = ''`, every table reference fully schema-qualified
+(`public.sales_quote_proposals`, `public.public_share_tokens`, `public.sales_quotes`,
+`public.notification_rules`, `public.notifications`) — neither function had this hardening before
+tonight; both predate the `search_path=''`/schema-qualification discipline established in
+migration 115. Grants narrowed to `anon` only (`revoke all ... from public; grant execute ... to
+anon;`) — confirmed by re-reading every call site in `persistence.ts`
+(`fetchPublicQuoteProposal`/`respondToPublicQuoteProposal`) that both always call via
+`supabaseHeaders()` with no access token, meaning every real call resolves as the `anon` role;
+`authenticated` was granted in the original migration but is not exercised by any code path found,
+so it's dropped as unused surface, matching migration 118's minimal-grant precedent. If a future
+"preview as customer" authenticated-staff flow is ever added, this grant will need revisiting —
+recorded here as a forward dependency, not a silent gap.
+
+**Token expiration/revocation (A2/A4) deliberately NOT touched by this fix**, per explicit
+instruction: `expires_at` still has no default and no writer ever sets it, and no revocation
+mechanism is added. This fix closes the *replay* gap (A3) only. A2/A4 remain open, tracked
+findings for a separate, explicitly-discussed product decision — see those sections above,
+unchanged.
+
+**Frontend changes — prepared, NOT yet committed/pushed.** The new RPC return shapes are a real
+contract change: `respond_to_quote_proposal` no longer returns nothing, and
+`get_quote_proposal_by_token` gains two new columns. Deploying frontend code built against the new
+shape *before* migration 119 has actually been run in production would break the live proposal
+response flow for every customer (the RPC PostgREST endpoint would still be the old `void`-shaped
+one), which is a strictly worse outcome than the vulnerability this fix addresses. The updated
+`src/persistence.ts`/`src/main.tsx` code is written, type-checked, and covered by mocked-fetch unit
+tests (§ below), but is being held as a local, uncommitted (or committed-but-unpushed — see the
+delivery note at the end of this document) change until E confirms migration 119 has actually run.
+
+#### A3 resolution — preflight
+
+Run against production before migration 119, to confirm the starting state:
+
+```sql
+-- Confirm the current function signatures/security settings (no
+-- search_path='' yet, prosecdef should already be true for both since
+-- they're already security definer today).
+select proname, prosecdef, proconfig
+from pg_proc
+where proname in ('get_quote_proposal_by_token', 'respond_to_quote_proposal')
+  and pronamespace = 'public'::regnamespace;
+
+-- Confirm current grants (expect authenticated present on both today --
+-- that's what this migration removes).
+select grantee, routine_name, privilege_type
+from information_schema.role_routine_grants
+where routine_schema = 'public'
+  and routine_name in ('get_quote_proposal_by_token', 'respond_to_quote_proposal');
+
+-- How many real proposals are currently in a respondable ('sent') state
+-- -- informational only, confirms this migration touches live, real data
+-- shape, not an empty table.
+select count(*) as sent_proposal_count from public.sales_quote_proposals where status = 'sent';
+```
+
+#### A3 resolution — migration 119 (exact content of the created file)
+
+The full, exact SQL is `backend/supabase/migrations/119_secure_quote_proposal_response.sql`,
+created in the repository, reproduced here for review. **Not run.**
+
+```sql
+begin;
+
+-- Section 1 -- get_quote_proposal_by_token(): same query logic, now also
+-- returns responded_at/approval_name, hardened, grant narrowed to anon.
+create or replace function public.get_quote_proposal_by_token(share_token text)
+returns table (
+  proposal_id uuid,
+  status text,
+  version integer,
+  content_snapshot jsonb,
+  client_name text,
+  responded_at timestamptz,
+  approval_name text
+)
+language sql
+security definer
+stable
+set search_path = ''
+as $$
+  select p.id, p.status, p.version, p.content_snapshot, p.client_name, p.responded_at, p.approval_name
+  from public.public_share_tokens t
+  join public.sales_quote_proposals p on p.id = t.entity_id
+  where t.token = share_token
+    and t.entity_type = 'sales_quote_proposal'
+    and (t.expires_at is null or t.expires_at > now());
+$$;
+
+revoke all on function public.get_quote_proposal_by_token(text) from public;
+grant execute on function public.get_quote_proposal_by_token(text) to anon;
+
+-- Section 2 -- respond_to_quote_proposal(): the atomic, outcome-returning
+-- fix. See the migration file's own comments for the full design
+-- rationale on each branch.
+create or replace function public.respond_to_quote_proposal(
+  share_token text,
+  new_status text,
+  approver_name text,
+  approver_ip text,
+  notes text
+)
+returns table (
+  outcome text,
+  status text,
+  responded_at timestamptz,
+  approval_name text,
+  version integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  target_id uuid;
+  snapshot jsonb;
+  target_quote_id uuid;
+  updated_status text;
+  updated_responded_at timestamptz;
+  updated_approval_name text;
+  updated_version integer;
+  current_status text;
+  current_responded_at timestamptz;
+  current_approval_name text;
+  current_version integer;
+  owner_email text;
+  quote_site_name text;
+  rule_active boolean;
+begin
+  if new_status not in ('approved', 'rejected', 'revision_requested') then
+    raise exception 'Invalid proposal response status';
+  end if;
+
+  select p.id, p.content_snapshot, p.quote_id
+  into target_id, snapshot, target_quote_id
+  from public.public_share_tokens t
+  join public.sales_quote_proposals p on p.id = t.entity_id
+  where t.token = share_token
+    and t.entity_type = 'sales_quote_proposal'
+    and (t.expires_at is null or t.expires_at > now());
+
+  if target_id is null then
+    return query select 'invalid_token'::text, null::text, null::timestamptz, null::text, null::integer;
+    return;
+  end if;
+
+  update public.sales_quote_proposals
+  set status = new_status,
+      responded_at = now(),
+      response_notes = notes,
+      approval_name = approver_name,
+      approval_ip = approver_ip,
+      approval_content_hash = encode(sha256(snapshot::text::bytea), 'hex'),
+      updated_at = now()
+  where id = target_id
+    and status = 'sent'
+  returning status, responded_at, approval_name, version
+  into updated_status, updated_responded_at, updated_approval_name, updated_version;
+
+  if updated_status is null then
+    select status, responded_at, approval_name, version
+    into current_status, current_responded_at, current_approval_name, current_version
+    from public.sales_quote_proposals
+    where id = target_id;
+
+    return query select 'already_responded'::text, current_status, current_responded_at, current_approval_name, current_version;
+    return;
+  end if;
+
+  select q.created_by_email, q.site_name into owner_email, quote_site_name
+  from public.sales_quotes q where q.id = target_quote_id;
+
+  select is_active into rule_active from public.notification_rules where event_type = 'quote_proposal_responded';
+
+  if owner_email is not null and coalesce(rule_active, false) then
+    insert into public.notifications (recipient_email, event_type, title, body, related_entity_type, related_entity_id, dedupe_key)
+    values (
+      owner_email,
+      'quote_proposal_responded',
+      'Proposal ' || replace(new_status, '_', ' '),
+      coalesce(quote_site_name, 'A quote') || ' proposal v' || updated_version || ' was ' || replace(new_status, '_', ' ') || ' by ' || coalesce(approver_name, 'the client') || '.',
+      'sales_quote_proposal',
+      target_id::text,
+      'quote_proposal_responded:' || target_id::text || ':' || new_status
+    )
+    on conflict (dedupe_key) do nothing;
+  end if;
+
+  return query select 'success'::text, updated_status, updated_responded_at, updated_approval_name, updated_version;
+end;
+$$;
+
+revoke all on function public.respond_to_quote_proposal(text, text, text, text, text) from public;
+grant execute on function public.respond_to_quote_proposal(text, text, text, text, text) to anon;
+
+commit;
+```
+
+#### A3 resolution — post-migration verification
+
+```sql
+-- 1. Both functions are security definer with search_path='' set.
+select proname, prosecdef, proconfig
+from pg_proc
+where proname in ('get_quote_proposal_by_token', 'respond_to_quote_proposal')
+  and pronamespace = 'public'::regnamespace;
+-- Expected: prosecdef = true for both; proconfig contains 'search_path='.
+
+-- 2. Grants are anon-only now (expect zero rows for authenticated/PUBLIC).
+select grantee, routine_name, privilege_type
+from information_schema.role_routine_grants
+where routine_schema = 'public'
+  and routine_name in ('get_quote_proposal_by_token', 'respond_to_quote_proposal')
+  and grantee in ('PUBLIC', 'authenticated');
+
+-- 3. Existing proposal rows and their content_snapshot are untouched --
+-- row count and every content_snapshot's own hash should match whatever
+-- E records from the preflight (this migration touches no existing row).
+select count(*) as sent_proposal_count from public.sales_quote_proposals where status = 'sent';
+```
+
+#### A3 resolution — transaction-safe test script (exact, runnable, never commits)
+
+Self-contained, `begin;`/`rollback;` wrapped -- creates its own throwaway quote/proposals/tokens,
+never touches real data, and undoes everything at the end regardless of outcome. Uses a real,
+existing workspace-admin member of the Ergon Test Workspace to satisfy migration 117's
+`sales_quotes` ownership trigger during fixture setup only -- the RPCs under test themselves never
+check caller identity (they're purely token-based), so the actual `respond_to_quote_proposal`/
+`get_quote_proposal_by_token` calls run as `anon`, matching the real production call path and
+empirically confirming the narrowed grant is sufficient.
+
+**Honest scope note on the "two competing responses" requirement**: this script proves the
+guarantee by calling the RPC sequentially against an already-`'sent'` row (first call succeeds,
+second is rejected) rather than literally racing two simultaneous database connections, which
+isn't practical to script from one Supabase Studio session. Both cases hit the identical code path
+(`update ... where status = 'sent'`), and Postgres's documented behavior for two concurrent
+`UPDATE`s on the same row (the second waits for the first's lock, then re-evaluates its `WHERE`
+clause against the post-commit row) is a property of the SQL statement itself, not something that
+requires literally racing two sessions to verify for this specific pattern -- stated plainly here
+rather than overclaiming a true concurrency test was run.
+
+```sql
+begin;
+
+do $$
+declare
+  original_role text;
+  admin_user_id uuid;
+  admin_workspace_id uuid;
+  test_quote_id uuid;
+  proposal_a_id uuid;
+  proposal_b_id uuid;
+  token_a text := 'test-token-a-' || gen_random_uuid()::text;
+  token_b text := 'test-token-b-' || gen_random_uuid()::text;
+  token_expired text := 'test-token-expired-' || gen_random_uuid()::text;
+  outcome1 text; status1 text; responded_at1 timestamptz; approval_name1 text; version1 integer;
+  outcome2 text; status2 text; responded_at2 timestamptz; approval_name2 text; version2 integer;
+  notif_count_after integer;
+  snapshot_before jsonb;
+  snapshot_after jsonb;
+begin
+  select current_setting('role') into original_role;
+
+  select wm.user_id, wm.workspace_id into admin_user_id, admin_workspace_id
+  from public.workspace_members wm
+  join public.workspaces w on w.id = wm.workspace_id
+  where w.slug = 'ergon-test' and wm.is_workspace_admin
+  limit 1;
+
+  if admin_user_id is null then
+    raise exception 'no workspace-admin member of the Ergon Test Workspace found -- cannot run tests';
+  end if;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id, 'role', 'authenticated')::text, true);
+
+  -- Fixture: one real sales_quotes row + two proposals (A: reuse/race
+  -- tests, B: the revision_requested-locks-too test), both status='sent'.
+  perform set_config('role', 'authenticated', true);
+  insert into public.sales_quotes (client_name, site_name, created_by_email)
+  values ('Migration 119 Test Client', 'Migration 119 Test Site', 'phase2-test@example.com')
+  returning id into test_quote_id;
+  perform set_config('role', original_role, true);
+
+  insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name)
+  values (test_quote_id, 1, 'sent', '{"siteName":"Migration 119 Test Site","bom":[]}'::jsonb, 'Migration 119 Test Client')
+  returning id into proposal_a_id;
+
+  insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name)
+  values (test_quote_id, 2, 'sent', '{"siteName":"Migration 119 Test Site","bom":[]}'::jsonb, 'Migration 119 Test Client')
+  returning id into proposal_b_id;
+
+  select content_snapshot into snapshot_before from public.sales_quote_proposals where id = proposal_a_id;
+
+  insert into public.public_share_tokens (token, entity_type, entity_id, expires_at) values
+    (token_a, 'sales_quote_proposal', proposal_a_id, null),
+    (token_b, 'sales_quote_proposal', proposal_b_id, null),
+    (token_expired, 'sales_quote_proposal', proposal_a_id, now() - interval '1 day');
+
+  perform set_config('role', 'anon', true);
+
+  -- Invalid token.
+  select outcome into outcome1 from public.respond_to_quote_proposal('this-token-does-not-exist', 'approved', 'Nobody', '', '');
+  if outcome1 is distinct from 'invalid_token' then
+    raise exception 'TEST FAILED: unknown token should return invalid_token, got %', outcome1;
+  end if;
+  raise notice 'TEST PASSED: invalid token returns invalid_token';
+
+  -- Expired token.
+  select outcome into outcome1 from public.respond_to_quote_proposal(token_expired, 'approved', 'Nobody', '', '');
+  if outcome1 is distinct from 'invalid_token' then
+    raise exception 'TEST FAILED: expired token should return invalid_token, got %', outcome1;
+  end if;
+  raise notice 'TEST PASSED: expired token returns invalid_token';
+
+  -- First approval succeeds.
+  select outcome, status, responded_at, approval_name, version
+  into outcome1, status1, responded_at1, approval_name1, version1
+  from public.respond_to_quote_proposal(token_a, 'approved', 'First Responder', '', 'looks good');
+  if outcome1 is distinct from 'success' or status1 is distinct from 'approved' or approval_name1 is distinct from 'First Responder' then
+    raise exception 'TEST FAILED: first approval should succeed -- got outcome=%, status=%, name=%', outcome1, status1, approval_name1;
+  end if;
+  raise notice 'TEST PASSED: first approval succeeds, outcome=success, status=approved';
+
+  -- Replaying the same approval fails safely, original state preserved
+  -- (also the "two competing responses" proof -- see the scope note above).
+  select outcome, status, responded_at, approval_name
+  into outcome2, status2, responded_at2, approval_name2
+  from public.respond_to_quote_proposal(token_a, 'approved', 'Replay Attempt', '', 'trying again');
+  if outcome2 is distinct from 'already_responded' or status2 is distinct from 'approved' or approval_name2 is distinct from 'First Responder' then
+    raise exception 'TEST FAILED: replaying the same approval should return already_responded with the ORIGINAL approval_name unchanged -- got outcome=%, status=%, name=%', outcome2, status2, approval_name2;
+  end if;
+  if responded_at2 is distinct from responded_at1 then
+    raise exception 'TEST FAILED: responded_at must not change on replay';
+  end if;
+  raise notice 'TEST PASSED: replaying the same approval is rejected, exactly one winner, original state preserved';
+
+  -- A different later status also fails safely.
+  select outcome, status into outcome2, status2
+  from public.respond_to_quote_proposal(token_a, 'rejected', 'Second Attempt', '', 'changed my mind');
+  if outcome2 is distinct from 'already_responded' or status2 is distinct from 'approved' then
+    raise exception 'TEST FAILED: a different later status must also be rejected -- got outcome=%, status=%', outcome2, status2;
+  end if;
+  raise notice 'TEST PASSED: a different later status is also rejected; authoritative status remains approved';
+
+  -- revision_requested also locks that proposal version (proposal B).
+  select outcome, status into outcome1, status1
+  from public.respond_to_quote_proposal(token_b, 'revision_requested', 'Reviewer', '', 'please adjust pricing note');
+  if outcome1 is distinct from 'success' or status1 is distinct from 'revision_requested' then
+    raise exception 'TEST FAILED: first revision_requested response on proposal B should succeed';
+  end if;
+  select outcome, status into outcome2, status2
+  from public.respond_to_quote_proposal(token_b, 'approved', 'Late Approver', '', '');
+  if outcome2 is distinct from 'already_responded' or status2 is distinct from 'revision_requested' then
+    raise exception 'TEST FAILED: proposal B should now be locked at revision_requested -- got outcome=%, status=%', outcome2, status2;
+  end if;
+  raise notice 'TEST PASSED: revision_requested also locks its proposal version against further responses';
+
+  -- Exactly one notification exists for proposal A despite 2 replay attempts.
+  select count(*) into notif_count_after
+  from public.notifications
+  where related_entity_type = 'sales_quote_proposal' and related_entity_id = proposal_a_id::text;
+  if notif_count_after <> 1 then
+    raise exception 'TEST FAILED: expected exactly 1 notification for proposal A, found %', notif_count_after;
+  end if;
+  raise notice 'TEST PASSED: exactly one notification exists despite replay/race attempts';
+
+  -- Finalized proposals remain viewable via the original token.
+  select status, approval_name, responded_at into status1, approval_name1, responded_at1
+  from public.get_quote_proposal_by_token(token_a);
+  if status1 is distinct from 'approved' or approval_name1 is distinct from 'First Responder' then
+    raise exception 'TEST FAILED: get_quote_proposal_by_token should still resolve token_a and show the real approver -- got status=%, name=%', status1, approval_name1;
+  end if;
+  raise notice 'TEST PASSED: an already-responded proposal remains fully viewable via its original token';
+
+  -- content_snapshot is unchanged -- only status/response fields were ever touched.
+  select content_snapshot into snapshot_after from public.sales_quote_proposals where id = proposal_a_id;
+  if snapshot_after is distinct from snapshot_before then
+    raise exception 'TEST FAILED: content_snapshot must never be modified by responding to a proposal';
+  end if;
+  raise notice 'TEST PASSED: content_snapshot is unchanged';
+
+  perform set_config('role', original_role, true);
+
+  raise notice 'ALL MIGRATION 119 TESTS PASSED';
+end $$;
+
+rollback;
+```
+
+#### A3 resolution — rollback (only if migration 119 has already been run and must be reversed)
+
+```sql
+-- Restores the exact pre-119 function bodies (from migrations 053/054)
+-- and the authenticated grant they had before.
+create or replace function public.get_quote_proposal_by_token(share_token text)
+returns table (
+  proposal_id uuid,
+  status text,
+  version integer,
+  content_snapshot jsonb,
+  client_name text
+)
+language sql
+security definer
+stable
+as $$
+  select p.id, p.status, p.version, p.content_snapshot, p.client_name
+  from public_share_tokens t
+  join sales_quote_proposals p on p.id = t.entity_id
+  where t.token = share_token
+    and t.entity_type = 'sales_quote_proposal'
+    and (t.expires_at is null or t.expires_at > now());
+$$;
+
+revoke all on function public.get_quote_proposal_by_token(text) from public;
+grant execute on function public.get_quote_proposal_by_token(text) to anon, authenticated;
+
+create or replace function public.respond_to_quote_proposal(share_token text, new_status text, approver_name text, approver_ip text, notes text)
+returns void
+language plpgsql
+security definer
+as $$
+declare
+  target_id uuid;
+  snapshot jsonb;
+  target_quote_id uuid;
+  target_version integer;
+  owner_email text;
+  quote_site_name text;
+  rule_active boolean;
+begin
+  if new_status not in ('approved', 'rejected', 'revision_requested') then
+    raise exception 'Invalid proposal response status';
+  end if;
+
+  select p.id, p.content_snapshot, p.quote_id, p.version
+  into target_id, snapshot, target_quote_id, target_version
+  from public_share_tokens t
+  join sales_quote_proposals p on p.id = t.entity_id
+  where t.token = share_token
+    and t.entity_type = 'sales_quote_proposal'
+    and (t.expires_at is null or t.expires_at > now());
+
+  if target_id is null then
+    raise exception 'Invalid or expired proposal link';
+  end if;
+
+  update sales_quote_proposals
+  set status = new_status,
+      responded_at = now(),
+      response_notes = notes,
+      approval_name = approver_name,
+      approval_ip = approver_ip,
+      approval_content_hash = encode(sha256(snapshot::text::bytea), 'hex'),
+      updated_at = now()
+  where id = target_id;
+
+  select q.created_by_email, q.site_name into owner_email, quote_site_name
+  from sales_quotes q where q.id = target_quote_id;
+
+  select is_active into rule_active from notification_rules where event_type = 'quote_proposal_responded';
+
+  if owner_email is not null and coalesce(rule_active, false) then
+    insert into notifications (recipient_email, event_type, title, body, related_entity_type, related_entity_id, dedupe_key)
+    values (
+      owner_email,
+      'quote_proposal_responded',
+      'Proposal ' || replace(new_status, '_', ' '),
+      coalesce(quote_site_name, 'A quote') || ' proposal v' || target_version || ' was ' || replace(new_status, '_', ' ') || ' by ' || coalesce(approver_name, 'the client') || '.',
+      'sales_quote_proposal',
+      target_id::text,
+      'quote_proposal_responded:' || target_id::text || ':' || new_status
+    )
+    on conflict (dedupe_key) do nothing;
+  end if;
+end;
+$$;
+
+revoke all on function public.respond_to_quote_proposal(text, text, text, text, text) from public;
+grant execute on function public.respond_to_quote_proposal(text, text, text, text, text) to anon, authenticated;
+```
+
+Rolling back also requires reverting the matching frontend commit (once it exists) back to the
+version that calls the old `void`-shaped RPC and ignores the new `get_quote_proposal_by_token`
+columns -- a plain `git revert` of that commit, not a manual re-edit.
+
 ### A4. Revocation — none exists
 
 Repo-wide search for any `DELETE` against `public_share_tokens` or any revoke path returns

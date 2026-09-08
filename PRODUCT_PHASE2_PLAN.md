@@ -1,8 +1,18 @@
 # Phase 2 Plan — Clients + Sales Quote Ownership Graph
 
-Status: **Revision 5 — migrations 117 and 118 both RUN successfully in production and fully
-verified, including the transaction-safe test script (§11.1a).** No RLS policy, workflow, RPC, or
-application code has been changed.
+Status: **Revision 6 — migrations 117 and 118 both RUN successfully in production and fully
+verified, including the transaction-safe test script (§11.1a). The per-workspace uniqueness
+migration (previously numbered "119" throughout this document) is renumbered to migration 120.**
+
+**Renumbering note (2026-09-08, later the same week):** migration 119 has been claimed by an
+unrelated, higher-priority security fix — a live proposal-token replay vulnerability in
+`respond_to_quote_proposal`, found during the 2026-09-08 overnight audit
+(`PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md` Part A3) and prioritized ahead of this phase's own
+work per E's explicit instruction. See `backend/supabase/migrations/119_secure_quote_proposal_response.sql`
+(created, not run) and that audit document's updated Part A3 for the full fix design. Every
+"migration 119" reference below now means migration 120 — this is a pure renumbering, no design
+content changed. No RLS policy, workflow, RPC, or application code from Phase 2 itself has been
+changed by this renumbering.
 
 **Final verification results (2026-09-08):** zero nulls in both new columns; full backfill to the
 Ergon Test Workspace confirmed; both columns `NOT NULL`; both triggers present and firing on
@@ -52,7 +62,7 @@ statement each test exercises.
    backend role; migration 115's functions never restricted it either). **Since run and
    confirmed clean — see the Revision 5 status block above.**
 4. **This renumbers the plan's previously-referenced "migration 118"** (per-workspace uniqueness
-   transition + quote-ref counters + explicit trigger ordering, §7) **to migration 119**, since
+   transition + quote-ref counters + explicit trigger ordering, §7) **to migration 120**, since
    the grant-fix migration claimed the number 118 first. That work is unaffected and has not
    started.
 5. **Recommended next step at the time this Revision 4 entry was written (now done — see Revision 5
@@ -70,7 +80,7 @@ statement each test exercises.
    with the exact reasoning documented (§4.2) and a dedicated test proving it works (§11.1a).
 3. Migration 117 is now a real file, created with `begin;`/`commit;` wrapping the full sequence
    exactly as designed in Revision 2 — no soak period, no illustrative placeholders.
-4. `assign_sales_quote_ref()`'s migration-119 planning note is corrected to preserve its existing
+4. `assign_sales_quote_ref()`'s migration-120 planning note is corrected to preserve its existing
    `if new.quote_ref is not null then return new;` early-return behavior (§7.2), verified against
    the real function body in `066_sales_quote_ref_and_closed_at.sql`.
 5. Repository checks run clean against the new file: `tsc -b` exits 0, `eslint .` reports 0
@@ -92,7 +102,7 @@ statement each test exercises.
    token access is described as intentional, token-authorized access to that one proposal, not as
    an absence of workspace data (§3.3). Suspended-workspace and notification workspace-awareness
    are now recorded as required-before-Phase-3-is-complete, not optional future flags.
-6. Migration 119's quote-ref trigger ordering is now explicitly designed and verified, not
+6. Migration 120's quote-ref trigger ordering is now explicitly designed and verified, not
    assumed from trigger-name alphabetization (§7.2).
 7. The test suite adds explicit UPDATE-immutability and suspended/ambiguous/zero-membership
    INSERT-failure tests, and explicitly disclaims "gap-free" claims about `quote_ref` sequencing
@@ -394,7 +404,7 @@ One addition beyond Revision 2's sketch: the real file's header comment records 
 `sales_quotes` already has a `before insert` trigger, `sales_quotes_assign_ref` (migration 066),
 which — being alphabetically before `sales_quotes_guard_workspace_id` — fires first. This is
 harmless for migration 117 specifically, because `assign_sales_quote_ref()` in its current form
-never reads `new.workspace_id`. It becomes relevant only once migration 119 redefines that
+never reads `new.workspace_id`. It becomes relevant only once migration 120 redefines that
 function to key the ref counter by workspace, which is why §7.2 designs explicit ordering for
 that later change rather than leaving it implicit here.
 
@@ -542,7 +552,7 @@ unacceptable duration. That doesn't apply at this table's size, so the extra ste
 complexity without a corresponding safety benefit. If a future phase applies this same pattern to
 a genuinely large table, that two-step form is the right one to reach for instead.
 
-**What migration 117 leaves for migration 119:** only the per-workspace uniqueness transition and
+**What migration 117 leaves for migration 120:** only the per-workspace uniqueness transition and
 the quote-ref counter/trigger-order change (§7), because both are meaningless correctness-wise
 until a second workspace actually exists, and bundling them into 117 would only add unrelated
 surface area to the migration that removes the null-risk window.
@@ -553,13 +563,13 @@ surface area to the migration that removes the null-risk window.
 
 | Table | New column | Index | Deletion behavior | Unique constraint change |
 |---|---|---|---|---|
-| `clients` | `workspace_id uuid not null` (set within 117) | `idx_clients_workspace_id` (117) | unchanged | `clients.name` global `unique` → `unique(workspace_id, name)` (119) |
-| `sales_quotes` | `workspace_id uuid not null` (set within 117) | `idx_sales_quotes_workspace_id` (117) | unchanged | `sales_quotes_quote_ref_unique unique(quote_ref)` → `unique(workspace_id, quote_ref)` (119) |
+| `clients` | `workspace_id uuid not null` (set within 117) | `idx_clients_workspace_id` (117) | unchanged | `clients.name` global `unique` → `unique(workspace_id, name)` (120) |
+| `sales_quotes` | `workspace_id uuid not null` (set within 117) | `idx_sales_quotes_workspace_id` (117) | unchanged | `sales_quotes_quote_ref_unique unique(quote_ref)` → `unique(workspace_id, quote_ref)` (120) |
 | All inheriting children | none | none new | unchanged — already `not null … on delete cascade` to their parent | none — no column added |
 
 ---
 
-## 7. Migration 119 — per-workspace uniqueness and explicit trigger ordering
+## 7. Migration 120 — per-workspace uniqueness and explicit trigger ordering
 
 ### 7.1 Uniqueness transition
 
@@ -567,7 +577,7 @@ surface area to the migration that removes the null-risk window.
 2. **`sales_quotes.quote_ref`** and its supporting counter table — see §7.2 for the full,
    order-verified design.
 
-Deferred to 119, not bundled into 117, because until a second workspace exists, global and
+Deferred to 120, not bundled into 117, because until a second workspace exists, global and
 per-workspace uniqueness are behaviorally identical for the one real workspace in production —
 there's no correctness reason to couple this to the null-safety work in 117.
 
@@ -581,7 +591,7 @@ guard plus a numeric naming convention that makes the intended order unambiguous
 reader (belt and suspenders, not "one clever trick"):
 
 ```sql
--- Illustrative only — migration 119, not yet designed as a runnable file.
+-- Illustrative only — migration 120, not yet designed as a runnable file.
 
 -- 1. Rename the existing ownership trigger with an explicit numeric prefix
 --    so its firing order relative to ref-assignment is stated, not implied.
@@ -664,19 +674,19 @@ section use these exact, verified names — not guesses.
 
 The `insert ... on conflict (workspace_id, year) do update set next_seq = ... + 1 returning next_seq - 1`
 pattern (§7.2, step 2) is the same atomic upsert-increment shape already used by the *existing,
-unmodified* `assign_sales_quote_ref()` in migration 066 — migration 119 only adds `workspace_id`
+unmodified* `assign_sales_quote_ref()` in migration 066 — migration 120 only adds `workspace_id`
 to the conflict target and the returned row, it doesn't change the underlying safety mechanism.
 Two concurrent quote-creation transactions targeting the same `(workspace_id, year)` serialize
 correctly because the `on conflict do update` clause takes a row-level lock on the counter row for
 the duration of the increment — the second transaction blocks until the first commits or rolls
 back, then sees the already-incremented value. This is the same pattern this codebase's own
 standing rule requires for any "re-acquired by key" table (`HANDOFF.md`: *"must use an atomic
-upsert-reclaim RPC, not a plain INSERT"*) — migration 119 doesn't introduce a new risk here, it
+upsert-reclaim RPC, not a plain INSERT"*) — migration 120 doesn't introduce a new risk here, it
 extends an already-correct mechanism to a composite key.
 
 ### 7.5 Preservation guarantees, stated explicitly
 
-- **Existing `quote_ref` values are never touched.** Migration 119 alters the counter table and the
+- **Existing `quote_ref` values are never touched.** Migration 120 alters the counter table and the
   assignment trigger's *future* behavior only — no `update sales_quotes set quote_ref = ...`
   statement exists anywhere in this design. Every quote's current ref stays exactly as it is.
 - **A deliberately supplied non-null `quote_ref` is still preserved.** §7.2's redefined
@@ -687,18 +697,18 @@ extends an already-correct mechanism to a composite key.
 
 ### 7.6 Active/suspended workspace behavior — inherited for free from migration 117
 
-Migration 119 does not need its own active/suspended check on quote-ref assignment. By the time
+Migration 120 does not need its own active/suspended check on quote-ref assignment. By the time
 `assign_sales_quote_ref()` fires on a `sales_quotes` insert, `new.workspace_id` was already
 stamped by migration 117's `guard_workspace_id_mutation()` trigger, which only ever succeeds by
 calling `resolve_caller_workspace_id()` — and that function already rejects any caller whose only
 workspace is suspended (§4.1), *before the row is even created*. So a `sales_quotes` row can only
 ever reach the ref-assignment trigger already carrying an active workspace's id. This is a real
-example of the layered design paying off: migration 119 gets a correctness guarantee for free from
+example of the layered design paying off: migration 120 gets a correctness guarantee for free from
 a constraint migration 117 already established, rather than needing to re-implement it.
 
-### 7.7 Preflight and transaction-safe tests for migration 119 (designed now, not run)
+### 7.7 Preflight and transaction-safe tests for migration 120 (designed now, not run)
 
-**Preflight** (run before 119, confirm the starting state):
+**Preflight** (run before 120, confirm the starting state):
 ```sql
 select count(*) as sales_quote_ref_counters_row_count from public.sales_quote_ref_counters;
 select conname from pg_constraint where conrelid = 'public.sales_quote_ref_counters'::regclass;
@@ -709,7 +719,7 @@ select conname from pg_constraint where conrelid = 'public.sales_quotes'::regcla
 ```
 
 **Transaction-safe test scenarios** (to design as an executable script, same `begin;`/`rollback;`
-pattern as §11.1a, when 119 is actually drafted — listed here so the design is complete, not
+pattern as §11.1a, when 120 is actually drafted — listed here so the design is complete, not
 deferred to a future session with no plan):
 - Two quotes created back-to-back for the same workspace in the same year get sequential,
   non-duplicate refs (extends existing Test G).
@@ -726,7 +736,7 @@ deferred to a future session with no plan):
   since it's now workspace-scoped; the *same* workspace still cannot create two clients with the
   same name (regression test for existing behavior, not just new behavior).
 
-### 7.8 Production verification for migration 119 (designed now, not run)
+### 7.8 Production verification for migration 120 (designed now, not run)
 
 ```sql
 -- Confirm the new constraint/column shape.
@@ -744,14 +754,14 @@ select count(*) from public.sales_quote_ref_counters where workspace_id is null;
 
 ### 7.9 Rollback limitations — cross-referenced from §9
 
-See §9's "Rollback of migration 118" section (which already covers 119's rollback caveats under
+See §9's "Rollback of migration 118" section (which already covers 120's rollback caveats under
 its prior numbering) for the honest limitation: if a second workspace has already created quotes
 under the new per-workspace counter scheme by the time a rollback is needed, collapsing
 `sales_quote_ref_counters` back to a single `(year)` key is lossy for counter *granularity* (two
 workspaces' sequences would need to be merged/renumbered), though every `quote_ref` value already
 stamped on a `sales_quotes` row is unaffected either way. Given §13's confirmed decision that no
 second workspace exists until Phase 3's isolation and an active-workspace selector are built, this
-scenario cannot actually arise before migration 119 is long since stable in production.
+scenario cannot actually arise before migration 120 is long since stable in production.
 
 ### 7.10 In plain language — what changes for a real user
 
@@ -761,7 +771,7 @@ it's created, exactly as today. Under the hood, that number now comes from a cou
 scoped to the workspace instead of a single global counter, but since only one workspace
 (Ergon Test Workspace) exists in production, the sequence of numbers a user actually sees does
 not change or skip. The same is true for adding a new client with the same name as an existing
-one — today that's rejected outright; after 119, it's still rejected within the same workspace
+one — today that's rejected outright; after 120, it's still rejected within the same workspace
 (no behavior change visible to any current user), and would only be *allowed* if a second,
 different company's workspace existed, which it doesn't yet.
 
@@ -843,10 +853,10 @@ alter table public.clients drop column if exists workspace_id;
 alter table public.sales_quotes drop column if exists workspace_id;
 ```
 
-**Rollback of migration 119** (if run and found to have a problem): restore the global unique
+**Rollback of migration 120** (if run and found to have a problem): restore the global unique
 constraints, restore `sales_quote_ref_counters`'s original `(year)` primary key (dropping the
 `workspace_id` column), restore `assign_sales_quote_ref()`'s prior year-only-keyed body, and
-rename the triggers back. **Honest caveat, unchanged in kind from Revision 1:** if 119 has been
+rename the triggers back. **Honest caveat, unchanged in kind from Revision 1:** if 120 has been
 live long enough for a second workspace to have created quotes under the new per-workspace
 counter scheme, collapsing the counter table back to a single `(year)` key is lossy for counter
 *granularity* — two workspaces' sequences would need to be merged/renumbered — though the
@@ -874,7 +884,7 @@ with slug `ergon-test` and `status = 'active'`.
   direct-SQL update of either row's `workspace_id` is rejected, then delete/soft-delete the
   throwaway rows (see §11's caveat about `quote_ref` gaps from this).
 
-**Post-119 verification (later):** confirm the new per-workspace unique constraints exist and the
+**Post-120 verification (later):** confirm the new per-workspace unique constraints exist and the
 old global ones are gone; confirm `sales_quote_ref_counters` now has one row per
 `(workspace_id, year)`; confirm a freshly-created quote gets a correctly-scoped, sequential
 `quote_ref` with no visible behavior change for today's single workspace; confirm the trigger-order
@@ -1349,6 +1359,6 @@ still fire correctly for an authenticated caller with the grants fully closed.
 nulls, correct backfill, both triggers present and firing as designed. Migration 118 (grant
 correction, §14.5) has been created in response to a real finding from that verification, but has
 **not** been run yet. No RLS policy has changed and no application code has been deployed.
-Migration 119 (per-workspace uniqueness, quote-ref counters, explicit trigger ordering, §7) has
+Migration 120 (per-workspace uniqueness, quote-ref counters, explicit trigger ordering, §7) has
 not been started. Repository checks pass clean against both new migration files: `tsc -b` exits
 0; `eslint .` reports 0 errors and 76 warnings, the same baseline as before either file existed.*
