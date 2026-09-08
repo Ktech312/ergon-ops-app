@@ -247,7 +247,7 @@ E's stated direction, from an overnight planning conversation (research → clar
 
 ## Recent work log (most recent first — 2026-09-08)
 
-- **(pending commit...) Overnight autonomous work session, Priority 2: four small, isolated bug fixes, each with regression tests.** Run per E's explicit overnight authorization (git reconciliation, then a large prioritized safe-work queue) — see the morning-report entry at the top of this section once written for the full session summary; this entry covers only the shipped code fixes.
+- **(`af8e1b0`) Overnight autonomous work session, Priority 2: four small, isolated bug fixes, each with regression tests.** Run per E's explicit overnight authorization (git reconciliation, then a large prioritized safe-work queue) — see the morning-report entry at the top of this section once written for the full session summary; this entry covers only the shipped code fixes.
 
   **Note on commit granularity**: E's instructions asked for each Priority 2 fix as its own separate reviewable commit. All four touch `src/main.tsx` in overlapping/adjacent regions; splitting them into separate commits would have required manual git-hunk surgery (`git apply` on hand-edited partial patches) with real risk of silently corrupting the file during an unattended run. Bundled into one commit instead, with each fix documented separately below and in the commit message itself — flagging this deviation explicitly rather than doing it silently.
 
