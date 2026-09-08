@@ -1,0 +1,53 @@
+-- Corrects an unintended grant surfaced by E's post-migration-117
+-- verification: information_schema.role_routine_grants showed EXECUTE on
+-- public.resolve_caller_workspace_id() and
+-- public.guard_workspace_id_mutation() granted to `authenticated` AND
+-- `anon`, even though migration 117 never granted either explicitly and
+-- its own comments and PRODUCT_PHASE2_PLAN.md section 4.2 both stated
+-- neither function should be.
+--
+-- Root cause: this Supabase project is bootstrapped with `alter default
+-- privileges in schema public grant execute on functions to anon,
+-- authenticated, service_role` (a standard part of Supabase project
+-- setup), so any newly created function in the public schema is
+-- automatically executable by those roles unless explicitly revoked
+-- afterward. Migration 117's `revoke all ... from public` only revokes
+-- the PUBLIC pseudo-role's default grant -- it does not touch a
+-- separately-recorded grant to a specific named role. This is the first
+-- migration in this project where a function was deliberately meant to
+-- carry no grant to authenticated, which is why the gap wasn't visible
+-- until now.
+--
+-- service_role is deliberately left untouched here -- it is Supabase's
+-- trusted, RLS-bypassing backend role, is not used by any client-facing
+-- code path, and migration 115's functions never restricted it either;
+-- revoking it would be an inconsistent, unrequested change.
+--
+-- Practical exposure while this gap existed, for the record:
+-- guard_workspace_id_mutation() (returns trigger) could never be called
+-- directly by any role regardless of grants -- Postgres rejects that at
+-- the language level, not via ACL -- so this revoke is a hygiene/
+-- defense-in-depth correction for that function, not a fix for an
+-- exploitable gap. resolve_caller_workspace_id() (returns uuid) could
+-- have been called directly via PostgREST's
+-- rpc/resolve_caller_workspace_id. An authenticated caller would only
+-- ever learn their own resolved workspace id or one of the three
+-- documented errors -- no cross-user exposure. An anonymous caller's
+-- auth.uid() resolves to null, which never matches any
+-- workspace_members.user_id, so the function always raised "no
+-- workspace membership found" -- no data was ever returned to an
+-- anonymous caller. No exploitation occurred; this migration closes the
+-- surface regardless, to match the original design intent.
+--
+-- Renumbers the plan's previously-referenced "migration 118" (per-
+-- workspace uniqueness transition + quote-ref counters + explicit
+-- trigger ordering, PRODUCT_PHASE2_PLAN.md section 7) to migration 119.
+-- That work has not started and is unaffected by this file.
+--
+-- Idempotent: revoking a privilege that is already absent is a no-op in
+-- Postgres, not an error, so this is safe to run more than once.
+
+revoke execute on function public.resolve_caller_workspace_id() from authenticated;
+revoke execute on function public.resolve_caller_workspace_id() from anon;
+revoke execute on function public.guard_workspace_id_mutation() from authenticated;
+revoke execute on function public.guard_workspace_id_mutation() from anon;
