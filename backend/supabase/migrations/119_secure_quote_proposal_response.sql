@@ -53,7 +53,15 @@ begin;
 -- any code path found.
 -- ============================================================
 
-create or replace function public.get_quote_proposal_by_token(share_token text)
+-- CREATE OR REPLACE cannot change a function's return-row shape (Postgres
+-- 42P13: "cannot change return type of existing function... Row type
+-- defined by OUT parameters is different"). Both functions below change
+-- shape (new columns / void -> table), so each needs an explicit DROP
+-- first. Safe: this immediately re-creates both, inside the same
+-- transaction, so there is no window where either function is missing.
+drop function if exists public.get_quote_proposal_by_token(text);
+
+create function public.get_quote_proposal_by_token(share_token text)
 returns table (
   proposal_id uuid,
   status text,
@@ -123,7 +131,10 @@ grant execute on function public.get_quote_proposal_by_token(text) to anon;
 -- as Section 1.
 -- ============================================================
 
-create or replace function public.respond_to_quote_proposal(
+-- Same reason as above: void -> table is also a return-shape change.
+drop function if exists public.respond_to_quote_proposal(text, text, text, text, text);
+
+create function public.respond_to_quote_proposal(
   share_token text,
   new_status text,
   approver_name text,

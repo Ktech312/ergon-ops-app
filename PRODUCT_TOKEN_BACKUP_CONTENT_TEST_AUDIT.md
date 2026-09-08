@@ -215,9 +215,25 @@ created in the repository, reproduced here for review. **Not run.**
 ```sql
 begin;
 
+-- CORRECTION (2026-09-08, live during E's first run attempt): CREATE OR
+-- REPLACE cannot change a function's return-row shape -- Postgres 42P13,
+-- "cannot change return type of existing function... Row type defined
+-- by OUT parameters is different." Both functions below change shape
+-- (new columns / void -> table), so each needs an explicit DROP first.
+-- The first run attempt failed on exactly this at Section 1, before
+-- Section 2 or `commit;` was ever reached -- the whole transaction
+-- rolled back automatically, nothing committed, production was never
+-- left in a partial state. Fixed by adding `drop function if exists`
+-- immediately before each `create` below (now plain `create`, not `or
+-- replace`, since the preceding drop guarantees a clean slate either
+-- way). Both drop+create pairs are inside the same transaction, so
+-- there is no window where either function is missing.
+
 -- Section 1 -- get_quote_proposal_by_token(): same query logic, now also
 -- returns responded_at/approval_name, hardened, grant narrowed to anon.
-create or replace function public.get_quote_proposal_by_token(share_token text)
+drop function if exists public.get_quote_proposal_by_token(text);
+
+create function public.get_quote_proposal_by_token(share_token text)
 returns table (
   proposal_id uuid,
   status text,
@@ -245,8 +261,11 @@ grant execute on function public.get_quote_proposal_by_token(text) to anon;
 
 -- Section 2 -- respond_to_quote_proposal(): the atomic, outcome-returning
 -- fix. See the migration file's own comments for the full design
--- rationale on each branch.
-create or replace function public.respond_to_quote_proposal(
+-- rationale on each branch. Same return-shape-change reason as Section 1
+-- (void -> table), so this also needs an explicit DROP first.
+drop function if exists public.respond_to_quote_proposal(text, text, text, text, text);
+
+create function public.respond_to_quote_proposal(
   share_token text,
   new_status text,
   approver_name text,
@@ -544,8 +563,12 @@ rollback;
 
 ```sql
 -- Restores the exact pre-119 function bodies (from migrations 053/054)
--- and the authenticated grant they had before.
-create or replace function public.get_quote_proposal_by_token(share_token text)
+-- and the authenticated grant they had before. Restoring the OLD shape
+-- is ALSO a return-shape change from whatever 119 left live, so this
+-- needs the same drop-first treatment as the forward migration.
+drop function if exists public.get_quote_proposal_by_token(text);
+
+create function public.get_quote_proposal_by_token(share_token text)
 returns table (
   proposal_id uuid,
   status text,
@@ -568,7 +591,9 @@ $$;
 revoke all on function public.get_quote_proposal_by_token(text) from public;
 grant execute on function public.get_quote_proposal_by_token(text) to anon, authenticated;
 
-create or replace function public.respond_to_quote_proposal(share_token text, new_status text, approver_name text, approver_ip text, notes text)
+drop function if exists public.respond_to_quote_proposal(text, text, text, text, text);
+
+create function public.respond_to_quote_proposal(share_token text, new_status text, approver_name text, approver_ip text, notes text)
 returns void
 language plpgsql
 security definer
