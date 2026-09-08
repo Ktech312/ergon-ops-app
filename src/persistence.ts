@@ -10416,6 +10416,32 @@ export type PublicQuoteProposalView = {
   version: number;
   contentSnapshot: ProposalSnapshot;
   clientName: string;
+  // Added by migration 119 -- lets the public page show "This proposal
+  // was approved on <date>" with real data instead of a bare status.
+  respondedAt: string | null;
+  approvalName: string | null;
+};
+
+// Migration 119: distinguishes "the RPC ran and here's what it found" from
+// "something actually broke," per the fix requirements -- see
+// PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md's "A3 resolution" section.
+export type PublicQuoteProposalResult =
+  | { outcome: "found"; data: PublicQuoteProposalView }
+  | { outcome: "invalid_token" }
+  | { outcome: "error" };
+
+export type ProposalResponseOutcome = "success" | "already_responded" | "invalid_token" | "error";
+
+// Always carries the AUTHORITATIVE current state of the proposal, even
+// when outcome is "already_responded" (someone else's response, or a
+// stale resubmission) -- the caller should render this state directly
+// rather than treating a non-"success" outcome as a bare failure.
+export type ProposalResponseResult = {
+  outcome: ProposalResponseOutcome;
+  status: SalesQuoteProposal["status"] | null;
+  respondedAt: string | null;
+  approvalName: string | null;
+  version: number | null;
 };
 
 type SalesQuoteProposalRow = {
@@ -10514,17 +10540,22 @@ export async function createQuoteProposalShareToken(proposalId: string, accessTo
   return token;
 }
 
-export async function fetchPublicQuoteProposal(token: string): Promise<PublicQuoteProposalView | null> {
+export async function fetchPublicQuoteProposal(token: string): Promise<PublicQuoteProposalResult> {
   if (!isRemotePersistenceConfigured() || !token) {
-    return null;
+    return { outcome: "error" };
   }
-  const response = await fetch(supabaseUrl("rpc/get_quote_proposal_by_token"), {
-    method: "POST",
-    headers: supabaseHeaders(),
-    body: JSON.stringify({ share_token: token }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(supabaseUrl("rpc/get_quote_proposal_by_token"), {
+      method: "POST",
+      headers: supabaseHeaders(),
+      body: JSON.stringify({ share_token: token }),
+    });
+  } catch {
+    return { outcome: "error" };
+  }
   if (!response.ok) {
-    return null;
+    return { outcome: "error" };
   }
   const rows = (await response.json()) as Array<{
     proposal_id: string;
@@ -10532,17 +10563,27 @@ export async function fetchPublicQuoteProposal(token: string): Promise<PublicQuo
     version: number;
     content_snapshot: ProposalSnapshot;
     client_name: string | null;
+    responded_at: string | null;
+    approval_name: string | null;
   }>;
   if (!rows.length) {
-    return null;
+    // A well-formed request that resolved zero rows means the token
+    // itself doesn't match a live, unexpired proposal -- distinct from a
+    // network/server failure (see migration 119, get_quote_proposal_by_token).
+    return { outcome: "invalid_token" };
   }
   const row = rows[0];
   return {
-    proposalId: row.proposal_id,
-    status: row.status as SalesQuoteProposal["status"],
-    version: row.version,
-    contentSnapshot: row.content_snapshot,
-    clientName: row.client_name ?? "",
+    outcome: "found",
+    data: {
+      proposalId: row.proposal_id,
+      status: row.status as SalesQuoteProposal["status"],
+      version: row.version,
+      contentSnapshot: row.content_snapshot,
+      clientName: row.client_name ?? "",
+      respondedAt: row.responded_at,
+      approvalName: row.approval_name,
+    },
   };
 }
 
@@ -10551,22 +10592,50 @@ export async function respondToPublicQuoteProposal(
   newStatus: "approved" | "rejected" | "revision_requested",
   approverName: string,
   notes: string,
-): Promise<boolean> {
+): Promise<ProposalResponseResult> {
+  const failed: ProposalResponseResult = { outcome: "error", status: null, respondedAt: null, approvalName: null, version: null };
   if (!isRemotePersistenceConfigured() || !token) {
-    return false;
+    return failed;
   }
-  const response = await fetch(supabaseUrl("rpc/respond_to_quote_proposal"), {
-    method: "POST",
-    headers: supabaseHeaders(),
-    body: JSON.stringify({
-      share_token: token,
-      new_status: newStatus,
-      approver_name: approverName || "Unknown",
-      approver_ip: "",
-      notes: notes || "",
-    }),
-  });
-  return response.ok;
+  let response: Response;
+  try {
+    response = await fetch(supabaseUrl("rpc/respond_to_quote_proposal"), {
+      method: "POST",
+      headers: supabaseHeaders(),
+      body: JSON.stringify({
+        share_token: token,
+        new_status: newStatus,
+        approver_name: approverName || "Unknown",
+        approver_ip: "",
+        notes: notes || "",
+      }),
+    });
+  } catch {
+    return failed;
+  }
+  if (!response.ok) {
+    return failed;
+  }
+  const rows = (await response.json()) as Array<{
+    outcome: string;
+    status: string | null;
+    responded_at: string | null;
+    approval_name: string | null;
+    version: number | null;
+  }>;
+  if (!rows.length) {
+    return failed;
+  }
+  const row = rows[0];
+  return {
+    outcome: (["success", "already_responded", "invalid_token"] as string[]).includes(row.outcome)
+      ? (row.outcome as ProposalResponseOutcome)
+      : "error",
+    status: (row.status as SalesQuoteProposal["status"] | null) ?? null,
+    respondedAt: row.responded_at,
+    approvalName: row.approval_name,
+    version: row.version,
+  };
 }
 
 // --- Migration 058: Site Intake Questionnaire ------------------------------
