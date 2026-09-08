@@ -74,11 +74,46 @@ itself performs no server-side idempotency/status check. Genuine reuse gap, not 
 
 #### A3 resolution — status as of 2026-09-08, later the same week
 
-**Status: fix designed, migration file created, NOT run.** Prioritized ahead of Phase 2's own
-per-workspace-uniqueness migration per E's explicit instruction — see
-`PRODUCT_PHASE2_PLAN.md`'s Revision 6 renumbering note. Full design below; exact SQL, rollback,
-and test script live in `backend/supabase/migrations/119_secure_quote_proposal_response.sql`
-(created, not run) and are reproduced in this section for review.
+**Status: RESOLVED. Migrations 119 and 121 both run and fully verified in production.**
+Prioritized ahead of Phase 2's own per-workspace-uniqueness migration per E's explicit
+instruction — see `PRODUCT_PHASE2_PLAN.md`'s Revision 6 renumbering note. Full design below; exact
+SQL, rollback, and test script live in `backend/supabase/migrations/119_secure_quote_proposal_response.sql`
+and `121_fix_respond_to_quote_proposal_bugs.sql`, and are reproduced in this section for the
+permanent record.
+
+**Two additional real bugs found live during E's own verification, neither introduced by this fix
+— both now corrected by migration 121 (`backend/supabase/migrations/121_fix_respond_to_quote_proposal_bugs.sql`)**:
+
+1. **Ambiguous column reference (Postgres 42702).** `respond_to_quote_proposal()`'s
+   `RETURNS TABLE (outcome, status, responded_at, approval_name, version)` columns collide with
+   the real column names on `sales_quote_proposals` — in `plpgsql`, `RETURNS TABLE` columns become
+   implicit variables in scope for the whole function body, so any unqualified reference to those
+   names inside an embedded SQL statement is genuinely ambiguous. This made **every real call to
+   the fixed function fail** (not just the test that first exposed it) until corrected by aliasing
+   the table and qualifying every reference.
+2. **`ON CONFLICT` arbiter mismatch (Postgres 42P10), pre-existing since migration 054.** The
+   notification insert's `on conflict (dedupe_key) do nothing` — copied verbatim from the
+   *original* migration 054 — never matched `notifications`' real unique index, which is
+   **partial**: `create unique index idx_notifications_dedupe on notifications(dedupe_key) where
+   dedupe_key is not null` (migration 024). Postgres will not infer a partial index as the `ON
+   CONFLICT` arbiter unless the clause restates the matching `WHERE` predicate. **This means no
+   real customer response to a proposal has ever successfully notified the quote's owner, since
+   migration 054 shipped** — this is a genuine, independent, pre-existing product gap this fix
+   happened to surface, not something introduced tonight. Fixed by adding
+   `where dedupe_key is not null` to the `ON CONFLICT` clause. The analogous, still-live bug in
+   `respond_to_submittal()` (migration 025/041 family, same unqualified pattern) is **not** fixed
+   by this migration — flagged here for a future, separate fix, not silently bundled in.
+
+Both were found and corrected live, in Studio, via ad-hoc `CREATE OR REPLACE` statements while E
+ran the verification pass — migration 121 is the permanent, consolidated record of exactly what
+ended up live, per the standing rule that an already-applied migration's SQL is never edited
+retroactively (same pattern as migration 118 after 117).
+
+**Final verification**: the full transaction-safe test script (§ below) ran clean to completion
+with no error after both corrections, confirming all 9 required scenarios — including the
+notification-count check, which failed twice more during this same session for reasons unrelated
+to the fix itself (a real fixture-setup bug in the test script's own role-switching, not the RPC —
+see the script's comments for detail).
 
 **Terminology note**: the schema's real "awaiting response" status value is `'sent'`
 (`sales_quote_proposals.status` check constraint: `'draft', 'sent', 'approved', 'rejected',
@@ -443,10 +478,17 @@ begin
     raise exception 'no workspace-admin member of the Ergon Test Workspace found -- cannot run tests';
   end if;
 
+  -- Ensure the one notification rule this test exercises is active
+  -- WITHIN this transaction, regardless of the live admin setting --
+  -- this test validates the RPC's own dedup/notify logic, not today's
+  -- specific admin configuration. Rolled back with everything else.
+  update public.notification_rules set is_active = true where event_type = 'quote_proposal_responded';
+  if not found then
+    insert into public.notification_rules (event_type, channels, is_active) values ('quote_proposal_responded', '{in_app}', true);
+  end if;
+
   perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id, 'role', 'authenticated')::text, true);
 
-  -- Fixture: one real sales_quotes row + two proposals (A: reuse/race
-  -- tests, B: the revision_requested-locks-too test), both status='sent'.
   perform set_config('role', 'authenticated', true);
   insert into public.sales_quotes (client_name, site_name, created_by_email)
   values ('Migration 119 Test Client', 'Migration 119 Test Site', 'phase2-test@example.com')
@@ -470,21 +512,18 @@ begin
 
   perform set_config('role', 'anon', true);
 
-  -- Invalid token.
   select outcome into outcome1 from public.respond_to_quote_proposal('this-token-does-not-exist', 'approved', 'Nobody', '', '');
   if outcome1 is distinct from 'invalid_token' then
     raise exception 'TEST FAILED: unknown token should return invalid_token, got %', outcome1;
   end if;
   raise notice 'TEST PASSED: invalid token returns invalid_token';
 
-  -- Expired token.
   select outcome into outcome1 from public.respond_to_quote_proposal(token_expired, 'approved', 'Nobody', '', '');
   if outcome1 is distinct from 'invalid_token' then
     raise exception 'TEST FAILED: expired token should return invalid_token, got %', outcome1;
   end if;
   raise notice 'TEST PASSED: expired token returns invalid_token';
 
-  -- First approval succeeds.
   select outcome, status, responded_at, approval_name, version
   into outcome1, status1, responded_at1, approval_name1, version1
   from public.respond_to_quote_proposal(token_a, 'approved', 'First Responder', '', 'looks good');
@@ -493,8 +532,6 @@ begin
   end if;
   raise notice 'TEST PASSED: first approval succeeds, outcome=success, status=approved';
 
-  -- Replaying the same approval fails safely, original state preserved
-  -- (also the "two competing responses" proof -- see the scope note above).
   select outcome, status, responded_at, approval_name
   into outcome2, status2, responded_at2, approval_name2
   from public.respond_to_quote_proposal(token_a, 'approved', 'Replay Attempt', '', 'trying again');
@@ -506,7 +543,6 @@ begin
   end if;
   raise notice 'TEST PASSED: replaying the same approval is rejected, exactly one winner, original state preserved';
 
-  -- A different later status also fails safely.
   select outcome, status into outcome2, status2
   from public.respond_to_quote_proposal(token_a, 'rejected', 'Second Attempt', '', 'changed my mind');
   if outcome2 is distinct from 'already_responded' or status2 is distinct from 'approved' then
@@ -514,7 +550,6 @@ begin
   end if;
   raise notice 'TEST PASSED: a different later status is also rejected; authoritative status remains approved';
 
-  -- revision_requested also locks that proposal version (proposal B).
   select outcome, status into outcome1, status1
   from public.respond_to_quote_proposal(token_b, 'revision_requested', 'Reviewer', '', 'please adjust pricing note');
   if outcome1 is distinct from 'success' or status1 is distinct from 'revision_requested' then
@@ -527,7 +562,13 @@ begin
   end if;
   raise notice 'TEST PASSED: revision_requested also locks its proposal version against further responses';
 
-  -- Exactly one notification exists for proposal A despite 2 replay attempts.
+  -- Switch back to the privileged role for the remaining raw-table
+  -- verification checks -- notifications' RLS (migration 114) correctly
+  -- hides other users' rows from anon/non-recipient roles, so checking
+  -- "did the row get created at all" needs the same role that set up the
+  -- fixtures, not the simulated anonymous customer.
+  perform set_config('role', original_role, true);
+
   select count(*) into notif_count_after
   from public.notifications
   where related_entity_type = 'sales_quote_proposal' and related_entity_id = proposal_a_id::text;
@@ -536,7 +577,6 @@ begin
   end if;
   raise notice 'TEST PASSED: exactly one notification exists despite replay/race attempts';
 
-  -- Finalized proposals remain viewable via the original token.
   select status, approval_name, responded_at into status1, approval_name1, responded_at1
   from public.get_quote_proposal_by_token(token_a);
   if status1 is distinct from 'approved' or approval_name1 is distinct from 'First Responder' then
@@ -544,14 +584,11 @@ begin
   end if;
   raise notice 'TEST PASSED: an already-responded proposal remains fully viewable via its original token';
 
-  -- content_snapshot is unchanged -- only status/response fields were ever touched.
   select content_snapshot into snapshot_after from public.sales_quote_proposals where id = proposal_a_id;
   if snapshot_after is distinct from snapshot_before then
     raise exception 'TEST FAILED: content_snapshot must never be modified by responding to a proposal';
   end if;
   raise notice 'TEST PASSED: content_snapshot is unchanged';
-
-  perform set_config('role', original_role, true);
 
   raise notice 'ALL MIGRATION 119 TESTS PASSED';
 end $$;
@@ -661,6 +698,13 @@ grant execute on function public.respond_to_quote_proposal(text, text, text, tex
 Rolling back also requires reverting the matching frontend commit (once it exists) back to the
 version that calls the old `void`-shaped RPC and ignores the new `get_quote_proposal_by_token`
 columns -- a plain `git revert` of that commit, not a manual re-edit.
+
+**Rolling back migration 121 alone** (without also rolling back 119): re-run 119's original
+`respond_to_quote_proposal()` body exactly as reproduced in this document's migration-119 block
+above (`create or replace function`, same signature, no `DROP` needed) — this restores the
+ambiguous-column and `ON CONFLICT` bugs 121 fixed, which is only useful for isolating whether a
+future regression is 121's fault specifically; there's no scenario where reverting to the known-
+buggy version is actually desirable otherwise.
 
 ### A4. Revocation — none exists
 

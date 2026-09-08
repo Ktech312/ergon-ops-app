@@ -247,7 +247,7 @@ E's stated direction, from an overnight planning conversation (research → clar
 
 ## Recent work log (most recent first — 2026-09-08)
 
-- **(migration `119_secure_quote_proposal_response.sql` created, NOT run; matching frontend fix + a second dead-array removal committed locally, NOT pushed) Live proposal-token replay vulnerability fixed and prioritized ahead of the per-workspace uniqueness work, per E's explicit instruction.**
+- **(migrations `119_secure_quote_proposal_response.sql` and `121_fix_respond_to_quote_proposal_bugs.sql` both RUN and fully verified in production; matching frontend fix + a second dead-array removal now pushed) Live proposal-token replay vulnerability fixed and prioritized ahead of the per-workspace uniqueness work, per E's explicit instruction.**
 
   **Renumbering**: the per-workspace uniqueness migration (`clients.name`/`sales_quotes.quote_ref`,
   previously "migration 119" throughout `PRODUCT_PHASE2_PLAN.md`) is renumbered to **migration
@@ -313,16 +313,56 @@ E's stated direction, from an overnight planning conversation (research → clar
   scanned directly for every real vendor name/cost figure the array contained -- none ship. No
   database record touched, per the explicit limit.
 
-  **Current git state**: `origin/main` is at `b9e9d4a` (migration 119 file + design docs --
-  pushed, safe, doesn't change any live behavior since the migration hasn't run). Local `main` is
-  2 commits ahead, **not pushed**: `74f2d24` (frontend proposal-response fix) then `1e35bf3` (dead
-  array removal, sequenced after simply to avoid git-history complexity, not because it depends on
-  the security fix). **Action needed from E**: (1) review and run migration 119 in Supabase
-  Studio, using the preflight/verification blocks in `PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md`;
-  (2) run the transaction-safe test script there and confirm `ALL MIGRATION 119 TESTS PASSED`; (3)
-  once confirmed, tell the next session (or run `git push origin main` directly) to push the two
-  held commits -- both are already fully checked and ready, just intentionally not deployed ahead
-  of the migration they depend on.
+  **Live verification found and fixed two more real bugs, neither introduced by this fix, both
+  now permanently recorded in `121_fix_respond_to_quote_proposal_bugs.sql`:**
+  1. **Migration 119's own first run attempt failed outright** (Postgres 42P13: `CREATE OR
+     REPLACE FUNCTION` can't change a function's return-row shape). Fixed by adding
+     `drop function if exists ...` before each affected `create` -- directly in the still-unrun
+     119 file, since nothing had committed yet. Second run attempt succeeded.
+  2. **After 119 committed, live testing found `respond_to_quote_proposal()` failed on every real
+     call** (Postgres 42702, ambiguous column reference: its own `RETURNS TABLE` column names
+     collide with `sales_quote_proposals`' real column names, and in `plpgsql` those become
+     implicit variables in scope for the whole function body). Fixed by aliasing the table and
+     qualifying every reference.
+  3. **The notification insert failed on every real call too, and had since migration 054**
+     (Postgres 42P10: `on conflict (dedupe_key) do nothing`, copied verbatim from the original
+     054, never matched `notifications`' real unique index, which is *partial*
+     -- `... where dedupe_key is not null`, migration 024). **This means no real customer
+     response to a proposal has ever successfully notified the quote's owner since this feature
+     shipped** -- a genuine, independent, pre-existing gap this fix happened to surface, not
+     something introduced tonight. Fixed by restating the matching `where` clause in the `ON
+     CONFLICT` clause. The identical, still-live bug in `respond_to_submittal()` (migration
+     025/041 family) is **not** fixed here -- flagged for a separate future fix, not silently
+     bundled in.
+  4. **Migration 119 also picked up an unwanted `authenticated` grant**, same root cause as
+     migration 118 (this project's schema-level default privileges), fixed the same way
+     (`revoke execute ... from authenticated`).
+
+  Both #1 and #4's corrections were folded directly into `119_secure_quote_proposal_response.sql`
+  before/immediately after its successful run (matching the standing rule: never edit an
+  already-*committed* migration's SQL after the fact -- #1 was fixed before it ever committed,
+  #4 was a separate `revoke` statement run live, not a file edit). #2 and #3 were found only
+  after 119 had already committed, so they're captured in a new migration,
+  `121_fix_respond_to_quote_proposal_bugs.sql`, per that same rule.
+
+  **The transaction-safe test script itself needed two more live corrections** before it actually
+  proved anything (both are test-script bugs, not RPC bugs): it originally checked the
+  notification count and read `content_snapshot` while still simulating the anonymous customer
+  (`role = anon`), so `notifications`' own RLS (migration 114: recipients only see their own rows)
+  correctly hid the very row the test had just caused the RPC to insert -- fixed by switching back
+  to the privileged connecting role before those two checks. It also assumed
+  `notification_rules.is_active` was already `true` for `quote_proposal_responded` in production
+  (it was, confirmed directly, but the test now sets this explicitly within its own rolled-back
+  transaction rather than depending on live admin configuration). The corrected script (in
+  `PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md`) ran clean to `ALL MIGRATION 119 TESTS PASSED` with
+  no error, confirming all 9 required scenarios.
+
+  **Final git state**: everything pushed. `dfcf897`..`b9e9d4a` from earlier tonight, then
+  `74f2d24` (frontend fix), `1e35bf3` (dead array removal), `a7e2720` (docs), `6416c59` (119's
+  own DROP-FUNCTION fix, pre-commit), `<this commit>` (121 + final doc updates) -- see `git log`
+  for exact hashes. The frontend commit is safe now that both 119 and 121 are confirmed live and
+  correct; the RPC contract it was written against (return shape) never changed between 119 and
+  121, only the body's internal correctness did.
 
   Per explicit instruction: Phase 3 RLS was not started, no second workspace was created, and the
   migration was not run.
