@@ -24550,28 +24550,41 @@ function PanelHeader({
 type SubmittalResponseStatus = "approved" | "rejected" | "revision_requested";
 
 function SubmittalPublicPage({ token }: { token: string }) {
-  const [phase, setPhase] = useState<"loading" | "error" | "ready" | "responded">("loading");
+  // "invalid" = the token itself doesn't resolve (bad/expired link) --
+  // distinct from "error" (a genuine network/server failure), per
+  // migration 122's fix requirements (same shape as ProposalPublicPage).
+  const [phase, setPhase] = useState<"loading" | "invalid" | "error" | "ready" | "responded">("loading");
   const [data, setData] = useState<PublicSubmittalView | null>(null);
   const [approverName, setApproverName] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [respondedStatus, setRespondedStatus] = useState<SubmittalResponseStatus | null>(null);
+  const [respondedAt, setRespondedAt] = useState<string | null>(null);
+  const [respondedByName, setRespondedByName] = useState<string | null>(null);
+  const [respondedByMe, setRespondedByMe] = useState(false);
 
   useEffect(() => {
     fetchPublicSubmittal(token)
       .then((result) => {
-        if (!result) {
+        if (result.outcome === "invalid_token") {
+          setPhase("invalid");
+          return;
+        }
+        if (result.outcome === "error") {
           setPhase("error");
           return;
         }
-        setData(result);
-        if (result.status === "sent") {
+        setData(result.data);
+        if (result.data.status === "sent") {
           setPhase("ready");
         } else {
           setPhase("responded");
-          if (result.status === "approved" || result.status === "rejected" || result.status === "revision_requested") {
-            setRespondedStatus(result.status);
+          setRespondedByMe(false);
+          if (result.data.status === "approved" || result.data.status === "rejected" || result.data.status === "revision_requested") {
+            setRespondedStatus(result.data.status);
+            setRespondedAt(result.data.respondedAt);
+            setRespondedByName(result.data.approvalName);
           }
         }
       })
@@ -24585,14 +24598,38 @@ function SubmittalPublicPage({ token }: { token: string }) {
     }
     setSubmitError("");
     setSubmitting(true);
-    const ok = await respondToPublicSubmittal(token, newStatus, approverName.trim(), notes.trim());
+    const result = await respondToPublicSubmittal(token, newStatus, approverName.trim(), notes.trim());
     setSubmitting(false);
-    if (ok) {
+
+    if (result.outcome === "success") {
       setRespondedStatus(newStatus);
+      setRespondedAt(result.respondedAt);
+      setRespondedByName(result.approvalName);
+      setRespondedByMe(true);
       setPhase("responded");
-    } else {
-      setSubmitError("Could not submit your response. Please try again or contact your Ergon representative.");
+      return;
     }
+
+    if (result.outcome === "already_responded") {
+      // Someone else's response (or an earlier one of ours from another
+      // tab) already won -- reload and display the authoritative
+      // recorded outcome instead of showing a generic failure.
+      if (result.status === "approved" || result.status === "rejected" || result.status === "revision_requested") {
+        setRespondedStatus(result.status);
+      }
+      setRespondedAt(result.respondedAt);
+      setRespondedByName(result.approvalName);
+      setRespondedByMe(false);
+      setPhase("responded");
+      return;
+    }
+
+    if (result.outcome === "invalid_token") {
+      setPhase("invalid");
+      return;
+    }
+
+    setSubmitError("Could not submit your response. Please try again or contact your Ergon representative.");
   }
 
   if (phase === "loading") {
@@ -24603,7 +24640,7 @@ function SubmittalPublicPage({ token }: { token: string }) {
     );
   }
 
-  if (phase === "error" || !data) {
+  if (phase === "invalid") {
     return (
       <div className="submittal-public-page">
         <h1>Link not found</h1>
@@ -24612,7 +24649,18 @@ function SubmittalPublicPage({ token }: { token: string }) {
     );
   }
 
+  if (phase === "error" || !data) {
+    return (
+      <div className="submittal-public-page">
+        <h1>Something went wrong</h1>
+        <p>We could not load this submittal right now. Please try again in a moment, or contact your Ergon representative if this keeps happening.</p>
+      </div>
+    );
+  }
+
   const snapshot = data.contentSnapshot;
+  const respondedDateLabel = respondedAt ? new Date(respondedAt).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : "";
+  const respondedByLabel = respondedByName ? ` by ${respondedByName}` : "";
 
   return (
     <div className="submittal-public-page">
@@ -24623,9 +24671,19 @@ function SubmittalPublicPage({ token }: { token: string }) {
 
       {phase === "responded" && respondedStatus && (
         <div className={`submittal-response-banner submittal-status-${respondedStatus}`}>
-          {respondedStatus === "approved" && "Thank you - this submittal has been approved."}
-          {respondedStatus === "rejected" && "This submittal has been marked as rejected. Your Ergon representative will follow up."}
-          {respondedStatus === "revision_requested" && "Thanks - a revision has been requested. Your Ergon representative will follow up."}
+          {respondedByMe ? (
+            <>
+              {respondedStatus === "approved" && "Thank you - this submittal has been approved."}
+              {respondedStatus === "rejected" && "This submittal has been marked as rejected. Your Ergon representative will follow up."}
+              {respondedStatus === "revision_requested" && "Thanks - a revision has been requested. Your Ergon representative will follow up."}
+            </>
+          ) : (
+            <>
+              {respondedStatus === "approved" && `This submittal was already approved${respondedDateLabel ? ` on ${respondedDateLabel}` : ""}${respondedByLabel}.`}
+              {respondedStatus === "rejected" && `This submittal was already rejected${respondedDateLabel ? ` on ${respondedDateLabel}` : ""}${respondedByLabel}.`}
+              {respondedStatus === "revision_requested" && `A revision was already requested on this submittal${respondedDateLabel ? ` on ${respondedDateLabel}` : ""}${respondedByLabel}.`}
+            </>
+          )}
         </div>
       )}
 
