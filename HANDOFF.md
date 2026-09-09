@@ -1,6 +1,6 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-09-08
+Last updated: 2026-09-08 (migrations 122/123 confirmed run — submittal-response replay fix)
 
 Purpose: carry context between chat sessions. Read this first in any new session before making changes.
 
@@ -10,6 +10,7 @@ Product direction is defined in `PRODUCT_PLAN.md`. The staged discovery and deli
 - Do not use, import from, migrate against, or reference VLTD. VLTD is a separate project. If Supabase Studio or Vercel shows VLTD selected, switch away before touching anything for Ergon.
 - The live user-facing target is Vercel production: `https://ergon-ops-app.vercel.app/`.
 - The intended Ergon Supabase project id is `hnjxvsxsxoowhegcqurf`.
+- **Migrations 119, 121, 122, and 123 confirmed run and fully verified in production (2026-09-08)** — proposal-response and submittal-response replay/notification-dedup fixes. See the work-log entries below for full detail. Migration 120 is reserved (never created) for the still-pending per-workspace uniqueness plan (`PRODUCT_PHASE2_PLAN.md` Revision 6).
 - **Correction (2026-09-06): the line below (migrations "through 098") was stale and contradicted the rest of this file, which already discusses migrations up to 113 further down.** Repo migrations currently exist from `001_initial_ops_schema.sql` through **`113_message_reactions.sql` — 113 is the actual highest migration number in the repo as of this correction.** Status of 099-113 (from this file's own later, dated entries — not re-verified line-by-line today, only 068/070/095 were re-verified directly against production today, see immediately below): 099-106, 108-110, and 112-113 are documented as confirmed run and live-verified; **107 (the `channels` UPDATE policy that makes Unlock-then-Lock actually persist) is documented as still not run** as of this file's own most recent word on it (see "Recent work log" 2026-09-04/09-02 entries) — nothing in today's session touched or re-checked 107, so treat that status as carried forward, not freshly confirmed.
 - Migrations 096, 097, and 098 all confirmed run 2026-08-28. Drawings document type, Project Stakeholders, and Builds soft-delete are all fully functional.
 - GitHub/Vercel deploys app code. It does not automatically apply Supabase SQL migrations. Supabase setup remains separate unless a migration pipeline is added.
@@ -246,6 +247,78 @@ E's stated direction, from an overnight planning conversation (research → clar
 5. (Later, unscoped) Google Drive auto-backup; HubSpot two-way sync for billing/status — each needs its own scoping pass when E is ready
 
 ## Recent work log (most recent first — 2026-09-08)
+
+- **(migrations `122_secure_submittal_response.sql` and `123_fix_get_users_by_role_search_path.sql` both RUN and fully verified in production; matching frontend fix pushed) Submittal-response replay and notification-dedup bugs fixed as a narrow follow-up to the proposal fix below, per E's explicit instruction.**
+
+  **The two confirmed bugs** (full trace in `PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md` Part E,
+  written *before* any code changed, per E's explicit "first inspect and report" instruction):
+  `respond_to_submittal()` (migration 025) had the identical missing status-transition guard as
+  the pre-119 proposal function -- any share token could replay to overwrite an already-decided
+  submittal. Separately, migration 055's notification insert used
+  `on conflict (dedupe_key) do nothing`, which never matched `notifications.dedupe_key`'s real
+  *partial* unique index (`... where dedupe_key is not null`, migration 024) -- the same 42P10
+  class fixed for proposals in migration 121, present since 055 shipped. **This means no submittal
+  response has ever successfully notified a PM or admin since that feature shipped** -- an
+  independent, pre-existing gap this fix happened to surface, not introduced by tonight's work.
+
+  **The fix** (migration 122) mirrors 119/121 exactly, with every lesson from that live debugging
+  cycle built in from the start instead of found live: `drop function if exists` before each
+  `create` (both functions' return shape changes), `RETURNS TABLE` columns aliased/qualified
+  throughout to avoid the ambiguous-column bug, the `ON CONFLICT` clause pre-corrected to match
+  the real partial index, and `authenticated` explicitly revoked alongside `revoke all ... from
+  public` (this project's schema-level default privileges auto-grant `EXECUTE` to `authenticated`
+  on any new function, same gotcha migration 118 first found). `respond_to_submittal()` now does
+  an atomic `update ... where status = 'sent'`, returns a structured
+  `(outcome, status, responded_at, approval_name, version)` result instead of `void`, and only
+  fires notifications on the winning transition. `get_submittal_by_token()` gains
+  `responded_at`/`approval_name`. Recipients (every `pm`-role user unioned with every admin) are
+  **unchanged** -- no business-process decision made here, per explicit instruction. Token
+  expiration (`expires_at` never set) and revocation remain deliberately untouched, same as the
+  proposal fix -- documented as unresolved product decisions, not invented.
+
+  **Live testing surfaced one genuinely new bug, not anticipated in the design, fixed by migration
+  123**: `respond_to_submittal()`'s `search_path=''` hardening broke its own calls to
+  `get_users_by_role()`/`get_admin_emails()` (migrations 042/049) -- those two functions predate
+  the `search_path=''` discipline and have unqualified table references (`app_user_roles`,
+  `app_known_users`) with no `SET` clause of their own, so they inherit whatever search_path is
+  active in their *caller's* execution scope. Since the caller's scope was `''`, their own
+  unqualified references failed to resolve (`relation "app_user_roles" does not exist`), caught
+  live by the transaction-safe test script before any real submittal was ever affected. Fixed by
+  hardening both functions the same way (`security definer` + `search_path=''` + fully qualified
+  `public.app_user_roles`/`public.app_known_users`) -- pure hardening, no business-logic change,
+  same signature so `create or replace` (no `DROP` needed). **The proposal fix (119/121) never
+  hit this**: it notifies via the quote's own `created_by_email` column directly and never calls
+  either function -- confirmed by re-reading `119_secure_quote_proposal_response.sql` directly,
+  nothing already verified tonight is affected.
+
+  **Tested via the same transaction-safe SQL pattern as 119/121** (`begin;`/`rollback;`, never
+  commits, full script in the audit doc's Part E8) covering all scenarios required: valid
+  approval/rejection/revision-request across three independent submittal fixtures; same-response
+  and different-response replay, both rejected with the original state preserved; unchanged
+  `status`/`response_notes`/`approval_name`/`approval_ip`/`approval_content_hash`/`responded_at`
+  after replay, checked directly against the table; exactly one notification per intended
+  recipient, computed dynamically against the real live `pm`+admin roster rather than fabricated
+  accounts; invalid and expired tokens; an already-responded submittal still fully viewable via
+  its original token; `content_snapshot` provably unchanged; the pre-existing authenticated
+  pm/admin write RLS policy on `project_submittals` confirmed untouched. All scenarios passed
+  clean on the second run (after migration 123 fixed the `get_users_by_role` search_path bug the
+  first run surfaced).
+
+  **Frontend** (`src/persistence.ts`/`src/main.tsx`, commit `8dd244f`): `fetchPublicSubmittal`/
+  `respondToPublicSubmittal` now return discriminated outcomes matching the new RPC shape instead
+  of collapsing every failure into `null`/`boolean`. `SubmittalPublicPage` mirrors
+  `ProposalPublicPage`'s pattern exactly: distinguishes an invalid/expired token from a genuine
+  load failure, and on a lost replay race reloads and displays the authoritative stored response
+  (third-person "already approved on [date] by [name]" wording) instead of a generic error or the
+  losing attempt's own input. 11 new unit tests (`src/submittal-response.test.ts`) cover every
+  outcome branch. tsc/vitest both clean (14 files, 124 tests). Committed and pushed together with
+  the migration files (`df72ffe`, `8dd244f`) since both migrations were already confirmed live
+  before either commit was made -- no deployment-ordering hold needed this time.
+
+  **Production verification**: new bundle (`index-BsUnoRys.js`) confirmed live at
+  `ergon-ops-app.vercel.app`; `?submittal=<bad-token>` round-tripped through the real deployed RPC
+  end-to-end and rendered the new dedicated "Link not found" state (proving `fetchPublicSubmittal`
+  correctly mapped an empty RPC result to `invalid_token`), no console errors on that path.
 
 - **(migrations `119_secure_quote_proposal_response.sql` and `121_fix_respond_to_quote_proposal_bugs.sql` both RUN and fully verified in production; matching frontend fix + a second dead-array removal now pushed) Live proposal-token replay vulnerability fixed and prioritized ahead of the per-workspace uniqueness work, per E's explicit instruction.**
 
