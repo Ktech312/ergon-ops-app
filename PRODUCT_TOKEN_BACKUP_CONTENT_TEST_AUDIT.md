@@ -937,3 +937,580 @@ views, offline upload retry logic, or permission-check coverage beyond what's al
 through the notification-recipient tests — real gaps, but lower leverage relative to the five
 above; adding them now would be coverage for its own sake rather than protecting genuinely
 fragile, high-blast-radius behavior.
+
+---
+
+## Part E — Submittal-response fix (2026-09-08, follow-up to migrations 119/121)
+
+Status: **migration 122 created, NOT run.** Requested by E as a narrow, separate follow-up once
+the identical proposal-response bugs (Part A3, migrations 119/121) were confirmed fixed. Full
+trace performed before any change was made — both reported issues confirmed directly from the
+complete code path (migrations 025 and 055, `src/persistence.ts`, `src/main.tsx`), not assumed
+from the proposal case's similarity.
+
+### E1. Confirmed: no status-transition guard (same class as Part A3)
+
+`respond_to_submittal()`'s original definition (`025_phase11_scheduling_templates_submittals.sql:189-197`,
+unchanged by migration 055 apart from adding the notification block) does:
+```sql
+update project_submittals
+set status = new_status, responded_at = now(), response_notes = notes, ...
+where id = target_id;
+```
+No `and status = 'sent'` precondition — identical gap to the pre-119 `respond_to_quote_proposal()`.
+`SubmittalPublicPage` (`main.tsx:24552`, pre-fix) gates the response form purely client-side
+(`phase === "ready"`), the same UI-only gate the proposal page had — calling the RPC directly
+bypasses it entirely.
+
+### E2. Confirmed: `ON CONFLICT` arbiter mismatch, present since migration 055 shipped
+
+`055_submittal_responded_notification.sql:65-75`:
+```sql
+insert into notifications (...) values (...)
+on conflict (dedupe_key) do nothing;
+```
+Same 42P10 class as the bug fixed in migration 121 — `notifications.dedupe_key` only has a
+**partial** unique index (`... where dedupe_key is not null`, migration 024), and this clause
+never restates that predicate. Migration 055's own header comment states this notification code
+was written specifically because no `submittal_responded` notification had ever fired before —
+combined with this bug being present from that same migration's first version, **no submittal
+response has ever successfully notified a PM or admin since migration 055 shipped.** An
+independent, pre-existing gap this follow-up happened to confirm, not introduced by tonight's
+work.
+
+### E3. Full flow trace, as requested before any change was made
+
+- **`get_submittal_by_token(share_token)`** (`025:142-162`) — `security definer`, `language sql`,
+  no `search_path=''` (predates that discipline), returns `submittal_id, status, version,
+  content_snapshot, client_name, project_name` — no `responded_at`/`approval_name`, same gap
+  `get_quote_proposal_by_token` had before 119.
+- **`respond_to_submittal(...)`** — traced above (E1/E2).
+- **Persistence functions** (`src/persistence.ts`): `createSubmittal` (authenticated, creates the
+  submittal row with `status: "sent"`), `createSubmittalShareToken` (authenticated, generates the
+  token via the same `generateShareToken()` used by proposals — `crypto.randomUUID()` x2 primary
+  path, confirmed identical entropy characteristics to Part A1), `loadSubmittalsForProject`
+  (authenticated, loads existing submittals + their tokens for the internal PM/admin UI),
+  `fetchPublicSubmittal`/`respondToPublicSubmittal` — pre-fix, same collapsed `null`/`boolean`
+  return shapes the proposal functions had before 119.
+- **Public UI**: `SubmittalPublicPage` (`main.tsx:24552`) — pre-fix, byte-for-byte the same state
+  machine (`loading`/`error`/`ready`/`responded`) and gaps `ProposalPublicPage` had before its own
+  fix: no distinction between invalid-token and a genuine failure, no authoritative-state reload
+  on a lost race, no dated "already responded" wording.
+- **Notification recipients and rules**: no `created_by`/owner column on `project_submittals`
+  (submittals are gated to pm/admin writes generally, not tied to one individual, per migration
+  055's own comment) — recipients are every user holding the `pm` role
+  (`get_users_by_role('pm')`, migration 042) unioned with every admin (`get_admin_emails()`,
+  migration 049), one notification insert per recipient. **Confirmed unchanged by this fix** —
+  neither function's own definition nor grants are touched; they're called identically, just
+  schema-qualified at the call site (`public.get_users_by_role(...)`).
+- **Share-token creation and validation**: identical mechanism and gaps to proposals —
+  `public_share_tokens.expires_at` is nullable with no default and no writer ever sets it (same
+  as Part A2), no revocation mechanism exists (same as Part A4). Both deliberately untouched by
+  this fix, per explicit instruction — see E7 below.
+
+### E4. The fix — migration 122 (exact content of the created file)
+
+Same three-outcome shape as migrations 119/121, applying every lesson from that verification
+session proactively instead of discovering them live: `DROP FUNCTION` before each `CREATE`
+(both functions change return shape — new columns / void → table), `RETURNS TABLE` columns
+aliased/qualified throughout every embedded SQL statement (avoiding the 42702 ambiguous-column
+bug found during 119's verification), the `ON CONFLICT` clause pre-corrected to match the real
+partial index, and `authenticated` explicitly revoked alongside `revoke all ... from public` from
+the start (avoiding the grant-leak follow-up migration 118 needed for the workspace-ownership
+functions).
+
+Full, exact SQL is `backend/supabase/migrations/122_secure_submittal_response.sql`, created in the
+repository, reproduced here for review:
+
+```sql
+begin;
+
+drop function if exists public.get_submittal_by_token(text);
+
+create function public.get_submittal_by_token(share_token text)
+returns table (
+  submittal_id uuid,
+  status text,
+  version integer,
+  content_snapshot jsonb,
+  client_name text,
+  project_name text,
+  responded_at timestamptz,
+  approval_name text
+)
+language sql
+security definer
+stable
+set search_path = ''
+as $$
+  select s.id, s.status, s.version, s.content_snapshot, s.client_name, p.project_name, s.responded_at, s.approval_name
+  from public.public_share_tokens t
+  join public.project_submittals s on s.id = t.entity_id
+  join public.projects p on p.id = s.project_id
+  where t.token = share_token
+    and t.entity_type = 'project_submittal'
+    and (t.expires_at is null or t.expires_at > now());
+$$;
+
+revoke all on function public.get_submittal_by_token(text) from public;
+revoke execute on function public.get_submittal_by_token(text) from authenticated;
+grant execute on function public.get_submittal_by_token(text) to anon;
+
+drop function if exists public.respond_to_submittal(text, text, text, text, text);
+
+create function public.respond_to_submittal(
+  share_token text,
+  new_status text,
+  approver_name text,
+  approver_ip text,
+  notes text
+)
+returns table (
+  outcome text,
+  status text,
+  responded_at timestamptz,
+  approval_name text,
+  version integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  target_id uuid;
+  target_project_id uuid;
+  updated_status text;
+  updated_responded_at timestamptz;
+  updated_approval_name text;
+  updated_version integer;
+  current_status text;
+  current_responded_at timestamptz;
+  current_approval_name text;
+  current_version integer;
+  project_label text;
+  rule_active boolean;
+  recipient record;
+begin
+  if new_status not in ('approved', 'rejected', 'revision_requested') then
+    raise exception 'Invalid submittal response status';
+  end if;
+
+  select s.id, s.project_id
+  into target_id, target_project_id
+  from public.public_share_tokens t
+  join public.project_submittals s on s.id = t.entity_id
+  where t.token = share_token
+    and t.entity_type = 'project_submittal'
+    and (t.expires_at is null or t.expires_at > now());
+
+  if target_id is null then
+    return query select 'invalid_token'::text, null::text, null::timestamptz, null::text, null::integer;
+    return;
+  end if;
+
+  update public.project_submittals as ps
+  set status = new_status,
+      responded_at = now(),
+      response_notes = notes,
+      approval_name = approver_name,
+      approval_ip = approver_ip,
+      approval_content_hash = encode(sha256(ps.content_snapshot::text::bytea), 'hex'),
+      updated_at = now()
+  where ps.id = target_id
+    and ps.status = 'sent'
+  returning ps.status, ps.responded_at, ps.approval_name, ps.version
+  into updated_status, updated_responded_at, updated_approval_name, updated_version;
+
+  if updated_status is null then
+    select ps.status, ps.responded_at, ps.approval_name, ps.version
+    into current_status, current_responded_at, current_approval_name, current_version
+    from public.project_submittals as ps
+    where ps.id = target_id;
+
+    return query select 'already_responded'::text, current_status, current_responded_at, current_approval_name, current_version;
+    return;
+  end if;
+
+  select p.project_name into project_label from public.projects p where p.id = target_project_id;
+
+  select is_active into rule_active from public.notification_rules where event_type = 'submittal_responded';
+
+  if coalesce(rule_active, false) then
+    for recipient in
+      select email from public.get_users_by_role('pm')
+      union
+      select email from public.get_admin_emails()
+    loop
+      insert into public.notifications (recipient_email, event_type, title, body, related_entity_type, related_entity_id, dedupe_key)
+      values (
+        recipient.email,
+        'submittal_responded',
+        'Submittal ' || replace(new_status, '_', ' '),
+        coalesce(project_label, 'A project') || ' submittal v' || updated_version || ' was ' || replace(new_status, '_', ' ') || ' by ' || coalesce(approver_name, 'the client') || '.',
+        'project_submittal',
+        target_id::text,
+        'submittal_responded:' || target_id::text || ':' || new_status || ':' || recipient.email
+      )
+      on conflict (dedupe_key) where dedupe_key is not null do nothing;
+    end loop;
+  end if;
+
+  return query select 'success'::text, updated_status, updated_responded_at, updated_approval_name, updated_version;
+end;
+$$;
+
+revoke all on function public.respond_to_submittal(text, text, text, text, text) from public;
+revoke execute on function public.respond_to_submittal(text, text, text, text, text) from authenticated;
+grant execute on function public.respond_to_submittal(text, text, text, text, text) to anon;
+
+commit;
+```
+
+### E5. Preflight — run before migration 122
+
+```sql
+select proname, prosecdef, proconfig
+from pg_proc
+where proname in ('get_submittal_by_token', 'respond_to_submittal')
+  and pronamespace = 'public'::regnamespace;
+
+select grantee, routine_name, privilege_type
+from information_schema.role_routine_grants
+where routine_schema = 'public'
+  and routine_name in ('get_submittal_by_token', 'respond_to_submittal');
+
+select count(*) as sent_submittal_count from public.project_submittals where status = 'sent';
+```
+
+### E6. Post-migration verification
+
+```sql
+-- 1. Both functions are security definer with search_path='' set.
+select proname, prosecdef, proconfig
+from pg_proc
+where proname in ('get_submittal_by_token', 'respond_to_submittal')
+  and pronamespace = 'public'::regnamespace;
+-- Expected: prosecdef = true for both; proconfig contains 'search_path='.
+
+-- 2. Grants are anon-only now (expect zero rows for authenticated/PUBLIC).
+select grantee, routine_name, privilege_type
+from information_schema.role_routine_grants
+where routine_schema = 'public'
+  and routine_name in ('get_submittal_by_token', 'respond_to_submittal')
+  and grantee in ('PUBLIC', 'authenticated');
+
+-- 3. Existing submittal rows are untouched.
+select count(*) as sent_submittal_count from public.project_submittals where status = 'sent';
+
+-- 4. RLS on project_submittals is unchanged (this migration only touches
+-- the two public RPCs).
+select polname, pg_get_expr(polqual, polrelid) as using_expr, pg_get_expr(polwithcheck, polrelid) as with_check_expr
+from pg_policy where polrelid = 'public.project_submittals'::regclass
+order by polname;
+```
+
+### E7. Deliberately not touched, per explicit instruction
+
+`public_share_tokens.expires_at` still has no default and no writer sets it (same as Part A2) —
+no expiration period is introduced. No revocation mechanism is added (same as Part A4). Recipient
+roles (`pm` + admins) are unchanged — no business process or notification-audience decision was
+made here. `get_users_by_role()`/`get_admin_emails()` themselves are not re-hardened (they predate
+`search_path=''` too) — out of scope for this narrow fix, called exactly as migration 055 already
+called them.
+
+### E8. Transaction-safe test script (exact, runnable, never commits)
+
+Self-contained, `begin;`/`rollback;` wrapped. No workspace-membership simulation is needed for the
+fixture setup this time — unlike `clients`/`sales_quotes`, `projects` has no `workspace_id` column
+yet (a separate, future table group), so the test project/submittals are created directly as the
+SQL editor's own privileged connecting role, the same way `resolveProjectId()`'s real minimal
+insert (`persistence.ts`) does it. Covers every scenario requested: valid approval, valid
+rejection, valid revision request (three independent submittal fixtures), same-response replay,
+different-response replay (both against the approval fixture — the sequential-replay proof doubles
+as the "two competing responses, one winner" test, same honest scope note as Part A3's script:
+this proves the guard via the identical atomic-`UPDATE` mechanism sequentially, not via two
+literal simultaneous connections), unchanged `status`/`response_notes`/`approval_name`/
+`approval_ip`/`approval_content_hash`/`responded_at` after replay (checked directly against the
+table, not just the RPC's own return), exactly one notification **per intended recipient**
+(computed dynamically against the real, current `pm`+admin roster rather than fabricating fake
+accounts — proves both "one per recipient" and "no duplicates on replay/retry" in one check),
+invalid and expired tokens, finalized-submittal viewing via the original token, and a direct
+confirmation that the pre-existing authenticated pm/admin write policy on `project_submittals` is
+untouched (no regression in internal submittal management).
+
+```sql
+begin;
+
+do $$
+declare
+  original_role text;
+  test_project_id uuid;
+  submittal_a_id uuid;
+  submittal_b_id uuid;
+  submittal_c_id uuid;
+  token_a text := 'test-submittal-token-a-' || gen_random_uuid()::text;
+  token_b text := 'test-submittal-token-b-' || gen_random_uuid()::text;
+  token_c text := 'test-submittal-token-c-' || gen_random_uuid()::text;
+  token_expired text := 'test-submittal-token-expired-' || gen_random_uuid()::text;
+  outcome1 text; status1 text; responded_at1 timestamptz; approval_name1 text; version1 integer;
+  outcome2 text; status2 text; responded_at2 timestamptz; approval_name2 text; version2 integer;
+  notif_count_after integer;
+  expected_recipient_count integer;
+  snapshot_before jsonb;
+  snapshot_after jsonb;
+  notes_after text;
+  ip_after text;
+  hash_after text;
+begin
+  select current_setting('role') into original_role;
+
+  insert into public.projects (project_name)
+  values ('Migration 122 Test Project ' || gen_random_uuid()::text)
+  returning id into test_project_id;
+
+  insert into public.project_submittals (project_id, version, status, content_snapshot, client_name)
+  values (test_project_id, 1, 'sent', '{"projectName":"Migration 122 Test Project","bom":[]}'::jsonb, 'Migration 122 Test Client')
+  returning id into submittal_a_id;
+
+  insert into public.project_submittals (project_id, version, status, content_snapshot, client_name)
+  values (test_project_id, 2, 'sent', '{"projectName":"Migration 122 Test Project","bom":[]}'::jsonb, 'Migration 122 Test Client')
+  returning id into submittal_b_id;
+
+  insert into public.project_submittals (project_id, version, status, content_snapshot, client_name)
+  values (test_project_id, 3, 'sent', '{"projectName":"Migration 122 Test Project","bom":[]}'::jsonb, 'Migration 122 Test Client')
+  returning id into submittal_c_id;
+
+  select content_snapshot into snapshot_before from public.project_submittals where id = submittal_a_id;
+
+  update public.notification_rules set is_active = true where event_type = 'submittal_responded';
+  if not found then
+    insert into public.notification_rules (event_type, channels, is_active) values ('submittal_responded', '{in_app}', true);
+  end if;
+
+  select count(distinct email) into expected_recipient_count from (
+    select email from public.get_users_by_role('pm')
+    union
+    select email from public.get_admin_emails()
+  ) r;
+
+  insert into public.public_share_tokens (token, entity_type, entity_id, expires_at) values
+    (token_a, 'project_submittal', submittal_a_id, null),
+    (token_b, 'project_submittal', submittal_b_id, null),
+    (token_c, 'project_submittal', submittal_c_id, null),
+    (token_expired, 'project_submittal', submittal_a_id, now() - interval '1 day');
+
+  perform set_config('role', 'anon', true);
+
+  select outcome into outcome1 from public.respond_to_submittal('this-token-does-not-exist', 'approved', 'Nobody', '', '');
+  if outcome1 is distinct from 'invalid_token' then
+    raise exception 'TEST FAILED: unknown token should return invalid_token, got %', outcome1;
+  end if;
+  raise notice 'TEST PASSED: invalid token returns invalid_token';
+
+  select outcome into outcome1 from public.respond_to_submittal(token_expired, 'approved', 'Nobody', '', '');
+  if outcome1 is distinct from 'invalid_token' then
+    raise exception 'TEST FAILED: expired token should return invalid_token, got %', outcome1;
+  end if;
+  raise notice 'TEST PASSED: expired token returns invalid_token';
+
+  select outcome, status, responded_at, approval_name, version
+  into outcome1, status1, responded_at1, approval_name1, version1
+  from public.respond_to_submittal(token_a, 'approved', 'First Responder', '203.0.113.5', 'looks good');
+  if outcome1 is distinct from 'success' or status1 is distinct from 'approved' or approval_name1 is distinct from 'First Responder' then
+    raise exception 'TEST FAILED: valid approval should succeed -- got outcome=%, status=%, name=%', outcome1, status1, approval_name1;
+  end if;
+  raise notice 'TEST PASSED: valid approval succeeds, outcome=success, status=approved';
+
+  select outcome, status into outcome1, status1
+  from public.respond_to_submittal(token_b, 'rejected', 'Reviewer B', '', 'not acceptable');
+  if outcome1 is distinct from 'success' or status1 is distinct from 'rejected' then
+    raise exception 'TEST FAILED: valid rejection should succeed -- got outcome=%, status=%', outcome1, status1;
+  end if;
+  raise notice 'TEST PASSED: valid rejection succeeds, outcome=success, status=rejected';
+
+  select outcome, status into outcome1, status1
+  from public.respond_to_submittal(token_c, 'revision_requested', 'Reviewer C', '', 'please adjust scope');
+  if outcome1 is distinct from 'success' or status1 is distinct from 'revision_requested' then
+    raise exception 'TEST FAILED: valid revision request should succeed -- got outcome=%, status=%', outcome1, status1;
+  end if;
+  raise notice 'TEST PASSED: valid revision request succeeds, outcome=success, status=revision_requested';
+
+  select outcome, status, responded_at, approval_name
+  into outcome2, status2, responded_at2, approval_name2
+  from public.respond_to_submittal(token_a, 'approved', 'Replay Attempt', '', 'trying again');
+  if outcome2 is distinct from 'already_responded' or status2 is distinct from 'approved' or approval_name2 is distinct from 'First Responder' then
+    raise exception 'TEST FAILED: same-response replay should return already_responded with the ORIGINAL approval_name unchanged -- got outcome=%, status=%, name=%', outcome2, status2, approval_name2;
+  end if;
+  if responded_at2 is distinct from responded_at1 then
+    raise exception 'TEST FAILED: responded_at must not change on replay';
+  end if;
+  raise notice 'TEST PASSED: same-response replay rejected, exactly one winner, original state preserved';
+
+  select outcome, status into outcome2, status2
+  from public.respond_to_submittal(token_a, 'rejected', 'Second Attempt', '', 'changed my mind');
+  if outcome2 is distinct from 'already_responded' or status2 is distinct from 'approved' then
+    raise exception 'TEST FAILED: a different-response replay must also be rejected -- got outcome=%, status=%', outcome2, status2;
+  end if;
+  raise notice 'TEST PASSED: different-response replay also rejected; authoritative status remains approved';
+
+  perform set_config('role', original_role, true);
+
+  select response_notes, approval_ip, approval_content_hash
+  into notes_after, ip_after, hash_after
+  from public.project_submittals where id = submittal_a_id;
+  if notes_after is distinct from 'looks good' then
+    raise exception 'TEST FAILED: response_notes must not change on replay, got %', notes_after;
+  end if;
+  if ip_after is distinct from '203.0.113.5' then
+    raise exception 'TEST FAILED: approval_ip must not change on replay, got %', ip_after;
+  end if;
+  if hash_after is null then
+    raise exception 'TEST FAILED: approval_content_hash should have been set by the winning response';
+  end if;
+  raise notice 'TEST PASSED: response_notes, approval_ip, and approval_content_hash all unchanged after replay';
+
+  select count(*) into notif_count_after
+  from public.notifications
+  where related_entity_type = 'project_submittal' and related_entity_id = submittal_a_id::text;
+  if notif_count_after <> expected_recipient_count then
+    raise exception 'TEST FAILED: expected % notifications (one per pm/admin recipient) for submittal A, found %', expected_recipient_count, notif_count_after;
+  end if;
+  raise notice 'TEST PASSED: exactly % notification(s) exist for submittal A (one per intended recipient), unchanged by replay attempts', expected_recipient_count;
+
+  select status, approval_name, responded_at into status1, approval_name1, responded_at1
+  from public.get_submittal_by_token(token_a);
+  if status1 is distinct from 'approved' or approval_name1 is distinct from 'First Responder' then
+    raise exception 'TEST FAILED: get_submittal_by_token should still resolve token_a and show the real approver -- got status=%, name=%', status1, approval_name1;
+  end if;
+  raise notice 'TEST PASSED: an already-responded submittal remains fully viewable via its original token';
+
+  select content_snapshot into snapshot_after from public.project_submittals where id = submittal_a_id;
+  if snapshot_after is distinct from snapshot_before then
+    raise exception 'TEST FAILED: content_snapshot must never be modified by responding to a submittal';
+  end if;
+  raise notice 'TEST PASSED: content_snapshot is unchanged';
+
+  if not exists (
+    select 1 from pg_policy
+    where polrelid = 'public.project_submittals'::regclass
+      and polname = 'pm and admin write project_submittals'
+  ) then
+    raise exception 'TEST FAILED: the existing authenticated pm/admin write policy on project_submittals is missing -- this migration must not have touched it';
+  end if;
+  raise notice 'TEST PASSED: authenticated internal submittal management RLS is untouched';
+
+  raise notice 'ALL MIGRATION 122 TESTS PASSED';
+end $$;
+
+rollback;
+```
+
+### E9. Rollback (only if migration 122 has already been run and must be reversed)
+
+```sql
+create or replace function public.get_submittal_by_token(share_token text)
+returns table (
+  submittal_id uuid,
+  status text,
+  version integer,
+  content_snapshot jsonb,
+  client_name text,
+  project_name text
+)
+language sql
+security definer
+stable
+as $$
+  select s.id, s.status, s.version, s.content_snapshot, s.client_name, p.project_name
+  from public_share_tokens t
+  join project_submittals s on s.id = t.entity_id
+  join projects p on p.id = s.project_id
+  where t.token = share_token
+    and t.entity_type = 'project_submittal'
+    and (t.expires_at is null or t.expires_at > now());
+$$;
+
+revoke all on function public.get_submittal_by_token(text) from public;
+grant execute on function public.get_submittal_by_token(text) to anon, authenticated;
+
+create or replace function public.respond_to_submittal(share_token text, new_status text, approver_name text, approver_ip text, notes text)
+returns void
+language plpgsql
+security definer
+as $$
+declare
+  target_id uuid;
+  target_project_id uuid;
+  target_version integer;
+  project_label text;
+  rule_active boolean;
+  recipient record;
+begin
+  if new_status not in ('approved', 'rejected', 'revision_requested') then
+    raise exception 'Invalid submittal response status';
+  end if;
+
+  select s.id, s.project_id, s.version into target_id, target_project_id, target_version
+  from public_share_tokens t
+  join project_submittals s on s.id = t.entity_id
+  where t.token = share_token
+    and t.entity_type = 'project_submittal'
+    and (t.expires_at is null or t.expires_at > now());
+
+  if target_id is null then
+    raise exception 'Invalid or expired submittal link';
+  end if;
+
+  update project_submittals
+  set status = new_status,
+      responded_at = now(),
+      response_notes = notes,
+      approval_name = approver_name,
+      approval_ip = approver_ip,
+      approval_content_hash = encode(sha256(content_snapshot::text::bytea), 'hex'),
+      updated_at = now()
+  where id = target_id;
+
+  select p.project_name into project_label from projects p where p.id = target_project_id;
+
+  select is_active into rule_active from notification_rules where event_type = 'submittal_responded';
+
+  if coalesce(rule_active, false) then
+    for recipient in
+      select email from get_users_by_role('pm')
+      union
+      select email from get_admin_emails()
+    loop
+      insert into notifications (recipient_email, event_type, title, body, related_entity_type, related_entity_id, dedupe_key)
+      values (
+        recipient.email,
+        'submittal_responded',
+        'Submittal ' || replace(new_status, '_', ' '),
+        coalesce(project_label, 'A project') || ' submittal v' || target_version || ' was ' || replace(new_status, '_', ' ') || ' by ' || coalesce(approver_name, 'the client') || '.',
+        'project_submittal',
+        target_id::text,
+        'submittal_responded:' || target_id::text || ':' || new_status || ':' || recipient.email
+      )
+      on conflict (dedupe_key) do nothing;
+    end loop;
+  end if;
+end;
+$$;
+
+revoke all on function public.respond_to_submittal(text, text, text, text, text) from public;
+grant execute on function public.respond_to_submittal(text, text, text, text, text) to anon, authenticated;
+```
+
+Rolling back also requires reverting the matching frontend commit back to the version that calls
+the old `void`-shaped RPC and ignores the new `get_submittal_by_token` columns — a plain `git
+revert`, not a manual re-edit.
+
+### E10. Frontend changes — prepared, held until migration 122 is confirmed run
+
+Same deployment-ordering hazard as the proposal fix: `respond_to_submittal()` no longer returns
+nothing, and `get_submittal_by_token()` gains two new columns. `src/persistence.ts`
+(`fetchPublicSubmittal`/`respondToPublicSubmittal`, plus the new `PublicSubmittalResult`/
+`SubmittalResponseResult` types) and `src/main.tsx` (`SubmittalPublicPage`, rewritten to the same
+outcome-aware shape as `ProposalPublicPage`) are written, type-checked, and covered by 11 new
+mocked-fetch unit tests in `src/submittal-response.test.ts` — but held locally until E confirms
+migration 122 has run, per the same reasoning as the proposal fix.
