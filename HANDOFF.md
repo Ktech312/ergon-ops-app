@@ -1,6 +1,6 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-09-09 (migrations 125 and 126 both RUN and verified; the corrected bridge-test script (revision 4, no destructive DELETE) ran CLEAN in full — first-ever successful complete run of migration 124's bridge-test suite, zero failures, zero skips; Gate 1's precondition is now met but NONE of its actions taken yet — migration 124 still applied in Studio but not committed to git, awaiting E's explicit go-ahead; full writer/helper/system-health audits done; six new product-plan documents; two small live bug fixes + tests)
+Last updated: 2026-09-09 (Gate 1 CLOSED — migration 124's workspace-authorization bridge, migrations 125/126, and the two small error-visibility fixes are committed, pushed, deployed to production, and live-verified with zero discrepancies; see the two new work-log entries at the top for full evidence)
 
 Purpose: carry context between chat sessions. Read this first in any new session before making changes.
 
@@ -247,6 +247,19 @@ E's stated direction, from an overnight planning conversation (research → clar
 5. (Later, unscoped) Google Drive auto-backup; HubSpot two-way sync for billing/status — each needs its own scoping pass when E is ready
 
 ## Recent work log (most recent first — 2026-09-09)
+
+- **(Gate 1 CLOSED — committed, pushed, deployed to production, and live-verified) The workspace-authorization bridge (migrations 124-126) and the two small error-visibility fixes are now live in production, with zero drift and zero errors observed.**
+  - **Commits** (two, per E's explicit split instruction):
+    - `53f6b77` — "Add workspace authorization bridge (migrations 124-126) and frontend routing." Migrations 124/125/126, `migration_124_bridge_tests.sql`, `drift_report_standalone.sql`, the five bridge-routed `persistence.ts` writers (`setUserRole` deleted), `src/role-bridge.test.ts`, and the related product/handoff documentation.
+    - `a950d04` — "Log HTTP failures in upsertKnownUser and markConversationRead." The two small overnight error-visibility fixes plus `src/known-user-and-read-receipt-error-visibility.test.ts`, kept separate as instructed.
+  - **Pre-push verification** (both commits, run in sequence as `persistence.ts` was split then re-merged): `tsc --noEmit` clean; `vitest run` — 16 files, 142 tests, all passed both before and after restoring the error-visibility fixes; `vite build` clean (one pre-existing, unrelated chunk-size warning).
+  - **Pushed to `main`**: `git push origin main` succeeded (`6da27f3..a950d04`), confirmed via `git log origin/main`.
+  - **Production deployment confirmed live** (Vercel dashboard, deployment `3Sq7YFfbL`): Status **Ready**, Environment **Production — Current**, built from `main` at commit `a950d04`, serving `ergon-ops-app.vercel.app`.
+  - **Production Admin page verified clean**: loaded via the authenticated session (Claude-in-Chrome), zero console errors, zero failed network requests on a fresh reload — Team Roster, Deletion Log, Company Branding, and Pending Approvals all rendered normally.
+  - **Deployed bundle confirmed to use all five bridge writer RPCs**: fetched the live bundle (`assets/index-BcVSRUq1.js`) and confirmed it references `bridge_set_primary_role`, `bridge_set_secondary_roles`, `bridge_set_user_allowed_views`, `bridge_grant_admin`, and `bridge_revoke_admin`; confirmed the dead `setUserRole` is absent. (`bridge_drift_report` is a read-only admin diagnostic by design, never wired into the UI — confirmed via a repo-wide grep with zero hits — so it wasn't expected in the bundle.)
+  - **`bridge_drift_report()` run read-only against production**: called directly via `fetch` using the live authenticated session's access token and the anon key extracted from the deployed bundle. `POST .../rpc/bridge_drift_report` → **status 200, body `[]`** — zero discrepancy rows between the legacy and workspace authorization systems, confirmed live in production, not just in the earlier test-script run against the same data.
+  - **No real user's role, admin status, or allowed views were changed during any of this** — every verification action was either read-only (the drift report, the Admin page load) or non-destructive inspection (bundle fetch, deployment status). No Admin UI mutation control was clicked.
+  - **Gate 1 is now fully closed.** Nothing further is authorized or begun: migration 127 (design-only policy-closure plan) remains undrafted as runnable SQL, Phase 3 RLS has not started, no Billing or share-link implementation work has begun, and no second workspace was created.
 
 - **(`migration_124_bridge_tests.sql` revision 4 — RUN clean, first successful complete run ever) The full bridge-test suite passed end to end, zero failures, zero skips.**
   - E ran the corrected script (13.4's fix — no destructive DELETE). Result: "Success. No rows returned," no error. By the script's own design (both a test failure and any skipped section always raise a hard exception), this can only mean it reached the literal final notice `ALL MIGRATION 124 BRIDGE TESTS PASSED -- ZERO SECTIONS SKIPPED`.
