@@ -916,23 +916,36 @@ export type KnownUser = {
   lastSeenAt: string;
 };
 
+// Best-effort by design (called on ordinary interaction events, not a
+// user-initiated save) -- stays fire-and-forget from the caller's
+// perspective. Previously swallowed both network AND HTTP failures with
+// zero signal at all; now at least logs a real failure to the console
+// instead of looking identical to success, without changing the
+// function's void/fire-and-forget contract for any of its call sites.
 export async function upsertKnownUser(userId: string, email: string, accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
 
-  await fetch(supabaseUrl("app_known_users?on_conflict=user_id"), {
-    method: "POST",
-    headers: {
-      ...supabaseHeaders(accessToken),
-      prefer: "resolution=merge-duplicates",
-    },
-    body: JSON.stringify({
-      user_id: userId,
-      email,
-      last_seen_at: new Date().toISOString(),
-    }),
-  }).catch(() => undefined);
+  try {
+    const response = await fetch(supabaseUrl("app_known_users?on_conflict=user_id"), {
+      method: "POST",
+      headers: {
+        ...supabaseHeaders(accessToken),
+        prefer: "resolution=merge-duplicates",
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        email,
+        last_seen_at: new Date().toISOString(),
+      }),
+    });
+    if (!response.ok) {
+      console.error(`upsertKnownUser failed for ${userId}: ${response.status}`);
+    }
+  } catch (error) {
+    console.error(`upsertKnownUser network error for ${userId}:`, error);
+  }
 }
 
 export async function checkIsAdmin(userId: string, accessToken?: string): Promise<boolean> {
@@ -1840,7 +1853,13 @@ export async function markConversationRead(conversationId: string, myUserId: str
   }
   // Not treated as an error if 0 rows match -- "nothing unread" is the
   // normal case every time you reopen a conversation you're caught up on.
-  await fetch(
+  // The response itself was previously never checked at all -- since
+  // fetch() only rejects on network failure, an HTTP failure (e.g. a 401
+  // from an expired session) resolved normally, letting a caller's
+  // optimistic "mark read" UI update proceed as if the write had
+  // succeeded. Now at least logged, so a real failure isn't
+  // indistinguishable from the normal "nothing to mark" case.
+  const response = await fetch(
     supabaseUrl(`direct_messages?conversation_id=eq.${conversationId}&sender_id=neq.${myUserId}&read_at=is.null`),
     {
       method: "PATCH",
@@ -1848,6 +1867,9 @@ export async function markConversationRead(conversationId: string, myUserId: str
       body: JSON.stringify({ read_at: new Date().toISOString() }),
     },
   );
+  if (!response.ok) {
+    console.error(`markConversationRead failed for conversation ${conversationId}: ${response.status}`);
+  }
 }
 
 export type UserRoles = { primary: string; secondary: string[] };
