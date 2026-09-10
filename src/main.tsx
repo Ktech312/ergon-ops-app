@@ -117,6 +117,7 @@ import {
   createPurchaseOrderReceipt,
   createPurchaseOrderHold,
   createProjectFromClosedWonQuote,
+  type ProjectConversionOutcome,
   createProjectDocuments,
   createPurchaseOrder,
   createPurchaseRequestRemote,
@@ -398,6 +399,7 @@ import {
   computeNextProjectRef,
 } from "./persistence";
 import { DataLoadErrorBanner } from "./components/DataLoadErrorBanner";
+import { runClosedWonConversionFlow, buildProjectConversionStatusMessage } from "./quote-conversion-flow";
 import "./styles.css";
 
 type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "messages" | "search" | "profile";
@@ -3200,9 +3202,14 @@ function App() {
     }
   }
 
-  async function handleUpdateSalesQuoteStatus(quoteId: string, status: SalesQuote["status"]) {
+  // Returns whether the database write actually succeeded -- callers that
+  // need to know before proceeding (e.g. runClosedWonConversionFlow, which
+  // must not prompt for or attempt a Project conversion against a status
+  // that didn't actually land) await this instead of firing it and moving
+  // on.
+  async function handleUpdateSalesQuoteStatus(quoteId: string, status: SalesQuote["status"]): Promise<boolean> {
     if (!authSession) {
-      return;
+      return false;
     }
     const previous = salesQuotes.find((entry) => entry.id === quoteId);
     // Any move into a closed state (re)stamps closedAt to now; reopening to
@@ -3212,11 +3219,13 @@ function App() {
     setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, status, closedAt: closedAt ?? "" } : entry)));
     try {
       await updateSalesQuoteStatus(quoteId, status, closedAt, authSession.accessToken);
+      return true;
     } catch (error) {
       if (previous) {
         setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? previous : entry)));
       }
       setSalesQuoteStatus(error instanceof Error ? error.message : "Could not update quote status.");
+      return false;
     }
   }
 
@@ -4127,23 +4136,23 @@ function App() {
   // full per-garage/lot breakdown including photos/drawings -- in the same
   // format, so media can be tracked from presale through closeout. Prompted
   // from Site Builder when a quote's status is set to Closed - Won.
-  async function handleCreateProjectFromClosedWonQuote(quote: SalesQuote): Promise<ProjectSite | null> {
+  async function handleCreateProjectFromClosedWonQuote(quote: SalesQuote): Promise<ProjectConversionOutcome> {
     if (!authSession) {
-      return null;
+      return { ok: false, reason: "unknown", message: "You're not signed in -- sign in and try again." };
     }
-    const created = await createProjectFromClosedWonQuote(quote, authSession.accessToken);
-    if (created) {
+    const result = await createProjectFromClosedWonQuote(quote, authSession.accessToken);
+    if (result.ok) {
       setProjectSites((current) => {
-        const existingIndex = current.findIndex((entry) => entry.name === created.name);
+        const existingIndex = current.findIndex((entry) => entry.name === result.project.name);
         if (existingIndex >= 0) {
           const next = current.slice();
-          next[existingIndex] = created;
+          next[existingIndex] = result.project;
           return next;
         }
-        return [...current, created];
+        return [...current, result.project];
       });
     }
-    return created;
+    return result;
   }
 
   async function handleDownloadSalesQuoteImage(image: SalesQuoteLocationImage) {
@@ -18083,9 +18092,9 @@ function SalesHome({
   onUpdateSalesQuoteLocationItem: (quoteId: string, locationId: string, itemId: string, updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>) => void;
   onDeleteSalesQuoteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onPullLocationHardwareIntoQuoteBom: (quoteId: string) => void;
-  onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => void;
+  onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => Promise<boolean>;
   onDeleteSalesQuote: (quoteId: string) => void;
-  onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectSite | null>;
+  onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectConversionOutcome>;
   onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateSalesQuoteBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
@@ -22083,9 +22092,9 @@ function SalesQuoteBuilder({
   onUpdateLocationItem: (quoteId: string, locationId: string, itemId: string, updates: Partial<{ qty: number; locationLabel: string; accessoryCatalogItemId: string | null; accessoryQty: number }>) => void;
   onDeleteLocationItem: (quoteId: string, locationId: string, itemId: string) => void;
   onPullLocationHardware: (quoteId: string) => void;
-  onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => void;
+  onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => Promise<boolean>;
   onDeleteQuote: (quoteId: string) => void;
-  onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectSite | null>;
+  onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectConversionOutcome>;
   onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
@@ -22299,27 +22308,31 @@ function SalesQuoteBuilder({
   async function runCreateProjectFromQuote(quote: SalesQuote) {
     setIsCreatingProject(true);
     setProjectCreateStatus("Creating project...");
-    const created = await onCreateProjectFromClosedWonQuote(quote);
-    setIsCreatingProject(false);
-    if (created) {
-      setProjectCreateStatus(`Created Project "${created.name}" (${created.ref || "no ref yet"}) -- find it on the Projects page.`);
-    } else {
-      const message = "Could not create the project -- check your connection and that you're signed in, then try Create Project again. If it keeps happening, check the browser console for details.";
-      setProjectCreateStatus(message);
-      window.alert(message);
+    // try/finally so the loading state always clears -- on success, on a
+    // known rejection, and even on a genuinely unexpected throw (e.g. from
+    // the setProjectSites updater in handleCreateProjectFromClosedWonQuote)
+    // -- rather than leaving the button stuck in "Creating..." forever if
+    // something above ever throws instead of resolving to a result.
+    try {
+      const result = await onCreateProjectFromClosedWonQuote(quote);
+      const { status, alert } = buildProjectConversionStatusMessage(result);
+      setProjectCreateStatus(status);
+      if (alert) {
+        window.alert(alert);
+      }
+    } finally {
+      setIsCreatingProject(false);
     }
   }
 
   async function handleStatusChange(quote: SalesQuote, nextStatus: SalesQuote["status"]) {
-    onUpdateStatus(quote.id, nextStatus);
-    if (nextStatus !== "closed_won") {
-      return;
-    }
-    const wantsProject = window.confirm(`Create a new Project from "${quote.siteName}"? This copies the contact info, BOM, and every garage/lot -- including photos and drawings -- into a new Project you can find on the Projects page.`);
-    if (!wantsProject) {
-      return;
-    }
-    await runCreateProjectFromQuote(quote);
+    await runClosedWonConversionFlow({
+      nextStatus,
+      updateStatus: () => onUpdateStatus(quote.id, nextStatus),
+      confirmCreateProject: () =>
+        window.confirm(`Create a new Project from "${quote.siteName}"? This copies the contact info, BOM, and every garage/lot -- including photos and drawings -- into a new Project you can find on the Projects page.`),
+      createProject: () => runCreateProjectFromQuote(quote),
+    });
   }
 
   function submitNewQuote() {
@@ -22550,7 +22563,11 @@ function SalesQuoteBuilder({
                   )}
                 </div>
               )}
-              {projectCreateStatus && <small className="muted">{projectCreateStatus}</small>}
+              {projectCreateStatus && (
+                <small className="muted" role="status" aria-live="polite">
+                  {projectCreateStatus}
+                </small>
+              )}
             </div>
             <div className="quote-detail-actions">
               <div className="quote-header-pill-row">

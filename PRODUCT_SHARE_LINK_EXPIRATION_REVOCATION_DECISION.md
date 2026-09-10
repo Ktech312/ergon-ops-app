@@ -520,9 +520,9 @@ Nothing in production changed. A real, read-only check of the live data found th
 
 ---
 
-## Part 12 — Migration 127 policy-closure plan (design SQL only — not drafted as a runnable migration)
+## Part 12 — Migration 129 policy-closure plan (design SQL only — not drafted as a runnable migration)
 
-**Renumbered twice now, both times for the same reason**: first from "migration 125" to migration 126 when the urgent `is_app_admin` anon-grant fix (Part 13.1) needed that slot; now from 126 to **127**, because migration 126 was needed for a second, unrelated urgent fix found live — `bridge_drift_report()`'s ambiguous-column bug (Part 13.3). This plan remains design-only and has never existed as a real file or run — it simply keeps moving to the next available slot as real, more urgent fixes take the numbers ahead of it.
+**Renumbered four times now, every time for the same reason**: first from "migration 125" to migration 126 when the urgent `is_app_admin` anon-grant fix (Part 13.1) needed that slot; then from 126 to 127, because migration 126 was needed for a second, unrelated urgent fix found live — `bridge_drift_report()`'s ambiguous-column bug (Part 13.3); then from 127 to 128, because migration 127 was needed for a third, unrelated fix — the atomic Sales Quote -> Project conversion rewrite; now from 128 to **129**, because migration 128 was needed for a fourth, unrelated fix found live during migration 127's own production verification — hardening the project-INSERT trigger chain (`assign_project_ref()`/`create_project_channel()`) against the exact same empty-search-path inheritance bug class (see HANDOFF.md's entries for migrations 127/128). This plan remains design-only and has never existed as a real file or run — it simply keeps moving to the next available slot as real, more urgent fixes take the numbers ahead of it.
 
 Status: **design-only**, per your own instruction: migration 124's SQL test results haven't been confirmed, so this is not drafted as an actual numbered migration file yet — it's the reviewable plan for what that migration will contain once 124 is fully tested and deployed. Not run, not deployed, no policy touched.
 
@@ -607,7 +607,7 @@ $$;
 
 This mirrors `bridge_set_primary_role()`'s dual-write shape exactly, just with the invite's own validity substituted for an admin-authorization check — same atomicity guarantee (one function body, one implicit transaction), same `active_workspace_id()` guard, same `search_path=''`/full-qualification discipline. **Marked explicitly as not-yet-finalized**: the exact validation block, the invites table's real column names, and whether an invite can ever carry admin-granting power (which would need a `bridge_grant_admin`-style mirror into `app_admins` too) all depend on Task 2's confirmed read of the real `accept_user_invite()` definition — this shape is the design, not the final SQL.
 
-### 12.4 Required test coverage for migration 127 (design, not yet written)
+### 12.4 Required test coverage for migration 129 (design, not yet written)
 
 - **Handcrafted direct-write rejection**: after the policy narrows, a raw PostgREST `POST`/`PATCH`/`DELETE` against `app_user_roles`/`app_admins` (simulated the same way this session's tests simulate `role='authenticated'`) must fail with a permissions error.
 - **Authorized bridge success**: every one of migration 124's five bridge RPCs still succeeds end-to-end after the narrowing (proves the RPCs' `security definer` ownership genuinely bypasses the now-closed policy, as expected).
@@ -735,4 +735,4 @@ E ran the corrected script (revision 4). Result: **"Success. No rows returned," 
 
 ---
 
-**Migration 125 (13.1) is run and verified — closed.** **Migration 126 (13.3) is run and applied.** **The bridge-test script (13.4's defect, now fixed) ran clean in full (13.5) — Gate 1's precondition is met, but none of Gate 1's actions (commit, push, deploy, live verification) have been taken.** Migration 127's policy-closure plan (Part 12) is still design-only. Nothing has been committed to git.
+**Migration 125 (13.1) is run and verified — closed. Migration 126 (13.3) is run and applied. Gate 1 (migrations 124-126, the workspace-authorization bridge) is fully closed** — committed, pushed, deployed to production, and live-verified with zero drift; see HANDOFF.md's 2026-09-09 entry. **Migration 127 (the atomic Sales Quote -> Project conversion rewrite) is applied in Supabase.** Its own production verification found a live search-path-inheritance bug in the project-INSERT trigger chain — **migration 128 (drafted, not yet run) hardens `assign_project_ref()`/`create_project_channel()`** to fix it; `migration_127_conversion_tests.sql` has not yet been rerun against both migrations together. Migration 129's policy-closure plan (Part 12) is still design-only.

@@ -9371,21 +9371,6 @@ export async function moveSalesQuoteLocationImage(imageId: string, targetLocatio
   return response.ok;
 }
 
-// Used by both the per-location Files viewer and the site-wide Photo
-// Gallery's bulk-delete -- removes the storage object first (best-effort;
-// a missing/already-gone object shouldn't block clearing the DB row) then
-// the sales_quote_location_images row itself.
-async function deleteStorageObject(bucket: string, storagePath: string, accessToken: string): Promise<void> {
-  if (!storagePath) {
-    return;
-  }
-  const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
-  await fetch(`${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${bucket}/${storagePath}`, {
-    method: "DELETE",
-    headers: { apikey: anonKey, authorization: `Bearer ${accessToken}` },
-  }).catch(() => undefined);
-}
-
 // Migration 088: soft delete only, Storage object left in place -- same
 // reasoning as deleteProjectLocationImage below.
 export async function deleteSalesQuoteLocationImage(imageId: string, _storagePath: string, label: string, actorEmail: string, accessToken?: string): Promise<boolean> {
@@ -10112,177 +10097,199 @@ export async function deleteProjectShipmentPhoto(photoId: string, label: string,
   }
 }
 
+export type ProjectConversionPhotoFailure = {
+  locationName: string;
+  fileName: string;
+  reason: string;
+};
+
+// Stable, matches the RPC's own EC00x SQLSTATEs (migration 127) --
+// "unknown" covers a network failure or any error the RPC didn't tag with
+// one of those codes, which get a generic, safe fallback message rather
+// than whatever raw text came back.
+export type ProjectConversionFailureReason =
+  | "not_authorized"
+  | "wrong_workspace"
+  | "quote_not_found"
+  | "not_closed_won"
+  | "name_collision"
+  | "conversion_in_progress"
+  | "workspace_unavailable"
+  | "unknown";
+
+export type ProjectConversionFailure = {
+  ok: false;
+  reason: ProjectConversionFailureReason;
+  message: string;
+};
+
+export type ProjectConversionSuccess = {
+  ok: true;
+  project: ProjectSite;
+  alreadyExisted: boolean;
+  // False for any project this function didn't itself create (or
+  // previously create) in one atomic transaction -- most commonly a
+  // project made by the pre-127 client-side code. Never inferred from row
+  // counts, which can't tell "always had 3 BOM lines" from "used to have
+  // 5, 2 silently failed to copy" -- see migration 127's own comment.
+  structureVerified: boolean;
+  bomLineCount: number;
+  locationCount: number;
+  locationItemCount: number;
+  totalPhotos: number;
+  copiedPhotos: number;
+  alreadyCopiedPhotos: number;
+  failedPhotos: ProjectConversionPhotoFailure[];
+};
+
+export type ProjectConversionOutcome = ProjectConversionSuccess | ProjectConversionFailure;
+
+type CreateProjectFromQuoteRpcResult = {
+  project_id: string;
+  already_existed: boolean;
+  structure_verified: boolean;
+  bom_line_count: number;
+  location_count: number;
+  location_item_count: number;
+  locations: Array<{
+    quote_location_id: string;
+    project_location_id: string;
+    already_copied_quote_image_ids: string[];
+  }>;
+};
+
+const PROJECT_CONVERSION_ERROR_CODE_REASONS: Record<string, ProjectConversionFailureReason> = {
+  EC001: "not_authorized",
+  EC002: "wrong_workspace",
+  EC003: "quote_not_found",
+  EC004: "not_closed_won",
+  EC005: "name_collision",
+  EC006: "conversion_in_progress",
+  EC007: "workspace_unavailable",
+};
+
+const GENERIC_PROJECT_CONVERSION_FAILURE_MESSAGE =
+  "Could not create the project -- check your connection and that you're signed in, then try Create Project again. If it keeps happening, check the browser console for details.";
+
+async function readProjectConversionRpcFailure(response: Response): Promise<ProjectConversionFailure> {
+  const body = (await response.json().catch(() => ({}))) as { code?: unknown; message?: unknown };
+  const code = typeof body.code === "string" ? body.code : null;
+  const message = typeof body.message === "string" && body.message ? body.message : null;
+  console.error("createProjectFromClosedWonQuote: create_project_from_quote RPC failed", response.status, code, message);
+  const reason = code ? PROJECT_CONVERSION_ERROR_CODE_REASONS[code] : undefined;
+  // Only ever surface the RPC's own message when it's one of the specific,
+  // known-safe codes migration 127 raises -- an unrecognized code or a
+  // network-level failure falls back to the same generic message this
+  // function has always shown, rather than risking an internal detail
+  // (a raw constraint name, a stack fragment) reaching the user.
+  if (reason && message) {
+    return { ok: false, reason, message };
+  }
+  return { ok: false, reason: "unknown", message: GENERIC_PROJECT_CONVERSION_FAILURE_MESSAGE };
+}
+
+// Best-effort cleanup after a photo's storage object was copied but its
+// database row could not be saved (a real failure, or another concurrent
+// retry winning the uniqueness race) -- otherwise that copy is orphaned in
+// Storage forever, referenced by nothing. Does its own fetch (there was a
+// shared deleteStorageObject() helper, but it turned out to already have
+// zero real call sites -- deleted as dead code rather than resurrected,
+// since it swallowed network errors and never checked response.ok, exactly
+// the failure to actually verify/log cleanup this function exists to fix)
+// so a failed cleanup is genuinely inspected and logged (status + body on
+// a non-2xx response, the error itself on a network failure) -- never
+// thrown, so a cleanup failure can never turn a reported photo failure
+// into a worse, unhandled one.
+async function cleanupOrphanedProjectLocationImage(destinationPath: string, accessToken: string) {
+  try {
+    const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
+    const response = await fetch(
+      `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${PROJECT_LOCATION_IMAGE_BUCKET}/${destinationPath}`,
+      { method: "DELETE", headers: { apikey: anonKey, authorization: `Bearer ${accessToken}` } },
+    );
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.error("createProjectFromClosedWonQuote: failed to clean up an orphaned storage object", destinationPath, response.status, body);
+    }
+  } catch (error) {
+    console.error("createProjectFromClosedWonQuote: failed to clean up an orphaned storage object (network error)", destinationPath, error);
+  }
+}
+
 // "Create Project" from a Closed - Won Sales Quote -- E's request: closing a
 // deal should offer to spin up a Project that starts with everything the
 // quote already has (contact/address info, BOM, and the full per-garage/lot
 // breakdown including photos/drawings), in the same format, so media can be
 // tracked from presale through implementation to closeout. One-time copy
 // (same "copy on link" shape as the older "Pull BOM from Closed Sales"): the
-// two stay independent after this runs. Idempotent -- calling it again for
-// a quote that was already converted just returns the existing project
-// instead of creating a duplicate or re-copying its media.
-export async function createProjectFromClosedWonQuote(quote: SalesQuote, accessToken?: string): Promise<ProjectSite | null> {
+// two stay independent after this runs.
+//
+// Migration 127 moved the project/scope-of-work/BOM-lines/locations/
+// location-items writes into one atomic, idempotent, workspace-safe
+// security-definer RPC (rpc/create_project_from_quote) so a network hiccup
+// or a bad row partway through can never leave a project half-built --
+// either the whole structure exists correctly, or nothing does, and it's
+// always safe to call again (it returns the existing project instead of
+// duplicating it). Only photo copying stays client-side after that --
+// copying a storage object is an HTTP call to the Storage API, not
+// something the RPC's SQL transaction can wrap -- so each photo's
+// copy+insert is tracked individually and reported back on the returned
+// result instead of being silently swallowed (the original bug: see
+// PRODUCT_ERROR_VISIBILITY_AUDIT.md's addendum). A retry skips photos the
+// RPC reports as already copied (via source_quote_image_id) rather than
+// re-copying and duplicating them; a copied-but-unsaved photo has its
+// orphaned storage object cleaned up; a uniqueness conflict from a
+// concurrent retry is confirmed and counted as already-copied, not a false
+// failure.
+export async function createProjectFromClosedWonQuote(quote: SalesQuote, accessToken?: string): Promise<ProjectConversionOutcome> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return null;
+    return { ok: false, reason: "unknown", message: GENERIC_PROJECT_CONVERSION_FAILURE_MESSAGE };
   }
   try {
-    // Idempotency guard: if this quote was already converted, just return
-    // that project instead of creating a second one.
-    const existingResponse = await fetch(
-      supabaseUrl(`projects?source_sales_quote_id=eq.${quote.id}&select=${PROJECT_SITE_SELECT}`),
-      { headers: supabaseHeaders(accessToken) },
-    );
-    if (existingResponse.ok) {
-      const existingRows = (await existingResponse.json()) as ProjectSiteRow[];
-      if (existingRows[0]) {
-        return mapProjectSiteRow(existingRows[0]);
-      }
-    }
-
-    const garageCount = quote.locations.filter((location) => location.locationType === "garage").length;
-    const lotCount = quote.locations.filter((location) => location.locationType === "lot").length;
-    const siteType: ProjectSite["type"] =
-      garageCount > 0 && lotCount > 0 ? "Mixed Parking" : lotCount > 0 ? "Surface Lot" : "Parking Garage";
-    const address = [quote.siteStreetAddress, quote.city, quote.siteState, quote.siteZip].filter(Boolean).join(", ");
-    // Address Book carryover (E: "it need to transfer over directly to the
-    // Project info form") -- Company Information was captured at quote
-    // time but never actually copied to the Project before; it's a natural
-    // fit for Billing (the client's own mailing address, separate from the
-    // site's physical location).
-    const billingAddress = [quote.clientStreetAddress, quote.clientCity, quote.clientState, quote.clientZip].filter(Boolean).join(", ");
-    const cameraCount = quote.locations.reduce(
-      (sum, location) => sum + (location.fli ? 1 : 0) + (location.lpr ? 1 : 0) + (location.peopleCounting ? 1 : 0),
-      0,
-    );
-
-    const projectPayload = {
-      project_name: quote.siteName,
-      customer_name: quote.clientName || null,
-      site_type: siteType,
-      site_address: address || null,
-      app_status: "Draft",
-      camera_count: cameraCount,
-      notes: `Created from Closed - Won Sales Quote "${quote.siteName}".`,
-      source_sales_quote_id: quote.id,
-      converted_from_quote_at: new Date().toISOString(),
-      saas_type: quote.saasType || null,
-      saas_contract_amount: quote.saasContractAmount,
-      saas_billing_frequency: quote.saasBillingFrequency || null,
-      sale_amount: quote.saleAmount,
-      client_office_phone: quote.contactPhone || null,
-      billing_name: quote.clientName || null,
-      billing_address: billingAddress || null,
-    };
-
-    const projectResponse = await fetch(supabaseUrl("projects?on_conflict=project_name"), {
+    const rpcResponse = await fetch(supabaseUrl("rpc/create_project_from_quote"), {
       method: "POST",
-      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
-      body: JSON.stringify(projectPayload),
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ p_quote_id: quote.id }),
     });
-    if (!projectResponse.ok) {
-      console.error("createProjectFromClosedWonQuote: project insert failed", projectResponse.status, await projectResponse.text().catch(() => ""));
-      return null;
+    if (!rpcResponse.ok) {
+      return await readProjectConversionRpcFailure(rpcResponse);
     }
-    const projectRows = (await projectResponse.json()) as Array<{ id: string }>;
-    const projectId = projectRows[0]?.id;
-    if (!projectId) {
-      return null;
-    }
+    const rpcResult = (await rpcResponse.json()) as CreateProjectFromQuoteRpcResult;
 
-    await fetch(supabaseUrl("project_scope_of_work?on_conflict=project_id"), {
-      method: "POST",
-      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify({
-        project_id: projectId,
-        summary: EMPTY_SCOPE_OF_WORK.summary,
-        preparation: EMPTY_SCOPE_OF_WORK.preparation,
-        infrastructure: EMPTY_SCOPE_OF_WORK.infrastructure,
-        installation: EMPTY_SCOPE_OF_WORK.installation,
-        commissioning: EMPTY_SCOPE_OF_WORK.commissioning,
-        fine_tuning: EMPTY_SCOPE_OF_WORK.fineTuning,
-        assumptions: EMPTY_SCOPE_OF_WORK.assumptions,
-        exclusions: EMPTY_SCOPE_OF_WORK.exclusions,
-      }),
-    });
-
-    if (quote.bomLines.length > 0) {
-      await fetch(supabaseUrl("project_bom_lines"), {
-        method: "POST",
-        headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
-        body: JSON.stringify(
-          quote.bomLines.map((line, index) => ({
-            project_id: projectId,
-            item_name: line.item,
-            qty: line.qty,
-            status: "Not started",
-            request_speed: "Standard",
-            notes: line.notes || `Copied from closed-won quote "${quote.siteName}".`,
-            line_sort: index,
-            procurement_track: "warehouse_stock",
-          })),
-        ),
-      });
-    }
+    let totalPhotos = 0;
+    let copiedPhotos = 0;
+    let alreadyCopiedPhotos = 0;
+    const failedPhotos: ProjectConversionPhotoFailure[] = [];
 
     for (const location of quote.locations) {
-      const locationResponse = await fetch(supabaseUrl("project_locations"), {
-        method: "POST",
-        headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-        body: JSON.stringify({
-          project_id: projectId,
-          location_type: location.locationType,
-          name: location.name,
-          line_sort: location.lineSort,
-          fli: location.fli,
-          lpr: location.lpr,
-          people_counting: location.peopleCounting,
-          fli_camera_item_id: location.fliCameraItemId,
-          lpr_camera_item_id: location.lprCameraItemId,
-          people_counting_camera_item_id: location.peopleCountingCameraItemId,
-          entries_count: location.entriesCount,
-          exits_count: location.exitsCount,
-          levels_count: location.levelsCount,
-          source_quote_location_id: location.id,
-        }),
-      });
-      if (!locationResponse.ok) {
-        console.error("createProjectFromClosedWonQuote: location insert failed", locationResponse.status, await locationResponse.text().catch(() => ""));
+      const mapping = rpcResult.locations.find((entry) => entry.quote_location_id === location.id);
+      if (!mapping) {
+        // The RPC didn't report this location (e.g. it was soft-deleted
+        // between the quote loading client-side and this call) -- there's
+        // no project_location to attach photos to, so there's nothing to
+        // copy or fail; move on to the next location.
         continue;
       }
-      const locationRows = (await locationResponse.json()) as Array<{ id: string }>;
-      const projectLocationId = locationRows[0]?.id;
-      if (!projectLocationId) {
-        continue;
-      }
-
-      const allItems = [...location.signLines, ...location.sensorLines, ...location.miscLines];
-      if (allItems.length > 0) {
-        await fetch(supabaseUrl("project_location_items"), {
-          method: "POST",
-          headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
-          body: JSON.stringify(
-            allItems.map((item) => ({
-              project_location_id: projectLocationId,
-              line_type: item.lineType,
-              catalog_item_id: item.catalogItemId,
-              qty: item.qty,
-              line_sort: item.lineSort,
-            })),
-          ),
-        });
-      }
-
+      const alreadyCopiedIds = new Set(mapping.already_copied_quote_image_ids);
       for (const image of location.images) {
-        const destinationPath = buildProjectImageStoragePath(projectLocationId, image.fileName || "file");
+        totalPhotos += 1;
+        if (alreadyCopiedIds.has(image.id)) {
+          alreadyCopiedPhotos += 1;
+          continue;
+        }
+        const locationName = location.name || "Unnamed location";
+        const fileName = image.fileName || "Untitled photo";
+        const destinationPath = buildProjectImageStoragePath(mapping.project_location_id, image.fileName || "file");
         const copied = await copyStorageObject(SALES_QUOTE_IMAGE_BUCKET, image.storagePath, PROJECT_LOCATION_IMAGE_BUCKET, destinationPath, accessToken);
         if (!copied) {
+          failedPhotos.push({ locationName, fileName, reason: "Could not copy the file into the project's storage." });
           continue;
         }
         const imageInsertResponse = await fetch(supabaseUrl("project_location_images"), {
           method: "POST",
           headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
           body: JSON.stringify({
-            project_location_id: projectLocationId,
+            project_location_id: mapping.project_location_id,
             image_type: image.imageType,
             storage_path: destinationPath,
             file_name: image.fileName || null,
@@ -10292,43 +10299,82 @@ export async function createProjectFromClosedWonQuote(quote: SalesQuote, accessT
             photo_lat: image.lat,
             photo_lng: image.lng,
             origin: "sales",
+            source_quote_image_id: image.id,
           }),
         });
-        // Migration 087 safety: if it hasn't been run yet, the `origin`
-        // column won't exist and the insert above 400s -- retry without it
-        // so the photo still copies over (just untagged) instead of being
-        // silently dropped.
-        if (!imageInsertResponse.ok && imageInsertResponse.status === 400) {
-          await fetch(supabaseUrl("project_location_images"), {
-            method: "POST",
-            headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
-            body: JSON.stringify({
-              project_location_id: projectLocationId,
-              image_type: image.imageType,
-              storage_path: destinationPath,
-              file_name: image.fileName || null,
-              description: image.description || null,
-              uploaded_at: image.uploadedAt,
-              uploaded_by_email: image.uploadedByEmail || null,
-              photo_lat: image.lat,
-              photo_lng: image.lng,
-            }),
-          });
+        if (imageInsertResponse.ok) {
+          copiedPhotos += 1;
+          continue;
         }
+        if (imageInsertResponse.status === 409) {
+          // Someone else's retry (another tab, a double-click) already
+          // copied this exact photo and won the uniqueness race -- confirm
+          // a row really exists before trusting that, then treat it as
+          // already-copied rather than a false failure, and clean up this
+          // attempt's now-redundant storage copy.
+          const confirmResponse = await fetch(
+            supabaseUrl(
+              `project_location_images?project_location_id=eq.${mapping.project_location_id}&source_quote_image_id=eq.${image.id}&select=id&limit=1`,
+            ),
+            { headers: supabaseHeaders(accessToken) },
+          );
+          const confirmRows = confirmResponse.ok ? ((await confirmResponse.json().catch(() => [])) as Array<{ id: string }>) : [];
+          await cleanupOrphanedProjectLocationImage(destinationPath, accessToken);
+          if (confirmRows.length > 0) {
+            alreadyCopiedPhotos += 1;
+            continue;
+          }
+          console.error("createProjectFromClosedWonQuote: uniqueness conflict on project_location_images but no matching row found", mapping.project_location_id, image.id);
+          failedPhotos.push({ locationName, fileName, reason: "The file copied but its record could not be confirmed." });
+          continue;
+        }
+        const insertErrorBody = (await imageInsertResponse.json().catch(() => ({}))) as { message?: unknown };
+        const insertErrorMessage = typeof insertErrorBody.message === "string" ? insertErrorBody.message : null;
+        // The raw PostgREST message (which can include a constraint or
+        // schema detail) is only ever logged, never shown to the user --
+        // the failedPhotos reason is a stable, plain-language message
+        // regardless of what the server actually said.
+        console.error("createProjectFromClosedWonQuote: project_location_images insert failed", imageInsertResponse.status, insertErrorMessage);
+        await cleanupOrphanedProjectLocationImage(destinationPath, accessToken);
+        failedPhotos.push({
+          locationName,
+          fileName,
+          reason: "The file copied, but its photo record could not be saved. Try Create Project again.",
+        });
       }
     }
 
-    const finalResponse = await fetch(supabaseUrl(`projects?id=eq.${projectId}&select=${PROJECT_SITE_SELECT}`), {
+    const finalResponse = await fetch(supabaseUrl(`projects?id=eq.${rpcResult.project_id}&select=${PROJECT_SITE_SELECT}`), {
       headers: supabaseHeaders(accessToken),
     });
     if (!finalResponse.ok) {
-      return null;
+      console.error(
+        "createProjectFromClosedWonQuote: final project fetch failed",
+        finalResponse.status,
+        await finalResponse.text().catch(() => ""),
+      );
+      return { ok: false, reason: "unknown", message: GENERIC_PROJECT_CONVERSION_FAILURE_MESSAGE };
     }
     const finalRows = (await finalResponse.json()) as ProjectSiteRow[];
-    return finalRows[0] ? mapProjectSiteRow(finalRows[0]) : null;
+    if (!finalRows[0]) {
+      return { ok: false, reason: "unknown", message: GENERIC_PROJECT_CONVERSION_FAILURE_MESSAGE };
+    }
+    return {
+      ok: true,
+      project: mapProjectSiteRow(finalRows[0]),
+      alreadyExisted: rpcResult.already_existed,
+      structureVerified: rpcResult.structure_verified,
+      bomLineCount: rpcResult.bom_line_count,
+      locationCount: rpcResult.location_count,
+      locationItemCount: rpcResult.location_item_count,
+      totalPhotos,
+      copiedPhotos,
+      alreadyCopiedPhotos,
+      failedPhotos,
+    };
   } catch (error) {
     console.error("createProjectFromClosedWonQuote threw", error);
-    return null;
+    return { ok: false, reason: "unknown", message: GENERIC_PROJECT_CONVERSION_FAILURE_MESSAGE };
   }
 }
 
