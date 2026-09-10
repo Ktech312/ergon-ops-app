@@ -650,18 +650,23 @@ export async function loadOwnAllowedViews(userId: string, accessToken?: string):
 // Requires the target user to already have an app_user_roles row (assign a
 // role first). PATCH only updates an existing row rather than risking an
 // insert that is missing the required role_key.
+// Migration 124: routed through the bridge_set_user_allowed_views() RPC
+// instead of a direct PATCH -- this is the fifth (and last) of the live
+// direct-write functions to be bridged; a corrected requirement from the
+// first draft of migration 124, which left this one unbridged despite
+// its own documentation implying otherwise. Legacy-only write (no
+// workspace-side equivalent for allowed_views exists) -- the RPC still
+// re-verifies admin status and that exactly one primary-role row exists
+// server-side, rather than trusting the caller.
 export async function setUserAllowedViews(userId: string, allowedViews: string[] | null, accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
 
-  const response = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.true`), {
-    method: "PATCH",
+  const response = await fetch(supabaseUrl("rpc/bridge_set_user_allowed_views"), {
+    method: "POST",
     headers: supabaseHeaders(accessToken),
-    body: JSON.stringify({
-      allowed_views: allowedViews,
-      updated_at: new Date().toISOString(),
-    }),
+    body: JSON.stringify({ target_user_id: userId, new_allowed_views: allowedViews }),
   });
 
   if (!response.ok) {
@@ -670,40 +675,22 @@ export async function setUserAllowedViews(userId: string, allowedViews: string[]
 }
 
 // Sets a user's PRIMARY role (the one that drives their default tab set).
-// Deletes any existing primary row first, since a user should only ever
-// have exactly one -- then upserts the new one (on the real user_id+role_key
-// unique index from migration 040), which also correctly "promotes" a role
-// that was already held as secondary rather than erroring on a duplicate.
+// Migration 124: routed through the bridge_set_primary_role() RPC instead
+// of writing app_user_roles directly -- the RPC does the exact same
+// delete-then-upsert against app_user_roles this function used to do
+// itself, AND mirrors the change into workspace_member_roles in the same
+// transaction (see PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md
+// Part 9.7.1). The RPC also re-checks admin status server-side rather
+// than trusting the caller.
 export async function setPrimaryUserRole(userId: string, roleKey: string, accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
 
-  // A row count of 0 here is normal (nothing to clean up yet) -- the real
-  // risk flagged in the 2026-08-24 audit was response.ok going unchecked
-  // entirely, which could leave a stale is_primary=true row behind if this
-  // ever genuinely failed (RLS, network) with no signal at all. Now it
-  // throws like every sibling write in this function already does.
-  const cleanupResponse = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.true&role_key=neq.${roleKey}`), {
-    method: "DELETE",
-    headers: supabaseHeaders(accessToken),
-  });
-  if (!cleanupResponse.ok) {
-    throw new Error(`Could not clear the previous primary role: ${cleanupResponse.status}`);
-  }
-
-  const response = await fetch(supabaseUrl("app_user_roles?on_conflict=user_id,role_key"), {
+  const response = await fetch(supabaseUrl("rpc/bridge_set_primary_role"), {
     method: "POST",
-    headers: {
-      ...supabaseHeaders(accessToken),
-      prefer: "resolution=merge-duplicates",
-    },
-    body: JSON.stringify({
-      user_id: userId,
-      role_key: roleKey,
-      is_primary: true,
-      updated_at: new Date().toISOString(),
-    }),
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ target_user_id: userId, new_role_key: roleKey }),
   });
 
   if (!response.ok) {
@@ -712,38 +699,18 @@ export async function setPrimaryUserRole(userId: string, roleKey: string, access
 }
 
 // Secondary roles: additional access without replacing the primary role.
-// Replaces the user's whole secondary set with the given list -- simpler
-// and just as correct as diffing, since this is an infrequent admin action
-// on a short list, not a hot path.
+// Migration 124: routed through the bridge_set_secondary_roles() RPC --
+// same delete-and-replace-the-whole-set shape as before, now mirrored
+// into workspace_member_roles atomically alongside the legacy write.
 export async function setSecondaryUserRoles(userId: string, roleKeys: string[], accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
 
-  const cleanupResponse = await fetch(supabaseUrl(`app_user_roles?user_id=eq.${userId}&is_primary=eq.false`), {
-    method: "DELETE",
-    headers: supabaseHeaders(accessToken),
-  });
-  if (!cleanupResponse.ok) {
-    throw new Error(`Could not clear the previous secondary roles: ${cleanupResponse.status}`);
-  }
-
-  if (roleKeys.length === 0) {
-    return;
-  }
-
-  const response = await fetch(supabaseUrl("app_user_roles?on_conflict=user_id,role_key"), {
+  const response = await fetch(supabaseUrl("rpc/bridge_set_secondary_roles"), {
     method: "POST",
-    headers: {
-      ...supabaseHeaders(accessToken),
-      prefer: "resolution=merge-duplicates",
-    },
-    body: JSON.stringify(roleKeys.map((roleKey) => ({
-      user_id: userId,
-      role_key: roleKey,
-      is_primary: false,
-      updated_at: new Date().toISOString(),
-    }))),
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ target_user_id: userId, new_role_keys: roleKeys }),
   });
 
   if (!response.ok) {
@@ -1950,41 +1917,31 @@ export async function loadAllAdmins(accessToken?: string): Promise<string[]> {
   return rows.map((row) => row.user_id);
 }
 
-export async function setUserRole(userId: string, roleKey: string, accessToken?: string) {
-  if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
-  }
+// setUserRole() was removed 2026-09-08: dead code (zero call sites in
+// main.tsx, confirmed by whole-project grep), and its
+// `on_conflict=user_id` target hadn't matched any real constraint since
+// migration 040 replaced app_user_roles' single-column primary key with
+// `id` + a `(user_id, role_key)` unique index -- this function could not
+// have worked correctly even if something had called it. Removing it now
+// rather than bridging it, so it can't silently bypass the new
+// bridge_set_primary_role()/bridge_set_secondary_roles() RPCs if anyone
+// ever revives it without checking history first.
 
-  const response = await fetch(supabaseUrl("app_user_roles?on_conflict=user_id"), {
-    method: "POST",
-    headers: {
-      ...supabaseHeaders(accessToken),
-      prefer: "resolution=merge-duplicates",
-    },
-    body: JSON.stringify({
-      user_id: userId,
-      role_key: roleKey,
-      updated_at: new Date().toISOString(),
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Could not update role: ${response.status}`);
-  }
-}
-
+// Migration 124: routed through bridge_grant_admin()/bridge_revoke_admin()
+// instead of writing app_admins directly -- mirrors the change into
+// workspace_members.is_workspace_admin in the same transaction,
+// one-directionally only (see PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md
+// Part 9.7.1) -- a workspace admin is never automatically promoted to a
+// global app_admin by this or any other path.
 export async function grantAdmin(userId: string, accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
 
-  const response = await fetch(supabaseUrl("app_admins?on_conflict=user_id"), {
+  const response = await fetch(supabaseUrl("rpc/bridge_grant_admin"), {
     method: "POST",
-    headers: {
-      ...supabaseHeaders(accessToken),
-      prefer: "resolution=merge-duplicates",
-    },
-    body: JSON.stringify({ user_id: userId }),
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ target_user_id: userId }),
   });
 
   if (!response.ok) {
@@ -1997,9 +1954,10 @@ export async function revokeAdmin(userId: string, accessToken?: string) {
     return;
   }
 
-  const response = await fetch(supabaseUrl(`app_admins?user_id=eq.${userId}`), {
-    method: "DELETE",
+  const response = await fetch(supabaseUrl("rpc/bridge_revoke_admin"), {
+    method: "POST",
     headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ target_user_id: userId }),
   });
 
   if (!response.ok) {
