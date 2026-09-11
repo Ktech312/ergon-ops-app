@@ -1649,9 +1649,10 @@ function App() {
       return;
     }
     const syncTimer = window.setTimeout(() => {
-      saveDeviceRecipes(deviceRecipes, authSession.accessToken).catch(() => {
+      saveDeviceRecipes(deviceRecipes, authSession.accessToken).catch((error) => {
+        console.error("Cloud save failed for equipment recipes:", error);
         setSyncStatus("error");
-        setAuthStatus("Cloud save failed for equipment recipes. Check login, RLS policies, or Supabase env vars.");
+        setAuthStatus("Some equipment recipe changes could not be saved. Try again. If the problem continues, contact support.");
       });
     }, 650);
     return () => window.clearTimeout(syncTimer);

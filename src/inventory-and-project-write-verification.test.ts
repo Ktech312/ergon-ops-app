@@ -39,6 +39,12 @@ import { saveInventoryItems, saveProjectSites, restoreFullBackupSnapshot, type P
 // never undo the DELETE that already ran, so it isn't a real fix and
 // isn't tested as if it were one. See PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md
 // for the separate, not-yet-implemented design for that.
+//
+// Also added 2026-09-11 (task 2, overnight local-only pass): the
+// pre-existing inventory_items (item metadata) row-count check --
+// tightened from `<` to `!==` after confirming an over-count is
+// structurally impossible for this single-table on_conflict=sku upsert
+// to produce as a false failure (see that describe block's own comment).
 
 function respond(ok: boolean, status: number, body: unknown) {
   return {
@@ -148,6 +154,57 @@ function callsMatching(mock: ReturnType<typeof installFetchRouter>, urlSubstring
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn());
   vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+describe("saveInventoryItems -- inventory_items (item metadata) write verification", () => {
+  // Task 2 of the 2026-09-11 overnight local-only pass: this pre-existing
+  // check (2026-08-24 audit) already used `.ok` + a row-count check, just
+  // with `<` instead of `!==`. Reviewed and confirmed safe to tighten to
+  // `!==`: this is a single-table `on_conflict=sku` upsert, and Postgres
+  // itself hard-errors on a duplicate sku within one payload rather than
+  // silently returning extra rows, so there is no legitimate scenario
+  // where this specific upsert returns more rows than were sent -- an
+  // over-count is exactly as much a real integrity failure as an
+  // under-count. Also brought the messages in line with the balance
+  // write beside it: plain user-facing text, real detail in the log.
+  it("throws a plain message and logs detail when the item write fails outright", async () => {
+    installFetchRouter({ items: respond(false, 500, { message: "constraint violation" }) });
+    await expect(saveInventoryItems([makePart()], "token")).rejects.toThrow("Some inventory item details could not be saved.");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("inventory_items write failed (500)"));
+  });
+
+  it("throws when the item write returns 200 OK but wrote zero rows", async () => {
+    installFetchRouter({ items: respond(true, 200, []) });
+    await expect(saveInventoryItems([makePart()], "token")).rejects.toThrow("Some inventory item details could not be saved.");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("returned 0 row(s), expected 1"));
+  });
+
+  it("throws when the item write returns fewer rows than sent for a multi-item batch", async () => {
+    installFetchRouter({ items: respond(true, 200, [{ id: "item-1", sku: "SKU-1" }]) });
+    await expect(
+      saveInventoryItems([makePart({ ref: "SKU-1" }), makePart({ ref: "SKU-2" })], "token"),
+    ).rejects.toThrow("Some inventory item details could not be saved.");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("returned 1 row(s), expected 2"));
+  });
+
+  it("throws when the item write returns MORE rows than sent", async () => {
+    installFetchRouter({
+      items: respond(true, 200, [
+        { id: "item-1", sku: "SKU-1" },
+        { id: "item-1-dup", sku: "SKU-1" },
+      ]),
+    });
+    await expect(saveInventoryItems([makePart()], "token")).rejects.toThrow("Some inventory item details could not be saved.");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("returned 2 row(s), expected 1"));
+  });
+
+  it("does not throw when every item row is exactly accounted for", async () => {
+    installFetchRouter({
+      items: respond(true, 200, [{ id: "item-1", sku: "SKU-1" }]),
+      balances: respond(true, 200, [{ inventory_item_id: "item-1" }]),
+    });
+    await expect(saveInventoryItems([makePart()], "token")).resolves.toBeUndefined();
+  });
 });
 
 describe("saveInventoryItems -- inventory_balances write verification", () => {
