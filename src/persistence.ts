@@ -5379,20 +5379,43 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
   if (balancePayload.length === 0) {
     return;
   }
+  // Migration 091 (quantity_allocated) is confirmed run in production
+  // (2026-08-23) -- the old "retry without quantity_allocated on any 400"
+  // fallback that used to sit here is deliberately removed, not just
+  // untriggered. Blindly retrying every 400 assumed the *only* possible
+  // 400 was the migration-091 column being missing, but any unrelated
+  // validation error (a bad location_id, a constraint violation) would
+  // have been silently swallowed by the same retry -- one bad batch could
+  // "recover" via the fallback, appear to succeed, and still not save the
+  // real quantities. That's the exact silent-partial-save shape this
+  // whole fix exists to close, so it does not belong in the fix itself.
+  // If a genuinely disconnected local/dev database ever needs this
+  // compatibility again, it must inspect the response body for the
+  // specific missing-column error, not retry on status code alone.
   const balanceResponse = await fetch(supabaseUrl("inventory_balances?on_conflict=inventory_item_id,location_id"), {
     method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(balancePayload),
   });
-  // Migration 091 safety: retry without quantity_allocated if it hasn't
-  // landed yet, so stock itself still saves.
-  if (!balanceResponse.ok && balanceResponse.status === 400) {
-    const fallbackPayload = balancePayload.map(({ quantity_allocated: _quantityAllocated, ...rest }) => rest);
-    await fetch(supabaseUrl("inventory_balances?on_conflict=inventory_item_id,location_id"), {
-      method: "POST",
-      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify(fallbackPayload),
-    });
+  if (!balanceResponse.ok) {
+    const bodyText = await balanceResponse.text().catch(() => "");
+    console.error(`saveInventoryItems: inventory_balances write failed (${balanceResponse.status}): ${bodyText}`);
+    throw new Error("Some inventory quantities could not be saved.");
+  }
+  // Same partial-write risk as the item upsert above, just for on-hand/
+  // allocated quantities instead of item metadata -- this write was
+  // previously never checked at all. A 200/204 with a row count that
+  // doesn't exactly match what was sent -- fewer (RLS/constraint dropped
+  // some rows) or more (a duplicate-key/on_conflict surprise) -- is an
+  // integrity failure either way, not just "fewer than expected." The
+  // real status/count detail is logged for diagnosis; the user only ever
+  // sees a plain, honest statement that something didn't save.
+  const savedBalanceRows = (await balanceResponse.json().catch(() => [])) as unknown[];
+  if (savedBalanceRows.length !== balancePayload.length) {
+    console.error(
+      `saveInventoryItems: inventory_balances write returned ${savedBalanceRows.length} row(s), expected ${balancePayload.length} -- integrity check failed.`,
+    );
+    throw new Error("Some inventory quantities could not be saved.");
   }
 }
 
@@ -6779,17 +6802,48 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
     .filter((row): row is NonNullable<typeof row> => row !== null);
 
   if (scopePayload.length > 0) {
-    await fetch(supabaseUrl("project_scope_of_work?on_conflict=project_id"), {
+    const scopeResponse = await fetch(supabaseUrl("project_scope_of_work?on_conflict=project_id"), {
       method: "POST",
-      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(scopePayload),
     });
+    if (!scopeResponse.ok) {
+      const bodyText = await scopeResponse.text().catch(() => "");
+      console.error(`saveProjectSites: project_scope_of_work write failed (${scopeResponse.status}): ${bodyText}`);
+      throw new Error("Some project details could not be saved.");
+    }
+    // This write was previously never checked at all -- a 200/204 with a
+    // row count that doesn't exactly match what was sent (fewer or more)
+    // means a project's summary/preparation/infrastructure/installation/
+    // commissioning/fine-tuning/assumptions/exclusions text silently
+    // didn't persist as intended, while the project record itself
+    // (checked above) looked saved fine. The real status/count detail is
+    // logged for diagnosis; the user only ever sees a plain statement.
+    const savedScopeRows = (await scopeResponse.json().catch(() => [])) as unknown[];
+    if (savedScopeRows.length !== scopePayload.length) {
+      console.error(
+        `saveProjectSites: project_scope_of_work write returned ${savedScopeRows.length} row(s), expected ${scopePayload.length} -- integrity check failed.`,
+      );
+      throw new Error("Some project details could not be saved.");
+    }
   }
 
   // BOM lines have no natural per-line key to reconcile against (same
   // limitation the original migration noted), so each save wholesale
   // replaces a project's line set: resolve item names to inventory_item_id
   // in bulk, delete the project's existing lines, then re-insert current ones.
+  //
+  // NOT COVERED by the write-verification fix above (2026-09-10 review,
+  // deliberately left alone): the DELETE below and the INSERT further down
+  // are two separate, unchecked requests with no transaction between them.
+  // If the DELETE succeeds and the INSERT then fails (or silently drops
+  // rows), a project's BOM is left genuinely empty, not just unverified.
+  // Adding a row-count check here would only prove the INSERT failed --
+  // it would NOT undo the DELETE that already ran, so it would not remove
+  // the actual risk. A real fix needs one atomic Postgres RPC (delete +
+  // insert in a single transaction), the same shape as migrations
+  // 127/128's project-conversion RPC -- see the separate proposal doc for
+  // this, not a same-pass patch here.
   const itemNames = new Set<string>();
   sites.forEach((site) => site.bom.forEach((line) => itemNames.add(line.item)));
   const itemRows = itemNames.size

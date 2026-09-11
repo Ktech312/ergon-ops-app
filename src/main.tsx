@@ -1578,9 +1578,10 @@ function App() {
       return;
     }
     const syncTimer = window.setTimeout(() => {
-      saveProjectSites(projectSites, authSession.accessToken).catch(() => {
+      saveProjectSites(projectSites, authSession.accessToken).catch((error) => {
+        console.error("Cloud save failed for projects:", error);
         setSyncStatus("error");
-        setAuthStatus("Cloud save failed for projects. Check login, RLS policies, or Supabase env vars.");
+        setAuthStatus("Some project changes could not be saved. Try again. If the problem continues, contact support.");
       });
     }, 650);
     return () => window.clearTimeout(syncTimer);
@@ -1690,9 +1691,10 @@ function App() {
       return;
     }
     const syncTimer = window.setTimeout(() => {
-      saveInventoryItems(inventoryItems, authSession.accessToken).catch(() => {
+      saveInventoryItems(inventoryItems, authSession.accessToken).catch((error) => {
+        console.error("Cloud save failed for inventory items:", error);
         setSyncStatus("error");
-        setAuthStatus("Cloud save failed for inventory items. Check login, RLS policies, or Supabase env vars.");
+        setAuthStatus("Some inventory changes could not be saved. Try again. If the problem continues, contact support.");
       });
     }, 650);
     return () => window.clearTimeout(syncTimer);
@@ -6537,9 +6539,10 @@ function App() {
           setInventoryMovements(reloadedInventoryMovements);
           setProjectAllocations(reloadedProjectAllocations);
           setAuthStatus("Backup restored.");
-        } catch {
+        } catch (error) {
+          console.error("Backup restore failed:", error);
           setSyncStatus("error");
-          setAuthStatus("Backup restore failed.");
+          setAuthStatus("Backup restore did not complete. Some information may already have been restored. Review the data before trying again.");
         }
       })();
     };
