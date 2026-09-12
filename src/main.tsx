@@ -9917,6 +9917,19 @@ function Inventory({
     qty: 1,
     notes: "",
   });
+  // Optional-association form-level guard (2026-09-12, overnight
+  // reliability closeout continuation, task 6/A2.6 remainder): the
+  // Project <select> below is populated live from projectSites, but the
+  // selected value can still go stale between selection and Save -- a
+  // mid-session rename or delete of that project in another tab, or (for
+  // the modal's very first render) a default value picked before the
+  // user touches the field at all. Catching it here, before
+  // onTransferToProject ever runs, means a movement/allocation with an
+  // unresolved project reference is never created in the first place --
+  // this is the safe, restore-independent half of A2.6's scoping (the
+  // persistence-layer functions this feeds are unchanged and still
+  // shared with restoreFullBackupSnapshot).
+  const [transferError, setTransferError] = useState("");
   const adjustItem = inventoryItems.find((part) => part.ref === adjustDraft.partRef);
   const sortedDraftHistory = [...(itemDraft.priceHistory ?? [])].sort((a, b) => b.date.localeCompare(a.date));
   // A brand-new company (or the brief window before the async load
@@ -10323,6 +10336,7 @@ function Inventory({
     });
     setAdjustLockedPart(part ?? null);
     setAdjustModalMode("count");
+    setTransferError("");
     setShowAdjustModal(true);
   }
 
@@ -10354,7 +10368,12 @@ function Inventory({
     if (!part || part.retired || !transferDraft.projectName || part.stock <= 0) {
       return;
     }
+    if (!projectSites.some((project) => project.name === transferDraft.projectName)) {
+      setTransferError(`"${transferDraft.projectName}" no longer matches a current project. Pick it again from the list.`);
+      return;
+    }
 
+    setTransferError("");
     onTransferToProject(part.ref, transferDraft.projectName, Math.max(1, Math.round(Number(transferDraft.qty) || 1)), transferDraft.notes);
     setShowAdjustModal(false);
   }
@@ -11368,7 +11387,8 @@ function Inventory({
                 </>
               ) : (
                 <>
-                  <label>Project<select value={transferDraft.projectName} onChange={(event) => setTransferDraft((current) => ({ ...current, projectName: event.target.value }))}>{projectSites.map((project) => <option key={project.name} value={project.name}>{project.ref} - {project.name}</option>)}</select></label>
+                  <label>Project<select value={transferDraft.projectName} onChange={(event) => { setTransferDraft((current) => ({ ...current, projectName: event.target.value })); setTransferError(""); }}>{projectSites.map((project) => <option key={project.name} value={project.name}>{project.ref} - {project.name}</option>)}</select></label>
+                  {transferError && <div className="modal-error-text">{transferError}</div>}
                   <label>Quantity<input type="number" min="1" max={availableOf(adjustItem)} value={transferDraft.qty} onChange={(event) => setTransferDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
                   <label className="span-2">Notes<textarea value={transferDraft.notes} onChange={(event) => setTransferDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Install phase, location, reason, or approval note." /></label>
                 </>
