@@ -9279,6 +9279,7 @@ function PurchaseOrdersTable({
   const [isSavingHold, setIsSavingHold] = useState(false);
   const [resumingId, setResumingId] = useState<string | null>(null);
   const holdTarget = orders.find((po) => po.id === holdTargetId) ?? null;
+  const holdOrderModalPanelRef = useModalA11y(Boolean(holdTarget), () => setHoldTargetId(null));
 
   async function submitHold() {
     if (!holdTargetId || !holdReason.trim()) {
@@ -9385,7 +9386,7 @@ function PurchaseOrdersTable({
 
       {holdTarget && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="hold-order-title">
+          <section ref={holdOrderModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="hold-order-title">
             <div className="modal-header">
               <div>
                 <h2 id="hold-order-title">Put On Hold</h2>
@@ -9657,6 +9658,7 @@ function Vendors({
   const [showModal, setShowModal] = useState(false);
   const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
   const [draft, setDraft] = useState({ name: "", contactName: "", email: "", phone: "", website: "", notes: "" });
+  const vendorModalPanelRef = useModalA11y(showModal, () => setShowModal(false));
   const [showInactive, setShowInactive] = useState(false);
 
   const visibleVendors = vendors.filter((vendor) => showInactive || vendor.isActive);
@@ -9729,7 +9731,7 @@ function Vendors({
 
       {showModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="vendor-modal-title">
+          <section ref={vendorModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="vendor-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="vendor-modal-title">{editingVendorId ? "Edit Vendor" : "Add Vendor"}</h2>
@@ -9956,6 +9958,11 @@ function Inventory({
   const buildHasShortage = buildComponentRows.some((component) => component.shortage > 0);
   const workOrderBuild = buildTransactions.find((build) => build.id === workOrderBuildId) ?? null;
   const workOrderRecipe = workOrderBuild ? deviceRecipes.find((recipe) => recipe.outputName === workOrderBuild.equipmentName || recipe.name === workOrderBuild.equipmentName) : undefined;
+  const deviceBuilderModalPanelRef = useModalA11y(showDeviceModal, () => setShowDeviceModal(false));
+  const workOrderModalPanelRef = useModalA11y(Boolean(workOrderBuild), () => setWorkOrderBuildId(null));
+  const buildConfirmModalPanelRef = useModalA11y(showBuildConfirm, () => setShowBuildConfirm(false));
+  const mergeOneOffModalPanelRef = useModalA11y(Boolean(mergeOneOffTarget), () => setMergeOneOffTarget(null));
+  const inventoryImageModalPanelRef = useModalA11y(Boolean(previewItem), () => setPreviewItem(null));
   const workOrderRows = workOrderBuild && workOrderRecipe
     ? workOrderRecipe.components.map((component) => {
         const part = inventoryItems.find((item) => item.name === component.itemName);
@@ -11001,7 +11008,7 @@ function Inventory({
       </section>
       {mergeOneOffTarget && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="merge-one-off-modal-title">
+          <section ref={mergeOneOffModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="merge-one-off-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="merge-one-off-modal-title">Merge Into Existing Item</h2>
@@ -11040,7 +11047,7 @@ function Inventory({
       )}
       {showDeviceModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel device-modal-panel" role="dialog" aria-modal="true" aria-labelledby="device-builder-modal-title">
+          <section ref={deviceBuilderModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel device-modal-panel" role="dialog" aria-modal="true" aria-labelledby="device-builder-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="device-builder-modal-title">{selectedBuildRecipe.outputName}</h2>
@@ -11097,7 +11104,7 @@ function Inventory({
       )}
       {workOrderBuild && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel work-order-panel" role="dialog" aria-modal="true" aria-labelledby="work-order-title">
+          <section ref={workOrderModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel work-order-panel" role="dialog" aria-modal="true" aria-labelledby="work-order-title">
             <div className="modal-header">
               <div>
                 <h2 id="work-order-title">{workOrderBuild.buildNumber}</h2>
@@ -11163,7 +11170,7 @@ function Inventory({
       )}
       {showBuildConfirm && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel build-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="build-confirm-title">
+          <section ref={buildConfirmModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel build-confirm-panel" role="dialog" aria-modal="true" aria-labelledby="build-confirm-title">
             <div className="modal-header">
               <div>
                 <h2 id="build-confirm-title">Confirm Equipment Build</h2>
@@ -11211,7 +11218,7 @@ function Inventory({
       )}
       {previewItem && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel image-modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-image-modal-title">
+          <section ref={inventoryImageModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel image-modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-image-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="inventory-image-modal-title">{previewItem.name}</h2>
@@ -11848,6 +11855,10 @@ function Projects({
     travelExpenses: null,
   });
   const [showAddressBookModal, setShowAddressBookModal] = useState(false);
+  const addressBookModalPanelRef = useModalA11y(showAddressBookModal, () => setShowAddressBookModal(false));
+  const saasModalPanelRef = useModalA11y(showSaasModal, () => setShowSaasModal(false));
+  const costBreakdownModalPanelRef = useModalA11y(showCostBreakdownModal, () => setShowCostBreakdownModal(false));
+  const discussionModalPanelRef = useModalA11y(showDiscussionModal, () => setShowDiscussionModal(false));
   const [newProjectShippingAddressDraft, setNewProjectShippingAddressDraft] = useState({ label: "", attnName: "", streetAddress: "", city: "", state: "", zip: "", phone: "", homePhone: "", cellPhone: "", workPhone: "" });
   const [newStakeholderDraft, setNewStakeholderDraft] = useState({ role: "", name: "", phone: "", email: "", address: "", notes: "" });
   const [editingBomIndex, setEditingBomIndex] = useState<number | null>(null);
@@ -13121,7 +13132,7 @@ function Projects({
 
       {showAddressBookModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="address-book-title">
+          <section ref={addressBookModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="address-book-title">
             <div className="modal-header">
               <div>
                 <h2 id="address-book-title">Address Book</h2>
@@ -13455,7 +13466,7 @@ function Projects({
 
       {showDiscussionModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="discussion-modal-title">
+          <section ref={discussionModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="discussion-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="discussion-modal-title">Discussion -- {selectedProject.name}</h2>
@@ -13474,7 +13485,7 @@ function Projects({
 
       {showCostBreakdownModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="cost-breakdown-modal-title">
+          <section ref={costBreakdownModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="cost-breakdown-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="cost-breakdown-modal-title">Cost Breakdown</h2>
@@ -13560,7 +13571,7 @@ function Projects({
 
       {showSaasModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="saas-modal-title">
+          <section ref={saasModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="saas-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="saas-modal-title">SaaS Contract</h2>
@@ -13928,6 +13939,8 @@ function ClientLedger({
   // someone deliberately moves it out of the Closed Projects queue --
   // closing it (PM sets status to Closed) just makes it eligible.
   const [showAddToLedger, setShowAddToLedger] = useState(false);
+  const addToLedgerModalPanelRef = useModalA11y(showAddToLedger, () => setShowAddToLedger(false));
+  const addAssetModalPanelRef = useModalA11y(showAddAsset, () => setShowAddAsset(false));
   const [addDraft, setAddDraft] = useState<{ projectId: string; bucket: "active" | "archived" }>({ projectId: "", bucket: "active" });
 
   function ledgerInfoFor(projectId: string | undefined) {
@@ -14135,7 +14148,7 @@ function ClientLedger({
 
         {showAddToLedger && (
           <div className="modal-backdrop" role="presentation">
-            <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-to-ledger-title">
+            <section ref={addToLedgerModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-to-ledger-title">
               <div className="modal-header">
                 <div>
                   <h2 id="add-to-ledger-title">Add to Primary List</h2>
@@ -14337,7 +14350,7 @@ function ClientLedger({
 
       {showAddAsset && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-asset-title">
+          <section ref={addAssetModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-asset-title">
             <div className="modal-header">
               <div>
                 <h2 id="add-asset-title">Add Hardware</h2>
@@ -18890,6 +18903,10 @@ function SalesCatalog({
   const [proposalItem, setProposalItem] = useState<CatalogItem | null>(null);
   const [proposalField, setProposalField] = useState<CatalogPriceChangeField>("markup_percent");
   const [proposalValue, setProposalValue] = useState(0);
+  const catalogItemModalPanelRef = useModalA11y(modalOpen, () => setModalOpen(false));
+  const catalogImportModalPanelRef = useModalA11y(importModalOpen, () => setImportModalOpen(false));
+  const catalogImageModalPanelRef = useModalA11y(Boolean(previewItem), () => setPreviewItem(null));
+  const catalogProposalModalPanelRef = useModalA11y(Boolean(proposalItem), () => setProposalItem(null));
   const [proposalReason, setProposalReason] = useState("");
   const [isUploadingDatasheet, setIsUploadingDatasheet] = useState(false);
 
@@ -19320,7 +19337,7 @@ function SalesCatalog({
 
       {modalOpen && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-item-title">
+          <section ref={catalogItemModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-item-title">
             <div className="modal-header">
               <div>
                 <h2 id="catalog-item-title">{editingId ? "Edit Product" : "Add Product"}</h2>
@@ -19482,7 +19499,7 @@ function SalesCatalog({
 
       {importModalOpen && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-import-title">
+          <section ref={catalogImportModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-import-title">
             <div className="modal-header">
               <div>
                 <h2 id="catalog-import-title">Upload a list of items</h2>
@@ -19536,7 +19553,7 @@ function SalesCatalog({
 
       {previewItem && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-image-modal-title">
+          <section ref={catalogImageModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-image-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="catalog-image-modal-title">{previewItem.productName}</h2>
@@ -19557,7 +19574,7 @@ function SalesCatalog({
 
       {proposalItem && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-proposal-title">
+          <section ref={catalogProposalModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-proposal-title">
             <div className="modal-header">
               <div>
                 <h2 id="catalog-proposal-title">Propose a price change</h2>
@@ -19845,6 +19862,7 @@ function CameraCaptureModal({
   const activeLensIdRef = useRef("");
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
   const pointerEventsRef = useRef<Map<number, PointerEvent>>(new Map());
+  const cameraCaptureModalPanelRef = useModalA11y(true, onClose);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -20185,7 +20203,7 @@ function CameraCaptureModal({
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="modal-panel camera-capture-modal" role="dialog" aria-modal="true" aria-labelledby="camera-capture-title">
+      <section ref={cameraCaptureModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel camera-capture-modal" role="dialog" aria-modal="true" aria-labelledby="camera-capture-title">
         <div className="modal-header">
           <div>
             <h2 id="camera-capture-title">Photos: {locationName}</h2>
@@ -20526,6 +20544,7 @@ function MediaPreviewModal({
   const [targetLocationId, setTargetLocationId] = useState(currentLocationId);
   const [status, setStatus] = useState("");
   const isPhoto = file.imageType === "photo";
+  const mediaPreviewModalPanelRef = useModalA11y(true, onClose);
 
   async function handleSave() {
     setStatus("Saving...");
@@ -20551,7 +20570,7 @@ function MediaPreviewModal({
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="file-preview-title">
+      <section ref={mediaPreviewModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="file-preview-title">
         <div className="modal-header">
           <div>
             <h2 id="file-preview-title">{file.fileName}</h2>
@@ -20630,6 +20649,7 @@ function LocationFilesModal({
   const [previewFile, setPreviewFile] = useState<LocationImageLike | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState("");
+  const locationFilesModalPanelRef = useModalA11y(true, onClose);
 
   async function handleDelete(image: LocationImageLike) {
     if (!window.confirm(`Delete "${image.fileName}"? This can't be undone.`)) {
@@ -20649,7 +20669,7 @@ function LocationFilesModal({
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="location-files-title">
+      <section ref={locationFilesModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="location-files-title">
         <div className="modal-header">
           <div>
             <h2 id="location-files-title">Files: {locationName}</h2>
@@ -20779,6 +20799,7 @@ function SiteGalleryModal({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isWorking, setIsWorking] = useState(false);
   const [previewFile, setPreviewFile] = useState<{ locationId: string; image: LocationImageLike } | null>(null);
+  const siteGalleryModalPanelRef = useModalA11y(true, onClose);
 
   const groups = locations
     .map((location) => ({ location, photos: location.images.filter((image) => image.imageType === "photo") }))
@@ -20873,7 +20894,7 @@ function SiteGalleryModal({
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="modal-panel site-gallery-modal" role="dialog" aria-modal="true" aria-labelledby="site-gallery-title">
+      <section ref={siteGalleryModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel site-gallery-modal" role="dialog" aria-modal="true" aria-labelledby="site-gallery-title">
         <div className="modal-header">
           <div>
             <h2 id="site-gallery-title">Photo Gallery: {siteName}</h2>
@@ -21151,6 +21172,8 @@ function ProjectShippingSection({
   const [showNewShipmentModal, setShowNewShipmentModal] = useState(false);
   const [selectedShipmentId, setSelectedShipmentId] = useState<string | null>(null);
   const selectedShipment = shipments.find((shipment) => shipment.id === selectedShipmentId) ?? null;
+  const newShipmentModalPanelRef = useModalA11y(showNewShipmentModal, () => setShowNewShipmentModal(false));
+  const shipmentDetailModalPanelRef = useModalA11y(Boolean(selectedShipment), () => setSelectedShipmentId(null));
 
   const emptyAddressDraft = { label: "", streetAddress: "", city: "", state: "", zip: "", attnName: "", phone: "", homePhone: "", cellPhone: "", workPhone: "" };
   const [newAddressDraft, setNewAddressDraft] = useState(emptyAddressDraft);
@@ -21269,7 +21292,7 @@ function ProjectShippingSection({
 
       {showNewShipmentModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-shipment-title">
+          <section ref={newShipmentModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-shipment-title">
             <div className="modal-header">
               <div>
                 <h2 id="new-shipment-title">New Shipment</h2>
@@ -21358,7 +21381,7 @@ function ProjectShippingSection({
 
       {selectedShipment && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="shipment-detail-title">
+          <section ref={shipmentDetailModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="shipment-detail-title">
             <div className="modal-header">
               <div>
                 <h2 id="shipment-detail-title">{selectedShipment.shipmentNumber}</h2>
@@ -21484,6 +21507,7 @@ function Marketing({
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const marketingPreviewModalPanelRef = useModalA11y(Boolean(previewId), () => setPreviewId(null));
 
   const groups = projectSites
     .map((site) => {
@@ -21654,7 +21678,7 @@ function Marketing({
 
       {previewEntry && (
         <div className="modal-backdrop" role="presentation" onClick={() => setPreviewId(null)}>
-          <section className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="marketing-preview-title" onClick={(event) => event.stopPropagation()}>
+          <section ref={marketingPreviewModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="marketing-preview-title" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
                 <h2 id="marketing-preview-title">{previewEntry.image.fileName || previewEntry.location.name}</h2>
@@ -21716,6 +21740,8 @@ function ProjectImagesModal({
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const projectImagesModalPanelRef = useModalA11y(true, onClose);
+  const projectImagesPreviewModalPanelRef = useModalA11y(Boolean(previewId), () => setPreviewId(null));
 
   const folders = [
     { key: "pm" as const, label: "PM", photos: photos.filter(({ image }) => image.origin !== "sales") },
@@ -21781,7 +21807,7 @@ function ProjectImagesModal({
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="modal-panel modal-panel-wide" role="dialog" aria-modal="true" aria-labelledby="project-images-title">
+      <section ref={projectImagesModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel modal-panel-wide" role="dialog" aria-modal="true" aria-labelledby="project-images-title">
         <div className="modal-header">
           <div>
             <h2 id="project-images-title">Images: {projectName}</h2>
@@ -21849,7 +21875,7 @@ function ProjectImagesModal({
 
         {previewEntry && (
           <div className="modal-backdrop" role="presentation" onClick={() => setPreviewId(null)}>
-            <section className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="project-images-preview-title" onClick={(event) => event.stopPropagation()}>
+            <section ref={projectImagesPreviewModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="project-images-preview-title" onClick={(event) => event.stopPropagation()}>
               <div className="modal-header">
                 <div>
                   <h2 id="project-images-preview-title">{previewEntry.image.fileName || previewEntry.location.name}</h2>
@@ -21952,6 +21978,7 @@ function ProjectLocationsSection({
 
   const locations = project.locations ?? [];
   const selectedLocation = locations.find((location) => location.id === selectedLocationId) ?? null;
+  const projectLocationModalPanelRef = useModalA11y(Boolean(selectedLocation), () => setSelectedLocationId(null));
   // E: "when we click on a project we should have all the details down to
   // each location like the info, bom, cost, etc." Info and BOM (the line
   // items below) already existed per location -- cost didn't. Estimated
@@ -22069,7 +22096,7 @@ function ProjectLocationsSection({
 
       {selectedLocation && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="project-location-title">
+          <section ref={projectLocationModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="project-location-title">
             <div className="modal-header">
               <div>
                 <h2 id="project-location-title">{selectedLocation.name || (selectedLocation.locationType === "garage" ? "Garage" : "Lot")}</h2>
@@ -22620,6 +22647,10 @@ function SalesQuoteBuilder({
 
   const selectedQuote = salesQuotes.find((quote) => quote.id === selectedQuoteId) ?? null;
   const selectedLocation = selectedQuote?.locations.find((location) => location.id === selectedLocationId) ?? null;
+  const quoteLocationModalPanelRef = useModalA11y(Boolean(selectedLocation && selectedQuote), () => setSelectedLocationId(null));
+  const newQuoteModalPanelRef = useModalA11y(showNewQuoteModal, () => setShowNewQuoteModal(false));
+  const editSiteModalPanelRef = useModalA11y(Boolean(isEditingSiteInfo && selectedQuote), () => setIsEditingSiteInfo(false));
+  const siteIntakeModalPanelRef = useModalA11y(Boolean(showIntakeModal && selectedQuote), () => setShowIntakeModal(false));
   // Same idea as Admin -> Pre-Sales Rules: categories come straight from the
   // Product Catalog instead of a freeform typed tier.
   const catalogCategories = Array.from(new Set(catalogItems.map((item) => item.category.trim()).filter(Boolean))).sort();
@@ -23358,7 +23389,7 @@ function SalesQuoteBuilder({
 
       {selectedLocation && selectedQuote && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="quote-location-title">
+          <section ref={quoteLocationModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="quote-location-title">
             <div className="modal-header">
               <div>
                 <h2 id="quote-location-title">{selectedLocation.name || (selectedLocation.locationType === "garage" ? "Garage" : "Lot")}</h2>
@@ -23572,7 +23603,7 @@ function SalesQuoteBuilder({
 
       {showNewQuoteModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-quote-title">
+          <section ref={newQuoteModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-quote-title">
             <div className="modal-header">
               <div>
                 <h2 id="new-quote-title">New Site</h2>
@@ -23605,7 +23636,7 @@ function SalesQuoteBuilder({
           named locations would be surprising. */}
       {isEditingSiteInfo && selectedQuote && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="edit-site-title">
+          <section ref={editSiteModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="edit-site-title">
             <div className="modal-header">
               <div>
                 <h2 id="edit-site-title">Edit Site</h2>
@@ -23680,7 +23711,7 @@ function SalesQuoteBuilder({
           trigger button above the locations table. */}
       {showIntakeModal && selectedQuote && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="site-intake-title">
+          <section ref={siteIntakeModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="site-intake-title">
             <div className="modal-header">
               <div className="quote-intake-print-area">
                 <h2 id="site-intake-title">Site Intake Questionnaire</h2>
@@ -24017,6 +24048,10 @@ function TaskEditorModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const isClosed = editingTask?.status === "done" && Boolean(editingTask?.closedAt);
+  // TaskEditorModal has no isOpen prop of its own -- the parent only
+  // mounts it while a task is being edited, so mount/unmount itself is
+  // the open/close signal.
+  const taskEditorModalPanelRef = useModalA11y(true, onClose);
 
   async function handleSubmitClick() {
     if (!draft.title.trim() || isSubmitting) {
@@ -24048,7 +24083,7 @@ function TaskEditorModal({
 
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
+      <section ref={taskEditorModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="task-editor-title">
         <div className="modal-header">
           <div>
             <h2 id="task-editor-title">{editingId ? "Edit Task" : "Add Task"}</h2>
