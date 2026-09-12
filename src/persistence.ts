@@ -5539,19 +5539,28 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
 
 export type BuildComponent = { itemName: string; qty: number };
 
-// equipmentTypeId (added for migration 130's save_equipment_recipe RPC,
-// not yet called by saveDeviceRecipes -- that wiring is a separate, later
-// step): the real, stable equipment_types.id, once loaded. Optional
-// because it doesn't exist for a recipe that only lives in local state and
-// hasn't round-tripped through a load yet (a brand-new recipe before its
-// first save). Once present, every edit path already carries it forward
-// unchanged (main.tsx's recipe edit handlers spread { ...recipe, ... }, so
-// no handler needed updating for this alone) -- it must be sent back on
-// every later save once the save path is wired to the new RPC, so the RPC
-// can update the same row (and correctly handle a rename) instead of
-// resolving by name every time, which is the exact bug
-// PRODUCT_EQUIPMENT_RECIPE_ATOMIC_SAVE_PLAN.md §2a documents.
+// equipmentTypeId: the real, stable equipment_types.id, once known.
+// Optional because it doesn't exist for a recipe that only lives in local
+// state and hasn't been saved yet (a brand-new recipe before its first
+// successful save). Sent back on every later save so the RPC updates the
+// same row (and correctly handles a rename) instead of resolving by name,
+// which is the exact bug PRODUCT_EQUIPMENT_RECIPE_ATOMIC_SAVE_PLAN.md §2a
+// documents.
+//
+// clientId: a stable, purely client-side identity that exists from the
+// moment a recipe is created (see createDeviceRecipeClientId()) and never
+// changes for the life of that recipe in local state -- unlike
+// equipmentTypeId (which starts undefined and only exists once the first
+// save round-trips) and unlike `name` (user-editable). This is what
+// saveDeviceRecipes' caller (the save queue below) uses to match a save
+// result back to the right local recipe: matching by `name` broke the
+// moment a recipe was renamed while its save was still in flight, since
+// the server echo still carries the OLD name at that point. A loaded
+// recipe derives clientId from its own equipmentTypeId (already stable and
+// unique); a brand-new recipe is assigned one at creation time, before it
+// has ever been saved.
 export type BuildRecipe = {
+  clientId: string;
   equipmentTypeId?: string;
   name: string;
   outputName: string;
@@ -5560,6 +5569,18 @@ export type BuildRecipe = {
   components: BuildComponent[];
   retired?: boolean;
 };
+
+// crypto.randomUUID() with the same environment fallback generateShareToken
+// (elsewhere in this file) already uses -- a single UUID is plenty of
+// entropy for a purely local, never-persisted-to-the-database identity
+// (it is never sent to the RPC or stored in any table; only
+// equipmentTypeId is).
+export function createDeviceRecipeClientId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+}
 
 type EquipmentTypeRow = {
   id: string;
@@ -5576,6 +5597,9 @@ const EQUIPMENT_TYPE_SELECT =
 
 function mapEquipmentTypeRow(row: EquipmentTypeRow): BuildRecipe {
   return {
+    // A loaded recipe's clientId is its own real id -- already stable and
+    // unique, no separate generation needed.
+    clientId: row.id,
     equipmentTypeId: row.id,
     name: row.equipment_name,
     outputName: row.output_item?.item_name ?? row.equipment_name,
@@ -5609,8 +5633,13 @@ export type SaveEquipmentRecipeResult = {
 };
 
 // Called by saveDeviceRecipes below on every save_equipment_recipe RPC
-// response.
-export function mapSaveEquipmentRecipeResult(raw: SaveEquipmentRecipeResult): BuildRecipe {
+// response. Returns everything BuildRecipe has EXCEPT clientId: the RPC
+// has no concept of it (it is never sent as a parameter), so there is
+// nothing here to map it from. The caller (the save queue below) is the
+// one place that knows which local clientId a given result belongs to --
+// via the request/result array's shared index, not anything in this
+// return value.
+export function mapSaveEquipmentRecipeResult(raw: SaveEquipmentRecipeResult): Omit<BuildRecipe, "clientId"> {
   return {
     equipmentTypeId: raw.equipmentTypeId,
     name: raw.name,
@@ -5656,18 +5685,21 @@ export async function loadDeviceRecipes(accessToken?: string): Promise<BuildReci
 // that exact row rather than re-resolving by name -- closing the
 // rename-creates-a-duplicate bug that name-only resolution had. A brand
 // new recipe (no equipmentTypeId yet) sends null and the RPC creates it.
-// The RPC's own return value (the freshly saved recipe, in BuildRecipe's
-// own shape) is converted via mapSaveEquipmentRecipeResult and returned
-// here so the caller can backfill a new recipe's real id into local
-// state -- without that, a recipe created this session would keep
-// resolving saves by name (the same bug this was meant to close) until
-// the next full reload.
-export async function saveDeviceRecipes(recipes: BuildRecipe[], accessToken?: string): Promise<BuildRecipe[]> {
+//
+// Returns one mapped result per input recipe, in the SAME order (index i
+// of the result corresponds to index i of `recipes`) -- this is what lets
+// a caller match a result back to the local recipe it belongs to via a
+// stable clientId plus this shared index, rather than via `name` (see
+// reconcileSavedDeviceRecipes below for why matching by name is unsafe: a
+// rename while a save is in flight means the server echo still carries
+// the OLD name). The result omits clientId entirely -- see
+// mapSaveEquipmentRecipeResult's own comment for why.
+export async function saveDeviceRecipes(recipes: BuildRecipe[], accessToken?: string): Promise<Array<Omit<BuildRecipe, "clientId">>> {
   if (!isRemotePersistenceConfigured() || !accessToken || recipes.length === 0) {
     return recipes;
   }
 
-  const saved: BuildRecipe[] = [];
+  const saved: Array<Omit<BuildRecipe, "clientId">> = [];
   for (const recipe of recipes) {
     const response = await fetch(supabaseUrl("rpc/save_equipment_recipe"), {
       method: "POST",
@@ -5696,6 +5728,108 @@ export async function saveDeviceRecipes(recipes: BuildRecipe[], accessToken?: st
     saved.push(mapSaveEquipmentRecipeResult(raw));
   }
   return saved;
+}
+
+// Pure, no I/O, no React -- applies at most one field (equipmentTypeId)
+// onto `current`, matched via each recipe's stable clientId plus the
+// `requested`/`saved` arrays' shared index (saveDeviceRecipes returns one
+// result per input recipe, in the same order -- see its own comment).
+// Never matches by `name`: a rename that happens while a save is in
+// flight would otherwise be lost, since `saved[i].name` still reflects
+// whatever name was actually sent, not whatever the recipe has been
+// renamed to since. Every other field is left exactly as `current` has
+// it -- this only ever backfills an id, it never replaces a recipe with
+// the (possibly now-stale) server echo, so edits made while the request
+// was in flight are preserved untouched. Returns the exact same `current`
+// array reference when nothing actually changed, so a caller using this
+// inside a React state updater can safely skip a re-render (and, if
+// nothing changed, does not need to re-save).
+export function reconcileSavedDeviceRecipes(
+  current: BuildRecipe[],
+  requested: BuildRecipe[],
+  saved: Array<Omit<BuildRecipe, "clientId">>,
+): BuildRecipe[] {
+  const backfill = new Map<string, string>();
+  requested.forEach((recipe, index) => {
+    const equipmentTypeId = saved[index]?.equipmentTypeId;
+    if (equipmentTypeId) {
+      backfill.set(recipe.clientId, equipmentTypeId);
+    }
+  });
+  if (backfill.size === 0) {
+    return current;
+  }
+  let changed = false;
+  const next = current.map((recipe) => {
+    const equipmentTypeId = backfill.get(recipe.clientId);
+    if (equipmentTypeId && recipe.equipmentTypeId !== equipmentTypeId) {
+      changed = true;
+      return { ...recipe, equipmentTypeId };
+    }
+    return recipe;
+  });
+  return changed ? next : current;
+}
+
+// Serializes saveDeviceRecipes calls so a brand-new recipe (no
+// equipmentTypeId yet) is never sent to the RPC with
+// p_equipment_type_id: null more than once concurrently. Without this, a
+// recipe created and then edited again before its first save returns
+// could trigger a second, overlapping save that ALSO sends null (since
+// the id backfill from the first call hasn't landed in local state yet)
+// -- the RPC has no way to know the two calls mean "the same recipe," so
+// it would create two separate equipment_types rows for one local recipe.
+//
+// enqueue() keeps only the single LATEST snapshot passed to it while a
+// save is in flight (not a queue of every intermediate call) and runs it
+// as exactly one follow-up save once the in-flight one settles, with the
+// newly assigned id already merged in via reconcileSavedDeviceRecipes --
+// so that follow-up sends the real id, never null again, even though the
+// snapshot it was built from was captured before the id existed.
+//
+// applyReconciled is called with a plain state-updater function (the same
+// shape React's setState accepts, e.g. `setDeviceRecipes`) specifically so
+// the id backfill is always applied against whatever the true, live
+// recipe state is at that moment -- never a snapshot this queue is
+// holding onto itself, which could otherwise clobber edits a caller made
+// while the request was in flight (requirement: preserve those edits).
+export function createDeviceRecipeSaveQueue(
+  applyReconciled: (updater: (current: BuildRecipe[]) => BuildRecipe[]) => void,
+  onError: (error: unknown) => void,
+) {
+  let saving = false;
+  let pending: { recipes: BuildRecipe[]; accessToken: string } | null = null;
+
+  async function run(recipes: BuildRecipe[], accessToken: string): Promise<void> {
+    saving = true;
+    let saved: Array<Omit<BuildRecipe, "clientId">> | null = null;
+    try {
+      saved = await saveDeviceRecipes(recipes, accessToken);
+      const result = saved;
+      applyReconciled((current) => reconcileSavedDeviceRecipes(current, recipes, result));
+    } catch (error) {
+      onError(error);
+    } finally {
+      saving = false;
+    }
+
+    const next = pending;
+    pending = null;
+    if (next) {
+      const followUpRecipes = saved ? reconcileSavedDeviceRecipes(next.recipes, recipes, saved) : next.recipes;
+      void run(followUpRecipes, next.accessToken);
+    }
+  }
+
+  return {
+    enqueue(recipes: BuildRecipe[], accessToken: string): void {
+      if (saving) {
+        pending = { recipes, accessToken };
+        return;
+      }
+      void run(recipes, accessToken);
+    },
+  };
 }
 
 // Bug found 2026-08-22: "Delete Equipment Type" only ever removed a recipe

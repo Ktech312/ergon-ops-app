@@ -27,6 +27,7 @@ function respond(ok: boolean, status: number, body: unknown) {
 
 function makeRecipe(overrides: Partial<BuildRecipe> = {}): BuildRecipe {
   return {
+    clientId: "client-enterprise-vpu-server",
     name: "Enterprise VPU Server",
     outputName: "Enterprise VPU Server",
     description: "",

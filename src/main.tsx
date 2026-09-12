@@ -265,7 +265,8 @@ import {
   restoreFullBackupSnapshot,
   reviewUserApproval,
   revokeAdmin,
-  saveDeviceRecipes,
+  createDeviceRecipeClientId,
+  createDeviceRecipeSaveQueue,
   deleteEquipmentType,
   deleteInventoryItem,
   saveInventoryItems,
@@ -650,6 +651,7 @@ type SalesQuoteExtractResponse = {
 
 const buildRecipes: BuildRecipe[] = [
   {
+    clientId: "seed-enterprise-vpu-server",
     name: "Enterprise VPU Server",
     outputName: "Enterprise VPU Server",
     description: "Internal server build assembled from purchased compute, storage, power, rack, and hardware components.",
@@ -670,6 +672,7 @@ const buildRecipes: BuildRecipe[] = [
     ],
   },
   {
+    clientId: "seed-vpu-edge-box",
     name: "VPU Edge Box",
     outputName: "VPU Edge Box",
     description: "Standard edge enclosure for powered parking garage or lot locations.",
@@ -682,6 +685,7 @@ const buildRecipes: BuildRecipe[] = [
     ],
   },
   {
+    clientId: "seed-vpu-edge-box-with-solar",
     name: "VPU Edge Box with Solar",
     outputName: "VPU Edge Box with Solar",
     description: "Edge enclosure plus solar power package for locations with no reliable site power.",
@@ -1652,39 +1656,33 @@ function App() {
     loadDeviceRecipes(authSession.accessToken).then(setDeviceRecipes).catch(() => {});
   }, [authSession]);
 
+  // A save queue (not just the debounce timer below) is needed because a
+  // brand-new recipe has no equipmentTypeId until its FIRST save returns
+  // one -- if the user keeps editing during that round trip, the debounce
+  // timer fires again and would otherwise start a second, overlapping
+  // save that ALSO sends p_equipment_type_id: null (the id backfill from
+  // the first call hasn't landed yet), creating a duplicate equipment_types
+  // row for what's really one local recipe. createDeviceRecipeSaveQueue
+  // serializes these: only one save runs at a time, and any save requested
+  // while one is already in flight is coalesced into a single follow-up
+  // that runs once the first settles, using the id it just assigned.
+  // Created once (lazy ref init) so its in-flight/pending tracking
+  // survives re-renders.
+  const deviceRecipeSaveQueueRef = useRef<ReturnType<typeof createDeviceRecipeSaveQueue> | null>(null);
+  if (!deviceRecipeSaveQueueRef.current) {
+    deviceRecipeSaveQueueRef.current = createDeviceRecipeSaveQueue(setDeviceRecipes, (error) => {
+      console.error("Cloud save failed for equipment recipes:", error);
+      setSyncStatus("error");
+      setAuthStatus("Some equipment recipe changes could not be saved. Try again. If the problem continues, contact support.");
+    });
+  }
+
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured() || deviceRecipes.length === 0) {
       return;
     }
     const syncTimer = window.setTimeout(() => {
-      saveDeviceRecipes(deviceRecipes, authSession.accessToken)
-        .then((saved) => {
-          // Backfill only: a brand-new recipe has no equipmentTypeId until
-          // this save resolves and the RPC reports the id it created. Only
-          // apply that one field, and only when it actually changed --
-          // never overwrite with the full server-echoed recipe, since the
-          // user may have kept editing while this save was in flight, and
-          // returning the exact same state array (not a new one) when
-          // nothing changed lets React bail out instead of re-triggering
-          // this same effect and re-saving forever.
-          setDeviceRecipes((current) => {
-            let changed = false;
-            const next = current.map((recipe) => {
-              const match = saved.find((entry) => entry.name === recipe.name);
-              if (match?.equipmentTypeId && recipe.equipmentTypeId !== match.equipmentTypeId) {
-                changed = true;
-                return { ...recipe, equipmentTypeId: match.equipmentTypeId };
-              }
-              return recipe;
-            });
-            return changed ? next : current;
-          });
-        })
-        .catch((error) => {
-          console.error("Cloud save failed for equipment recipes:", error);
-          setSyncStatus("error");
-          setAuthStatus("Some equipment recipe changes could not be saved. Try again. If the problem continues, contact support.");
-        });
+      deviceRecipeSaveQueueRef.current?.enqueue(deviceRecipes, authSession.accessToken);
     }, 650);
     return () => window.clearTimeout(syncTimer);
   }, [deviceRecipes, authSession]);
@@ -9715,6 +9713,7 @@ function Inventory({
   // below. Fall back to an inert placeholder recipe instead so the panel
   // renders normally and that option stays reachable.
   const selectedBuildRecipe = deviceRecipes.find((recipe) => recipe.name === buildDraft.recipeName) ?? deviceRecipes.find((recipe) => !recipe.retired) ?? deviceRecipes[0] ?? {
+    clientId: "placeholder-no-equipment-types",
     name: "",
     outputName: "No equipment types yet",
     description: "",
@@ -10209,6 +10208,7 @@ function Inventory({
       setDeviceRecipes((current) => [
         ...current,
         {
+          clientId: createDeviceRecipeClientId(),
           name: nextName,
           outputName: nextName,
           description: "",
