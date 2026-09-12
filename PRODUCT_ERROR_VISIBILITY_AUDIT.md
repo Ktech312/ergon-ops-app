@@ -775,3 +775,65 @@ Fresh trace of every equipment/project/build NAME → id resolution site that cu
 Deployed (commit `dbf1a6c`, see `HANDOFF.md`): `.ok` checks and diagnostic logging added to `createPurchaseOrder` (also stopped fabricating fake "saved" line items on a real write failure — see that function's own comment), `addTaskHardwareDependency`, `updateTaskHardwareDependencyStatus` (logging-only, stays non-throwing — its caller is fire-and-forget), `createPurchaseOrderReceipt`, `getOrCreateVendorId`, `updatePurchaseOrderLineReceivedQty`, `createPurchaseRequestRemote`, `updatePurchaseRequestRemote`, `updateProjectLedgerInfo` (logging-only, stays non-throwing — its caller-side revert redesign was reverted 2026-09-11 and is not reattempted), and `saveProjectSites`' `projects` upsert (row-count check added for consistency, not a confirmed partial-write bug).
 
 **Still open, not fixed this pass** (a caller-side UX gap, not a missing check — the persistence-layer logging above already exists or was just added): `updatePurchaseOrderLineReceivedQty`'s returned boolean is discarded by its one caller (`PurchaseOrderDetailPanel.logLine`, `main.tsx`) without inspecting it — a failed receiving PATCH shows no visible sign to the user beyond the (now-logged) console entry. Fixing this means the caller actually branching on the result to show a status message, a UI decision slightly beyond "add a missing check," deliberately left for a future pass.
+
+## Addendum 4 (2026-09-12, overnight reliability closeout, part 2) — supersedes several "not fixed this pass" statements above
+
+**Read this before treating any "not fixed this pass," "not attempted," or "remains open" statement
+in A2.5, A2.6, or A2.7 above as still current.** A second work queue on the same overnight run
+(commit `6e1a877`) closed several of the specific gaps those sections named as open. Nothing below
+contradicts the trace/scoping work in A2.5/A2.6 — it implements what they had already correctly
+scoped as safe next steps. `PRODUCT_MASTER_COMPLETION_PLAN.md` §2/§6 is the authoritative,
+up-to-date status table across the whole plan; this addendum is the audit-specific detail behind
+those rows.
+
+- **A2.5's "small, self-contained, non-workflow-changing follow-up candidate"** — giving
+  `restoreFullBackupSnapshot` a real return shape instead of `Promise<void>` — **is now DONE.**
+  The function returns a `RestoreOutcome` (`{ ok, sections: RestoreSectionResult[] }`) with one
+  entry per section (`attempted`, `succeeded`, `count`, `error`), computed by a new
+  `runSection(section, count, run)` helper so one section's failure never blocks an unrelated
+  later section. 7 new tests in `src/restore-backup-snapshot.test.ts` lock in: complete success
+  with accurate per-section counts, first-section failure not blocking later independent
+  sections, a middle failure preserving an earlier section's already-committed success, two
+  malformed-snapshot rejection cases (via a new `validateBackupSnapshotShape`), and deterministic
+  document-number retry (see next item). **What this does NOT do** (unchanged from A2.5's own
+  conclusion): it does not make the whole restore atomic, and it does not add run-id/resume
+  tracking — that remains the greenfield `restore_runs` design in A2.2c/A2.5, still not started.
+- **A2.5's other open gap — `saveRestoredProjectDocuments`'s `document_number` regenerating from
+  `Date.now()` on every retry — is now DONE.** `ProjectDocument`/`ProjectDocumentRow` gained a
+  `documentNumber`/`document_number` field, populated and persisted on first save; a retry of the
+  same snapshot now sends the same `document_number` both times. A legacy document with no
+  recorded `documentNumber` still falls back to a generated `DOC-RESTORE-...` value (never
+  duplicated across two exports of two different documents, but not itself idempotent across
+  retries — a narrower, acceptable residual gap for pre-existing legacy rows only, not a new one).
+- **A2.6's persistence-layer optional-association rejection is now DONE for all three named
+  functions** — `saveBuildTransactions`, `saveInventoryMovements`, `saveProjectAllocations` all
+  now reject a batch containing an unresolved equipment/project/build/movement reference, naming
+  the offending record, rather than silently writing `null`. 17 new tests in
+  `src/optional-association-warnings.test.ts`. This resolves A2.6's own scoping conclusion in the
+  direction it recommended reviewing — **the restore-leniency question A2.6 itself raised remains
+  genuinely open**: these three functions are still shared, unmodified, between the live save path
+  and `restoreFullBackupSnapshot`, so a batch-level rejection here now also applies during
+  restore. This was a deliberate, reviewed choice for this pass (matching the standing decision
+  that an unresolved reference must warn and require correction, "never silently saved as null,"
+  with no carved-out exception stated for restore) — but E should confirm this is the intended
+  restore behavior, since A2.6 had flagged it as worth a separate leniency decision before this
+  was implemented. The form-level UI guard A2.6 also scoped (a stale-dropdown check before object
+  creation, independent of restore) remains **not implemented**, still a real, separate follow-up.
+- **A2.6 item 1's confirmed defect is now FIXED**: `saveBuildTransactions`'s equipment lookup now
+  resolves by `equipment_types.output_item.item_name` in addition to `equipment_name`, closing the
+  key-mismatch that silently nulled `equipment_type_id`/`finished_inventory_item_id` whenever a
+  recipe's "Equipment title" (bound to `outputName`) was edited without renaming the recipe's
+  internal `name`. **Whether to backfill already-affected historical `build_transactions` rows
+  remains an open, separate decision** — this pass fixes the bug going forward only, exactly as
+  A2.6 itself anticipated ("what to do about already-existing rows... is a real, separate decision
+  this pass does not make").
+- **A2.7's remaining item — the purchase-order receiving caller-UX gap — is STILL OPEN,
+  unchanged.** Not attempted in part 2 either; still the one remaining item on the critical-write
+  list, tracked in `PRODUCT_MASTER_COMPLETION_PLAN.md` §2/§4 batch 4.
+- **System Health**: Phase A (existing-data-only: `loadNotificationDeliveryFailures`, admin-gated
+  UI) is now DONE — see `PRODUCT_SYSTEM_HEALTH_PLAN.md` and `PRODUCT_MASTER_COMPLETION_PLAN.md`
+  for the current, authoritative status. Phase B (durable event storage beyond
+  `notification_deliveries`) remains design-only, unchanged.
+- Nothing in this addendum touches the Project BOM migration 131 package — it remains exactly as
+  described in `PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md` §7 and `HANDOFF.md`: drafted, tested
+  locally, kept uncommitted, not applied to any database.
