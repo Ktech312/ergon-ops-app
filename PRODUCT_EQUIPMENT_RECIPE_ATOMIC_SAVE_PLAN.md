@@ -487,3 +487,30 @@ described above. What remains open: the two-session concurrency check
 (deferred by explicit instruction), and the Project BOM RPC
 (`PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md`, still design-only, starts
 at `EC017`).
+
+## 17. Save-race correction: stable client identity + a serializing save queue (2026-09-12)
+
+E reviewed the §16 wiring and found a real race in `main.tsx`'s id-backfill
+logic: it matched a save result back to a local recipe via
+`saved.find((entry) => entry.name === recipe.name)`. That match silently
+fails if the recipe is renamed while its save is in flight, since the
+server echo still carries the pre-rename name — the id is never attached,
+and the next save resends `p_equipment_type_id: null` with the new name,
+creating a duplicate `equipment_types` row (an `EC016` name collision, or
+a genuinely separate row if the old name was already renamed away from).
+A second, related race: two overlapping saves for the same brand-new
+recipe could each send `null`, since neither has learned the real id yet.
+
+Fixed without any SQL/migration change — this section documents the
+frontend-only correction; see `HANDOFF.md`'s 2026-09-12 entry for the full
+implementation detail (the `clientId` field, `reconcileSavedDeviceRecipes`,
+`createDeviceRecipeSaveQueue`) and local-check/deployment record. In
+short: every `BuildRecipe` now carries a stable, purely client-side
+`clientId` that survives a rename (unlike `name`) and exists before the
+first save (unlike `equipmentTypeId`); a save result is matched back to
+its local recipe via that `clientId` plus the request/result arrays'
+shared index, never via `name`; and a small queue serializes
+`saveDeviceRecipes` calls so a brand-new recipe's create-call can never
+run twice concurrently — a save requested while one is already in flight
+is coalesced into exactly one follow-up, using the newly assigned id.
+The per-recipe RPC and migration 130 are unchanged.
