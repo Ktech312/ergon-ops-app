@@ -14538,6 +14538,101 @@ function PeoplePicker({
   );
 }
 
+// Searchable catalog-item combobox (2026-09-12, overnight reliability
+// closeout continuation, Sales workstream batch: replaces the flat
+// <select> of every active catalog item on the "add BOM line" row,
+// which becomes unusable to scan once the catalog has more than a
+// handful of SKUs -- PRODUCT_SALES_EXPERIENCE_PLAN.md's "Product/
+// catalog insertion into a quote" finding. Reuses PeoplePicker's exact
+// visual pattern/CSS classes (a proven, already-styled combobox already
+// in this codebase) rather than inventing new markup or a new
+// dependency -- filters by product name, manufacturer, and catalog
+// number as the rep types.
+function CatalogItemPicker({
+  items,
+  value,
+  onChange,
+  placeholder,
+  className,
+}: {
+  items: CatalogItem[];
+  value: string;
+  onChange: (catalogItemId: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const selected = items.find((item) => item.id === value) ?? null;
+  const [searchText, setSearchText] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const term = searchText.trim().toLowerCase();
+  const matches = (
+    term.length === 0
+      ? items
+      : items.filter(
+          (item) =>
+            item.productName.toLowerCase().includes(term) ||
+            item.manufacturer.toLowerCase().includes(term) ||
+            item.catalogNumber.toLowerCase().includes(term),
+        )
+  ).slice(0, 8);
+
+  if (selected && !isOpen) {
+    return (
+      <div className={`people-picker catalog-item-picker${className ? ` ${className}` : ""}`}>
+        <span className="catalog-item-picker-chosen">
+          {selected.productName}
+          <button type="button" className="icon-button-sm" aria-label="Clear catalog link" onClick={() => onChange("")}>
+            <X size={12} />
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`people-picker catalog-item-picker${className ? ` ${className}` : ""}`}>
+      <input
+        type="text"
+        className="people-picker-input"
+        placeholder={placeholder ?? "Search catalog (optional)"}
+        value={searchText}
+        onChange={(event) => {
+          setSearchText(event.target.value);
+          setIsOpen(true);
+        }}
+        onFocus={() => setIsOpen(true)}
+        onBlur={() => window.setTimeout(() => setIsOpen(false), 150)}
+      />
+      {isOpen && (
+        <div className="people-picker-suggestions">
+          {matches.length === 0 ? (
+            <div className="empty-compact-state">No matches.</div>
+          ) : (
+            matches.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="people-picker-suggestion"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChange(item.id);
+                  setSearchText("");
+                  setIsOpen(false);
+                }}
+              >
+                <span className="people-picker-suggestion-text">
+                  <span className="people-picker-suggestion-name">{item.productName}</span>
+                  {item.manufacturer && <span className="people-picker-suggestion-email">{item.manufacturer}</span>}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Shared message-thread UI (scroll history + compose row + attachments) --
 // extracted so DM threads (migration 094/100) and group channels
 // (migration 101, the Slack/ClickUp/Drive roadmap in HANDOFF.md) render
@@ -23293,16 +23388,13 @@ function SalesQuoteBuilder({
                               {sourceLocation ? `Pulled from ${sourceLocation.name || "a location"}` : "Pulled from a location (since removed)"}
                             </small>
                           )}
-                          <select
-                            className="bom-line-catalog-link"
+                          <CatalogItemPicker
+                            items={activeCatalogItems}
                             value={line.catalogItemId ?? ""}
-                            onChange={(event) => onUpdateBomLineCatalogLink(selectedQuote.id, line.id, event.target.value || null)}
-                          >
-                            <option value="">No catalog link (labor/service line)</option>
-                            {activeCatalogItems.map((item) => (
-                              <option key={item.id} value={item.id}>{item.productName}</option>
-                            ))}
-                          </select>
+                            onChange={(catalogItemId) => onUpdateBomLineCatalogLink(selectedQuote.id, line.id, catalogItemId || null)}
+                            placeholder="No catalog link (labor/service line)"
+                            className="bom-line-catalog-link"
+                          />
                           {linkedItem && <small className="muted">Pulls image, description &amp; datasheet from: {linkedItem.productName}</small>}
                         </div>
                         <div className="quote-bom-line-actions">
@@ -23329,12 +23421,7 @@ function SalesQuoteBuilder({
               <input placeholder="Item name" value={bomLineDraft.item} onChange={(event) => setBomLineDraft({ ...bomLineDraft, item: event.target.value })} />
               <input type="number" min={0.01} step={0.01} value={bomLineDraft.qty} onChange={(event) => setBomLineDraft({ ...bomLineDraft, qty: Number(event.target.value) || 1 })} />
               <input placeholder="Notes (optional)" value={bomLineDraft.notes} onChange={(event) => setBomLineDraft({ ...bomLineDraft, notes: event.target.value })} />
-              <select value={bomLineDraft.catalogItemId} onChange={(event) => setBomLineDraft({ ...bomLineDraft, catalogItemId: event.target.value })}>
-                <option value="">No catalog link (optional)</option>
-                {activeCatalogItems.map((item) => (
-                  <option key={item.id} value={item.id}>{item.productName}</option>
-                ))}
-              </select>
+              <CatalogItemPicker items={activeCatalogItems} value={bomLineDraft.catalogItemId} onChange={(catalogItemId) => setBomLineDraft({ ...bomLineDraft, catalogItemId })} placeholder="Catalog link (optional)" />
               <button
                 className="secondary-action mini-action"
                 type="button"

@@ -7554,6 +7554,17 @@ body:has(.modal-backdrop) .install-banner {
   white-space: nowrap;
 }
 
+.catalog-item-picker-chosen {
+  align-items: center;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  display: flex;
+  font-size: 13px;
+  gap: 6px;
+  justify-content: space-between;
+  padding: 6px 8px;
+}
+
 /* A small avatar + presence dot, shared by the People Picker, the
    @mention dropdown, and DM rows -- E's Slack reference showed avatar +
    online status next to every match, in all three of these spots. */
