@@ -1,14 +1,19 @@
-# Project BOM Atomic Replace — Design Proposal (migration drafted, NOT applied)
+# Project BOM Atomic Replace — Implemented and production-verified
 
-Status: **UPDATED 2026-09-12 (overnight reliability closeout): migration
-131 (`replace_project_bom_lines`), its verification test script
-(`backend/supabase/migration_131_bom_replace_tests.sql`), and the frontend
-wiring (`BomLine.id`/`sku`, `saveProjectSites` calling the RPC) are all
-DRAFTED and kept LOCAL — none of it is committed, none of it is applied to
-any database, and the frontend wiring is not deployed (it depends on the
-unapplied RPC). See `HANDOFF.md`'s 2026-09-12 entry for the exact file
+Status: **Migrations 131 and 132 are applied and fully verified in production
+(2026-09-12).** Migration 131 introduced `replace_project_bom_lines`; its first
+verification run exposed an insert-before-cleanup ordering defect and rolled back
+all synthetic fixtures. Migration 132 corrected the order and retained support
+for quantity-zero Draft placeholders. E reran the complete canonical verification
+script successfully; every failure and skip path raises a hard error, so clean
+completion confirms all sections passed with zero skips. The frontend package is
+now cleared for commit and deployment. See `HANDOFF.md`'s 2026-09-12 entry for the exact file
 list and local-check results, and this document's own end for the
 deviations found and corrected against the live schema while drafting.
+The 2026-09-12 recovery review also added stable browser-side line identity,
+serialized/coalesced saves, preservation of ids during edits, and compatibility
+with the app's existing zero-quantity Draft placeholders. It corrected the SQL
+suite to assert exact EC error codes instead of broadly catching `P0001`.
 This design itself (reconcile-by-id, one project per call, ambiguous-name
 rejection, `FOR UPDATE` locking, PM/workspace-admin authorization) is
 otherwise unchanged from the fully-reviewed plan below — nothing in the
