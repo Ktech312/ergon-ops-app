@@ -527,6 +527,66 @@ function clickableRowProps(onActivate: () => void) {
   };
 }
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// Reusable modal accessibility hook (2026-09-12, overnight reliability
+// closeout part 2 continuation, task 6 remainder). Every modal in this
+// app renders as `<div className="modal-backdrop"><section role="dialog"
+// aria-modal="true">...` with no focus management at all -- Escape does
+// nothing, focus stays wherever it was on the page behind the modal, and
+// closing a modal never returns focus to whatever triggered it. This one
+// hook fixes all three for whatever modal calls it, so each modal only
+// needs to attach the returned ref to its `role="dialog"` element and
+// pass its own open/close state -- not have focus logic re-implemented
+// per modal. Applied to a bounded, high-traffic batch (see HANDOFF.md for
+// the exact list) -- not yet every modal in the app.
+function useModalA11y(isOpen: boolean, onClose: () => void) {
+  const panelRef = useRef<HTMLElement | null>(null);
+  const triggerRef = useRef<Element | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    triggerRef.current = document.activeElement;
+    const panel = panelRef.current;
+    const focusables = panel ? Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)) : [];
+    (focusables[0] ?? panel)?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !panelRef.current) return;
+      const current = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        (el) => !el.hasAttribute("disabled"),
+      );
+      if (current.length === 0) return;
+      const first = current[0];
+      const last = current[current.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      if (triggerRef.current instanceof HTMLElement) {
+        triggerRef.current.focus();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  return panelRef;
+}
+
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
   purchasing: "Procurement",
@@ -8562,6 +8622,8 @@ function Purchasing({
   const receivingRequest = purchaseRequests.find((request) => request.id === receivingRequestId) ?? null;
   const editingRequest = purchaseRequests.find((request) => request.id === editingRequestId) ?? null;
   const receivingRemaining = receivingRequest ? Math.max(0, receivingRequest.quantity - (receivingRequest.receivedQuantity ?? 0)) : 0;
+  const receiveRequestPanelRef = useModalA11y(Boolean(receivingRequest), () => setReceivingRequestId(null));
+  const editRequestPanelRef = useModalA11y(Boolean(editingRequest), () => setEditingRequestId(null));
   const filteredPurchaseRequests = purchaseRequests.filter((request) => {
     // Once a request has become a real order (Create Purchase), it's done
     // living here -- E: "I also processed this and its still in requests,
@@ -8605,6 +8667,7 @@ function Purchasing({
   }
   const [createPurchaseOpen, setCreatePurchaseOpen] = useState(false);
   const [createPurchaseSourceId, setCreatePurchaseSourceId] = useState<string | null>(null);
+  const createPurchasePanelRef = useModalA11y(createPurchaseOpen, () => setCreatePurchaseOpen(false));
   const [purchaseDraft, setPurchaseDraft] = useState(emptyPurchaseDraft);
   const [purchaseDraftFile, setPurchaseDraftFile] = useState<File | null>(null);
   const purchaseSubtotal = purchaseDraft.lines.reduce((sum, line) => sum + line.qty * line.unitCost, 0);
@@ -8959,7 +9022,7 @@ function Purchasing({
       </section>
       {receivingRequest && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel receive-request-panel" role="dialog" aria-modal="true" aria-labelledby="receive-request-title">
+          <section ref={receiveRequestPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel receive-request-panel" role="dialog" aria-modal="true" aria-labelledby="receive-request-title">
             <div className="modal-header">
               <div>
                 <h2 id="receive-request-title">Receive Purchase Request</h2>
@@ -8987,7 +9050,7 @@ function Purchasing({
       )}
       {editingRequest && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel purchase-request-edit-panel" role="dialog" aria-modal="true" aria-labelledby="edit-request-title">
+          <section ref={editRequestPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel purchase-request-edit-panel" role="dialog" aria-modal="true" aria-labelledby="edit-request-title">
             <div className="modal-header">
               <div>
                 <h2 id="edit-request-title">Edit Purchase Request</h2>
@@ -9022,7 +9085,7 @@ function Purchasing({
 
       {createPurchaseOpen && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel purchase-request-edit-panel" role="dialog" aria-modal="true" aria-labelledby="create-purchase-title">
+          <section ref={createPurchasePanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel purchase-request-edit-panel" role="dialog" aria-modal="true" aria-labelledby="create-purchase-title">
             <div className="modal-header">
               <div>
                 <h2 id="create-purchase-title">Create Purchase</h2>
@@ -9793,6 +9856,7 @@ function Inventory({
     retired: false,
   };
   const [showItemModal, setShowItemModal] = useState(false);
+  const itemModalPanelRef = useModalA11y(showItemModal, () => setShowItemModal(false));
   const [mergeOneOffTarget, setMergeOneOffTarget] = useState<(typeof oneOffItems)[number] | null>(null);
   const [mergeOneOffDraft, setMergeOneOffDraft] = useState<{ partRef: string; notes: string }>({ partRef: "", notes: "" });
   const [editingItemRef, setEditingItemRef] = useState<string | null>(null);
@@ -9804,6 +9868,7 @@ function Inventory({
   const [editingPriceHistoryId, setEditingPriceHistoryId] = useState<number | null>(null);
   const [previewItem, setPreviewItem] = useState<Part | null>(null);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const adjustModalPanelRef = useModalA11y(showAdjustModal, () => setShowAdjustModal(false));
   const [adjustModalMode, setAdjustModalMode] = useState<"count" | "transfer">("count");
   const [adjustLockedPart, setAdjustLockedPart] = useState<Part | null>(null);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
@@ -11143,7 +11208,7 @@ function Inventory({
       )}
       {showItemModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-item-modal-title">
+          <section ref={itemModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-item-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="inventory-item-modal-title">{editingItemRef ? "Edit Inventory Item" : "Add Inventory Item"}</h2>
@@ -11271,7 +11336,7 @@ function Inventory({
       )}
       {showAdjustModal && adjustItem && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-adjust-modal-title">
+          <section ref={adjustModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="inventory-adjust-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="inventory-adjust-modal-title">Adjust Inventory</h2>
@@ -11729,6 +11794,10 @@ function Projects({
   const [bomImportRows, setBomImportRows] = useState<Array<{ item: string; qty: number }>>([]);
   const [bomImportStatus, setBomImportStatus] = useState("");
   const [showBomModal, setShowBomModal] = useState(false);
+  const bomModalPanelRef = useModalA11y(showBomModal, () => {
+    setShowBomModal(false);
+    setEditingBomIndex(null);
+  });
   // Section tiles on the project detail page: each collapses to a stat
   // card and opens the real content in one of these on click, instead of
   // rendering fully expanded all the time (the page scrolled forever).
@@ -13605,7 +13674,7 @@ function Projects({
 
       {showBomModal && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="bom-modal-title">
+          <section ref={bomModalPanelRef as React.Ref<HTMLElement>} tabIndex={-1} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="bom-modal-title">
             <div className="modal-header">
               <div>
                 <h2 id="bom-modal-title">{editingBomIndex === null ? "Add BOM Material" : "Edit BOM Material"}</h2>
