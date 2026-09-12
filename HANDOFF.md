@@ -1,6 +1,6 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-09-12, equipment-recipe save-race correction (**Code+tests: commit `dbd2d8c`. Docs: (pending commit). No SQL, no migration change -- frontend-only fix on top of 2026-09-11's migration-130 wiring below.**
+Last updated: 2026-09-12, equipment-recipe save-race correction (**Code+tests: commit `dbd2d8c`. Docs: commit `64ee7de`. No SQL, no migration change -- frontend-only fix on top of 2026-09-11's migration-130 wiring below.**
 E reviewed the deployed wiring and found a real race: `saveDeviceRecipes`' caller in `main.tsx` backfilled a new recipe's server-assigned `equipmentTypeId` by matching `saved.find((entry) => entry.name === recipe.name)`. That match breaks if the recipe is renamed while its save is still in flight (the server echo still carries the OLD name), so the id is never attached; the next debounced save then resends `p_equipment_type_id: null` with the new name, and the RPC creates a second, duplicate `equipment_types` row. A second form of the same problem: two overlapping saves for the same brand-new recipe (an edit arriving mid-flight) could each send null, since neither has learned the real id yet.
 
 **Fix** (`src/persistence.ts`, `src/main.tsx`):
