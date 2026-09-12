@@ -1,30 +1,51 @@
-# Equipment Recipe Atomic Save — Design Proposal (not implemented)
+# Equipment Recipe Atomic Save — Design Proposal (migration 130 APPLIED, frontend wired)
 
-Status: **Design ready for decision — NOT approved, NOT implementation-ready.
-No migration file exists. No SQL has been run against any database.**
-Written per the overnight autonomous pass's task 3 (2026-09-11), following
-the deployed `saveDeviceRecipes` write-verification fix (commits
-`de756ea`/`59f8e2b`) that made failures visible and rejected bad input
-before writing, but explicitly left the function non-atomic (see
-`PRODUCT_ERROR_VISIBILITY_AUDIT.md`'s corrected finding on this). **Two
-decisions are E's to make before this can move to a migration, not this
-document's to assume:**
-1. **Role access** (§8) — this design's RLS-grounded gate is `warehouse`-or-admin,
-   matching the live `equipment_types`/`equipment_bom_components` policy
-   (migration 023) — confirm that's the intended access, not a copy-paste
-   assumption from the sibling BOM plan's PM-or-admin gate.
-2. **Per-recipe vs. whole-batch atomicity** (§3) — this design makes ONE
-   recipe's save atomic by default (Option A); whether a whole multi-recipe
-   batch save should also be all-or-nothing is presented as an open choice,
-   not decided here.
+Status: **MIGRATION 130 APPLIED AND VERIFIED IN PRODUCTION (E, 2026-09-11)** —
+E ran `backend/supabase/migrations/130_atomic_equipment_recipe_save.sql` and
+its complete verification script (`backend/supabase/migration_130_recipe_save_tests.sql`)
+directly against the production Supabase project; both completed with no
+SQL error, meaning every assertion in the test script passed and zero
+sections were skipped. **The frontend is now wired to the new RPC**:
+`saveDeviceRecipes` (`src/persistence.ts`) calls `rpc/save_equipment_recipe`
+once per recipe instead of the old multi-request PATCH/INSERT/upsert/delete
+sequence — see the "Frontend wiring" section below for what changed and
+what remains. The two-session concurrency check (the test script's Section
+16) remains explicitly deferred, not run.
 
-Do not implement any part of this without a separate, explicit go-ahead —
-a technically detailed design is not that go-ahead. This document follows
-the same review discipline as `PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md`
-(its sibling document for the Project BOM problem, itself equally
-unapproved and design-only) and reuses its precedent — migrations
-127/128's `create_project_from_quote` — rather than inventing a new
-pattern.
+Role access and atomicity were decided by E on 2026-09-11 (below), and the
+migration was drafted, corrected across three review rounds, and finally
+approved and run by E following those decisions. Written per the overnight
+autonomous pass's task 3 (2026-09-11), following the deployed
+`saveDeviceRecipes` write-verification fix (commits `de756ea`/`59f8e2b`)
+that made failures visible and rejected bad input before writing, but
+explicitly left the function non-atomic (see
+`PRODUCT_ERROR_VISIBILITY_AUDIT.md`'s corrected finding on this).
+
+**Decisions (2026-09-11, E):**
+1. **Role access** (§8): **warehouse and workspace administrators** — E
+   confirmed this design's RLS-grounded gate (matching the live
+   `equipment_types`/`equipment_bom_components` policy, migration 023),
+   not the sibling BOM plan's PM-or-admin gate.
+2. **Atomicity** (§3): **Option A, confirmed** — save each recipe atomically
+   and independently. One broken recipe must not prevent unrelated recipes
+   from saving. The migration implements exactly one recipe per call; the
+   frontend still loops once per recipe, matching `saveDeviceRecipes`'
+   existing loop shape. The whole multi-recipe batch remains deliberately
+   not atomic — that was Option B, not chosen.
+3. **Implementation priority (E, 2026-09-11)**: this is the next
+   implementation priority overall — it addresses a live partial-save risk
+   and is smaller in scope than the Project BOM redesign. Project BOM
+   reconciliation (`PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md`) follows
+   after this one.
+
+**Still required before this migration is actually run**: E's review and
+explicit go-ahead on the drafted SQL itself (`130_atomic_equipment_recipe_save.sql`)
+and its accompanying test script — a decided design and a drafted migration
+are not that go-ahead. This document follows the same review discipline as
+`PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md` (its sibling document for the
+Project BOM problem, still design-only and second in the implementation
+order above) and reuses its precedent — migrations 127/128's
+`create_project_from_quote` — rather than inventing a new pattern.
 
 ## 1. The risk this is meant to close
 
@@ -155,10 +176,9 @@ a decision, not selected silently:**
   question Option A doesn't: should one bad recipe (e.g. an ambiguous
   component name) block saving four other, perfectly fine recipes in the
   same batch? That's a real UX tradeoff, not just a technical one.
-- **This document does not choose between them.** Option A is the
-  recommended default given the precedent and the lower batch-editing
-  frequency, but the choice is explicitly left for E's review, not
-  decided here.
+- **DECIDED (2026-09-11, E): Option A.** Save each recipe atomically and
+  independently — one broken recipe must not prevent unrelated recipes
+  from saving. Option B (whole-batch atomicity) is not implemented.
 
 ## 4. Existing versus new `equipment_types` rows
 
@@ -406,13 +426,64 @@ To be written and reviewed before any migration is drafted:
 
 ## 15. What this document is not
 
-Not a migration, not a frontend change, not an implementation plan with a
-start date, and **not approved**. `saveDeviceRecipes`' deployed
-write-verification fix (`de756ea`/`59f8e2b`) remains the current, correct,
-non-atomic-but-visible state of this feature — this document does not
-change that. Implementation should not begin until: the role-access gate
-in §8 (`warehouse`-or-admin) is confirmed as intended, not assumed; the
-batch-atomicity question in §3 is answered by E (not assumed); the real
-next-free `EC0xx` code is re-confirmed against whatever else has shipped
-by then; and E gives a separate, explicit go-ahead — a finished, detailed
-design is not that go-ahead.
+**Superseded by §16 below.** Migration 130 is applied and verified in
+production, and the frontend is wired to it — this section's original
+"not a frontend change, not deployed, not yet run" framing no longer
+describes the current state and is kept only for the historical record of
+how this design proposal evolved.
+
+**Updated 2026-09-11**: role access (§8) and atomicity (§3) are both now
+DECIDED by E (see the status block at the top of this document) — those
+two items are no longer open. The real next-free `EC0xx` code was
+re-confirmed immediately before drafting `130_atomic_equipment_recipe_save.sql`
+(still `EC008` at that time).
+
+## 16. Migration applied, frontend wiring (2026-09-11)
+
+**Migration 130 and its complete verification script both ran successfully
+in E's production Supabase project** — E confirmed no SQL error occurred,
+meaning every assertion in `backend/supabase/migration_130_recipe_save_tests.sql`
+passed and zero sections were skipped.
+
+**Frontend wiring completed this pass** (`src/persistence.ts`):
+`saveDeviceRecipes` no longer performs the old per-recipe sequence of
+separate PATCH/INSERT/upsert/delete PostgREST requests plus two upfront
+preflight lookups. It now calls `rpc/save_equipment_recipe` exactly once
+per recipe, in the same sequential, stop-at-the-first-failure loop as
+before (per-recipe atomicity, §3 Option A, unchanged):
+- An existing recipe sends its real `equipmentTypeId` as
+  `p_equipment_type_id`, so the RPC updates that exact row rather than
+  re-resolving by name — this is what closes the rename-creates-a-
+  duplicate risk §4 flagged. A new recipe sends `null`.
+- Every RPC response is converted via `mapSaveEquipmentRecipeResult` (the
+  imageUrl null/undefined mapper from the second correction round) into a
+  real `BuildRecipe`, and `saveDeviceRecipes` now returns the array of
+  saved recipes (previously `Promise<void>`) instead of discarding them.
+- The caller (`src/main.tsx`'s debounce-save effect) uses that return
+  value to backfill a newly created recipe's real `equipmentTypeId` into
+  local React state — the one field that changes, applied only when it
+  actually changed, so this can't loop the debounce-save effect forever.
+- A non-2xx RPC response is logged in full (status + body: `message`/
+  `code`/`details`/`hint`) via `console.error`, then only the existing
+  plain message (`"Some equipment recipes could not be saved."`) is
+  thrown to the caller — same convention as every other checked write in
+  this file.
+- Regression tests rewritten (`src/device-recipes-write-verification.test.ts`):
+  the old suite tested the now-deleted multi-request sequence's own
+  request ordering and no longer applied. The new suite covers a new
+  recipe save, an existing recipe save, a renamed recipe save (name sent
+  alongside the existing id), an RPC failure (plain error + logged
+  detail), and a multiple-recipe save (one RPC call per recipe, in order,
+  stopping at the first failure).
+
+**Explicitly deferred, not attempted this pass**: the two-session
+concurrency verification (the test script's Section 16; the proposed
+Node.js `pg`-based harness). Still a documented decision point, not a
+step that was skipped by mistake.
+
+What remained before this pass and is now done: E's review and go-ahead,
+running the migration and its test script, and the frontend change
+described above. What remains open: the two-session concurrency check
+(deferred by explicit instruction), and the Project BOM RPC
+(`PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md`, still design-only, starts
+at `EC017`).

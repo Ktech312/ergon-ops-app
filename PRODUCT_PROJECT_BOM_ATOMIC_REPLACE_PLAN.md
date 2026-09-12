@@ -190,13 +190,19 @@ inventing a new one:
   who may edit a BOM, only how the edit is applied).
 - Stable `EC0xx`-style error codes for anything the frontend needs to
   distinguish from a generic network failure, continuing the numbering
-  migration 127 established. **Confirmed 2026-09-11**: `grep -rhoE
-  "errcode = '[A-Z0-9]+'" backend/supabase/migrations/*.sql` across every
-  migration in the repo returns exactly `EC001` through `EC007`, all of
-  them in `127_atomic_project_conversion.sql`. **`EC008` is the next free
-  code.** Still re-check this at actual implementation time in case a
-  migration lands between now and then, but as of this validation pass
-  there is no ambiguity to resolve.
+  migration 127 established. **Superseded 2026-09-11 (later same day):**
+  `EC008` is **no longer** the next free code — migration 130
+  (`save_equipment_recipe`, the equipment-recipe atomic-save RPC) was
+  drafted and claims `EC008`-`EC016`. **`EC017` is the next free code for
+  this plan's RPC, once it is actually drafted** — re-verify this again at
+  that time (`grep -rhoE "errcode = '[A-Z0-9]+'" backend/supabase/migrations/*.sql`)
+  in case anything else has shipped by then; this is a re-confirmation
+  requirement, not a settled fact to copy forward blindly. (Historical
+  note, kept for the record: as of the original 2026-09-11 validation pass,
+  before migration 130 existed, `EC001`-`EC007` were the only codes in use,
+  all in `127_atomic_project_conversion.sql`, and `EC008` was genuinely the
+  next free code at that time — the claim was correct when written, and is
+  superseded by migration 130 now existing, not by having been wrong.)
 - A test script named and shaped like `migration_127_conversion_tests.sql`
   (see §6), reviewed by E before anything is run, exactly like 127/128's
   process.
@@ -954,9 +960,12 @@ immediate 2026-09-10 fix (row-count verification on the item/balance and
 project/scope-of-work writes) already shipped without touching this BOM
 sequence at all — **BOM atomicity remains entirely open/unimplemented,
 still true as of this 2026-09-11 revision.** §5a's ambiguous-name fallback
-behavior is decided (option (b)); §2a's schema validation confirms `EC008`
-is the next free error code. The design was substantially revised the
-same day (§3, §5a) from delete-then-reinsert to **reconcile-by-id**,
+behavior is decided (option (b)); §2a's schema validation confirmed
+`EC008` as the next free error code **at that time — since superseded by
+migration 130 (`save_equipment_recipe`), which now claims `EC008`-`EC016`;
+this plan's RPC would start at `EC017`, re-verified at actual
+implementation time (see §2's updated note above).** The design was
+substantially revised the same day (§3, §5a) from delete-then-reinsert to **reconcile-by-id**,
 specifically to close the `task_hardware_dependencies.project_bom_line_id`
 FK risk (§2a) by design rather than carrying it forward as a documented-
 but-accepted gap. **This revision has one real prerequisite that did not
