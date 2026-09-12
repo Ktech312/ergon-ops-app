@@ -1,5 +1,13 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, optional-association form-level guard (§4 item 9, A2.6 remainder) (**Code: commit `80915a5`. No migration, no business decision, restore-independent.**
+
+Traced every `projectName`/`equipmentName`-taking call site in `main.tsx` to separate genuinely form-driven ones (a raw string from a user selection, which can go stale) from internal ones (a live `.find()` by stable ref/id at call time, safe by construction: `allocateFromInventory`/`shipFromInventory`'s callers, both build-creation paths). Exactly one call site matched A2.6's actual risk: Inventory's "Transfer To Project" (`saveTransfer()`) takes its project name from a `<select>`-bound draft that can go stale between selection and Save. `saveTransfer()` now checks the selection still matches a current `projectSites` entry before calling `onTransferToProject`; on a mismatch it shows a plain inline error (`.modal-error-text`, an existing style) and does not create the movement. The error clears when the user picks a different project or reopens the modal.
+
+`npx tsc -b` clean. `NODE_OPTIONS="--max-old-space-size=6144" npx vitest run --no-file-parallelism`: 350/350 passing (unchanged -- same no-dedicated-unit-test precedent as the modal-a11y hook, both are DOM-behavior additions inside `main.tsx`). `npx eslint .`: 0 errors, 73 pre-existing warnings. `npm run build`: clean. Live-checked in a local dev boot (no console errors); the actual stale-selection race itself is narrow and wasn't reproduced interactively (would need real concurrent sessions), so this is a code-review-level guarantee plus a clean regression check, not a live-triggered repro.
+
+Pushed to `main`; HEAD and `origin/main` confirmed at `80915a5`. Deployed as a fresh Vercel Ready/Production deployment aliased to `https://ergon-ops-app.vercel.app`; live bundle (`assets/index-B0h_Oemt.js`) grepped for `no longer matches a current project` (1 match) plus the two prior batches' strings (both still present). Fresh unauthenticated browser load: zero console errors.)
+
 Last updated: 2026-09-12, modal accessibility hook applied to 6 high-traffic modals (**Code: commit `90b2533`. No migration, no business decision.**
 
 New reusable `useModalA11y(isOpen, onClose)` hook (`src/main.tsx`, next to `clickableRowProps`): Escape closes the modal, Tab/Shift+Tab cycle only among the modal's own focusable elements (never leaking focus to the page behind it), and focus returns to whatever triggered the modal once it closes. Applied to 6 of ~46 modals: Purchasing's receive-request, edit-request, and create-purchase modals; Inventory's add-or-edit-item and adjust-inventory modals; Projects' add-or-edit-BOM-line modal.
