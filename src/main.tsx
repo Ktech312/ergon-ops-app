@@ -2774,9 +2774,15 @@ function App() {
     }
   }
 
-  async function handleSetUserRole(userId: string, roleKey: string) {
+  // Returns whether the role assignment actually succeeded -- the
+  // Pending Approvals flow (below) needs to know this before it decides
+  // whether to also mark the sign-in approved, so a role-assignment
+  // failure (e.g. a Manager-role approver rejected by an admin-only
+  // check) can't be silently followed by an approval that leaves the new
+  // user signed in with zero roles.
+  async function handleSetUserRole(userId: string, roleKey: string): Promise<boolean> {
     if (!authSession) {
-      return;
+      return false;
     }
     try {
       await setPrimaryUserRole(userId, roleKey, authSession.accessToken);
@@ -2788,8 +2794,10 @@ function App() {
         return { ...current, [userId]: { primary: roleKey, secondary: existing.secondary.filter((key) => key !== roleKey) } };
       });
       setAdminStatus("Role updated.");
+      return true;
     } catch (error) {
       setAdminStatus(error instanceof Error ? error.message : "Could not update role.");
+      return false;
     }
   }
 
@@ -7753,6 +7761,7 @@ function App() {
             approvalStatuses={approvalStatuses}
             status={adminStatus}
             approvalStatusMessage={approvalReviewStatus}
+            onSetApprovalStatusMessage={setApprovalReviewStatus}
             onSetRole={handleSetUserRole}
             onSetSecondaryRoles={handleSetSecondaryRoles}
             onGrantAdmin={handleGrantAdmin}
@@ -17349,6 +17358,7 @@ function AdminPage({
   approvalStatuses,
   status,
   approvalStatusMessage,
+  onSetApprovalStatusMessage,
   onSetRole,
   onSetSecondaryRoles,
   onGrantAdmin,
@@ -17420,7 +17430,8 @@ function AdminPage({
   approvalStatuses: UserStatus[];
   status: string;
   approvalStatusMessage: string;
-  onSetRole: (userId: string, roleKey: string) => void;
+  onSetApprovalStatusMessage: (message: string) => void;
+  onSetRole: (userId: string, roleKey: string) => Promise<boolean>;
   onSetSecondaryRoles: (userId: string, roleKeys: string[]) => void;
   onGrantAdmin: (userId: string) => void;
   onRevokeAdmin: (userId: string) => void;
@@ -17708,8 +17719,29 @@ function AdminPage({
               <PendingApprovalRow
                 key={user.userId}
                 user={user}
-                onApprove={(roleKey, expiresAt) => {
-                  onSetRole(user.userId, roleKey);
+                onApprove={async (roleKey, expiresAt) => {
+                  // Sequenced on purpose (2026-09-12, found live in
+                  // production): these two used to fire unawaited and
+                  // unsequenced, so a role-assignment failure (e.g. a
+                  // Manager-role approver rejected by an admin-only
+                  // check, before migration 133) could still be followed
+                  // by an approval that succeeded on its own -- leaving
+                  // the new user signed in and approved with zero roles,
+                  // with no error the approver would reliably notice.
+                  // Now the role must actually be confirmed set before
+                  // the sign-in is approved at all; a failure here shows
+                  // right in this panel and leaves the row in the queue
+                  // instead of silently vanishing half-configured.
+                  const roleAssigned = await onSetRole(user.userId, roleKey);
+                  if (!roleAssigned) {
+                    // Deliberately surfaced here, not just via the generic
+                    // admin status line -- that renders inside the
+                    // admin-only "Assign roles" section below, which a
+                    // Manager-role approver (allowed to use this panel,
+                    // per this panel's own label) cannot see at all.
+                    onSetApprovalStatusMessage(`Could not assign the "${roleKey}" role -- ${user.email} was NOT approved. Ask an admin to assign the role, or try again.`);
+                    return;
+                  }
                   onReviewApproval(user.userId, "approved", expiresAt);
                 }}
                 onDeny={() => onReviewApproval(user.userId, "denied", null)}
