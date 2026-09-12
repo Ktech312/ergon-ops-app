@@ -2052,6 +2052,8 @@ function App() {
       return false;
     }
     const newReceipts: PurchaseOrderReceipt[] = [];
+    const receivedLineIds = new Set<string>();
+    let everyLineSaved = true;
     for (const line of order.lines) {
       const remaining = line.qty - (line.receivedQty ?? 0);
       if (!line.id || remaining <= 0) {
@@ -2059,8 +2061,10 @@ function App() {
       }
       const ok = await updatePurchaseOrderLineReceivedQty(line.id, line.qty, authSession.accessToken);
       if (!ok) {
-        continue;
+        everyLineSaved = false;
+        break;
       }
+      receivedLineIds.add(line.id);
       applyPurchaseOrderReceiptToInventory(order, line, remaining, destination);
       const receipt = await createPurchaseOrderReceipt(
         { purchaseOrderId, purchaseOrderLineId: line.id, itemName: line.name, qty: remaining, receivedByEmail: authSession.email },
@@ -2075,13 +2079,16 @@ function App() {
         candidate.id === purchaseOrderId
           ? {
               ...candidate,
-              lines: candidate.lines.map((line) => ({ ...line, receivedQty: line.qty })),
+              lines: candidate.lines.map((line) => (line.id && receivedLineIds.has(line.id) ? { ...line, receivedQty: line.qty } : line)),
               receipts: [...newReceipts, ...candidate.receipts],
-              status: "Received",
+              status: everyLineSaved ? "Received" : candidate.status,
             }
           : candidate,
       ),
     );
+    if (!everyLineSaved) {
+      return false;
+    }
     await updatePurchaseOrderStatus(purchaseOrderId, "Received", authSession.accessToken);
     await syncLinkedRequestOnFullReceipt(order);
     return true;
@@ -9341,6 +9348,7 @@ function PurchaseOrderDetailPanel({
   const [receiveDrafts, setReceiveDrafts] = useState<Record<string, number>>({});
   const [loggingLineId, setLoggingLineId] = useState<string | null>(null);
   const [isReceivingAll, setIsReceivingAll] = useState(false);
+  const [receivingStatus, setReceivingStatus] = useState<{ message: string; isError: boolean } | null>(null);
   const [showCamera, setShowCamera] = useState(false);
   // Default: goes into warehouse stock. Only offer the project-direct
   // option when the order actually has a project on it -- E: "give the
@@ -9355,19 +9363,41 @@ function PurchaseOrderDetailPanel({
     const remaining = Math.max(0, line.qty - (line.receivedQty ?? 0));
     const qty = Math.max(1, Math.min(remaining, receiveDrafts[line.id] ?? remaining));
     setLoggingLineId(line.id);
-    await onReceiveLine(po.id, line.id, line.name, qty, destination);
-    setReceiveDrafts((current) => {
-      const next = { ...current };
-      delete next[line.id!];
-      return next;
-    });
-    setLoggingLineId(null);
+    setReceivingStatus(null);
+    try {
+      const ok = await onReceiveLine(po.id, line.id, line.name, qty, destination);
+      if (!ok) {
+        setReceivingStatus({ message: `Could not record receipt for ${line.name}. Try again. If the problem continues, contact support.`, isError: true });
+        return;
+      }
+      setReceiveDrafts((current) => {
+        const next = { ...current };
+        delete next[line.id!];
+        return next;
+      });
+      setReceivingStatus({ message: `Receipt recorded for ${line.name}.`, isError: false });
+    } catch (error) {
+      console.error(`PurchaseOrderDetailPanel.logLine failed for line ${line.id}:`, error);
+      setReceivingStatus({ message: `Could not record receipt for ${line.name}. Try again. If the problem continues, contact support.`, isError: true });
+    } finally {
+      setLoggingLineId(null);
+    }
   }
 
   async function receiveAll() {
     setIsReceivingAll(true);
-    await onReceiveAll(po.id, destination);
-    setIsReceivingAll(false);
+    setReceivingStatus(null);
+    try {
+      const ok = await onReceiveAll(po.id, destination);
+      setReceivingStatus(ok
+        ? { message: "All remaining line items were recorded as received.", isError: false }
+        : { message: "Receiving stopped because one line could not be saved. Successfully recorded lines remain received; the failed line and remaining lines were not changed.", isError: true });
+    } catch (error) {
+      console.error(`PurchaseOrderDetailPanel.receiveAll failed for order ${po.id}:`, error);
+      setReceivingStatus({ message: "Receiving stopped because a line could not be saved. Try again. If the problem continues, contact support.", isError: true });
+    } finally {
+      setIsReceivingAll(false);
+    }
   }
 
   return (
@@ -9447,6 +9477,11 @@ function PurchaseOrderDetailPanel({
             </button>
           </div>
         </div>
+        {receivingStatus && (
+          <div className={`action-status${receivingStatus.isError ? " receiving-action-status-error" : ""}`} role={receivingStatus.isError ? "alert" : "status"} aria-live="polite">
+            {receivingStatus.message}
+          </div>
+        )}
         <div className="line-list">
           {po.lines.map((line, index) => {
             const received = line.receivedQty ?? 0;
@@ -25149,7 +25184,7 @@ function ProposalPublicPage({ token }: { token: string }) {
       )}
 
       <section className="submittal-public-section">
-        <h2>Pricing &amp; Bill of Material</h2>
+        <h2>Bill of Material</h2>
         <table className="proposal-bom-table stack-table-mobile">
           <thead><tr><th></th><th>Item</th><th>Description</th><th>Qty</th><th>Datasheet</th></tr></thead>
           <tbody>

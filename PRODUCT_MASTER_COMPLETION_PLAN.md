@@ -60,16 +60,16 @@ Each phase has a **measurable** gate — not "looks done," a specific, checkable
 
 ### Phase 1 — Reliability closeout
 **Gate**: Equipment Recipe save is atomic and race-safe (**DONE**, migration 130 +
-clientId/queue fix, deployed). Project BOM replace is atomic and concurrency-safe (**migration
-131 drafted, reviewed by this pass's own test-writing, NOT applied — gate not yet met**; met once
-migration 131 is reviewed by E, run, and its frontend wiring deployed). Backup restore reports
+clientId/queue fix, deployed). Project BOM replace is atomic and concurrency-safe (**DONE**,
+migrations 131/132 + canonical zero-skip database verification + clientId/save queue, deployed).
+Backup restore reports
 accurate per-section success/failure instead of an all-or-nothing throw (**DONE this pass** —
 `restoreFullBackupSnapshot` now returns a structured `RestoreOutcome`; whole-snapshot atomicity
 itself remains explicitly out of scope, see §2 row). Every confirmed-critical write in
 `PRODUCT_ERROR_VISIBILITY_AUDIT.md`'s ranked list either has a check+plain-error+log, or is
-explicitly documented as a reviewed, deferred decision (**effectively met** — the two-part sweep
-across both overnight passes covered every named function; the one remaining item is a caller-side
-UX gap on purchase-order receiving, see §2). Optional-association warnings are enforced for the
+explicitly documented as a reviewed, deferred decision (**met** — the two-part sweep covered every
+named persistence function, and the final purchase-order receiving caller now shows a visible
+failure and no longer marks failed/remaining lines received). Optional-association warnings are enforced for the
 three specified persistence functions (**DONE this pass** for `saveBuildTransactions`,
 `saveInventoryMovements`, `saveProjectAllocations` — batch-scoped rejection naming the unresolved
 record, restore-leniency question intentionally left open, see §2). System Health is real and
@@ -113,9 +113,9 @@ branding, and a signature/acceptance flow good enough that the team stops needin
 HubSpot/PandaDoc for this step — measured by at least one real deal closed end-to-end through
 Ergon alone. Today: proposal-response and submittal-response replay bugs are fixed and live
 (migrations 119/121/122/123), but share tokens never expire or get revoked (a column exists,
-nothing ever sets it), and no price is shown anywhere in the flow — the proposal page's own
-"Pricing & Bill of Material" heading actively promises a price column that does not exist
-(confirmed at `src/main.tsx:24913`, independently spot-verified this session).
+nothing ever sets it), and no price is shown anywhere in the flow. The misleading proposal-page
+heading that previously promised pricing was corrected to "Bill of Material" on 2026-09-12;
+actual customer-facing pricing remains open and depends on frozen per-line pricing.
 
 ### Phase 6 — Mobile and accessibility
 **Gate**: Every Critical-tier screen is keyboard-operable and screen-reader-passable (46 modals
@@ -153,10 +153,10 @@ explicit go-ahead to begin design work on it at all.
 | Workstream | Current State | Remaining Work | Priority | Verification Needed | Dependency | Definition of Done |
 |---|---|---|---|---|---|---|
 | Equipment Recipe atomic save | **Done, deployed** (migration 130 + clientId/save-queue race fix) | Two-session concurrency verification | Medium | User acceptance | — | Migration + test script run in production; frontend wired; race-condition tests passing (all true except live two-session check) |
-| Project BOM atomic replace | **Migration + test script + frontend fully drafted locally, regression-tested against a mock RPC, NOT applied/deployed** (migration 131) | E review → run migration → run test script in Supabase → deploy already-committed-ready frontend | **Critical** — blocks Phase 1 gate and this session's own standing "keep migration 131 and its frontend together" rule | Migration, Prod verify | None but E's own review/run | Migration applied; test script passes in production; frontend calls the RPC; regression tests passing (already true locally); deployed |
+| Project BOM atomic replace | **Done, deployed** (migrations 131/132; canonical database suite passed with zero failures/skips; frontend/clientId/save queue live) | Authenticated user acceptance during the next natural Project BOM edit | N/A — done | User acceptance | — | Migration applied; test script passed; frontend calls the RPC; regression tests pass; deployed — met |
 | Backup restore structured outcome | **Done this pass** — `restoreFullBackupSnapshot` returns a `RestoreOutcome` (per-section attempted/succeeded/count/error), snapshot shape validated before any write, `document_number` now deterministic from snapshot data instead of `Date.now()` | Nothing outstanding for this specific sub-item | N/A — done | Code (done), Prod verify (not yet exercised against a real restore in production) | — | 7 tests covering success/first-failure/middle-failure/malformed/deterministic-retry — all passing |
 | Backup restore checkpoint/resume design | Whole-restore atomicity confirmed impractical without a large RPC rewrite (documented, not attempted); no `restore_runs`-style tracking exists | Implement a `restore_runs` table + run id + resumable per-section retry, per `PRODUCT_ERROR_VISIBILITY_AUDIT.md` A2.2c/A2.5 | Medium | Migration, Code, Business decision (how lenient should a resumed/retried restore be) | Benefits from System Health's durable-event pattern but doesn't require it | Checkpointed restore with resumable per-section retry; tested only against synthetic/staging data, never production |
-| Remaining critical-write audit | **Effectively closed** — every function on Part 2's named list now has `.ok` checks + diagnostic logging (13 functions this pass, ~10 more in the immediately preceding pass); one caller-side UX gap remains (below) | `updatePurchaseOrderLineReceivedQty`'s caller (`PurchaseOrderDetailPanel.logLine`) discards the returned boolean — a failed receiving PATCH shows nothing to the user beyond a console log | Medium | Code, User acceptance | None | Caller branches on the result and shows a plain status message on failure |
+| Remaining critical-write audit | **Done** — every named persistence function has response checks/diagnostics; purchase-order line and receive-all callers now branch on failure, show a plain accessible message, preserve failed/remaining line state, and only complete the order after every line saves | Authenticated user acceptance during the next natural receiving action | N/A — done | User acceptance | — | A failed receiving write is visible and cannot produce a false all-received screen — met |
 | Optional-association warning (persistence layer, 3 specified functions) | **Done this pass** — `saveBuildTransactions`, `saveInventoryMovements`, `saveProjectAllocations` now reject a batch containing an unresolved equipment/project/build/movement reference, naming the offending record; also fixed a real, independently-confirmed key-mismatch defect in `saveBuildTransactions` (equipment lookup now matches on `output_item.item_name` as well as `equipment_name`) | Whether restore should be allowed to stay more lenient than live save (these three functions are shared between both paths) remains an open, not-yet-decided question | High | Business decision (restore leniency), User acceptance | — | User is warned and must correct an unresolved reference, never silently saved as null — met for live saves; restore-path leniency still an open call |
 | Optional-association warning (form-level UI guard) | **Traced, scoped, not implemented** (`PRODUCT_ERROR_VISIBILITY_AUDIT.md` A2.6) — the safe first step (catch a stale/renamed selection before object creation) never touches restore | Build the form-level check using the existing `setActionStatus` "N skipped" banner pattern | Medium | Code | None — deliberately restore-independent | A user picking a stale dropdown value is warned before the record is even created |
 | xlsx vulnerability | **Evaluated, recommendation given** (`PRODUCT_XLSX_REPLACEMENT_EVALUATION.md`) | Migrate to `exceljs` (or confirm staying), per the small POC plan already written | High | Business decision (which library / accept risk), Code, Prod verify | None | `npm audit`-class finding cleared; both import flows verified against real files |
@@ -205,11 +205,11 @@ blocked on a business decision is still listed in sequence, with the decision na
 picking it up later doesn't require re-deriving why it's blocked. Batches already completed in
 this session's two overnight passes are not relisted here — only what remains.
 
-1. **Migration 131 review and application** (Critical). E reviews `backend/supabase/migrations/131_atomic_project_bom_replace.sql` and its test script, runs the migration alone (per this session's own standing rule — one SQL action, verification script after), then the already-committed-ready frontend BOM code is pushed/deployed. *Verification: Migration, Prod verify.*
+1. **Project BOM atomic replacement — DONE.** Migrations 131/132 are applied, the canonical zero-skip database suite passed, frontend wiring is deployed, and the production bundle is verified.
 2. **Client Ledger safe-revert redesign** (Critical). Design and implement caller-side recovery for `updateProjectLedgerInfo` failures without repeating the concurrency flaw found and reverted 2026-09-11. *Verification: Business decision first, then Code, User acceptance.*
 3. **Sales Batch 1 — frozen per-line pricing** (Critical). See §5 Batch 1. This is the single highest-leverage remaining gap in the whole plan short of migration 131 and Phase 3. *Verification: Business decision, Migration, Code.*
-4. **Purchase-order receiving caller UX fix** (Medium, small). Make `PurchaseOrderDetailPanel.logLine` branch on `updatePurchaseOrderLineReceivedQty`'s already-returned boolean and show a plain failure message. *Verification: Code.*
-5. **Sales Batch 2 — customer-facing pricing display + heading fix** (Critical/quick-win split). The "Pricing & Bill of Material" heading correction is a zero-risk copy fix independent of #3 and can ship immediately; the actual price column depends on #3 landing first. *Verification: Code.*
+4. **Purchase-order receiving caller UX fix — DONE.** The line and receive-all actions show accessible success/failure status; receive-all stops on the first failed write and cannot falsely complete untouched lines.
+5. **Sales Batch 2 — heading fix DONE; customer-facing pricing display remains.** The misleading "Pricing & Bill of Material" heading now reads "Bill of Material". The actual price column depends on #3 landing first. *Verification remaining: pricing design, Code, User acceptance.*
 6. **Sales Batch 3 — in-place BOM-line editing** (High). Let a rep edit item/qty/notes on an existing quote BOM line instead of delete-and-re-add (which discards notes). *Verification: Code.*
 7. **Sales Batch 4 — `client_id`/`quote_ref` carry-through** (High, small, safe). One-line addition to `create_project_from_quote()`'s already-hardened insert list. *Verification: Code, Migration (small, additive), Prod verify.*
 8. **Modal focus-trap/Escape-close reusable hook** (High). One shared hook, applied first to the most-used Inventory/Projects/Sales modals, matching this pass's `clickableRowProps` pattern for reuse over per-instance patching. *Verification: Code, User acceptance.*
@@ -239,7 +239,7 @@ only E can decide) per batch.
 | Batch | What it is | Already decided | Open question | Priority | Verification |
 |---|---|---|---|---|---|
 | 1. Frozen per-line pricing | Add `unit_price`/`unit_cost` snapshot columns to `sales_quote_bom_lines`, populated from the catalog item's current values at insert time, never recomputed afterward; recompute dashboard KPIs from frozen values instead of live catalog joins | The mechanism (snapshot-at-insert, not live-join) — matches the pattern already used elsewhere in this codebase for frozen state | Whether/when to build this at all, and how a price change mid-quote-lifecycle (before acceptance) should be handled | **Critical** | Business decision, Migration, Code, User acceptance |
-| 2. Customer-facing pricing display + heading fix | Show the frozen price on the customer-facing proposal table; rename "Pricing & Bill of Material" to "Bill of Material" immediately regardless of when pricing lands (zero-risk copy fix) | The heading fix — no ambiguity, ships independently | How much pricing detail the customer sees (line-item vs. total-only) — depends on Batch 1's decision | Critical (heading fix: quick win, no dependency) | Code, Prod verify |
+| 2. Customer-facing pricing display + heading fix | **Heading fix done:** the proposal now says "Bill of Material." Remaining: show frozen prices after Batch 1 establishes them | The heading fix is complete | How much pricing detail the customer sees (line-item vs. total-only) — depends on Batch 1's decision | Critical for pricing | Business decision, Code, User acceptance |
 | 3. In-place BOM-line editing | Add item/qty/notes editing on an existing quote BOM line (the row already renders these three fields as static text) | Yes — additive UI/data change, no process implications | None | High | Code |
 | 4. `client_id`/`quote_ref` carry-through | Add `client_id` (already a nullable column on both `sales_quotes` and `projects`) and `quote_ref` to `create_project_from_quote()`'s insert list | Yes — small, scoped data-completeness fix to an already-hardened, already-shipped atomic function | None | High | Code, Migration (small), Prod verify |
 | 5. Internal approval-before-send gate | Reuse the existing Catalog Price Change Requests propose/review/approve pattern as the template for a proposal-send approval gate | The mechanism to reuse | Who approves, at what deal-size threshold, or whether at all — explicitly sequenced behind Batch 1 (nothing price-related to approve until pricing exists) | Medium | Business decision, Code |

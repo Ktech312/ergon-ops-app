@@ -43,11 +43,12 @@ This is a lighter-depth document than the others produced overnight — it maps 
 
 ## Task 9 Product Review (overnight autonomous pass, 2026-09-11)
 
-**Verification status (added 2026-09-11, review): this entire section was produced by a delegated
+**Verification status (added 2026-09-11, review; updated 2026-09-12): this entire section was produced by a delegated
 background agent, not read and verified line-by-line by the orchestrating session.** The
 orchestrating session independently spot-verified exactly ONE material current-state claim from
-this section against source directly (the "Pricing & Bill of Material" proposal table has no price
-column — confirmed at `src/main.tsx:24933-24951`) and found it accurate. No other claim below has
+this section against source directly (the proposal table has no price column — confirmed in the
+same component). Its formerly misleading "Pricing & Bill of Material" heading was corrected to
+"Bill of Material" on 2026-09-12; the missing price data remains unchanged. No other claim below has
 been independently re-checked by a second reader. Treat every **current-state ("current capability"
 / "missing capability" / "not found in code")** claim below as a **preliminary, agent-sourced
 finding** that should be spot-checked again before being relied on for a real product decision —

@@ -2251,6 +2251,12 @@ td small.quote-ref-tag {
   width: fit-content;
 }
 
+.receiving-action-status-error {
+  background: #fbeaea;
+  border-color: #e8c2c2;
+  color: #a01029;
+}
+
 .panel-title-row {
   align-items: flex-start;
   border-bottom: 1px solid #e8e1d5;

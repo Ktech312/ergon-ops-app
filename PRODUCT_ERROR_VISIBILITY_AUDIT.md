@@ -774,7 +774,7 @@ Fresh trace of every equipment/project/build NAME → id resolution site that cu
 
 Deployed (commit `dbf1a6c`, see `HANDOFF.md`): `.ok` checks and diagnostic logging added to `createPurchaseOrder` (also stopped fabricating fake "saved" line items on a real write failure — see that function's own comment), `addTaskHardwareDependency`, `updateTaskHardwareDependencyStatus` (logging-only, stays non-throwing — its caller is fire-and-forget), `createPurchaseOrderReceipt`, `getOrCreateVendorId`, `updatePurchaseOrderLineReceivedQty`, `createPurchaseRequestRemote`, `updatePurchaseRequestRemote`, `updateProjectLedgerInfo` (logging-only, stays non-throwing — its caller-side revert redesign was reverted 2026-09-11 and is not reattempted), and `saveProjectSites`' `projects` upsert (row-count check added for consistency, not a confirmed partial-write bug).
 
-**Still open, not fixed this pass** (a caller-side UX gap, not a missing check — the persistence-layer logging above already exists or was just added): `updatePurchaseOrderLineReceivedQty`'s returned boolean is discarded by its one caller (`PurchaseOrderDetailPanel.logLine`, `main.tsx`) without inspecting it — a failed receiving PATCH shows no visible sign to the user beyond the (now-logged) console entry. Fixing this means the caller actually branching on the result to show a status message, a UI decision slightly beyond "add a missing check," deliberately left for a future pass.
+**Resolved 2026-09-12:** `PurchaseOrderDetailPanel.logLine` now branches on `updatePurchaseOrderLineReceivedQty`'s returned boolean and shows a plain, accessible success/failure message. The same review found and fixed a related false-success defect in `handleReceiveAllPurchaseOrderLines`: it previously skipped a failed line update but then marked every line and the entire order received. It now stops on the first failed write, updates local state only for lines actually saved, leaves the order open, and tells the user that the remaining lines were not changed.
 
 ## Addendum 4 (2026-09-12, overnight reliability closeout, part 2) — supersedes several "not fixed this pass" statements above
 
@@ -827,9 +827,9 @@ those rows.
   remains an open, separate decision** — this pass fixes the bug going forward only, exactly as
   A2.6 itself anticipated ("what to do about already-existing rows... is a real, separate decision
   this pass does not make").
-- **A2.7's remaining item — the purchase-order receiving caller-UX gap — is STILL OPEN,
-  unchanged.** Not attempted in part 2 either; still the one remaining item on the critical-write
-  list, tracked in `PRODUCT_MASTER_COMPLETION_PLAN.md` §2/§4 batch 4.
+- **A2.7's remaining purchase-order receiving caller-UX gap is RESOLVED (2026-09-12).**
+  Both single-line and receive-all actions now surface failure, and receive-all cannot falsely mark
+  failed or unattempted lines as received. See `PRODUCT_MASTER_COMPLETION_PLAN.md` §2/§4 batch 4.
 - **System Health**: Phase A (existing-data-only: `loadNotificationDeliveryFailures`, admin-gated
   UI) is now DONE — see `PRODUCT_SYSTEM_HEALTH_PLAN.md` and `PRODUCT_MASTER_COMPLETION_PLAN.md`
   for the current, authoritative status. Phase B (durable event storage beyond
