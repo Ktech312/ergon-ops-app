@@ -1624,9 +1624,17 @@ function App() {
       return;
     }
     const syncTimer = window.setTimeout(() => {
-      saveMovementsBuildsAllocations(buildTransactions, inventoryMovements, projectAllocations, authSession.accessToken).catch(() => {
+      saveMovementsBuildsAllocations(buildTransactions, inventoryMovements, projectAllocations, authSession.accessToken).catch((error) => {
+        // Correction (2026-09-11, review): this used to discard the caught
+        // error entirely and show a message naming RLS/env vars/login --
+        // now that the underlying save can throw for real, specific
+        // reasons (a failed prerequisite lookup, an unresolved sku, a
+        // failed write), log the real error for diagnosis and show only a
+        // plain, safe operational message -- never raw status codes,
+        // response bodies, or implementation detail to the user.
+        console.error("saveMovementsBuildsAllocations failed:", error);
         setSyncStatus("error");
-        setAuthStatus("Cloud save failed for movements/builds/allocations. Check login, RLS policies, or Supabase env vars.");
+        setAuthStatus("Some inventory history could not be saved. Try again. If the problem continues, contact support.");
       });
     }, 650);
     return () => window.clearTimeout(syncTimer);
@@ -2080,10 +2088,22 @@ function App() {
     }
   }
 
+  // Correction (2026-09-11, review): this used to update local state
+  // optimistically (even with no session at all) and never reverted it on
+  // failure, leaving an unsaved value displayed as if it had saved. Now
+  // pessimistic: require auth first (no local update at all without a
+  // session), await the write, and only update local state after it
+  // actually succeeds -- no rollback/snapshot-restore needed, since the
+  // local value is never changed until the database has confirmed it.
   async function handleUpdateVendor(id: string, updates: Parameters<typeof updateVendor>[1]) {
-    setVendors((current) => current.map((vendor) => (vendor.id === id ? { ...vendor, ...updates } : vendor)));
-    if (authSession) {
+    if (!authSession) {
+      return;
+    }
+    try {
       await updateVendor(id, updates, authSession.accessToken);
+      setVendors((current) => current.map((vendor) => (vendor.id === id ? { ...vendor, ...updates } : vendor)));
+    } catch (error) {
+      setVendorStatus(error instanceof Error ? error.message : "Could not save that vendor.");
     }
   }
 
@@ -3280,18 +3300,26 @@ function App() {
     }
   }
 
+  // Correction (2026-09-11, review): this used to update local state
+  // optimistically and never revert it on failure, leaving an unsaved
+  // catalog link displayed as if it had saved. Now pessimistic: await the
+  // write first, only update local state after it succeeds.
   async function handleUpdateSalesQuoteBomLineCatalogLink(quoteId: string, lineId: string, catalogItemId: string | null) {
     if (!authSession) {
       return;
     }
-    setSalesQuotes((current) =>
-      current.map((entry) =>
-        entry.id === quoteId
-          ? { ...entry, bomLines: entry.bomLines.map((line) => (line.id === lineId ? { ...line, catalogItemId } : line)) }
-          : entry,
-      ),
-    );
-    await updateSalesQuoteBomLineCatalogLink(lineId, catalogItemId, authSession.accessToken);
+    try {
+      await updateSalesQuoteBomLineCatalogLink(lineId, catalogItemId, authSession.accessToken);
+      setSalesQuotes((current) =>
+        current.map((entry) =>
+          entry.id === quoteId
+            ? { ...entry, bomLines: entry.bomLines.map((line) => (line.id === lineId ? { ...line, catalogItemId } : line)) }
+            : entry,
+        ),
+      );
+    } catch (error) {
+      setSalesQuoteStatus(error instanceof Error ? error.message : "Could not save that catalog link.");
+    }
   }
 
   async function handleUpdateSalesQuoteProposalFields(quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) {
@@ -3321,12 +3349,16 @@ function App() {
       saleAmount: number | null;
     }>,
   ) {
+    // Correction (2026-09-11, review): this used to update local state
+    // optimistically and never revert it on failure, leaving unsaved site
+    // info displayed as if it had saved. Now pessimistic: await the write
+    // first, only update local state after it succeeds.
     if (!authSession) {
       return;
     }
-    setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, ...updates } : entry)));
     try {
       await updateSalesQuoteInfo(quoteId, updates, authSession.accessToken);
+      setSalesQuotes((current) => current.map((entry) => (entry.id === quoteId ? { ...entry, ...updates } : entry)));
     } catch (error) {
       setSalesQuoteStatus(error instanceof Error ? error.message : "Could not update site info.");
     }
@@ -4942,10 +4974,14 @@ function App() {
     if (!authSession) {
       return;
     }
-    await updateFormSchemaField(id, patch, authSession.accessToken);
-    setHandoverSchema((current) =>
-      current ? { ...current, fields: current.fields.map((field) => (field.id === id ? { ...field, ...patch } : field)).sort((a, b) => a.sequenceOrder - b.sequenceOrder) } : current,
-    );
+    try {
+      await updateFormSchemaField(id, patch, authSession.accessToken);
+      setHandoverSchema((current) =>
+        current ? { ...current, fields: current.fields.map((field) => (field.id === id ? { ...field, ...patch } : field)).sort((a, b) => a.sequenceOrder - b.sequenceOrder) } : current,
+      );
+    } catch (error) {
+      setFormBuilderStatus(error instanceof Error ? error.message : "Could not save that field.");
+    }
   }
 
   async function handleDeleteFormField(id: string) {
@@ -4993,10 +5029,14 @@ function App() {
     if (!authSession) {
       return;
     }
-    await updateFormSchemaField(id, patch, authSession.accessToken);
-    setSiteIntakeSchema((current) =>
-      current ? { ...current, fields: current.fields.map((field) => (field.id === id ? { ...field, ...patch } : field)).sort((a, b) => a.sequenceOrder - b.sequenceOrder) } : current,
-    );
+    try {
+      await updateFormSchemaField(id, patch, authSession.accessToken);
+      setSiteIntakeSchema((current) =>
+        current ? { ...current, fields: current.fields.map((field) => (field.id === id ? { ...field, ...patch } : field)).sort((a, b) => a.sequenceOrder - b.sequenceOrder) } : current,
+      );
+    } catch (error) {
+      setSiteIntakeFormBuilderStatus(error instanceof Error ? error.message : "Could not save that field.");
+    }
   }
 
   async function handleDeleteSiteIntakeField(id: string) {
@@ -5183,12 +5223,20 @@ function App() {
     }
   }
 
+  // Correction (2026-09-11, review): this used to update local state
+  // optimistically and never revert it on failure, leaving an unsaved rule
+  // change displayed as if it had saved. Now pessimistic: await the write
+  // first, only update local state after it succeeds.
   async function handleUpdateSiteHardwareRule(id: string, patch: Partial<Omit<SiteHardwareRule, "id">>) {
     if (!authSession) {
       return;
     }
-    setSiteHardwareRules((current) => current.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)));
-    await updateSiteHardwareRule(id, patch, authSession.accessToken);
+    try {
+      await updateSiteHardwareRule(id, patch, authSession.accessToken);
+      setSiteHardwareRules((current) => current.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)));
+    } catch (error) {
+      setSiteHardwareRuleStatus(error instanceof Error ? error.message : "Could not save that rule.");
+    }
   }
 
   async function handleDeleteSiteHardwareRule(id: string) {

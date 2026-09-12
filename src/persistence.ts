@@ -3204,16 +3204,32 @@ export async function ensureTeamMemberForSelf(email: string, fullNameGuess: stri
       if (rows.length > 0) {
         return;
       }
+    } else {
+      // Correction (2026-09-11, review): this used to log the failed
+      // lookup and then fall through to the INSERT anyway. Once the lookup
+      // itself failed, this function has no idea whether the member
+      // already exists -- proceeding risked a duplicate row (or a
+      // confusing unique-constraint failure logged as if it were a fresh
+      // insert problem). Stop here; stays best-effort/non-throwing, same
+      // as before.
+      console.error(`ensureTeamMemberForSelf: team_members lookup failed for ${email} (${existingResponse.status})`);
+      return;
     }
-    await fetch(supabaseUrl("team_members"), {
+    const insertResponse = await fetch(supabaseUrl("team_members"), {
       method: "POST",
       headers: supabaseHeaders(accessToken),
       body: JSON.stringify({ full_name: fullNameGuess, email, role_title: null, is_active: true }),
     });
-  } catch {
+    if (!insertResponse.ok) {
+      console.error(`ensureTeamMemberForSelf: team_members insert failed for ${email} (${insertResponse.status})`);
+    }
+  } catch (error) {
     // Best-effort convenience only -- if this fails (e.g. a race with
     // another tab, or RLS denies a non-admin/manager), the person can
-    // still be added manually from Team Roster.
+    // still be added manually from Team Roster. Overnight audit
+    // (2026-09-11, task 2): now logs instead of vanishing completely;
+    // the best-effort/never-throws contract is unchanged.
+    console.error(`ensureTeamMemberForSelf network error for ${email}:`, error);
   }
 }
 
@@ -4068,11 +4084,28 @@ export async function updateFormSchemaField(
   if (patch.options !== undefined) payload.options = patch.options;
   if (patch.sequenceOrder !== undefined) payload.sequence_order = patch.sequenceOrder;
 
-  await fetch(supabaseUrl(`form_schema_fields?id=eq.${id}`), {
+  // Overnight audit (2026-09-11, task 2): this PATCH was completely
+  // unchecked. Safe to verify here -- both callers (handleUpdateFormField/
+  // handleUpdateSiteIntakeField) apply their local state update only AFTER
+  // this call resolves (not optimistically before it), so a throw here
+  // naturally prevents the local edit from ghost-applying, and both were
+  // wrapped in a try/catch matching their sibling "add" handler's existing
+  // status-message pattern in the same pass.
+  const response = await fetch(supabaseUrl(`form_schema_fields?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateFormSchemaField failed for field ${id} (${response.status}): ${bodyText}`);
+    throw new Error("Could not save this change.");
+  }
+  const rows = (await response.json().catch(() => [])) as unknown[];
+  if (rows.length === 0) {
+    console.error(`updateFormSchemaField affected 0 rows for field ${id} -- likely blocked by RLS or a missing field.`);
+    throw new Error("Could not save this change.");
+  }
 }
 
 export async function deleteFormSchemaField(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
@@ -4368,11 +4401,28 @@ export async function updateSiteHardwareRule(id: string, patch: Partial<Omit<Sit
   if (patch.sequenceOrder !== undefined) payload.sequence_order = patch.sequenceOrder;
   if (patch.isActive !== undefined) payload.is_active = patch.isActive;
 
-  await fetch(supabaseUrl(`site_hardware_rules?id=eq.${id}`), {
+  // Overnight audit (2026-09-11, task 2): this PATCH was completely
+  // unchecked. Safe to verify here -- the caller (handleUpdateSiteHardwareRule)
+  // was wrapped in a try/catch matching its sibling "add" handler's existing
+  // status-message pattern in the same pass. Deliberately does NOT revert
+  // the caller's optimistic local update on failure (that pattern caused a
+  // real concurrency bug elsewhere in this codebase) -- the status message
+  // alone is the safe, visible signal.
+  const response = await fetch(supabaseUrl(`site_hardware_rules?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateSiteHardwareRule failed for rule ${id} (${response.status}): ${bodyText}`);
+    throw new Error("Could not save this change.");
+  }
+  const rows = (await response.json().catch(() => [])) as unknown[];
+  if (rows.length === 0) {
+    console.error(`updateSiteHardwareRule affected 0 rows for rule ${id} -- likely blocked by RLS or a missing rule.`);
+    throw new Error("Could not save this change.");
+  }
 }
 
 export async function deleteSiteHardwareRule(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
@@ -6081,10 +6131,43 @@ export async function saveBuildTransactions(builds: BuildTransaction[], accessTo
   if (!isRemotePersistenceConfigured() || !accessToken || builds.length === 0) {
     return;
   }
-  const equipmentResponse = await fetch(supabaseUrl("equipment_types?select=id,equipment_name,output_inventory_item_id"), {
-    headers: supabaseHeaders(accessToken),
-  });
-  const equipmentRows = equipmentResponse.ok ? ((await equipmentResponse.json()) as Array<{ id: string; equipment_name: string; output_inventory_item_id: string | null }>) : [];
+  // Correction (2026-09-11, review): a failed lookup used to silently
+  // degrade to an empty map, which meant every build in this save would be
+  // written with a null equipment_type_id/finished_inventory_item_id --
+  // not because the equipment name was genuinely unmatched, but because the
+  // read itself failed (network error, RLS, a bad token). That's a false
+  // "unmatched" outcome hiding a real infrastructure failure. Now: an
+  // HTTP/network failure on this lookup is a hard stop before any write.
+  // A name that's genuinely absent from equipment_types (the lookup
+  // succeeded, the name just isn't in the result) still resolves to null --
+  // both equipment_type_id and finished_inventory_item_id are nullable FKs
+  // (migration 003: `equipment_type_id uuid references equipment_types(id)`,
+  // no `not null`), so that remains schema-valid, documented behavior, not
+  // a rejection case this pass has evidence to add.
+  let equipmentRows: Array<{ id: string; equipment_name: string; output_inventory_item_id: string | null }>;
+  try {
+    const equipmentResponse = await fetch(supabaseUrl("equipment_types?select=id,equipment_name,output_inventory_item_id"), {
+      headers: supabaseHeaders(accessToken),
+    });
+    if (!equipmentResponse.ok) {
+      const bodyText = await equipmentResponse.text().catch(() => "");
+      console.error(`saveBuildTransactions: equipment_types lookup failed (${equipmentResponse.status}): ${bodyText}`);
+      throw new Error("Some build transactions could not be saved.");
+    }
+    equipmentRows = (await equipmentResponse.json()) as Array<{ id: string; equipment_name: string; output_inventory_item_id: string | null }>;
+  } catch (error) {
+    if (error instanceof Error && error.message === "Some build transactions could not be saved.") {
+      throw error;
+    }
+    console.error("saveBuildTransactions: equipment_types lookup network error:", error);
+    // tsconfig targets ES2020, whose Error type has no two-arg (message,
+    // options) constructor overload -- every modern runtime this app
+    // actually ships to supports `cause` at runtime regardless, so it's
+    // attached as a plain property instead of via the constructor arg.
+    const wrapped = new Error("Some build transactions could not be saved.");
+    (wrapped as Error & { cause?: unknown }).cause = error;
+    throw wrapped;
+  }
   const equipmentByName = new Map(equipmentRows.map((row) => [row.equipment_name, row]));
 
   const payload = builds.map((build) => ({
@@ -6097,11 +6180,29 @@ export async function saveBuildTransactions(builds: BuildTransaction[], accessTo
     created_at: build.createdAt,
     undone_at: build.undoneAt ?? null,
   }));
-  await fetch(supabaseUrl("build_transactions?on_conflict=build_number"), {
+  // Overnight audit (2026-09-11, task 5): this POST was completely
+  // unchecked. Safe to verify here -- both callers already have a real
+  // handled-failure path: the live debounce-save effect (main.tsx) wraps
+  // this via saveMovementsBuildsAllocations in a .catch that sets a
+  // visible setAuthStatus/setSyncStatus("error") message, and the restore
+  // path's only caller has its own honest try/catch (see
+  // saveRestoredPurchaseRequests above) -- an isolated response check,
+  // not a redesign of either caller.
+  const response = await fetch(supabaseUrl("build_transactions?on_conflict=build_number"), {
     method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`saveBuildTransactions failed (${response.status}): ${bodyText}`);
+    throw new Error("Some build transactions could not be saved.");
+  }
+  const savedRows = (await response.json().catch(() => [])) as unknown[];
+  if (savedRows.length !== payload.length) {
+    console.error(`saveBuildTransactions returned ${savedRows.length} row(s), expected ${payload.length} -- integrity check failed.`);
+    throw new Error("Some build transactions could not be saved.");
+  }
 }
 
 // E: "I need to be able to delete these [cancelled/undone builds], it
@@ -6181,23 +6282,82 @@ export async function loadProjectAllocations(accessToken?: string): Promise<Proj
   return rows.map(mapProjectAllocationRow);
 }
 
+async function lookupRowsOrThrow<T>(callerLabel: string, lookupLabel: string, path: string, accessToken: string, userMessage: string): Promise<T[]> {
+  let response: Response;
+  try {
+    response = await fetch(supabaseUrl(path), { headers: supabaseHeaders(accessToken) });
+  } catch (error) {
+    console.error(`${callerLabel}: ${lookupLabel} lookup network error:`, error);
+    // See the matching comment in saveBuildTransactions above -- ES2020 lib
+    // has no two-arg Error constructor overload, so cause is attached as a
+    // plain property instead.
+    const wrapped = new Error(userMessage);
+    (wrapped as Error & { cause?: unknown }).cause = error;
+    throw wrapped;
+  }
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`${callerLabel}: ${lookupLabel} lookup failed (${response.status}): ${bodyText}`);
+    throw new Error(userMessage);
+  }
+  return (await response.json()) as T[];
+}
+
+// A movement whose sku is missing or all-whitespace cannot be persisted
+// correctly regardless of whether any lookup succeeds -- inventory_item_id
+// is NOT NULL on inventory_movements (migration 001). Whitespace is
+// deliberately not treated as a valid sku anywhere this is checked, so a
+// stray-space value can't slip past a truthiness check and still fail to
+// resolve later.
+function isBlankSku(sku: string | null | undefined): boolean {
+  return !sku || sku.trim().length === 0;
+}
+
 export async function saveInventoryMovements(movements: InventoryMovement[], accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken || movements.length === 0) {
     return;
   }
-  const skus = Array.from(new Set(movements.map((m) => m.sku).filter(Boolean)));
+
+  // Correction (2026-09-11, review): a movement with a missing or
+  // whitespace-only sku used to be silently filtered out of the write
+  // entirely -- the same data-loss shape this whole pass exists to remove,
+  // and it needs no business decision to reject: the column simply cannot
+  // hold a movement with no resolvable item. Checked BEFORE any lookup or
+  // write, and before the unresolved-sku check further below (which only
+  // catches a sku that IS present but doesn't match a real inventory_items
+  // row -- a different case from this one).
+  const blankSkuMovements = movements.filter((m) => isBlankSku(m.sku));
+  if (blankSkuMovements.length > 0) {
+    const detail = blankSkuMovements.map((m) => m.id).join(", ");
+    console.error(`saveInventoryMovements: missing/blank sku for movement(s): ${detail}`);
+    throw new Error("Some inventory movements could not be saved.");
+  }
+
+  const skus = Array.from(new Set(movements.map((m) => m.sku).filter((sku) => !isBlankSku(sku))));
   const projectNames = Array.from(new Set(movements.map((m) => m.projectName).filter((name): name is string => Boolean(name))));
   const buildNumbers = Array.from(new Set(movements.map((m) => m.buildNumber).filter((n): n is string => Boolean(n))));
 
+  // Correction (2026-09-11, review): each of these three lookups used to
+  // collapse an HTTP/network failure into an empty array -- indistinguishable
+  // from "genuinely no matching rows." For the sku lookup specifically that
+  // was dangerous: inventory_item_id is NOT NULL on inventory_movements
+  // (migration 001), so a failed lookup meant every movement in the batch
+  // was silently dropped from the write with no error raised at all (see
+  // the unresolved-sku check below, which now replaces that silent drop).
+  // project_id and build_transaction_id are both nullable FKs (migrations
+  // 001, 021, 075) -- a genuinely unmatched project/build NAME (the lookup
+  // itself succeeded) still safely resolves to null; that remains
+  // unchanged, documented behavior, not a rejection case this schema
+  // supports.
   const [itemRows, projectRows, buildRows] = await Promise.all([
     skus.length
-      ? fetch(supabaseUrl(`inventory_items?select=id,sku&sku=in.(${skus.map((s) => `"${s}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; sku: string }>>) : []))
+      ? lookupRowsOrThrow<{ id: string; sku: string }>("saveInventoryMovements", "inventory_items", `inventory_items?select=id,sku&sku=in.(${skus.map((s) => `"${s}"`).join(",")})`, accessToken, "Some inventory movements could not be saved.")
       : Promise.resolve([]),
     projectNames.length
-      ? fetch(supabaseUrl(`projects?select=id,project_name&project_name=in.(${projectNames.map((n) => `"${n.replace(/"/g, '\\"')}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; project_name: string }>>) : []))
+      ? lookupRowsOrThrow<{ id: string; project_name: string }>("saveInventoryMovements", "projects", `projects?select=id,project_name&project_name=in.(${projectNames.map((n) => `"${n.replace(/"/g, '\\"')}"`).join(",")})`, accessToken, "Some inventory movements could not be saved.")
       : Promise.resolve([]),
     buildNumbers.length
-      ? fetch(supabaseUrl(`build_transactions?select=id,build_number&build_number=in.(${buildNumbers.map((n) => `"${n}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; build_number: string }>>) : []))
+      ? lookupRowsOrThrow<{ id: string; build_number: string }>("saveInventoryMovements", "build_transactions", `build_transactions?select=id,build_number&build_number=in.(${buildNumbers.map((n) => `"${n}"`).join(",")})`, accessToken, "Some inventory movements could not be saved.")
       : Promise.resolve([]),
   ]);
 
@@ -6205,38 +6365,58 @@ export async function saveInventoryMovements(movements: InventoryMovement[], acc
   const projectIdByName = new Map(projectRows.map((row) => [row.project_name, row.id]));
   const buildIdByNumber = new Map(buildRows.map((row) => [row.build_number, row.id]));
 
-  const payload = movements
-    .map((movement) => {
-      const inventoryItemId = itemIdBySku.get(movement.sku);
-      if (!inventoryItemId) {
-        return null;
-      }
-      return {
-        legacy_id: movement.id,
-        movement_type: pgMovementType(movement.type),
-        inventory_item_id: inventoryItemId,
-        quantity: movement.quantity,
-        project_id: movement.projectName ? projectIdByName.get(movement.projectName) ?? null : null,
-        reference_number: movement.poNumber ?? null,
-        build_transaction_id: movement.buildNumber ? buildIdByNumber.get(movement.buildNumber) ?? null : null,
-        movement_date: movement.createdAt,
-        balance_before: movement.quantityBefore,
-        balance_after: movement.quantityAfter,
-        notes: movement.notes,
-        created_at: movement.createdAt,
-        performed_by_email: movement.createdByEmail || null,
-      };
-    })
-    .filter((row): row is NonNullable<typeof row> => row !== null);
-
-  if (payload.length === 0) {
-    return;
+  // Correction (2026-09-11, review): a movement with a genuinely nonempty
+  // sku that doesn't resolve to a real inventory_items row used to be
+  // silently filtered out of the write entirely, with only a payload-length
+  // mismatch (never actually checked against the ORIGINAL movement count)
+  // as a trace. Reject the whole save up front, before any write, naming
+  // every unresolved sku/movement so the failure is diagnosable. Every
+  // movement here is guaranteed to have a real, nonblank sku by this point
+  // (the blank-sku preflight above already rejected the whole save
+  // otherwise) -- this check only catches a sku that's present but doesn't
+  // match a real catalog row.
+  const unresolved = movements.filter((m) => !itemIdBySku.has(m.sku));
+  if (unresolved.length > 0) {
+    const detail = unresolved.map((m) => `${m.id} (sku ${m.sku})`).join(", ");
+    console.error(`saveInventoryMovements: unresolved sku for movement(s): ${detail}`);
+    throw new Error("Some inventory movements could not be saved.");
   }
-  await fetch(supabaseUrl("inventory_movements?on_conflict=legacy_id"), {
+
+  // No filter here (unlike before this review): every movement in
+  // `movements` is guaranteed present in the payload now -- blank skus and
+  // unresolved skus were both already rejected above, not silently dropped.
+  const payload = movements
+    .map((movement) => ({
+      legacy_id: movement.id,
+      movement_type: pgMovementType(movement.type),
+      inventory_item_id: itemIdBySku.get(movement.sku)!,
+      quantity: movement.quantity,
+      project_id: movement.projectName ? projectIdByName.get(movement.projectName) ?? null : null,
+      reference_number: movement.poNumber ?? null,
+      build_transaction_id: movement.buildNumber ? buildIdByNumber.get(movement.buildNumber) ?? null : null,
+      movement_date: movement.createdAt,
+      balance_before: movement.quantityBefore,
+      balance_after: movement.quantityAfter,
+      notes: movement.notes,
+      created_at: movement.createdAt,
+      performed_by_email: movement.createdByEmail || null,
+    }));
+
+  const response = await fetch(supabaseUrl("inventory_movements?on_conflict=legacy_id"), {
     method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`saveInventoryMovements failed (${response.status}): ${bodyText}`);
+    throw new Error("Some inventory movements could not be saved.");
+  }
+  const savedRows = (await response.json().catch(() => [])) as unknown[];
+  if (savedRows.length !== payload.length) {
+    console.error(`saveInventoryMovements returned ${savedRows.length} row(s), expected ${payload.length} -- integrity check failed.`);
+    throw new Error("Some inventory movements could not be saved.");
+  }
 }
 
 export async function saveProjectAllocations(allocations: ProjectAllocationHistory[], accessToken?: string): Promise<void> {
@@ -6247,15 +6427,25 @@ export async function saveProjectAllocations(allocations: ProjectAllocationHisto
   const projectNames = Array.from(new Set(allocations.map((a) => a.projectName).filter(Boolean)));
   const movementLegacyIds = Array.from(new Set(allocations.map((a) => a.movementId).filter(Boolean)));
 
+  // Correction (2026-09-11, review): these three lookups used to collapse
+  // an HTTP/network failure into an empty array, same gap as
+  // saveInventoryMovements above. Unlike that function, all three FKs here
+  // (project_id, inventory_item_id, movement_id on project_allocation_history,
+  // migration 003) are genuinely nullable -- none is NOT NULL -- so a
+  // *successful* lookup that simply doesn't match a name/sku/legacy id still
+  // safely resolves to null, unchanged from before. Only an HTTP/network
+  // failure on the lookup itself is new grounds for rejection; a name-level
+  // mismatch remains a documented, unresolved-optional-association
+  // limitation, not something this pass has schema evidence to reject.
   const [itemRows, projectRows, movementRows] = await Promise.all([
     skus.length
-      ? fetch(supabaseUrl(`inventory_items?select=id,sku&sku=in.(${skus.map((s) => `"${s}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; sku: string }>>) : []))
+      ? lookupRowsOrThrow<{ id: string; sku: string }>("saveProjectAllocations", "inventory_items", `inventory_items?select=id,sku&sku=in.(${skus.map((s) => `"${s}"`).join(",")})`, accessToken, "Some project allocations could not be saved.")
       : Promise.resolve([]),
     projectNames.length
-      ? fetch(supabaseUrl(`projects?select=id,project_name&project_name=in.(${projectNames.map((n) => `"${n.replace(/"/g, '\\"')}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; project_name: string }>>) : []))
+      ? lookupRowsOrThrow<{ id: string; project_name: string }>("saveProjectAllocations", "projects", `projects?select=id,project_name&project_name=in.(${projectNames.map((n) => `"${n.replace(/"/g, '\\"')}"`).join(",")})`, accessToken, "Some project allocations could not be saved.")
       : Promise.resolve([]),
     movementLegacyIds.length
-      ? fetch(supabaseUrl(`inventory_movements?select=id,legacy_id&legacy_id=in.(${movementLegacyIds.map((id) => `"${id}"`).join(",")})`), { headers: supabaseHeaders(accessToken) }).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; legacy_id: string }>>) : []))
+      ? lookupRowsOrThrow<{ id: string; legacy_id: string }>("saveProjectAllocations", "inventory_movements", `inventory_movements?select=id,legacy_id&legacy_id=in.(${movementLegacyIds.map((id) => `"${id}"`).join(",")})`, accessToken, "Some project allocations could not be saved.")
       : Promise.resolve([]),
   ]);
 
@@ -6277,11 +6467,23 @@ export async function saveProjectAllocations(allocations: ProjectAllocationHisto
     notes: allocation.notes,
     created_at: allocation.createdAt,
   }));
-  await fetch(supabaseUrl("project_allocation_history?on_conflict=legacy_id"), {
+  // Overnight audit (2026-09-11, task 5): same unchecked-POST gap and the
+  // same two already-safe callers as saveBuildTransactions above.
+  const response = await fetch(supabaseUrl("project_allocation_history?on_conflict=legacy_id"), {
     method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`saveProjectAllocations failed (${response.status}): ${bodyText}`);
+    throw new Error("Some project allocations could not be saved.");
+  }
+  const savedRows = (await response.json().catch(() => [])) as unknown[];
+  if (savedRows.length !== payload.length) {
+    console.error(`saveProjectAllocations returned ${savedRows.length} row(s), expected ${payload.length} -- integrity check failed.`);
+    throw new Error("Some project allocations could not be saved.");
+  }
 }
 
 // Orchestrates the three saves above in the order their foreign keys
@@ -7681,11 +7883,29 @@ async function saveRestoredPurchaseRequests(requests: PurchaseRequest[], accessT
     notes: request.notes,
     created_at: request.createdAt,
   }));
-  await fetch(supabaseUrl("purchase_requests?on_conflict=id"), {
+  // Overnight audit (2026-09-11, task 5): this POST was completely
+  // unchecked -- its result wasn't even assigned to a variable. Safe to
+  // verify here -- the only caller, restoreFullBackupSnapshot, is itself
+  // only ever called from handleImportBackup's reader.onload, which
+  // already has a real try/catch with an honest, non-overclaiming
+  // message ("Backup restore did not complete. Some information may
+  // already have been restored.") -- an isolated response check, not a
+  // redesign of the restore workflow.
+  const response = await fetch(supabaseUrl("purchase_requests?on_conflict=id"), {
     method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`saveRestoredPurchaseRequests failed (${response.status}): ${bodyText}`);
+    throw new Error("Some purchase requests could not be restored.");
+  }
+  const savedRows = (await response.json().catch(() => [])) as unknown[];
+  if (savedRows.length !== payload.length) {
+    console.error(`saveRestoredPurchaseRequests returned ${savedRows.length} row(s), expected ${payload.length} -- integrity check failed.`);
+    throw new Error("Some purchase requests could not be restored.");
+  }
 }
 
 async function saveRestoredProjectDocuments(docs: ProjectDocument[], accessToken: string): Promise<void> {
@@ -7702,19 +7922,39 @@ async function saveRestoredProjectDocuments(docs: ProjectDocument[], accessToken
     file_url: doc.storagePath ?? null,
     uploaded_at: doc.uploadedAt ?? new Date().toISOString(),
     uploaded_by_email: doc.uploadedByEmail ?? null,
+    // Added on review (2026-09-11): traced against the ProjectDocument type
+    // (persistence.ts) and the live per-document create path a few hundred
+    // lines above, which already writes both of these unconditionally.
+    // Migration 080 (purchase_order_id/purchase_request_id) is confirmed
+    // applied in production, same as migration 068 (uploaded_by_email,
+    // already carried above) -- the restore payload was simply missing two
+    // real, schema-backed fields the live write path already sends, not a
+    // speculative addition.
+    purchase_order_id: doc.purchaseOrderId ?? null,
+    purchase_request_id: doc.purchaseRequestId ?? null,
   }));
+  // Correction (2026-09-11, review): this used to retry on any 400 after
+  // stripping uploaded_by_email, on the theory that column might not exist
+  // yet. Migrations 068 and 080 are both confirmed applied in production --
+  // uploaded_by_email, purchase_order_id, and purchase_request_id are all
+  // real, live columns. Retrying on ANY 400 (not just a missing-column one)
+  // risked turning an unrelated validation error into a second request that
+  // silently omitted provenance and succeeded anyway -- removed entirely,
+  // not narrowed. Every non-OK response is now a real, reported failure.
   const response = await fetch(supabaseUrl("project_documents?on_conflict=id"), {
     method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok && response.status === 400) {
-    const fallbackPayload = payload.map(({ uploaded_by_email: _uploadedByEmail, ...doc }) => doc);
-    await fetch(supabaseUrl("project_documents?on_conflict=id"), {
-      method: "POST",
-      headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify(fallbackPayload),
-    });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`saveRestoredProjectDocuments failed (${response.status}): ${bodyText}`);
+    throw new Error("Some project documents could not be restored.");
+  }
+  const savedRows = (await response.json().catch(() => [])) as unknown[];
+  if (savedRows.length !== payload.length) {
+    console.error(`saveRestoredProjectDocuments returned ${savedRows.length} row(s), expected ${payload.length} -- integrity check failed.`);
+    throw new Error("Some project documents could not be restored.");
   }
 }
 
@@ -8137,11 +8377,26 @@ export async function updateVendor(
   if (Object.keys(payload).length === 0) {
     return;
   }
-  await fetch(supabaseUrl(`vendors?id=eq.${id}`), {
+  // Overnight audit (2026-09-11, task 2): this PATCH was completely
+  // unchecked. Safe to verify here -- the caller (handleUpdateVendor) was
+  // wrapped in a try/catch reusing the existing setVendorStatus channel.
+  // Deliberately does NOT revert the caller's optimistic local update on
+  // failure -- the status message alone is the safe, visible signal.
+  const response = await fetch(supabaseUrl(`vendors?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateVendor failed for vendor ${id} (${response.status}): ${bodyText}`);
+    throw new Error("Could not save this change.");
+  }
+  const rows = (await response.json().catch(() => [])) as unknown[];
+  if (rows.length === 0) {
+    console.error(`updateVendor affected 0 rows for vendor ${id} -- likely blocked by RLS or a missing vendor.`);
+    throw new Error("Could not save this change.");
+  }
 }
 
 async function getOrCreateVendorId(name: string, accessToken: string): Promise<string | null> {
@@ -9143,25 +9398,57 @@ export async function addSalesQuoteBomLines(
 // (source_location_id not null), leaving anything a rep typed in by hand
 // at the quote level (source_location_id null) untouched, then re-adds
 // fresh lines from the locations' current state via addSalesQuoteBomLines.
+// Overnight audit (2026-09-11, task 2): this DELETE was completely
+// unchecked. Verified safe to add a check here -- the one caller
+// (handlePullLocationHardwareIntoQuoteBom) already wraps this AND the
+// subsequent addSalesQuoteBomLines(...) insert in one try/catch with a
+// real visible status message (setSalesQuoteStatus), so a throw here
+// reaches the user. This check does NOT make the two-step delete-then-
+// reinsert sequence atomic -- if this delete succeeds and the following
+// insert then fails, the location-sourced BOM lines are still gone with
+// nothing re-inserted (the same class of risk documented for
+// saveProjectSites' BOM lines in PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md).
+// This only makes the delete's own failure visible instead of silent; it
+// does not close that separate, already-documented atomicity gap.
 export async function deleteSalesQuoteBomLinesByLocationSource(quoteId: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(supabaseUrl(`sales_quote_bom_lines?quote_id=eq.${quoteId}&source_location_id=not.is.null`), {
+  const response = await fetch(supabaseUrl(`sales_quote_bom_lines?quote_id=eq.${quoteId}&source_location_id=not.is.null`), {
     method: "DELETE",
     headers: supabaseHeaders(accessToken),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`deleteSalesQuoteBomLinesByLocationSource failed for quote ${quoteId} (${response.status}): ${bodyText}`);
+    throw new Error("Could not update the Quote BOM.");
+  }
 }
 
 export async function updateSalesQuoteBomLineCatalogLink(id: string, catalogItemId: string | null, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
+  // Overnight audit (2026-09-11, task 2): this PATCH was completely
+  // unchecked. Safe to verify here -- the caller was given a small try/catch
+  // reusing the existing setSalesQuoteStatus channel. This field is a
+  // cosmetic/bookkeeping catalog link, not the BOM line's core content
+  // (item/qty), which is checked separately.
+  const response = await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify({ catalog_item_id: catalogItemId }),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateSalesQuoteBomLineCatalogLink failed for line ${id} (${response.status}): ${bodyText}`);
+    throw new Error("Could not save this change.");
+  }
+  const rows = (await response.json().catch(() => [])) as unknown[];
+  if (rows.length === 0) {
+    console.error(`updateSalesQuoteBomLineCatalogLink affected 0 rows for line ${id} -- likely blocked by RLS or a missing line.`);
+    throw new Error("Could not save this change.");
+  }
 }
 
 export async function deleteSalesQuoteBomLine(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
@@ -11137,9 +11424,24 @@ export async function updateSalesQuoteInfo(
   if (Object.keys(payload).length === 0) {
     return;
   }
-  await fetch(supabaseUrl(`sales_quotes?id=eq.${quoteId}`), {
+  // Overnight audit (2026-09-11, task 2): this PATCH was completely
+  // unchecked. Safe to verify here -- the caller (handleUpdateSalesQuoteInfo)
+  // already has a real try/catch that shows a visible status message, so a
+  // throw here reaches the user instead of vanishing or becoming an
+  // unhandled rejection.
+  const response = await fetch(supabaseUrl(`sales_quotes?id=eq.${quoteId}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateSalesQuoteInfo failed for quote ${quoteId} (${response.status}): ${bodyText}`);
+    throw new Error("Could not save this change.");
+  }
+  const rows = (await response.json().catch(() => [])) as unknown[];
+  if (rows.length === 0) {
+    console.error(`updateSalesQuoteInfo affected 0 rows for quote ${quoteId} -- likely blocked by RLS or a missing quote.`);
+    throw new Error("Could not save this change.");
+  }
 }
