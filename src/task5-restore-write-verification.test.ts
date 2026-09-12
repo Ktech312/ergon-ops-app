@@ -53,10 +53,18 @@ function makeBuild(overrides: Partial<BuildTransaction> = {}): BuildTransaction 
   };
 }
 
+// A resolving equipment_types row for makeBuild()'s default equipmentName
+// ("Test Recipe") -- since 2026-09-12 (task 4), a build's equipmentName
+// that does NOT resolve now rejects the whole save (see the dedicated
+// "unresolved equipment name" describe block below), so every test in
+// this describe block that isn't specifically testing that rejection
+// needs a resolving row.
+const RESOLVING_EQUIPMENT_ROW = { id: "eq-1", equipment_name: "Test Recipe", output_inventory_item_id: null, output_item: null };
+
 describe("saveBuildTransactions", () => {
   it("throws a plain message and logs detail when the POST fails outright", async () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).includes("equipment_types")) return respond(true, 200, []);
+      if (String(url).includes("equipment_types")) return respond(true, 200, [RESOLVING_EQUIPMENT_ROW]);
       return respond(false, 500, { message: "db error" });
     });
     await expect(saveBuildTransactions([makeBuild()], "token")).rejects.toThrow("Some build transactions could not be saved.");
@@ -65,7 +73,7 @@ describe("saveBuildTransactions", () => {
 
   it("throws when the POST returns 200 OK but affects fewer rows than sent", async () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).includes("equipment_types")) return respond(true, 200, []);
+      if (String(url).includes("equipment_types")) return respond(true, 200, [RESOLVING_EQUIPMENT_ROW]);
       return respond(true, 200, []);
     });
     await expect(saveBuildTransactions([makeBuild()], "token")).rejects.toThrow("Some build transactions could not be saved.");
@@ -74,7 +82,7 @@ describe("saveBuildTransactions", () => {
 
   it("does not throw when every row is genuinely saved", async () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).includes("equipment_types")) return respond(true, 200, []);
+      if (String(url).includes("equipment_types")) return respond(true, 200, [RESOLVING_EQUIPMENT_ROW]);
       return respond(true, 200, [{ build_number: "BLD-1" }]);
     });
     await expect(saveBuildTransactions([makeBuild()], "token")).resolves.toBeUndefined();
@@ -271,34 +279,39 @@ function makeAllocation(overrides: Partial<ProjectAllocationHistory> = {}): Proj
   };
 }
 
+// Resolving lookup rows for makeAllocation()'s defaults (sku "SKU-1",
+// project "Project X", movement "m1") -- since 2026-09-12 (task 4), a
+// nonempty sku/projectName/movementId that does NOT resolve now rejects
+// the whole save (see the dedicated "unresolved association" describe
+// block below), so every test in this describe block that isn't
+// specifically testing that rejection needs resolving rows.
+function installResolvingAllocationLookups(finalRoute: (url: string) => ReturnType<typeof respond>) {
+  globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+    if (String(url).includes("inventory_items")) return respond(true, 200, [{ id: "item-1", sku: "SKU-1" }]);
+    if (String(url).includes("projects")) return respond(true, 200, [{ id: "proj-1", project_name: "Project X" }]);
+    if (String(url).includes("inventory_movements")) return respond(true, 200, [{ id: "mv-1", legacy_id: "m1" }]);
+    return finalRoute(url);
+  });
+}
+
 describe("saveProjectAllocations", () => {
   it("throws a plain message and logs detail when the POST fails outright", async () => {
-    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).includes("inventory_items")) return respond(true, 200, []);
-      if (String(url).includes("projects")) return respond(true, 200, []);
-      if (String(url).includes("inventory_movements")) return respond(true, 200, []);
-      return respond(false, 500, { message: "db error" });
-    });
+    installResolvingAllocationLookups(() => respond(false, 500, { message: "db error" }));
     await expect(saveProjectAllocations([makeAllocation()], "token")).rejects.toThrow("Some project allocations could not be saved.");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("saveProjectAllocations failed (500)"));
   });
 
   it("throws when the POST returns 200 OK but affects zero rows", async () => {
-    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).includes("inventory_items")) return respond(true, 200, []);
-      if (String(url).includes("projects")) return respond(true, 200, []);
-      if (String(url).includes("inventory_movements")) return respond(true, 200, []);
-      return respond(true, 200, []);
-    });
+    installResolvingAllocationLookups(() => respond(true, 200, []));
     await expect(saveProjectAllocations([makeAllocation()], "token")).rejects.toThrow("Some project allocations could not be saved.");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("saveProjectAllocations returned 0 row(s), expected 1"));
   });
 
   it("does not throw when every row is genuinely saved", async () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (String(url).includes("inventory_items")) return respond(true, 200, []);
-      if (String(url).includes("projects")) return respond(true, 200, []);
-      if (String(url).includes("inventory_movements")) return respond(true, 200, []);
+      if (String(url).includes("inventory_items")) return respond(true, 200, [{ id: "item-1", sku: "SKU-1" }]);
+      if (String(url).includes("projects")) return respond(true, 200, [{ id: "proj-1", project_name: "Project X" }]);
+      if (String(url).includes("inventory_movements")) return respond(true, 200, [{ id: "mv-1", legacy_id: "m1" }]);
       return respond(true, 200, [{ legacy_id: "a1" }]);
     });
     await expect(saveProjectAllocations([makeAllocation()], "token")).resolves.toBeUndefined();
@@ -368,25 +381,37 @@ function makePurchaseRequest(overrides: Partial<PurchaseRequest> = {}): Purchase
   };
 }
 
+// Updated 2026-09-12 (overnight reliability closeout part 2, task 3):
+// restoreFullBackupSnapshot no longer rejects when a single section
+// fails -- each section is caught and reported independently in the
+// returned RestoreOutcome (see restore-backup-snapshot.test.ts for the
+// orchestrator-level behavior this enables: an earlier or later
+// section's success/failure no longer depends on this one). These tests
+// now assert the same underlying saveRestoredPurchaseRequests failure
+// shows up as a failed, error-carrying section instead of a thrown
+// rejection.
 describe("saveRestoredPurchaseRequests (via restoreFullBackupSnapshot)", () => {
-  it("propagates a failed restore of purchase requests as a real thrown error", async () => {
+  it("reports a failed restore of purchase requests as a failed section, not a thrown error", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(false, 500, { message: "db error" }));
-    await expect(restoreFullBackupSnapshot({ purchaseRequests: [makePurchaseRequest()] }, "token")).rejects.toThrow(
-      "Some purchase requests could not be restored.",
-    );
+    const outcome = await restoreFullBackupSnapshot({ purchaseRequests: [makePurchaseRequest()] }, "token");
+    expect(outcome.ok).toBe(false);
+    const section = outcome.sections.find((s) => s.section === "purchaseRequests");
+    expect(section).toMatchObject({ attempted: true, succeeded: false, error: "Some purchase requests could not be restored." });
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("saveRestoredPurchaseRequests failed (500)"));
   });
 
-  it("propagates a zero-rows-affected restore as a real thrown error, not a false success", async () => {
+  it("reports a zero-rows-affected restore as a failed section, not a false success", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, []));
-    await expect(restoreFullBackupSnapshot({ purchaseRequests: [makePurchaseRequest()] }, "token")).rejects.toThrow(
-      "Some purchase requests could not be restored.",
-    );
+    const outcome = await restoreFullBackupSnapshot({ purchaseRequests: [makePurchaseRequest()] }, "token");
+    expect(outcome.ok).toBe(false);
+    expect(outcome.sections.find((s) => s.section === "purchaseRequests")).toMatchObject({ succeeded: false });
   });
 
-  it("does not throw when the restore genuinely succeeds", async () => {
+  it("reports a succeeded section when the restore genuinely succeeds", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, [{ id: "pr1" }]));
-    await expect(restoreFullBackupSnapshot({ purchaseRequests: [makePurchaseRequest()] }, "token")).resolves.toBeUndefined();
+    const outcome = await restoreFullBackupSnapshot({ purchaseRequests: [makePurchaseRequest()] }, "token");
+    expect(outcome.ok).toBe(true);
+    expect(outcome.sections.find((s) => s.section === "purchaseRequests")).toMatchObject({ attempted: true, succeeded: true, count: 1 });
   });
 });
 
@@ -414,23 +439,28 @@ function makeProjectDocument(overrides: Partial<ProjectDocument> = {}): ProjectD
 // newly added to the restore payload to match the live per-document create
 // path) survive in the one request that is made; and a genuine success
 // still resolves cleanly.
+// Updated 2026-09-12 (overnight reliability closeout part 2, task 3):
+// same orchestrator-behavior update as the purchaseRequests describe
+// block above -- a section failure is now reported in RestoreOutcome,
+// not thrown.
 describe("saveRestoredProjectDocuments (via restoreFullBackupSnapshot)", () => {
-  it("reports a 400 as a real failure and does not retry", async () => {
+  it("reports a 400 as a failed section, not a thrown error, and does not retry", async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(false, 400, { message: "some unrelated validation error" }));
     globalThis.fetch = fetchMock;
-    await expect(restoreFullBackupSnapshot({ projectDocuments: [makeProjectDocument()] }, "token")).rejects.toThrow(
-      "Some project documents could not be restored.",
-    );
+    const outcome = await restoreFullBackupSnapshot({ projectDocuments: [makeProjectDocument()] }, "token");
+    expect(outcome.sections.find((s) => s.section === "projectDocuments")).toMatchObject({
+      succeeded: false,
+      error: "Some project documents could not be restored.",
+    });
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("saveRestoredProjectDocuments failed (400)"));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("propagates a non-400 failure as a real thrown error, also with exactly one request", async () => {
+  it("reports a non-400 failure as a failed section, also with exactly one request", async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(false, 500, { message: "db error" }));
     globalThis.fetch = fetchMock;
-    await expect(restoreFullBackupSnapshot({ projectDocuments: [makeProjectDocument()] }, "token")).rejects.toThrow(
-      "Some project documents could not be restored.",
-    );
+    const outcome = await restoreFullBackupSnapshot({ projectDocuments: [makeProjectDocument()] }, "token");
+    expect(outcome.sections.find((s) => s.section === "projectDocuments")).toMatchObject({ succeeded: false });
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("saveRestoredProjectDocuments failed (500)"));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -453,10 +483,12 @@ describe("saveRestoredProjectDocuments (via restoreFullBackupSnapshot)", () => {
     expect(rows[0].purchase_request_id).toBe("pr-1");
   });
 
-  it("does not throw when the restore genuinely succeeds", async () => {
+  it("reports a succeeded section when the restore genuinely succeeds", async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, [{ id: "doc1" }]));
     globalThis.fetch = fetchMock;
-    await expect(restoreFullBackupSnapshot({ projectDocuments: [makeProjectDocument()] }, "token")).resolves.toBeUndefined();
+    const outcome = await restoreFullBackupSnapshot({ projectDocuments: [makeProjectDocument()] }, "token");
+    expect(outcome.ok).toBe(true);
+    expect(outcome.sections.find((s) => s.section === "projectDocuments")).toMatchObject({ attempted: true, succeeded: true, count: 1 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

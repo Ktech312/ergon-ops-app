@@ -186,11 +186,20 @@ describe("saveDeviceRecipes -- component payload shape", () => {
   });
 });
 
-describe("a thrown saveDeviceRecipes error reaches restoreFullBackupSnapshot, not just the function under test", () => {
-  it("propagates an RPC failure out of restoreFullBackupSnapshot", async () => {
+// Updated 2026-09-12 (overnight reliability closeout part 2, task 3):
+// restoreFullBackupSnapshot no longer rejects when a single section
+// fails -- it reports the failure in the returned RestoreOutcome
+// instead (see restore-backup-snapshot.test.ts for the orchestrator-
+// level tests this enables).
+describe("a saveDeviceRecipes RPC failure reaches restoreFullBackupSnapshot's returned outcome, not just the function under test", () => {
+  it("reports the RPC failure as a failed deviceRecipes section", async () => {
     installFetchRouter([respond(false, 500, { message: "db error" })]);
-    await expect(restoreFullBackupSnapshot({ deviceRecipes: [makeRecipe()] }, "token")).rejects.toThrow(
-      "Some equipment recipes could not be saved.",
-    );
+    const outcome = await restoreFullBackupSnapshot({ deviceRecipes: [makeRecipe()] }, "token");
+    expect(outcome.ok).toBe(false);
+    expect(outcome.sections.find((s) => s.section === "deviceRecipes")).toMatchObject({
+      attempted: true,
+      succeeded: false,
+      error: "Some equipment recipes could not be saved.",
+    });
   });
 });

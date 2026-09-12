@@ -192,6 +192,80 @@ export async function loadDeletionLog(accessToken?: string): Promise<DeletionLog
   return rows.map(mapDeletionLogRow);
 }
 
+// System Health Phase A (2026-09-12, overnight reliability closeout part
+// 2, task 5): built entirely from the existing notification_deliveries/
+// notifications tables (migration 024) -- no new migration, no new
+// storage. Aggregates raw failed-delivery rows (one per attempt) into one
+// row per distinct (channel, event type, failure reason), since an admin
+// needs "this has failed 40 times since Tuesday," not 40 separate
+// identical rows. This is deliberately the SAME shape
+// PRODUCT_SYSTEM_HEALTH_PLAN.md's dedup key describes (surface/entity/
+// reason), scoped down to what this one existing table can already
+// answer without a dedicated system_health_events table -- that fuller
+// design remains future work, this is what today's schema supports.
+export type NotificationDeliveryFailure = {
+  channel: string;
+  eventType: string;
+  failureReason: string;
+  occurrenceCount: number;
+  firstOccurredAt: string;
+  lastOccurredAt: string;
+  // A representative recipient from the most recent occurrence -- shown
+  // as-is (this is an admin-only view; every admin screen in this app
+  // already shows team member/user emails directly, e.g. Team Roster),
+  // not masked further.
+  lastRecipientEmail: string;
+};
+
+type NotificationDeliveryRow = {
+  channel: string;
+  error_message: string | null;
+  sent_at: string;
+  notification: { event_type: string; recipient_email: string } | null;
+};
+
+export async function loadNotificationDeliveryFailures(accessToken?: string): Promise<NotificationDeliveryFailure[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(
+      "notification_deliveries?select=channel,error_message,sent_at,notification:notifications(event_type,recipient_email)&status=eq.failed&order=sent_at.desc&limit=1000",
+    ),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as NotificationDeliveryRow[];
+  const byKey = new Map<string, NotificationDeliveryFailure>();
+  // Rows arrive newest-first (order=sent_at.desc) -- the first time a key
+  // is seen it's the most recent occurrence (lastOccurredAt/
+  // lastRecipientEmail); firstOccurredAt keeps shrinking as older rows
+  // for the same key are found walking down the list.
+  for (const row of rows) {
+    const eventType = row.notification?.event_type ?? "unknown";
+    const failureReason = row.error_message?.trim() || "No error detail recorded";
+    const key = `${row.channel}::${eventType}::${failureReason}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, {
+        channel: row.channel,
+        eventType,
+        failureReason,
+        occurrenceCount: 1,
+        firstOccurredAt: row.sent_at,
+        lastOccurredAt: row.sent_at,
+        lastRecipientEmail: row.notification?.recipient_email ?? "",
+      });
+    } else {
+      existing.occurrenceCount += 1;
+      existing.firstOccurredAt = row.sent_at;
+    }
+  }
+  return Array.from(byKey.values()).sort((a, b) => b.lastOccurredAt.localeCompare(a.lastOccurredAt));
+}
+
 // A one-off's aggregate qty is recomputed fresh from purchase-order receipts
 // on every render (see `oneOffItems` in main.tsx) -- merging doesn't rename
 // or delete anything, so without this record the same aggregate would just
@@ -1170,25 +1244,41 @@ export async function loadDirectMessageReactions(messageIds: string[], accessTok
   return rows.map(mapMessageReactionRow);
 }
 
+// Reviewed 2026-09-12 (overnight reliability closeout part 2, task 2):
+// logging-only, deliberately non-throwing -- the caller
+// (handleToggleDirectMessageReaction, main.tsx) has no try/catch at any
+// level from the raw onClick down to this fetch, and the DM thread's own
+// 5s poll already self-corrects a failed reaction within a few seconds
+// (the emoji "flickers back"). A thrown error here would be a genuine
+// unhandled promise rejection, a worse failure mode than today's silent
+// no-op -- this only makes a real failure visible in the console.
 export async function addDirectMessageReaction(messageId: string, userId: string, emoji: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(supabaseUrl("direct_message_reactions"), {
+  const response = await fetch(supabaseUrl("direct_message_reactions"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=ignore-duplicates" },
     body: JSON.stringify({ message_id: messageId, user_id: userId, emoji }),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`addDirectMessageReaction: insert failed for message ${messageId} (${response.status}): ${bodyText}`);
+  }
 }
 
 export async function removeDirectMessageReaction(messageId: string, userId: string, emoji: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(
+  const response = await fetch(
     supabaseUrl(`direct_message_reactions?message_id=eq.${messageId}&user_id=eq.${userId}&emoji=eq.${encodeURIComponent(emoji)}`),
     { method: "DELETE", headers: supabaseHeaders(accessToken) },
   );
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`removeDirectMessageReaction: delete failed for message ${messageId} (${response.status}): ${bodyText}`);
+  }
 }
 
 // Message attachments (migration 100) -- private per-conversation bucket,
@@ -1661,25 +1751,38 @@ export async function loadChannelMessageReactions(messageIds: string[], accessTo
   return rows.map(mapMessageReactionRow);
 }
 
+// Reviewed 2026-09-12 (overnight reliability closeout part 2, task 2):
+// logging-only, deliberately non-throwing -- same reasoning as
+// addDirectMessageReaction/removeDirectMessageReaction above (no
+// try/catch anywhere in the caller chain, the channel's own 5s poll
+// already self-corrects a failed reaction).
 export async function addChannelMessageReaction(messageId: string, userId: string, emoji: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(supabaseUrl("channel_message_reactions"), {
+  const response = await fetch(supabaseUrl("channel_message_reactions"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=ignore-duplicates" },
     body: JSON.stringify({ message_id: messageId, user_id: userId, emoji }),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`addChannelMessageReaction: insert failed for message ${messageId} (${response.status}): ${bodyText}`);
+  }
 }
 
 export async function removeChannelMessageReaction(messageId: string, userId: string, emoji: string, accessToken?: string): Promise<void> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(
+  const response = await fetch(
     supabaseUrl(`channel_message_reactions?message_id=eq.${messageId}&user_id=eq.${userId}&emoji=eq.${encodeURIComponent(emoji)}`),
     { method: "DELETE", headers: supabaseHeaders(accessToken) },
   );
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`removeChannelMessageReaction: delete failed for message ${messageId} (${response.status}): ${bodyText}`);
+  }
 }
 
 // Canvas (migration 104) -- Slack's per-channel Canvas tab, mapped onto a
@@ -2840,7 +2943,13 @@ export async function loadTasks(accessToken?: string): Promise<EOTask[]> {
     return [];
   }
 
-  const response = await fetch(supabaseUrl("tasks?select=*&deleted_at=is.null&order=created_at.desc"), {
+  // limit= added 2026-09-12 (overnight reliability closeout part 2, task
+  // 7): this select had no cap at all -- unlike inventory_movements/
+  // build_transactions/project_allocation_history (already limit=2000),
+  // this one was missed. Same cap, same reasoning: newest-first, oldest
+  // beyond the cap simply isn't loaded rather than the app fetching an
+  // ever-growing full table on every load.
+  const response = await fetch(supabaseUrl("tasks?select=*&deleted_at=is.null&order=created_at.desc&limit=2000"), {
     headers: supabaseHeaders(accessToken),
   });
 
@@ -3341,16 +3450,26 @@ export async function recordNotificationDelivery(
   }
 }
 
+// Reviewed 2026-09-12 (overnight reliability closeout part 2, task 2):
+// logging-only, deliberately non-throwing -- both callers
+// (handleMarkNotificationRead/handleMarkAllNotificationsRead, main.tsx)
+// already wrap this call in an explicit `.catch(() => {})`, so a real
+// failure only ever logged silently before; this makes it visible in the
+// console without changing either caller's optimistic-update behavior.
 export async function markNotificationRead(id: string, accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
 
-  await fetch(supabaseUrl(`notifications?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`notifications?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ is_read: true }),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`markNotificationRead: PATCH failed for notification ${id} (${response.status}): ${bodyText}`);
+  }
 }
 
 export async function markAllNotificationsRead(email: string, accessToken?: string) {
@@ -3358,11 +3477,15 @@ export async function markAllNotificationsRead(email: string, accessToken?: stri
     return;
   }
 
-  await fetch(supabaseUrl(`notifications?recipient_email=eq.${encodeURIComponent(email)}&is_read=eq.false`), {
+  const response = await fetch(supabaseUrl(`notifications?recipient_email=eq.${encodeURIComponent(email)}&is_read=eq.false`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ is_read: true }),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`markAllNotificationsRead: PATCH failed for ${email} (${response.status}): ${bodyText}`);
+  }
 }
 
 export type NotificationRule = {
@@ -4645,10 +4768,22 @@ export type ProjectDocument = {
   // Most documents (general project files) link to neither.
   purchaseOrderId?: string;
   purchaseRequestId?: string;
+  // The document's real, already-assigned project_documents.document_number
+  // (added 2026-09-12, overnight reliability closeout task 3) -- previously
+  // write-only from the client's perspective (generated fresh from
+  // Date.now() on every create/restore, never read back), which is exactly
+  // why a restore retry of the same snapshot used to produce a different
+  // document_number each time. Present for any document that has already
+  // been saved once; undefined only for a document that has never round-
+  // tripped through a load (there is no other case on the restore path,
+  // since a snapshot's documents always come from loadFullBackupSnapshot ->
+  // loadProjectDocuments, i.e. real, already-numbered rows).
+  documentNumber?: string;
 };
 
 type ProjectDocumentRow = {
   id: string;
+  document_number?: string | null;
   project_name: string | null;
   file_name: string;
   file_size_bytes: number | string;
@@ -4736,6 +4871,7 @@ function pgDocumentStorage(storage: ProjectDocument["storage"]): string {
 function mapProjectDocumentRow(row: ProjectDocumentRow): ProjectDocument {
   return {
     id: row.id,
+    documentNumber: row.document_number ?? undefined,
     name: row.file_name,
     project: row.project_name ?? "",
     size: Number(row.file_size_bytes),
@@ -4754,7 +4890,7 @@ export async function loadProjectDocuments(accessToken?: string): Promise<Projec
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,uploaded_by_email,file_url,purchase_order_id,purchase_request_id&order=uploaded_at.desc"), {
+  const response = await fetch(supabaseUrl("project_documents?select=id,document_number,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,uploaded_by_email,file_url,purchase_order_id,purchase_request_id&order=uploaded_at.desc"), {
     headers: supabaseHeaders(accessToken),
   });
   if (!response.ok && response.status === 400) {
@@ -4764,7 +4900,7 @@ export async function loadProjectDocuments(accessToken?: string): Promise<Projec
     // failing outright. But if the FALLBACK itself also fails, that's
     // a real error (permissions, outage, a different missing column),
     // not "no documents" -- throw instead of masking it as empty.
-    const fallbackResponse = await fetch(supabaseUrl("project_documents?select=id,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,file_url&order=uploaded_at.desc"), {
+    const fallbackResponse = await fetch(supabaseUrl("project_documents?select=id,document_number,project_name,file_name,file_size_bytes,status,document_type,storage_status,uploaded_at,file_url&order=uploaded_at.desc"), {
       headers: supabaseHeaders(accessToken),
     });
     if (!fallbackResponse.ok) {
@@ -6136,23 +6272,34 @@ export async function saveBuildTransactions(builds: BuildTransaction[], accessTo
   // read itself failed (network error, RLS, a bad token). That's a false
   // "unmatched" outcome hiding a real infrastructure failure. Now: an
   // HTTP/network failure on this lookup is a hard stop before any write.
-  // A name that's genuinely absent from equipment_types (the lookup
-  // succeeded, the name just isn't in the result) still resolves to null --
-  // both equipment_type_id and finished_inventory_item_id are nullable FKs
-  // (migration 003: `equipment_type_id uuid references equipment_types(id)`,
-  // no `not null`), so that remains schema-valid, documented behavior, not
-  // a rejection case this pass has evidence to add.
-  let equipmentRows: Array<{ id: string; equipment_name: string; output_inventory_item_id: string | null }>;
+  //
+  // Fixed 2026-09-12 (overnight reliability closeout part 2, task 4,
+  // a real defect found during optional-association tracing): this
+  // lookup used to key equipment ONLY by equipment_types.equipment_name,
+  // but build.equipmentName is populated from a recipe's OUTPUT name
+  // (BuildRecipe.outputName), not its internal `name`. The two start out
+  // equal when a recipe is first created, but silently diverge the
+  // moment a user edits the "Equipment title" field (bound to
+  // outputName) without renaming the recipe's own internal name -- after
+  // which every future build of that equipment type got written with
+  // equipment_type_id/finished_inventory_item_id null, with the name
+  // lookup having "succeeded" the whole time. Several read-side lookups
+  // elsewhere in this app already defensively check both fields for
+  // exactly this reason (e.g. `item.outputName === build.equipmentName
+  // || item.name === build.equipmentName`) -- this lookup now does the
+  // same, resolving by output name first, then by the recipe's own name.
+  let equipmentRows: Array<{ id: string; equipment_name: string; output_inventory_item_id: string | null; output_item: { item_name: string } | null }>;
   try {
-    const equipmentResponse = await fetch(supabaseUrl("equipment_types?select=id,equipment_name,output_inventory_item_id"), {
-      headers: supabaseHeaders(accessToken),
-    });
+    const equipmentResponse = await fetch(
+      supabaseUrl("equipment_types?select=id,equipment_name,output_inventory_item_id,output_item:inventory_items!output_inventory_item_id(item_name)"),
+      { headers: supabaseHeaders(accessToken) },
+    );
     if (!equipmentResponse.ok) {
       const bodyText = await equipmentResponse.text().catch(() => "");
       console.error(`saveBuildTransactions: equipment_types lookup failed (${equipmentResponse.status}): ${bodyText}`);
       throw new Error("Some build transactions could not be saved.");
     }
-    equipmentRows = (await equipmentResponse.json()) as Array<{ id: string; equipment_name: string; output_inventory_item_id: string | null }>;
+    equipmentRows = (await equipmentResponse.json()) as Array<{ id: string; equipment_name: string; output_inventory_item_id: string | null; output_item: { item_name: string } | null }>;
   } catch (error) {
     if (error instanceof Error && error.message === "Some build transactions could not be saved.") {
       throw error;
@@ -6166,18 +6313,45 @@ export async function saveBuildTransactions(builds: BuildTransaction[], accessTo
     (wrapped as Error & { cause?: unknown }).cause = error;
     throw wrapped;
   }
-  const equipmentByName = new Map(equipmentRows.map((row) => [row.equipment_name, row]));
+  const equipmentByEquipmentName = new Map(equipmentRows.map((row) => [row.equipment_name, row]));
+  const equipmentByOutputName = new Map(
+    equipmentRows
+      .filter((row): row is typeof row & { output_item: { item_name: string } } => Boolean(row.output_item?.item_name))
+      .map((row) => [row.output_item.item_name, row]),
+  );
+  function resolveEquipment(name: string) {
+    return equipmentByOutputName.get(name) ?? equipmentByEquipmentName.get(name);
+  }
 
-  const payload = builds.map((build) => ({
-    build_number: build.buildNumber,
-    equipment_type_id: equipmentByName.get(build.equipmentName)?.id ?? null,
-    finished_inventory_item_id: equipmentByName.get(build.equipmentName)?.output_inventory_item_id ?? null,
-    quantity_built: build.quantityBuilt,
-    status: build.status,
-    workflow_stage: build.stage ?? "complete",
-    created_at: build.createdAt,
-    undone_at: build.undoneAt ?? null,
-  }));
+  // Added 2026-09-12 (overnight reliability closeout part 2, task 4): a
+  // genuinely unmatched equipment NAME (non-blank, the lookup succeeded,
+  // it just isn't in the result) now rejects the whole save up front,
+  // naming every affected build -- rather than silently writing
+  // equipment_type_id/finished_inventory_item_id as null. A blank
+  // equipmentName is not treated as an error here (unlike a blank sku in
+  // saveInventoryMovements below): equipment_type_id has no NOT NULL
+  // constraint (migration 003), so "no equipment specified" is a
+  // legitimate, schema-permitted state, not a resolution failure.
+  const unresolvedEquipment = builds.filter((build) => build.equipmentName.trim().length > 0 && !resolveEquipment(build.equipmentName));
+  if (unresolvedEquipment.length > 0) {
+    const detail = unresolvedEquipment.map((build) => `${build.buildNumber} (equipment "${build.equipmentName}")`).join(", ");
+    console.error(`saveBuildTransactions: unresolved equipment name for build(s): ${detail}`);
+    throw new Error("Some build transactions could not be saved.");
+  }
+
+  const payload = builds.map((build) => {
+    const equipment = resolveEquipment(build.equipmentName);
+    return {
+      build_number: build.buildNumber,
+      equipment_type_id: equipment?.id ?? null,
+      finished_inventory_item_id: equipment?.output_inventory_item_id ?? null,
+      quantity_built: build.quantityBuilt,
+      status: build.status,
+      workflow_stage: build.stage ?? "complete",
+      created_at: build.createdAt,
+      undone_at: build.undoneAt ?? null,
+    };
+  });
   // Overnight audit (2026-09-11, task 5): this POST was completely
   // unchecked. Safe to verify here -- both callers already have a real
   // handled-failure path: the live debounce-save effect (main.tsx) wraps
@@ -6343,10 +6517,13 @@ export async function saveInventoryMovements(movements: InventoryMovement[], acc
   // was silently dropped from the write with no error raised at all (see
   // the unresolved-sku check below, which now replaces that silent drop).
   // project_id and build_transaction_id are both nullable FKs (migrations
-  // 001, 021, 075) -- a genuinely unmatched project/build NAME (the lookup
-  // itself succeeded) still safely resolves to null; that remains
-  // unchanged, documented behavior, not a rejection case this schema
-  // supports.
+  // 001, 021, 075) -- an EMPTY projectName/buildNumber still safely
+  // resolves to null (a movement genuinely not tied to a project/build).
+  // Updated 2026-09-12 (overnight reliability closeout part 2, task 4):
+  // a NONEMPTY project/build name that fails to resolve is no longer
+  // tolerated as silent-null -- see the unresolved-project/build check
+  // below, implementing the decided "warn and require correction"
+  // policy for this optional association.
   const [itemRows, projectRows, buildRows] = await Promise.all([
     skus.length
       ? lookupRowsOrThrow<{ id: string; sku: string }>("saveInventoryMovements", "inventory_items", `inventory_items?select=id,sku&sku=in.(${skus.map((s) => `"${s}"`).join(",")})`, accessToken, "Some inventory movements could not be saved.")
@@ -6380,9 +6557,31 @@ export async function saveInventoryMovements(movements: InventoryMovement[], acc
     throw new Error("Some inventory movements could not be saved.");
   }
 
+  // Added 2026-09-12 (overnight reliability closeout part 2, task 4 --
+  // implementing the decided "warn/reject instead of silently null"
+  // policy for these two optional associations). A genuinely nonempty
+  // projectName/buildNumber that doesn't resolve to a real row now
+  // rejects the whole save up front, naming every affected movement and
+  // its unresolved value -- the same treatment already given to sku
+  // above, extended to these two nullable FKs. A movement that never
+  // specified a project/build at all (empty string/undefined) is
+  // unaffected -- that remains a legitimate "not associated with a
+  // project or build" state, not a resolution failure.
+  const unresolvedProject = movements.filter((m) => m.projectName && !projectIdByName.has(m.projectName));
+  const unresolvedBuild = movements.filter((m) => m.buildNumber && !buildIdByNumber.has(m.buildNumber));
+  if (unresolvedProject.length > 0 || unresolvedBuild.length > 0) {
+    const detail = [
+      ...unresolvedProject.map((m) => `${m.id} (project "${m.projectName}")`),
+      ...unresolvedBuild.map((m) => `${m.id} (build "${m.buildNumber}")`),
+    ].join(", ");
+    console.error(`saveInventoryMovements: unresolved project/build for movement(s): ${detail}`);
+    throw new Error("Some inventory movements could not be saved.");
+  }
+
   // No filter here (unlike before this review): every movement in
   // `movements` is guaranteed present in the payload now -- blank skus and
-  // unresolved skus were both already rejected above, not silently dropped.
+  // unresolved skus/projects/builds were all already rejected above, not
+  // silently dropped.
   const payload = movements
     .map((movement) => ({
       legacy_id: movement.id,
@@ -6427,14 +6626,16 @@ export async function saveProjectAllocations(allocations: ProjectAllocationHisto
 
   // Correction (2026-09-11, review): these three lookups used to collapse
   // an HTTP/network failure into an empty array, same gap as
-  // saveInventoryMovements above. Unlike that function, all three FKs here
-  // (project_id, inventory_item_id, movement_id on project_allocation_history,
-  // migration 003) are genuinely nullable -- none is NOT NULL -- so a
-  // *successful* lookup that simply doesn't match a name/sku/legacy id still
-  // safely resolves to null, unchanged from before. Only an HTTP/network
-  // failure on the lookup itself is new grounds for rejection; a name-level
-  // mismatch remains a documented, unresolved-optional-association
-  // limitation, not something this pass has schema evidence to reject.
+  // saveInventoryMovements above. All three FKs here (project_id,
+  // inventory_item_id, movement_id on project_allocation_history,
+  // migration 003) are genuinely nullable -- none is NOT NULL -- so an
+  // EMPTY name/sku/legacy id still safely resolves to null, unchanged
+  // from before. Updated 2026-09-12 (overnight reliability closeout part
+  // 2, task 4): a NONEMPTY value that fails to resolve is no longer
+  // tolerated as silent-null -- see the unresolved check below,
+  // implementing the decided "warn and require correction" policy for
+  // these three optional associations (this was previously documented
+  // here as an accepted limitation; that framing is now superseded).
   const [itemRows, projectRows, movementRows] = await Promise.all([
     skus.length
       ? lookupRowsOrThrow<{ id: string; sku: string }>("saveProjectAllocations", "inventory_items", `inventory_items?select=id,sku&sku=in.(${skus.map((s) => `"${s}"`).join(",")})`, accessToken, "Some project allocations could not be saved.")
@@ -6450,6 +6651,32 @@ export async function saveProjectAllocations(allocations: ProjectAllocationHisto
   const itemIdBySku = new Map(itemRows.map((row) => [row.sku, row.id]));
   const projectIdByName = new Map(projectRows.map((row) => [row.project_name, row.id]));
   const movementIdByLegacyId = new Map(movementRows.map((row) => [row.legacy_id, row.id]));
+
+  // Added 2026-09-12 (overnight reliability closeout part 2, task 4): a
+  // genuinely nonempty sku/projectName/movementId that doesn't resolve
+  // now rejects the whole save up front, naming every affected
+  // allocation and its unresolved value(s) -- an allocation that never
+  // specified one of these at all (empty/undefined) is unaffected, that
+  // remains a legitimate unassociated state.
+  const unresolvedAllocations = allocations.filter(
+    (a) =>
+      (a.sku && !itemIdBySku.has(a.sku)) ||
+      (a.projectName && !projectIdByName.has(a.projectName)) ||
+      (a.movementId && !movementIdByLegacyId.has(a.movementId)),
+  );
+  if (unresolvedAllocations.length > 0) {
+    const detail = unresolvedAllocations
+      .map((a) => {
+        const problems: string[] = [];
+        if (a.sku && !itemIdBySku.has(a.sku)) problems.push(`sku "${a.sku}"`);
+        if (a.projectName && !projectIdByName.has(a.projectName)) problems.push(`project "${a.projectName}"`);
+        if (a.movementId && !movementIdByLegacyId.has(a.movementId)) problems.push(`movement "${a.movementId}"`);
+        return `${a.id} (${problems.join(", ")})`;
+      })
+      .join(", ");
+    console.error(`saveProjectAllocations: unresolved association for allocation(s): ${detail}`);
+    throw new Error("Some project allocations could not be saved.");
+  }
 
   const payload = allocations.map((allocation) => ({
     legacy_id: allocation.id,
@@ -7844,40 +8071,125 @@ export async function loadFullBackupSnapshot(roleMode: string, accessToken?: str
   };
 }
 
-export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnapshot>, accessToken?: string): Promise<void> {
+// Overnight reliability closeout (2026-09-12, task 3): restoreFullBackupSnapshot
+// used to return Promise<void> and propagate the first thrown error straight
+// out, aborting every later section regardless of whether that later
+// section actually depended on the one that failed -- the caller
+// (main.tsx's importBackup) could not tell which section failed, how many
+// succeeded, or show anything more specific than "some information may
+// already have been restored." This does NOT make the restore atomic (see
+// this function's own header note below on what still isn't) -- it makes
+// a partial failure honestly reported instead of either a false blanket
+// success or an equally uninformative blanket failure.
+export type RestoreSectionName =
+  | "inventoryItems"
+  | "deviceRecipes"
+  | "projectSites"
+  | "purchaseRequests"
+  | "projectDocuments"
+  | "movementsBuildsAllocations";
+
+export type RestoreSectionResult = {
+  section: RestoreSectionName;
+  // false when the snapshot had nothing for this section (nothing to
+  // restore is not a failure) -- succeeded/error are meaningless when
+  // attempted is false.
+  attempted: boolean;
+  succeeded: boolean;
+  count: number;
+  error?: string;
+};
+
+export type RestoreOutcome = {
+  // true only when every attempted section succeeded. A snapshot with
+  // nothing to restore at all (every section skipped) is also ok: true --
+  // there was nothing to fail.
+  ok: boolean;
+  sections: RestoreSectionResult[];
+};
+
+// Checked before any write begins -- a malformed snapshot (the wrong
+// top-level shape for a field that must be an array) is rejected outright
+// here, rather than discovered partway through as a raw TypeError (e.g.
+// `.map is not a function`) deep inside whichever section happens to hit
+// it first, with earlier sections already committed. This is a shallow
+// shape check, not a full per-row schema validation -- each section's own
+// save function (and, for equipment recipes and eventually project BOM
+// lines, the RPC itself) still validates its own row contents.
+function validateBackupSnapshotShape(snapshot: Partial<FullBackupSnapshot>): void {
+  const arrayFields: Array<keyof FullBackupSnapshot> = [
+    "projectSites",
+    "inventoryItems",
+    "deviceRecipes",
+    "purchaseRequests",
+    "projectDocuments",
+    "buildTransactions",
+    "inventoryMovements",
+    "projectAllocations",
+  ];
+  for (const field of arrayFields) {
+    const value = snapshot[field];
+    if (value !== undefined && !Array.isArray(value)) {
+      throw new Error("This backup file's structure is invalid and cannot be restored.");
+    }
+  }
+}
+
+export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnapshot>, accessToken?: string): Promise<RestoreOutcome> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return { ok: false, sections: [] };
   }
 
-  // Order matters, same dependency chain as the live debounce-save effects:
-  // inventory items and equipment recipes first (BOM lines/components
-  // resolve item names against them), then projects (BOM lines resolve
-  // against inventory items too), then purchase requests and documents
-  // (independent of the above), then builds -> movements -> allocations
-  // last (each resolves ids from the one before it).
-  if (snapshot.inventoryItems?.length) {
-    await saveInventoryItems(snapshot.inventoryItems, accessToken);
+  validateBackupSnapshotShape(snapshot);
+
+  const sections: RestoreSectionResult[] = [];
+
+  // Each section runs independently -- catches its own failure, records
+  // it, and lets every remaining section still be attempted, rather than
+  // aborting the whole restore at the first failure. Order is preserved
+  // from before (same dependency chain as the live debounce-save effects:
+  // inventory items and equipment recipes first, since BOM lines/
+  // components resolve item names against them; then projects; then
+  // purchase requests and documents, independent of the above; then
+  // builds -> movements -> allocations last, each resolving ids from the
+  // one before it) -- a later section attempting to run after an earlier
+  // one failed can still only produce more unresolved (null) links where
+  // its own lookups don't find a match, never a crash, since every
+  // resolution in this chain already tolerates a lookup miss by design.
+  //
+  // What this does NOT do: make the restore atomic. A section that
+  // partially writes before throwing (e.g. saveInventoryItems' own
+  // item-metadata write succeeding while its balance write then fails)
+  // still leaves that partial state committed -- this function reports
+  // that honestly as a failed section, it does not roll it back. Whole-
+  // backup atomicity remains impractical for the reasons documented in
+  // PRODUCT_ERROR_VISIBILITY_AUDIT.md's restore trace (A2.5).
+  async function runSection(section: RestoreSectionName, count: number, run: () => Promise<unknown>): Promise<void> {
+    if (count === 0) {
+      sections.push({ section, attempted: false, succeeded: false, count: 0 });
+      return;
+    }
+    try {
+      await run();
+      sections.push({ section, attempted: true, succeeded: true, count });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "An unknown error occurred.";
+      console.error(`restoreFullBackupSnapshot: section "${section}" failed:`, error);
+      sections.push({ section, attempted: true, succeeded: false, count, error: message });
+    }
   }
-  if (snapshot.deviceRecipes?.length) {
-    await saveDeviceRecipes(snapshot.deviceRecipes, accessToken);
-  }
-  if (snapshot.projectSites?.length) {
-    await saveProjectSites(snapshot.projectSites, accessToken);
-  }
-  if (snapshot.purchaseRequests?.length) {
-    await saveRestoredPurchaseRequests(snapshot.purchaseRequests, accessToken);
-  }
-  if (snapshot.projectDocuments?.length) {
-    await saveRestoredProjectDocuments(snapshot.projectDocuments, accessToken);
-  }
-  if (snapshot.buildTransactions?.length || snapshot.inventoryMovements?.length || snapshot.projectAllocations?.length) {
-    await saveMovementsBuildsAllocations(
-      snapshot.buildTransactions ?? [],
-      snapshot.inventoryMovements ?? [],
-      snapshot.projectAllocations ?? [],
-      accessToken,
-    );
-  }
+
+  await runSection("inventoryItems", snapshot.inventoryItems?.length ?? 0, () => saveInventoryItems(snapshot.inventoryItems ?? [], accessToken));
+  await runSection("deviceRecipes", snapshot.deviceRecipes?.length ?? 0, () => saveDeviceRecipes(snapshot.deviceRecipes ?? [], accessToken));
+  await runSection("projectSites", snapshot.projectSites?.length ?? 0, () => saveProjectSites(snapshot.projectSites ?? [], accessToken));
+  await runSection("purchaseRequests", snapshot.purchaseRequests?.length ?? 0, () => saveRestoredPurchaseRequests(snapshot.purchaseRequests ?? [], accessToken));
+  await runSection("projectDocuments", snapshot.projectDocuments?.length ?? 0, () => saveRestoredProjectDocuments(snapshot.projectDocuments ?? [], accessToken));
+  const movementsCount = (snapshot.buildTransactions?.length ?? 0) + (snapshot.inventoryMovements?.length ?? 0) + (snapshot.projectAllocations?.length ?? 0);
+  await runSection("movementsBuildsAllocations", movementsCount, () =>
+    saveMovementsBuildsAllocations(snapshot.buildTransactions ?? [], snapshot.inventoryMovements ?? [], snapshot.projectAllocations ?? [], accessToken),
+  );
+
+  return { ok: sections.every((section) => !section.attempted || section.succeeded), sections };
 }
 
 // Purchase Requests and Project Documents don't have a bulk upsert function
@@ -7933,9 +8245,22 @@ async function saveRestoredPurchaseRequests(requests: PurchaseRequest[], accessT
 }
 
 async function saveRestoredProjectDocuments(docs: ProjectDocument[], accessToken: string): Promise<void> {
+  // Deterministic restore (2026-09-12, overnight reliability closeout task
+  // 3): every document a real snapshot carries already has its own real,
+  // previously-assigned document_number (now selected/mapped by
+  // loadProjectDocuments -- see ProjectDocument.documentNumber's own
+  // comment). Using it here means restoring the SAME snapshot twice
+  // writes the exact same document_number both times, closing the gap
+  // PRODUCT_ERROR_VISIBILITY_AUDIT.md flagged (a retried restore
+  // previously produced a different number on every attempt, since it was
+  // freshly generated from Date.now() every call). The Date.now()-based
+  // fallback is kept ONLY for a snapshot exported before this field
+  // existed -- a document from a legacy snapshot with no recorded number
+  // still needs something to write, and inventing one on restore is no
+  // worse than what already happened for every restore before this fix.
   const payload = docs.map((doc, index) => ({
     id: doc.id,
-    document_number: `DOC-RESTORE-${Date.now().toString(36).toUpperCase()}-${index}`,
+    document_number: doc.documentNumber ?? `DOC-RESTORE-${Date.now().toString(36).toUpperCase()}-${index}`,
     project_name: doc.project || null,
     document_type: appDocumentType(doc.type),
     file_name: doc.name,
@@ -9578,11 +9903,22 @@ export async function updateSalesQuoteLocation(
   if (updates.entriesCount !== undefined) payload.entries_count = updates.entriesCount;
   if (updates.exitsCount !== undefined) payload.exits_count = updates.exitsCount;
   if (updates.levelsCount !== undefined) payload.levels_count = updates.levelsCount;
-  await fetch(supabaseUrl(`sales_quote_locations?id=eq.${id}`), {
+  // Reviewed 2026-09-12 (overnight reliability closeout part 2, task 2):
+  // logging-only, deliberately non-throwing -- the caller
+  // (handleUpdateSalesQuoteLocation, main.tsx) updates local state
+  // optimistically and awaits this call with no try/catch anywhere in
+  // the chain down to the onChange handler; throwing would be a genuine
+  // unhandled promise rejection. This only makes a real failure visible
+  // in the console.
+  const response = await fetch(supabaseUrl(`sales_quote_locations?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateSalesQuoteLocation: PATCH failed for location ${id} (${response.status}): ${bodyText}`);
+  }
 }
 
 export async function deleteSalesQuoteLocation(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
@@ -9652,11 +9988,18 @@ export async function updateSalesQuoteLocationItem(
   if (updates.locationLabel !== undefined) payload.location_label = updates.locationLabel;
   if (updates.accessoryCatalogItemId !== undefined) payload.accessory_catalog_item_id = updates.accessoryCatalogItemId;
   if (updates.accessoryQty !== undefined) payload.accessory_qty = updates.accessoryQty;
-  await fetch(supabaseUrl(`sales_quote_location_items?id=eq.${id}`), {
+  // Reviewed 2026-09-12 (overnight reliability closeout part 2, task 2):
+  // logging-only, deliberately non-throwing -- same reasoning as
+  // updateSalesQuoteLocation above (fire-and-forget caller, no try/catch).
+  const response = await fetch(supabaseUrl(`sales_quote_location_items?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateSalesQuoteLocationItem: PATCH failed for item ${id} (${response.status}): ${bodyText}`);
+  }
 }
 
 export async function deleteSalesQuoteLocationItem(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
@@ -9950,6 +10293,12 @@ export async function removePendingSitePhoto(id: string): Promise<void> {
   }
 }
 
+// Reviewed 2026-09-12 (overnight reliability closeout part 2, task 2):
+// logging-only addition to all three functions below -- each already
+// returns its real response.ok to the caller (unlike the fire-and-forget
+// group above, these booleans DO propagate), so this only adds the
+// missing diagnostic detail on a failure; the existing boolean-based
+// caller contracts are unchanged.
 export async function updateSalesQuoteLocationImageDescription(imageId: string, description: string, accessToken?: string): Promise<boolean> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return false;
@@ -9959,6 +10308,10 @@ export async function updateSalesQuoteLocationImageDescription(imageId: string, 
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ description: description || null }),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateSalesQuoteLocationImageDescription: PATCH failed for image ${imageId} (${response.status}): ${bodyText}`);
+  }
   return response.ok;
 }
 
@@ -9981,6 +10334,10 @@ export async function updateSalesQuoteLocationImageMeta(
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateSalesQuoteLocationImageMeta: PATCH failed for image ${imageId} (${response.status}): ${bodyText}`);
+  }
   return response.ok;
 }
 
@@ -9993,6 +10350,10 @@ export async function moveSalesQuoteLocationImage(imageId: string, targetLocatio
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ quote_location_id: targetLocationId }),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`moveSalesQuoteLocationImage: PATCH failed for image ${imageId} (${response.status}): ${bodyText}`);
+  }
   return response.ok;
 }
 
@@ -10160,11 +10521,20 @@ export async function updateProjectLocation(
   if (Object.keys(payload).length === 0) {
     return;
   }
-  await fetch(supabaseUrl(`project_locations?id=eq.${id}`), {
+  // Reviewed 2026-09-12 (overnight reliability closeout part 2, task 2):
+  // logging-only, deliberately non-throwing -- same reasoning as
+  // updateSalesQuoteLocation (its mirror function, per this file's own
+  // comment above updateProjectLocation's original definition): the
+  // caller is fire-and-forget with no try/catch.
+  const response = await fetch(supabaseUrl(`project_locations?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateProjectLocation: PATCH failed for location ${id} (${response.status}): ${bodyText}`);
+  }
 }
 
 export async function deleteProjectLocation(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
@@ -10294,11 +10664,19 @@ export async function updateProjectLocationItem(
   if (updates.locationLabel !== undefined) payload.location_label = updates.locationLabel;
   if (updates.accessoryCatalogItemId !== undefined) payload.accessory_catalog_item_id = updates.accessoryCatalogItemId;
   if (updates.accessoryQty !== undefined) payload.accessory_qty = updates.accessoryQty;
-  await fetch(supabaseUrl(`project_location_items?id=eq.${id}`), {
+  // Reviewed 2026-09-12 (overnight reliability closeout part 2, task 2):
+  // logging-only, deliberately non-throwing -- same reasoning as
+  // updateSalesQuoteLocationItem (its mirror function): fire-and-forget
+  // caller, no try/catch.
+  const response = await fetch(supabaseUrl(`project_location_items?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateProjectLocationItem: PATCH failed for item ${id} (${response.status}): ${bodyText}`);
+  }
 }
 
 export async function deleteProjectLocationItem(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {

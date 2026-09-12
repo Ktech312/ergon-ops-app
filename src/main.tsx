@@ -1,6 +1,5 @@
-import { Component, Fragment, StrictMode, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { Component, Fragment, StrictMode, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
-import * as XLSX from "xlsx";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -221,6 +220,7 @@ import {
   loadAllTaskActivity,
   loadDeletedTasks,
   loadDeletionLog,
+  loadNotificationDeliveryFailures,
   loadOneOffReconciliations,
   logOneOffReconciliation,
   loadScheduleTemplates,
@@ -325,6 +325,7 @@ import {
   type FormSchema,
   type FormSchemaField,
   type FullBackupSnapshot,
+  type RestoreSectionName,
   type InventoryMovement,
   type KnownUser,
   type Conversation,
@@ -375,6 +376,7 @@ import {
   type SalesQuoteLocationItem,
   type TaskActivityEntry,
   type DeletionLogEntry,
+  type NotificationDeliveryFailure,
   type OneOffReconciliation,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
@@ -488,6 +490,40 @@ const CRITICAL_DOMAIN_LABELS: Record<string, string> = {
   inventoryMovements: "Inventory Movement Ledger",
   projectDocuments: "Project Documents",
 };
+
+const RESTORE_SECTION_LABELS: Record<RestoreSectionName, string> = {
+  inventoryItems: "Inventory items",
+  deviceRecipes: "Equipment recipes",
+  projectSites: "Projects",
+  purchaseRequests: "Purchase requests",
+  projectDocuments: "Project documents",
+  movementsBuildsAllocations: "Inventory movements/builds/allocations",
+};
+
+// Reusable accessible clickable-row activation (2026-09-12, overnight
+// reliability closeout part 2, task 6). A plain `<tr onClick={...}>` is
+// not natively focusable or keyboard-operable -- this spreads the same
+// role="button" + tabIndex + Enter/Space onKeyDown pattern this codebase
+// already uses on its mobile-card equivalents of these same rows onto
+// the desktop `<tr>`, so keyboard-only users can open what a mouse click
+// already can. Applied to a bounded, high-traffic batch (Inventory,
+// Projects, Purchasing, Client Ledger, Team Roster, Task list, Project/
+// Sales Quote Locations) -- not every clickable row in the app; see
+// HANDOFF.md for the exact list of what this batch does and does not
+// cover.
+function clickableRowProps(onActivate: () => void) {
+  return {
+    role: "button" as const,
+    tabIndex: 0,
+    onClick: onActivate,
+    onKeyDown: (event: React.KeyboardEvent) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onActivate();
+      }
+    },
+  };
+}
 
 const TAB_LABELS: Record<View, string> = {
   dashboard: "Dashboard",
@@ -1170,6 +1206,7 @@ function App() {
   const [deletedTasks, setDeletedTasks] = useState<EOTask[]>([]);
   const [deletionLog, setDeletionLog] = useState<DeletionLogEntry[]>([]);
   const [oneOffReconciliations, setOneOffReconciliations] = useState<OneOffReconciliation[]>([]);
+  const [notificationDeliveryFailures, setNotificationDeliveryFailures] = useState<NotificationDeliveryFailure[]>([]);
   const [taskStatusMessage, setTaskStatusMessage] = useState("");
   const [taskActivity, setTaskActivity] = useState<TaskActivityEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -2193,6 +2230,17 @@ function App() {
 
     void saveUserRoleMode(authSession.userId, roleMode, authSession.accessToken);
   }, [authSession, roleMode, isAdmin]);
+
+  // System Health Phase A (2026-09-12, overnight reliability closeout
+  // part 2, task 5): admin-only, built from existing notification_deliveries
+  // data (no new migration). Gated the same way every other admin-only
+  // load in this file already is -- not a new authorization mechanism.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured() || !isAdmin) {
+      return;
+    }
+    loadNotificationDeliveryFailures(authSession.accessToken).then(setNotificationDeliveryFailures).catch(() => undefined);
+  }, [authSession, isAdmin]);
 
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
@@ -6577,7 +6625,7 @@ function App() {
             setRoleMode(snapshot.roleMode as RoleMode);
           }
           setAuthStatus("Restoring backup -- this can take a moment for larger snapshots...");
-          await restoreFullBackupSnapshot(snapshot, authSession.accessToken);
+          const restoreOutcome = await restoreFullBackupSnapshot(snapshot, authSession.accessToken);
           // Reload every entity from the tables so the UI reflects the
           // merged result rather than the raw (possibly stale) file contents.
           const [
@@ -6608,7 +6656,25 @@ function App() {
           setBuildTransactions(reloadedBuildTransactions);
           setInventoryMovements(reloadedInventoryMovements);
           setProjectAllocations(reloadedProjectAllocations);
-          setAuthStatus("Backup restored.");
+          // Overnight reliability closeout (2026-09-12, task 3): this used to
+          // show "Backup restored." unconditionally the moment
+          // restoreFullBackupSnapshot resolved without throwing -- but that
+          // function now runs every section independently and only THROWS
+          // for a top-level failure (bad config, malformed snapshot
+          // structure); an individual section's failure is caught inside it
+          // and reported in the returned outcome instead. Never claim
+          // "restored" when the outcome says otherwise.
+          const failedSections = restoreOutcome.sections.filter((section) => section.attempted && !section.succeeded);
+          const attemptedSections = restoreOutcome.sections.filter((section) => section.attempted);
+          if (failedSections.length === 0) {
+            setAuthStatus(attemptedSections.length === 0 ? "Backup restore had nothing to restore." : "Backup restored.");
+          } else {
+            setSyncStatus("error");
+            const failedLabels = failedSections.map((section) => RESTORE_SECTION_LABELS[section.section]).join(", ");
+            setAuthStatus(
+              `Backup restore finished with problems: ${attemptedSections.length - failedSections.length} of ${attemptedSections.length} section(s) restored. Failed: ${failedLabels}. Some information may already have been restored -- review the data before trying again.`,
+            );
+          }
         } catch (error) {
           console.error("Backup restore failed:", error);
           setSyncStatus("error");
@@ -7644,6 +7710,7 @@ function App() {
             proposalTemplateSections={proposalTemplateSections}
             onUpdateProposalTemplateSection={handleUpdateProposalTemplateSection}
             deletionLog={deletionLog}
+            notificationDeliveryFailures={notificationDeliveryFailures}
             onRefresh={() => {
               if (!authSession) {
                 return;
@@ -7982,43 +8049,56 @@ function Dashboard({
   const requestExposure = activePurchaseRequests.reduce((sum, request) => sum + request.quantity * request.estimatedUnitCost, 0);
   const recentReceipts = inventoryMovements.filter((movement) => movement.type === "receive").slice(0, 3);
   const recentTransfers = inventoryMovements.filter((movement) => movement.type === "transfer").slice(0, 3);
-  const activityFeed = [
-    // E: "Recent Activity is dominated by old cancelled purchase
-    // records" -- a cancelled request isn't something that happened
-    // recently in any useful sense, it's a dead end; excluding it (not
-    // deleting the underlying data, just this feed) keeps the timeline
-    // focused on things that actually moved.
-    ...purchaseRequests
-      .filter((request) => request.status !== "Cancelled")
-      .map((request) => ({
-        id: request.id,
-        date: request.createdAt,
-        kind: "Purchase",
-        title: `${request.requestNumber} - ${request.itemName}`,
-        detail: `${request.status} - ${Math.max(0, request.quantity - (request.receivedQuantity ?? 0))} remaining`,
-      })),
-    ...inventoryMovements.map((movement) => ({
-      id: movement.id,
-      date: movement.createdAt,
-      kind: "Inventory",
-      title: `${movement.type.replace("_", " ")} - ${movement.itemName}`,
-      detail: `${movement.quantityBefore} to ${movement.quantityAfter}${movement.projectName ? ` - ${movement.projectName}` : ""}`,
-    })),
-    ...buildTransactions.map((build) => ({
-      id: build.id,
-      date: build.createdAt,
-      kind: "Build",
-      title: `${build.buildNumber} - ${build.equipmentName}`,
-      detail: `${build.quantityBuilt} unit${build.quantityBuilt === 1 ? "" : "s"} - ${build.stage ?? build.status}`,
-    })),
-    ...projectAllocations.map((allocation) => ({
-      id: allocation.id,
-      date: allocation.createdAt,
-      kind: "Project",
-      title: `${allocation.projectName} - ${allocation.itemName}`,
-      detail: `${allocation.action} ${allocation.quantity} from ${allocation.sku}`,
-    })),
-  ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  // useMemo added 2026-09-12 (overnight reliability closeout part 2, task
+  // 7): this concatenates and sorts four full arrays (purchaseRequests,
+  // inventoryMovements, buildTransactions, projectAllocations) on every
+  // render of the Dashboard -- the default landing view, so it re-runs on
+  // every unrelated state change while mounted (e.g. the 5s message-poll
+  // tick). Only actually needs to recompute when one of those four
+  // source arrays changes.
+  const activityFeed = useMemo(
+    () =>
+      [
+        // E: "Recent Activity is dominated by old cancelled purchase
+        // records" -- a cancelled request isn't something that happened
+        // recently in any useful sense, it's a dead end; excluding it (not
+        // deleting the underlying data, just this feed) keeps the timeline
+        // focused on things that actually moved.
+        ...purchaseRequests
+          .filter((request) => request.status !== "Cancelled")
+          .map((request) => ({
+            id: request.id,
+            date: request.createdAt,
+            kind: "Purchase",
+            title: `${request.requestNumber} - ${request.itemName}`,
+            detail: `${request.status} - ${Math.max(0, request.quantity - (request.receivedQuantity ?? 0))} remaining`,
+          })),
+        ...inventoryMovements.map((movement) => ({
+          id: movement.id,
+          date: movement.createdAt,
+          kind: "Inventory",
+          title: `${movement.type.replace("_", " ")} - ${movement.itemName}`,
+          detail: `${movement.quantityBefore} to ${movement.quantityAfter}${movement.projectName ? ` - ${movement.projectName}` : ""}`,
+        })),
+        ...buildTransactions.map((build) => ({
+          id: build.id,
+          date: build.createdAt,
+          kind: "Build",
+          title: `${build.buildNumber} - ${build.equipmentName}`,
+          detail: `${build.quantityBuilt} unit${build.quantityBuilt === 1 ? "" : "s"} - ${build.stage ?? build.status}`,
+        })),
+        ...projectAllocations.map((allocation) => ({
+          id: allocation.id,
+          date: allocation.createdAt,
+          kind: "Project",
+          title: `${allocation.projectName} - ${allocation.itemName}`,
+          detail: `${allocation.action} ${allocation.quantity} from ${allocation.sku}`,
+        })),
+      ]
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, 8),
+    [purchaseRequests, inventoryMovements, buildTransactions, projectAllocations],
+  );
   const today = new Date().toISOString().slice(0, 10);
   const overdueProjects = projectSites.filter((project) => project.status !== "Closed" && project.due && !Number.isNaN(Date.parse(project.due)) && project.due < today);
   const overdueTasks = (tasks ?? []).filter((task) => task.status !== "done" && !task.deletedAt && task.dueDate && task.dueDate < today);
@@ -9143,7 +9223,7 @@ function PurchaseOrdersTable({
             const isExpanded = expandedOrderId === po.id;
             return (
               <Fragment key={po.id}>
-                <tr className="clickable-row" onClick={() => onToggleExpand(po.id)}>
+                <tr className="clickable-row" {...clickableRowProps(() => onToggleExpand(po.id))}>
                   <td><strong>{po.number}</strong><small>{formatPoDate(po.date)}</small>{po.createdByEmail && <small>by {po.createdByEmail}</small>}</td>
                   <td>{po.vendor}</td>
                   <td>{po.projectRef}</td>
@@ -10475,7 +10555,7 @@ function Inventory({
             </thead>
             <tbody>
               {filteredInventoryItems.map((part) => (
-                <tr key={part.ref} className="clickable-row" onClick={() => openEditItemModal(part)}>
+                <tr key={part.ref} className="clickable-row" {...clickableRowProps(() => openEditItemModal(part))}>
                   <td onClick={(event) => event.stopPropagation()}>
                     <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(part)} aria-label={`Open image for ${part.name}`}>
                       {part.imageUrl ? <img src={part.imageUrl} alt="" /> : <Image size={18} />}
@@ -11908,6 +11988,13 @@ function Projects({
     }
     setBomImportStatus("Parsing...");
     try {
+      // Dynamic import (2026-09-12, overnight reliability closeout part
+      // 2, task 7): xlsx is a large dependency (a few hundred KB) used
+      // only by this handler and handleCatalogFileSelect below -- every
+      // other session paid for it on first load regardless of whether a
+      // spreadsheet was ever imported. Loading it only when this handler
+      // actually runs keeps it out of the eager bundle entirely.
+      const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -12384,7 +12471,7 @@ function Projects({
                 const completion = projectCompletion(project);
                 const openLines = project.bom.filter((line) => line.status === "Need Quote" || line.status === "Not started").length;
                 return (
-                  <tr key={project.name} className="clickable-row" onClick={() => openProject(project.name)}>
+                  <tr key={project.name} className="clickable-row" {...clickableRowProps(() => openProject(project.name))}>
                     <td><strong>{project.ref}</strong></td>
                     <td><strong>{project.name}</strong><small>{project.type} - {project.package}</small></td>
                     <td>{project.client}</td>
@@ -13424,7 +13511,7 @@ function Projects({
                 </thead>
                 <tbody>
                   {selectedProject.bom.map((line, index) => (
-                    <tr key={`${selectedProject.name}-${line.item}-${index}`} className="clickable-row" onClick={() => openEditBomModal(line, index)}>
+                    <tr key={`${selectedProject.name}-${line.item}-${index}`} className="clickable-row" {...clickableRowProps(() => openEditBomModal(line, index))}>
                       <td><strong>{line.item}</strong></td>
                       <td data-label="Qty">{line.qty}</td>
                       <td data-label="Status"><span className={`status ${line.status === "Need Quote" || line.status === "Not started" ? "warn" : line.status.includes("Delivered") || line.status === "Completed" || line.status === "From Inventory" ? "ok" : ""}`}>{line.status}</span>{!line.sentToPurchasingAt && <small className="muted"> (draft)</small>}</td>
@@ -13808,7 +13895,7 @@ function ClientLedger({
                 </thead>
                 <tbody>
                   {listSites.map((site) => (
-                    <tr key={site.id ?? site.ref} className="clickable-row" onClick={() => openLedger(site)}>
+                    <tr key={site.id ?? site.ref} className="clickable-row" {...clickableRowProps(() => openLedger(site))}>
                       <td><strong>{site.name}</strong><small className="muted"> {site.ref}</small></td>
                       <td data-label="Client">{site.client || "-"}</td>
                       <td data-label="SaaS">{site.saasType || "-"}</td>
@@ -13838,7 +13925,7 @@ function ClientLedger({
                 </thead>
                 <tbody>
                   {financialRows.map((site) => (
-                    <tr key={site.id ?? site.ref} className="clickable-row" onClick={() => openLedger(site)}>
+                    <tr key={site.id ?? site.ref} className="clickable-row" {...clickableRowProps(() => openLedger(site))}>
                       <td><strong>{site.name}</strong><small className="muted"> {site.ref}</small></td>
                       <td data-label="Bucket"><span className={`status ${ledgerInfoFor(site.id)?.ledgerBucket === "archived" ? "retired" : "ok"}`}>{ledgerInfoFor(site.id)?.ledgerBucket === "archived" ? "Archived" : "Active"}</span></td>
                       <td data-label="Sale Amount">{site.saleAmount ? money(site.saleAmount) : "-"}</td>
@@ -17048,6 +17135,7 @@ function AdminPage({
   proposalTemplateSections,
   onUpdateProposalTemplateSection,
   deletionLog,
+  notificationDeliveryFailures,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -17118,13 +17206,20 @@ function AdminPage({
   proposalTemplateSections: ProposalTemplateSection[];
   onUpdateProposalTemplateSection: (id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) => void;
   deletionLog?: DeletionLogEntry[];
+  notificationDeliveryFailures?: NotificationDeliveryFailure[];
 }) {
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
   const [editingRosterId, setEditingRosterId] = useState<string | null>(null);
   const [copiedInviteId, setCopiedInviteId] = useState("");
   const [passwordResetFeedback, setPasswordResetFeedback] = useState<{ email: string; ok: boolean } | null>(null);
   const [showDeletionLog, setShowDeletionLog] = useState(false);
+  const [showSystemHealth, setShowSystemHealth] = useState(false);
+  const [systemHealthChannelFilter, setSystemHealthChannelFilter] = useState("all");
   const knownUserByEmail = new Map(knownUsers.map((user) => [user.email.toLowerCase(), user]));
+  const systemHealthChannels = Array.from(new Set((notificationDeliveryFailures ?? []).map((f) => f.channel))).sort();
+  const filteredSystemHealthFailures = (notificationDeliveryFailures ?? []).filter(
+    (f) => systemHealthChannelFilter === "all" || f.channel === systemHealthChannelFilter,
+  );
 
   async function triggerPasswordReset(email: string) {
     const ok = await onSendPasswordReset(email);
@@ -17234,6 +17329,63 @@ function AdminPage({
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {isAdmin && (
+        <section className="panel wide">
+          <div className="panel-title-row">
+            <div>
+              <h2>System Health</h2>
+              <p>
+                Failed notification deliveries (email, Slack, push) grouped by channel and reason -- built from existing delivery records, no separate log file or Vercel access needed.
+              </p>
+            </div>
+            <button className="secondary-action mini-action" type="button" onClick={() => setShowSystemHealth((current) => !current)}>
+              {showSystemHealth ? "Hide" : "Show"} ({(notificationDeliveryFailures ?? []).length})
+            </button>
+          </div>
+          {showSystemHealth && (
+            <div className="deleted-tasks-panel">
+              {(notificationDeliveryFailures ?? []).length === 0 ? (
+                <p className="muted">No failed notification deliveries recorded. This only reflects delivery attempts already made -- it is not a live health check.</p>
+              ) : (
+                <>
+                  <label className="inline-filter-field">
+                    Channel
+                    <select value={systemHealthChannelFilter} onChange={(event) => setSystemHealthChannelFilter(event.target.value)}>
+                      <option value="all">All channels</option>
+                      {systemHealthChannels.map((channel) => (
+                        <option key={channel} value={channel}>{channel}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {filteredSystemHealthFailures.length === 0 ? (
+                    <p className="muted">No failures for this channel.</p>
+                  ) : (
+                    <table className="stack-table-mobile">
+                      <thead>
+                        <tr><th>Channel</th><th>Event</th><th>Reason</th><th>Occurrences</th><th>First seen</th><th>Last seen</th><th>Last recipient</th></tr>
+                      </thead>
+                      <tbody>
+                        {filteredSystemHealthFailures.map((failure) => (
+                          <tr key={`${failure.channel}-${failure.eventType}-${failure.failureReason}`}>
+                            <td data-label="Channel">{failure.channel}</td>
+                            <td data-label="Event">{failure.eventType.replace(/_/g, " ")}</td>
+                            <td data-label="Reason">{failure.failureReason}</td>
+                            <td data-label="Occurrences"><span className="status warn">{failure.occurrenceCount}</span></td>
+                            <td data-label="First seen">{new Date(failure.firstOccurredAt).toLocaleString()}</td>
+                            <td data-label="Last seen">{new Date(failure.lastOccurredAt).toLocaleString()}</td>
+                            <td data-label="Last recipient">{failure.lastRecipientEmail || "Unknown"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
             </div>
           )}
         </section>
@@ -17377,7 +17529,7 @@ function AdminPage({
                 const isEditing = editingRosterId === member.id;
                 return (
                   <Fragment key={member.id}>
-                    <tr className="clickable-row" onClick={() => setEditingRosterId(isEditing ? null : member.id)}>
+                    <tr className="clickable-row" {...clickableRowProps(() => setEditingRosterId(isEditing ? null : member.id))}>
                       <td>
                         <span className="roster-name-cell">
                           {member.avatarUrl ? <img className="roster-avatar" src={member.avatarUrl} alt="" /> : <span className="roster-avatar roster-avatar-placeholder"><User size={13} /></span>}
@@ -18699,6 +18851,8 @@ function SalesCatalog({
     setImportStatus("Parsing...");
     setImportStatusIsError(false);
     try {
+      // Dynamic import -- see handleBomFileSelect's own comment above.
+      const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -18884,7 +19038,7 @@ function SalesCatalog({
                     <tr
                       key={item.id}
                       className={`clickable-row${item.isRetired ? " muted-row" : ""}`}
-                      onClick={() => (canManage ? openEditModal(item) : !item.isRetired && openProposalModal(item, "markup_percent"))}
+                      {...clickableRowProps(() => (canManage ? openEditModal(item) : !item.isRetired && openProposalModal(item, "markup_percent")))}
                     >
                       <td onClick={(event) => event.stopPropagation()}>
                         <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(item)} aria-label={`Open image for ${item.productName}`}>
@@ -21683,7 +21837,7 @@ function ProjectLocationsSection({
             const photoCount = location.images.filter((image) => image.imageType === "photo").length;
             const drawingCount = location.images.filter((image) => image.imageType === "drawing").length;
             return (
-              <tr key={location.id} className="clickable-row" onClick={() => setSelectedLocationId(location.id)}>
+              <tr key={location.id} className="clickable-row" {...clickableRowProps(() => setSelectedLocationId(location.id))}>
                 <td><span className={`status ${location.locationType === "garage" ? "ok" : ""}`}>{location.locationType === "garage" ? "Garage" : "Lot"}</span></td>
                 <td>
                   <input
@@ -22689,7 +22843,7 @@ function SalesQuoteBuilder({
                 const photoCount = location.images.filter((image) => image.imageType === "photo").length;
                 const drawingCount = location.images.filter((image) => image.imageType === "drawing").length;
                 return (
-                  <tr key={location.id} className="clickable-row" onClick={() => setSelectedLocationId(location.id)}>
+                  <tr key={location.id} className="clickable-row" {...clickableRowProps(() => setSelectedLocationId(location.id))}>
                     <td><span className={`status ${location.locationType === "garage" ? "ok" : ""}`}>{location.locationType === "garage" ? "Garage" : "Lot"}</span></td>
                     <td>
                       <input
@@ -24332,7 +24486,7 @@ function TasksBoard({
                   </thead>
                   <tbody>
                     {groupTasks.map((task) => (
-                      <tr key={task.id} className="clickable-row" onClick={() => openEditModal(task)}>
+                      <tr key={task.id} className="clickable-row" {...clickableRowProps(() => openEditModal(task))}>
                         <td>{task.title}</td>
                         <td>{TASK_SECTION_OPTIONS.find((option) => option.value === task.section)?.label ?? task.section}</td>
                         <td><span className={priorityBadgeClass(task.priority)}>{task.priority}</span></td>
