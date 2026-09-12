@@ -133,6 +133,7 @@ import {
   addSalesQuoteBomLines,
   deleteSalesQuoteBomLine,
   deleteSalesQuoteBomLinesByLocationSource,
+  updateSalesQuoteBomLine,
   updateSalesQuoteBomLineCatalogLink,
   createScheduleTemplate,
   createSubmittal,
@@ -3216,7 +3217,7 @@ function App() {
   // "Pull Location Hardware into Quote BOM" -- rolls every location's real
   // catalog-linked selections (FLI/LPR/People Counting camera picks, Sign,
   // Space Sensor, Misc lines) up into the one flat Quote BOM that actually
-  // becomes the pricing table on a Quote Proposal (migration 053), mirroring
+  // becomes the material table on a Quote Proposal (migration 053), mirroring
   // how the real EnSight proposals E shared list one row per product with a
   // qty rather than per physical location. Regenerate-safe: it only ever
   // replaces the lines it previously created (source_location_id set),
@@ -3400,6 +3401,29 @@ function App() {
       );
     } catch (error) {
       setSalesQuoteStatus(error instanceof Error ? error.message : "Could not save that catalog link.");
+    }
+  }
+
+  async function handleUpdateSalesQuoteBomLine(
+    quoteId: string,
+    lineId: string,
+    updates: { item: string; qty: number; notes: string; catalogItemId: string | null },
+  ): Promise<boolean> {
+    if (!authSession) {
+      return false;
+    }
+    try {
+      const saved = await updateSalesQuoteBomLine(lineId, updates, authSession.accessToken);
+      setSalesQuotes((current) => current.map((entry) => (
+        entry.id === quoteId
+          ? { ...entry, bomLines: entry.bomLines.map((line) => (line.id === lineId ? saved : line)) }
+          : entry
+      )));
+      setSalesQuoteStatus(`Updated ${saved.item} in the Quote BOM.`);
+      return true;
+    } catch (error) {
+      setSalesQuoteStatus(error instanceof Error ? error.message : "Could not save this BOM line.");
+      return false;
     }
   }
 
@@ -7502,6 +7526,7 @@ function App() {
             onCreateProjectFromClosedWonQuote={handleCreateProjectFromClosedWonQuote}
             onAddSalesQuoteBomLines={handleAddSalesQuoteBomLines}
             onDeleteSalesQuoteBomLine={handleDeleteSalesQuoteBomLine}
+            onUpdateSalesQuoteBomLine={handleUpdateSalesQuoteBomLine}
             onUpdateSalesQuoteBomLineCatalogLink={handleUpdateSalesQuoteBomLineCatalogLink}
             onUpdateSalesQuoteProposalFields={handleUpdateSalesQuoteProposalFields}
             onUpdateSalesQuoteInfo={handleUpdateSalesQuoteInfo}
@@ -18291,6 +18316,7 @@ function SalesHome({
   onCreateProjectFromClosedWonQuote,
   onAddSalesQuoteBomLines,
   onDeleteSalesQuoteBomLine,
+  onUpdateSalesQuoteBomLine,
   onUpdateSalesQuoteBomLineCatalogLink,
   onUpdateSalesQuoteProposalFields,
   onUpdateSalesQuoteInfo,
@@ -18373,6 +18399,7 @@ function SalesHome({
   onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectConversionOutcome>;
   onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
+  onUpdateSalesQuoteBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null }) => Promise<boolean>;
   onUpdateSalesQuoteBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateSalesQuoteProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
   onUpdateSalesQuoteInfo: (
@@ -18531,6 +18558,7 @@ function SalesHome({
         onCreateProjectFromClosedWonQuote={onCreateProjectFromClosedWonQuote}
         onAddBomLines={onAddSalesQuoteBomLines}
         onDeleteBomLine={onDeleteSalesQuoteBomLine}
+        onUpdateBomLine={onUpdateSalesQuoteBomLine}
         onUpdateBomLineCatalogLink={onUpdateSalesQuoteBomLineCatalogLink}
         onUpdateProposalFields={onUpdateSalesQuoteProposalFields}
         onUpdateQuoteInfo={onUpdateSalesQuoteInfo}
@@ -22309,6 +22337,7 @@ function SalesQuoteBuilder({
   onCreateProjectFromClosedWonQuote,
   onAddBomLines,
   onDeleteBomLine,
+  onUpdateBomLine,
   onUpdateBomLineCatalogLink,
   onUpdateProposalFields,
   onUpdateQuoteInfo,
@@ -22375,6 +22404,7 @@ function SalesQuoteBuilder({
   onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectConversionOutcome>;
   onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
+  onUpdateBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null }) => Promise<boolean>;
   onUpdateBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
   onUpdateQuoteInfo: (
@@ -22447,6 +22477,9 @@ function SalesQuoteBuilder({
   const [presalesNodeCount, setPresalesNodeCount] = useState(1);
   const [presalesCloudSync, setPresalesCloudSync] = useState(false);
   const [bomLineDraft, setBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "" });
+  const [editingBomLineId, setEditingBomLineId] = useState<string | null>(null);
+  const [editingBomLineDraft, setEditingBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "" });
+  const [isSavingBomLine, setIsSavingBomLine] = useState(false);
   const [proposalClientEmailDraft, setProposalClientEmailDraft] = useState("");
   const [proposalSummaryDraft, setProposalSummaryDraft] = useState("");
   const [copiedProposalId, setCopiedProposalId] = useState("");
@@ -22987,7 +23020,7 @@ function SalesQuoteBuilder({
 
           <div className="quote-hardware-summary">
             <span className="label">Quote BOM</span>
-            <p className="muted">Persisted line items for this quote -- this is what a Project pulls in once the quote is marked Closed - Won, and what a Quote Proposal's pricing table is built from.</p>
+            <p className="muted">Persisted line items for this quote -- this is what a Project pulls in once the quote is marked Closed - Won, and what a Quote Proposal's material table is built from.</p>
             <div className="submittal-create-row">
               <button
                 className="primary-action mini-action"
@@ -23003,29 +23036,99 @@ function SalesQuoteBuilder({
               {selectedQuote.bomLines.map((line) => {
                 const linkedItem = line.catalogItemId ? catalogItems.find((item) => item.id === line.catalogItemId) : undefined;
                 const sourceLocation = line.sourceLocationId ? selectedQuote.locations.find((location) => location.id === line.sourceLocationId) : undefined;
+                const isEditing = editingBomLineId === line.id;
                 return (
                   <li className="line-item" key={line.id}>
-                    <div>
-                      <strong>{line.item}</strong>
-                      <span>Qty {line.qty}{line.notes ? ` -- ${line.notes}` : ""}</span>
-                      {line.sourceLocationId && (
-                        <small className="muted">
-                          {sourceLocation ? `Pulled from ${sourceLocation.name || "a location"}` : "Pulled from a location (since removed)"}
-                        </small>
-                      )}
-                      <select
-                        className="bom-line-catalog-link"
-                        value={line.catalogItemId ?? ""}
-                        onChange={(event) => onUpdateBomLineCatalogLink(selectedQuote.id, line.id, event.target.value || null)}
-                      >
-                        <option value="">No catalog link (labor/service line)</option>
-                        {activeCatalogItems.map((item) => (
-                          <option key={item.id} value={item.id}>{item.productName}</option>
-                        ))}
-                      </select>
-                      {linkedItem && <small className="muted">Pulls image, description &amp; datasheet from: {linkedItem.productName}</small>}
-                    </div>
-                    <button className="icon-button" type="button" onClick={() => onDeleteBomLine(selectedQuote.id, line.id)} aria-label="Remove line">x</button>
+                    {isEditing ? (
+                      <div className="quote-bom-line-edit" role="group" aria-label={`Edit ${line.item}`}>
+                        <input
+                          aria-label="Item name"
+                          value={editingBomLineDraft.item}
+                          onChange={(event) => setEditingBomLineDraft((current) => ({ ...current, item: event.target.value }))}
+                        />
+                        <input
+                          aria-label="Quantity"
+                          type="number"
+                          min={0.01}
+                          step={0.01}
+                          value={editingBomLineDraft.qty}
+                          onChange={(event) => setEditingBomLineDraft((current) => ({ ...current, qty: Number(event.target.value) }))}
+                        />
+                        <input
+                          aria-label="Notes"
+                          placeholder="Notes (optional)"
+                          value={editingBomLineDraft.notes}
+                          onChange={(event) => setEditingBomLineDraft((current) => ({ ...current, notes: event.target.value }))}
+                        />
+                        <select
+                          aria-label="Catalog link"
+                          value={editingBomLineDraft.catalogItemId}
+                          onChange={(event) => setEditingBomLineDraft((current) => ({ ...current, catalogItemId: event.target.value }))}
+                        >
+                          <option value="">No catalog link (labor/service line)</option>
+                          {activeCatalogItems.map((item) => (
+                            <option key={item.id} value={item.id}>{item.productName}</option>
+                          ))}
+                        </select>
+                        <div className="quote-bom-line-edit-actions">
+                          <button
+                            className="primary-action mini-action"
+                            type="button"
+                            disabled={isSavingBomLine || !editingBomLineDraft.item.trim() || !Number.isFinite(editingBomLineDraft.qty) || editingBomLineDraft.qty <= 0}
+                            onClick={async () => {
+                              setIsSavingBomLine(true);
+                              const saved = await onUpdateBomLine(selectedQuote.id, line.id, {
+                                item: editingBomLineDraft.item,
+                                qty: editingBomLineDraft.qty,
+                                notes: editingBomLineDraft.notes,
+                                catalogItemId: editingBomLineDraft.catalogItemId || null,
+                              });
+                              setIsSavingBomLine(false);
+                              if (saved) setEditingBomLineId(null);
+                            }}
+                          >
+                            {isSavingBomLine ? "Saving..." : "Save"}
+                          </button>
+                          <button className="secondary-action mini-action" type="button" disabled={isSavingBomLine} onClick={() => setEditingBomLineId(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <strong>{line.item}</strong>
+                          <span>Qty {line.qty}{line.notes ? ` -- ${line.notes}` : ""}</span>
+                          {line.sourceLocationId && (
+                            <small className="muted">
+                              {sourceLocation ? `Pulled from ${sourceLocation.name || "a location"}` : "Pulled from a location (since removed)"}
+                            </small>
+                          )}
+                          <select
+                            className="bom-line-catalog-link"
+                            value={line.catalogItemId ?? ""}
+                            onChange={(event) => onUpdateBomLineCatalogLink(selectedQuote.id, line.id, event.target.value || null)}
+                          >
+                            <option value="">No catalog link (labor/service line)</option>
+                            {activeCatalogItems.map((item) => (
+                              <option key={item.id} value={item.id}>{item.productName}</option>
+                            ))}
+                          </select>
+                          {linkedItem && <small className="muted">Pulls image, description &amp; datasheet from: {linkedItem.productName}</small>}
+                        </div>
+                        <div className="quote-bom-line-actions">
+                          <button
+                            className="secondary-action mini-action"
+                            type="button"
+                            onClick={() => {
+                              setEditingBomLineId(line.id);
+                              setEditingBomLineDraft({ item: line.item, qty: line.qty, notes: line.notes, catalogItemId: line.catalogItemId ?? "" });
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button className="icon-button" type="button" onClick={() => onDeleteBomLine(selectedQuote.id, line.id)} aria-label="Remove line">x</button>
+                        </div>
+                      </>
+                    )}
                   </li>
                 );
               })}

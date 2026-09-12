@@ -2257,6 +2257,26 @@ td small.quote-ref-tag {
   color: #a01029;
 }
 
+.quote-bom-line-actions,
+.quote-bom-line-edit-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.quote-bom-line-edit {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(180px, 2fr) minmax(80px, 0.6fr) minmax(180px, 2fr) minmax(200px, 2fr) auto;
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .quote-bom-line-edit {
+    grid-template-columns: 1fr;
+  }
+}
+
 .panel-title-row {
   align-items: flex-start;
   border-bottom: 1px solid #e8e1d5;

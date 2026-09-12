@@ -9951,6 +9951,41 @@ export async function updateSalesQuoteBomLineCatalogLink(id: string, catalogItem
   }
 }
 
+export async function updateSalesQuoteBomLine(
+  id: string,
+  updates: { item: string; qty: number; notes: string; catalogItemId: string | null },
+  accessToken?: string,
+): Promise<SalesQuoteBomLine> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Could not save this BOM line.");
+  }
+  const item = updates.item.trim();
+  if (!item || !Number.isFinite(updates.qty) || updates.qty <= 0) {
+    throw new Error("Enter an item name and a quantity greater than zero.");
+  }
+  const response = await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
+    method: "PATCH",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      item_name: item,
+      qty: updates.qty,
+      notes: updates.notes.trim() || null,
+      catalog_item_id: updates.catalogItemId || null,
+    }),
+  });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateSalesQuoteBomLine failed for line ${id} (${response.status}): ${bodyText}`);
+    throw new Error("Could not save this BOM line.");
+  }
+  const rows = (await response.json().catch(() => [])) as SalesQuoteBomLineRow[];
+  if (rows.length !== 1) {
+    console.error(`updateSalesQuoteBomLine affected ${rows.length} rows for line ${id}; expected exactly 1.`);
+    throw new Error("Could not save this BOM line.");
+  }
+  return mapSalesQuoteBomLineRow(rows[0]);
+}
+
 export async function deleteSalesQuoteBomLine(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return { ok: false, error: "Not configured." };
