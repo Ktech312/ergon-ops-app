@@ -5539,7 +5539,20 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
 
 export type BuildComponent = { itemName: string; qty: number };
 
+// equipmentTypeId (added for migration 130's save_equipment_recipe RPC,
+// not yet called by saveDeviceRecipes -- that wiring is a separate, later
+// step): the real, stable equipment_types.id, once loaded. Optional
+// because it doesn't exist for a recipe that only lives in local state and
+// hasn't round-tripped through a load yet (a brand-new recipe before its
+// first save). Once present, every edit path already carries it forward
+// unchanged (main.tsx's recipe edit handlers spread { ...recipe, ... }, so
+// no handler needed updating for this alone) -- it must be sent back on
+// every later save once the save path is wired to the new RPC, so the RPC
+// can update the same row (and correctly handle a rename) instead of
+// resolving by name every time, which is the exact bug
+// PRODUCT_EQUIPMENT_RECIPE_ATOMIC_SAVE_PLAN.md §2a documents.
 export type BuildRecipe = {
+  equipmentTypeId?: string;
   name: string;
   outputName: string;
   description: string;
@@ -5549,6 +5562,7 @@ export type BuildRecipe = {
 };
 
 type EquipmentTypeRow = {
+  id: string;
   equipment_name: string;
   description: string | null;
   image_url: string | null;
@@ -5558,10 +5572,11 @@ type EquipmentTypeRow = {
 };
 
 const EQUIPMENT_TYPE_SELECT =
-  "equipment_name,description,image_url,is_retired,output_item:inventory_items!output_inventory_item_id(item_name),equipment_bom_components(quantity_required,item:inventory_items(item_name))";
+  "id,equipment_name,description,image_url,is_retired,output_item:inventory_items!output_inventory_item_id(item_name),equipment_bom_components(quantity_required,item:inventory_items(item_name))";
 
 function mapEquipmentTypeRow(row: EquipmentTypeRow): BuildRecipe {
   return {
+    equipmentTypeId: row.id,
     name: row.equipment_name,
     outputName: row.output_item?.item_name ?? row.equipment_name,
     description: row.description ?? "",
@@ -5570,6 +5585,40 @@ function mapEquipmentTypeRow(row: EquipmentTypeRow): BuildRecipe {
       .filter((component) => component.item)
       .map((component) => ({ itemName: component.item!.item_name, qty: Number(component.quantity_required) || 0 })),
     retired: row.is_retired,
+  };
+}
+
+// The raw jsonb shape migration 130's save_equipment_recipe() RPC returns.
+// imageUrl comes back as a real JSON null when equipment_types.image_url
+// is null -- JSON has no "undefined," so the RPC cannot return exactly
+// BuildRecipe (whose imageUrl is `string | undefined`) without a mapping
+// step. Chosen contract (E's preference, 2026-09-11): the RPC returns
+// this raw shape as-is, and mapSaveEquipmentRecipeResult below is the one
+// place that converts it into a real BuildRecipe, preserving BuildRecipe's
+// existing null-to-undefined convention (matching mapEquipmentTypeRow's
+// own `row.image_url ?? undefined` above) rather than changing BuildRecipe
+// itself or every consumer that reads recipe.imageUrl today.
+export type SaveEquipmentRecipeResult = {
+  equipmentTypeId: string;
+  name: string;
+  outputName: string;
+  description: string;
+  imageUrl: string | null;
+  retired: boolean;
+  components: BuildComponent[];
+};
+
+// Called by saveDeviceRecipes below on every save_equipment_recipe RPC
+// response.
+export function mapSaveEquipmentRecipeResult(raw: SaveEquipmentRecipeResult): BuildRecipe {
+  return {
+    equipmentTypeId: raw.equipmentTypeId,
+    name: raw.name,
+    outputName: raw.outputName,
+    description: raw.description,
+    imageUrl: raw.imageUrl ?? undefined,
+    retired: raw.retired,
+    components: raw.components,
   };
 }
 
@@ -5587,279 +5636,66 @@ export async function loadDeviceRecipes(accessToken?: string): Promise<BuildReci
   return rows.map(mapEquipmentTypeRow);
 }
 
-export async function saveDeviceRecipes(recipes: BuildRecipe[], accessToken?: string): Promise<void> {
+// Migration 130 moved this whole function's several separate,
+// independently-committing PostgREST requests per recipe (equipment_types
+// PATCH/INSERT, a bulk BOM upsert, a BOM cleanup DELETE, plus two upfront
+// preflight lookups to catch bad component names before writing anything)
+// into one atomic, security-definer RPC (rpc/save_equipment_recipe) --
+// component-name resolution/ambiguity/duplicate checks, the
+// equipment_types upsert, and the BOM reconciliation all happen inside a
+// single Postgres transaction per recipe now, so a partial failure can no
+// longer leave one recipe half-written the way the old multi-request
+// version could. Recipes are still processed one at a time in a plain
+// loop (not batched into one call) and this still stops at the first
+// failing recipe rather than skip-and-continue -- same "no silent partial
+// save" semantics as before, now backed by real per-recipe atomicity
+// instead of just visibility into a non-atomic sequence.
+//
+// equipmentTypeId (an existing recipe's real, stable id, once loaded via
+// loadDeviceRecipes) is sent as p_equipment_type_id so the RPC updates
+// that exact row rather than re-resolving by name -- closing the
+// rename-creates-a-duplicate bug that name-only resolution had. A brand
+// new recipe (no equipmentTypeId yet) sends null and the RPC creates it.
+// The RPC's own return value (the freshly saved recipe, in BuildRecipe's
+// own shape) is converted via mapSaveEquipmentRecipeResult and returned
+// here so the caller can backfill a new recipe's real id into local
+// state -- without that, a recipe created this session would keep
+// resolving saves by name (the same bug this was meant to close) until
+// the next full reload.
+export async function saveDeviceRecipes(recipes: BuildRecipe[], accessToken?: string): Promise<BuildRecipe[]> {
   if (!isRemotePersistenceConfigured() || !accessToken || recipes.length === 0) {
-    return;
+    return recipes;
   }
 
-  // One query resolves every item name (recipe outputs + component lines)
-  // referenced anywhere in the current recipe set to its inventory_items.id.
-  const itemNames = new Set<string>();
-  recipes.forEach((recipe) => {
-    itemNames.add(recipe.outputName);
-    recipe.components.forEach((component) => itemNames.add(component.itemName));
-  });
-  const namesParam = Array.from(itemNames)
-    .map((name) => `"${name.replace(/"/g, '\\"')}"`)
-    .join(",");
-  // Overnight audit (2026-09-11, PRODUCT_ERROR_VISIBILITY_AUDIT.md Addendum
-  // 2): this whole function used to treat every one of the fetches below as
-  // best-effort -- the two lookups silently degraded to an empty map on
-  // failure (which, given equipment_name has a real unique index, migration
-  // 020, meant every existing recipe would then be silently dropped rather
-  // than saved -- the unique constraint prevents duplicate rows, it doesn't
-  // prevent the update from being lost), the per-recipe PATCH result was
-  // discarded outright, a failed INSERT just `continue`d to the next recipe
-  // with no record of which one or how many, and both component-line writes
-  // were fire-and-forget. None of that could ever surface to a caller,
-  // because nothing here ever threw. Every step below now checks .ok (and,
-  // for the writes PostgREST can report a row count for, that the count is
-  // exactly what was expected) and throws immediately on the first failure
-  // -- matching saveInventoryItems/saveProjectSites' now-established
-  // pattern: log the real status/body for diagnosis, throw only a plain
-  // message for the caller. This intentionally stops at the first failing
-  // recipe rather than skip-and-continue -- a partial "3 of 5 recipes
-  // saved, silently" is the same failure shape being fixed, not a softer
-  // version of it.
-  //
-  // Corrected 2026-09-11 (same day, review): this is a visibility and
-  // input-validation fix, NOT a transactional/atomic one -- do not
-  // describe it that way. Each recipe is still written with several
-  // separate, independently-committing PostgREST requests, and recipes
-  // are still processed one at a time in a plain loop, not inside one
-  // database transaction. Concretely: if recipe 2 of 3 fails, recipe 1's
-  // writes remain committed (this function does not, and cannot without
-  // a real RPC, roll them back); within recipe 2 itself, its own
-  // equipment_types write can succeed and commit before a later
-  // component-line write for that same recipe fails. What changed is
-  // that this is no longer silent -- the caller now reliably learns a
-  // failure happened and processing stops there, and the two preflight
-  // checks above (component-name resolution, duplicate components within
-  // one recipe) catch real bad input before any write at all for the
-  // whole batch. Whole-call atomicity (all recipes succeed or none do)
-  // and per-recipe atomicity (one recipe's own writes succeed or none of
-  // them do) both remain open follow-up work -- an RPC the same shape as
-  // `PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md`'s, not built here or now.
-  const itemsResponse = await fetch(supabaseUrl(`inventory_items?select=id,item_name&item_name=in.(${namesParam})`), {
-    headers: supabaseHeaders(accessToken),
-  });
-  if (!itemsResponse.ok) {
-    const bodyText = await itemsResponse.text().catch(() => "");
-    console.error(`saveDeviceRecipes: inventory_items lookup failed (${itemsResponse.status}): ${bodyText}`);
-    throw new Error("Some equipment recipes could not be saved.");
-  }
-  const itemRows = (await itemsResponse.json()) as Array<{ id: string; item_name: string }>;
-  const itemIdByName = new Map(itemRows.map((row) => [row.item_name, row.id]));
-
-  // Preflight, reviewed 2026-09-11: a component name that doesn't resolve
-  // to exactly one inventory_items row used to be silently dropped from
-  // BOTH componentPayload (the .filter(id !== null) below never wrote it)
-  // AND desiredComponentIds (the "what should still exist" set) -- so the
-  // cleanup step further down would then see that component's *existing*
-  // row as no longer wanted and DELETE it, with nothing written to
-  // replace it. Net effect: a real, previously-saved component silently
-  // disappears the moment its catalog name stops resolving (renamed or
-  // deleted item, or -- the other real risk -- a duplicate item_name in
-  // the catalog, since itemIdByName is a Map and would have silently
-  // picked whichever duplicate row the query happened to return last).
-  // Fixed by checking every component name across every recipe BEFORE any
-  // write happens (not just for the one affected recipe -- rejecting the
-  // whole save is the same "stop before writing" principle already
-  // applied to the BOM RPC design's own ambiguous-name handling): zero
-  // matches or more than one both reject the entire call, nothing is
-  // silently omitted or arbitrarily chosen. outputName is deliberately
-  // NOT covered by this check -- output_inventory_item_id already
-  // tolerates being null (see below), and that existing behavior isn't
-  // being changed here.
-  const itemNameCounts = new Map<string, number>();
-  itemRows.forEach((row) => {
-    itemNameCounts.set(row.item_name, (itemNameCounts.get(row.item_name) ?? 0) + 1);
-  });
-  const unresolvedComponents: string[] = [];
-  const ambiguousComponents: string[] = [];
-  recipes.forEach((recipe) => {
-    recipe.components.forEach((component) => {
-      const count = itemNameCounts.get(component.itemName) ?? 0;
-      if (count === 0) {
-        unresolvedComponents.push(`${recipe.name} -> "${component.itemName}"`);
-      } else if (count > 1) {
-        ambiguousComponents.push(`${recipe.name} -> "${component.itemName}" (${count} catalog matches)`);
-      }
-    });
-  });
-  if (unresolvedComponents.length > 0 || ambiguousComponents.length > 0) {
-    console.error(
-      `saveDeviceRecipes: rejecting the entire save before any write -- unresolved component name(s): [${unresolvedComponents.join(", ")}]; ambiguous (duplicate catalog match) component name(s): [${ambiguousComponents.join(", ")}].`,
-    );
-    throw new Error("Some equipment recipes could not be saved.");
-  }
-
-  // Second preflight, reviewed 2026-09-11 (same day): two component
-  // entries within the SAME recipe that resolve to the same
-  // inventory_item_id (identical names, most commonly, but any two names
-  // resolving to the same catalog row have the same problem) would
-  // produce duplicate (equipment_type_id, inventory_item_id) rows in the
-  // same bulk equipment_bom_components upsert below -- a real
-  // on_conflict-target uniqueness violation Postgres can reject, and by
-  // the time it does, this recipe's own equipment_types write may
-  // already have committed. Scoped per-recipe (a fresh map per recipe),
-  // not globally -- two DIFFERENT recipes legitimately sharing a
-  // component is normal and not a duplicate. Deliberately does NOT
-  // combine the duplicate's quantities into one line automatically --
-  // that's a business-behavior decision, not something to guess at here.
-  const duplicateComponentEntries: string[] = [];
-  recipes.forEach((recipe) => {
-    const seenInventoryItemIdToName = new Map<string, string>();
-    recipe.components.forEach((component) => {
-      const inventoryItemId = itemIdByName.get(component.itemName);
-      if (!inventoryItemId) {
-        return; // already rejected above as unresolved/ambiguous
-      }
-      const firstSeenName = seenInventoryItemIdToName.get(inventoryItemId);
-      if (firstSeenName) {
-        duplicateComponentEntries.push(
-          firstSeenName === component.itemName
-            ? `${recipe.name} -> "${component.itemName}" (listed more than once)`
-            : `${recipe.name} -> "${firstSeenName}" and "${component.itemName}" resolve to the same catalog item`,
-        );
-      } else {
-        seenInventoryItemIdToName.set(inventoryItemId, component.itemName);
-      }
-    });
-  });
-  if (duplicateComponentEntries.length > 0) {
-    console.error(
-      `saveDeviceRecipes: rejecting the entire save before any write -- duplicate component(s) within a single recipe: [${duplicateComponentEntries.join(", ")}].`,
-    );
-    throw new Error("Some equipment recipes could not be saved.");
-  }
-
-  // Which recipes already exist (by equipment_name, the natural key)?
-  const existingResponse = await fetch(supabaseUrl("equipment_types?select=id,equipment_name"), {
-    headers: supabaseHeaders(accessToken),
-  });
-  if (!existingResponse.ok) {
-    const bodyText = await existingResponse.text().catch(() => "");
-    console.error(`saveDeviceRecipes: equipment_types lookup failed (${existingResponse.status}): ${bodyText}`);
-    throw new Error("Some equipment recipes could not be saved.");
-  }
-  const existingRows = (await existingResponse.json()) as Array<{ id: string; equipment_name: string }>;
-  const equipmentIdByName = new Map(existingRows.map((row) => [row.equipment_name, row.id]));
-
+  const saved: BuildRecipe[] = [];
   for (const recipe of recipes) {
-    const outputInventoryItemId = itemIdByName.get(recipe.outputName) ?? null;
-    const fields = {
-      description: recipe.description || null,
-      image_url: recipe.imageUrl || null,
-      output_inventory_item_id: outputInventoryItemId,
-      is_retired: Boolean(recipe.retired),
-      retired_at: recipe.retired ? new Date().toISOString() : null,
-    };
-
-    let equipmentTypeId = equipmentIdByName.get(recipe.name);
-    if (equipmentTypeId) {
-      const updateResponse = await fetch(supabaseUrl(`equipment_types?id=eq.${equipmentTypeId}`), {
-        method: "PATCH",
-        headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-        body: JSON.stringify(fields),
-      });
-      if (!updateResponse.ok) {
-        const bodyText = await updateResponse.text().catch(() => "");
-        console.error(`saveDeviceRecipes: equipment_types update failed for "${recipe.name}" (${updateResponse.status}): ${bodyText}`);
-        throw new Error("Some equipment recipes could not be saved.");
-      }
-      const updatedRows = (await updateResponse.json().catch(() => [])) as unknown[];
-      if (updatedRows.length === 0) {
-        console.error(`saveDeviceRecipes: equipment_types update for "${recipe.name}" (id ${equipmentTypeId}) affected 0 rows -- likely blocked by RLS.`);
-        throw new Error("Some equipment recipes could not be saved.");
-      }
-    } else {
-      const insertResponse = await fetch(supabaseUrl("equipment_types"), {
-        method: "POST",
-        headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-        body: JSON.stringify({
-          equipment_number: `EQ-${Date.now().toString(36).toUpperCase()}-${Math.round(Math.random() * 999)}`,
-          equipment_name: recipe.name,
-          ...fields,
-        }),
-      });
-      if (!insertResponse.ok) {
-        const bodyText = await insertResponse.text().catch(() => "");
-        console.error(`saveDeviceRecipes: equipment_types insert failed for "${recipe.name}" (${insertResponse.status}): ${bodyText}`);
-        throw new Error("Some equipment recipes could not be saved.");
-      }
-      const created = (await insertResponse.json()) as Array<{ id: string }>;
-      equipmentTypeId = created[0]?.id;
-      if (!equipmentTypeId) {
-        console.error(`saveDeviceRecipes: equipment_types insert for "${recipe.name}" returned no row.`);
-        throw new Error("Some equipment recipes could not be saved.");
-      }
-    }
-
-    // Reconcile BOM component lines: upsert current ones, delete removed ones.
-    const desiredComponentIds = recipe.components
-      .map((component) => itemIdByName.get(component.itemName))
-      .filter((id): id is string => Boolean(id));
-
-    const componentPayload = recipe.components
-      .map((component, index) => {
-        const inventoryItemId = itemIdByName.get(component.itemName);
-        return inventoryItemId
-          ? { equipment_type_id: equipmentTypeId, inventory_item_id: inventoryItemId, quantity_required: Math.max(0.01, component.qty), line_sort: index, is_active: true }
-          : null;
-      })
-      .filter((row): row is { equipment_type_id: string; inventory_item_id: string; quantity_required: number; line_sort: number; is_active: boolean } => row !== null);
-
-    if (componentPayload.length > 0) {
-      const componentResponse = await fetch(supabaseUrl("equipment_bom_components?on_conflict=equipment_type_id,inventory_item_id"), {
-        method: "POST",
-        headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
-        body: JSON.stringify(componentPayload),
-      });
-      if (!componentResponse.ok) {
-        const bodyText = await componentResponse.text().catch(() => "");
-        console.error(`saveDeviceRecipes: equipment_bom_components write failed for "${recipe.name}" (${componentResponse.status}): ${bodyText}`);
-        throw new Error("Some equipment recipes could not be saved.");
-      }
-      const savedComponentRows = (await componentResponse.json().catch(() => [])) as unknown[];
-      if (savedComponentRows.length !== componentPayload.length) {
-        console.error(
-          `saveDeviceRecipes: equipment_bom_components write for "${recipe.name}" returned ${savedComponentRows.length} row(s), expected ${componentPayload.length} -- integrity check failed.`,
-        );
-        throw new Error("Some equipment recipes could not be saved.");
-      }
-    }
-
-    const existingComponentsResponse = await fetch(
-      supabaseUrl(`equipment_bom_components?equipment_type_id=eq.${equipmentTypeId}&select=inventory_item_id`),
-      { headers: supabaseHeaders(accessToken) },
-    );
-    if (!existingComponentsResponse.ok) {
-      const bodyText = await existingComponentsResponse.text().catch(() => "");
-      console.error(`saveDeviceRecipes: equipment_bom_components lookup failed for "${recipe.name}" (${existingComponentsResponse.status}): ${bodyText}`);
+    const response = await fetch(supabaseUrl("rpc/save_equipment_recipe"), {
+      method: "POST",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({
+        p_equipment_type_id: recipe.equipmentTypeId ?? null,
+        p_equipment_name: recipe.name,
+        p_description: recipe.description || null,
+        p_image_url: recipe.imageUrl || null,
+        p_retired: Boolean(recipe.retired),
+        p_output_inventory_item_id: null,
+        p_output_item_name: recipe.outputName || null,
+        p_components: recipe.components.map((component, index) => ({
+          item_name: component.itemName,
+          quantity_required: component.qty,
+          line_sort: index,
+        })),
+      }),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
+      console.error(`saveDeviceRecipes: save_equipment_recipe RPC failed for "${recipe.name}" (${response.status}):`, body);
       throw new Error("Some equipment recipes could not be saved.");
     }
-    const existingComponentRows = (await existingComponentsResponse.json()) as Array<{ inventory_item_id: string }>;
-    const toRemove = existingComponentRows.map((row) => row.inventory_item_id).filter((id) => !desiredComponentIds.includes(id));
-    if (toRemove.length > 0) {
-      const removeResponse = await fetch(
-        supabaseUrl(`equipment_bom_components?equipment_type_id=eq.${equipmentTypeId}&inventory_item_id=in.(${toRemove.join(",")})`),
-        { method: "DELETE", headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" } },
-      );
-      if (!removeResponse.ok) {
-        const bodyText = await removeResponse.text().catch(() => "");
-        console.error(`saveDeviceRecipes: equipment_bom_components delete failed for "${recipe.name}" (${removeResponse.status}): ${bodyText}`);
-        throw new Error("Some equipment recipes could not be saved.");
-      }
-      const removedRows = (await removeResponse.json().catch(() => [])) as unknown[];
-      if (removedRows.length !== toRemove.length) {
-        console.error(
-          `saveDeviceRecipes: equipment_bom_components delete for "${recipe.name}" removed ${removedRows.length} row(s), expected ${toRemove.length} -- integrity check failed.`,
-        );
-        throw new Error("Some equipment recipes could not be saved.");
-      }
-    }
+    const raw = (await response.json()) as SaveEquipmentRecipeResult;
+    saved.push(mapSaveEquipmentRecipeResult(raw));
   }
+  return saved;
 }
 
 // Bug found 2026-08-22: "Delete Equipment Type" only ever removed a recipe

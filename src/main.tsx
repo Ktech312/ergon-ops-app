@@ -1657,11 +1657,34 @@ function App() {
       return;
     }
     const syncTimer = window.setTimeout(() => {
-      saveDeviceRecipes(deviceRecipes, authSession.accessToken).catch((error) => {
-        console.error("Cloud save failed for equipment recipes:", error);
-        setSyncStatus("error");
-        setAuthStatus("Some equipment recipe changes could not be saved. Try again. If the problem continues, contact support.");
-      });
+      saveDeviceRecipes(deviceRecipes, authSession.accessToken)
+        .then((saved) => {
+          // Backfill only: a brand-new recipe has no equipmentTypeId until
+          // this save resolves and the RPC reports the id it created. Only
+          // apply that one field, and only when it actually changed --
+          // never overwrite with the full server-echoed recipe, since the
+          // user may have kept editing while this save was in flight, and
+          // returning the exact same state array (not a new one) when
+          // nothing changed lets React bail out instead of re-triggering
+          // this same effect and re-saving forever.
+          setDeviceRecipes((current) => {
+            let changed = false;
+            const next = current.map((recipe) => {
+              const match = saved.find((entry) => entry.name === recipe.name);
+              if (match?.equipmentTypeId && recipe.equipmentTypeId !== match.equipmentTypeId) {
+                changed = true;
+                return { ...recipe, equipmentTypeId: match.equipmentTypeId };
+              }
+              return recipe;
+            });
+            return changed ? next : current;
+          });
+        })
+        .catch((error) => {
+          console.error("Cloud save failed for equipment recipes:", error);
+          setSyncStatus("error");
+          setAuthStatus("Some equipment recipe changes could not be saved. Try again. If the problem continues, contact support.");
+        });
     }, 650);
     return () => window.clearTimeout(syncTimer);
   }, [deviceRecipes, authSession]);
