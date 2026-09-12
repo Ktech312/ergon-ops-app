@@ -4963,6 +4963,8 @@ function App() {
   // Revision on a public page with no login.
   function buildProposalSnapshot(quote: SalesQuote): ProposalSnapshot {
     return {
+      companyName: branding.companyName,
+      companyLogoUrl: branding.logoStoragePath ? companyLogoUrl(branding.logoStoragePath) ?? "" : "",
       clientName: quote.clientName,
       siteName: quote.siteName,
       city: quote.city,
@@ -25246,6 +25248,7 @@ function ProposalPublicPage({ token }: { token: string }) {
   }
 
   const snapshot = data.contentSnapshot;
+  const proposalCompanyName = snapshot.companyName?.trim() || "Ergon";
   const respondedDateLabel = respondedAt ? new Date(respondedAt).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : "";
   const respondedByLabel = respondedByName ? ` by ${respondedByName}` : "";
 
@@ -25256,6 +25259,10 @@ function ProposalPublicPage({ token }: { token: string }) {
       </div>
 
       <header className="submittal-public-header">
+        <div className="proposal-public-brand">
+          {snapshot.companyLogoUrl && <img src={snapshot.companyLogoUrl} alt={`${proposalCompanyName} logo`} />}
+          <strong>{proposalCompanyName}</strong>
+        </div>
         <h1>{snapshot.siteName}</h1>
         <p>Proposal v{data.version}{snapshot.clientName ? ` - ${snapshot.clientName}` : ""}{snapshot.city ? ` - ${snapshot.city}` : ""}</p>
         {snapshot.quoteRef && <p className="muted">Reference {snapshot.quoteRef}</p>}
@@ -25293,11 +25300,11 @@ function ProposalPublicPage({ token }: { token: string }) {
           <tbody>
             {snapshot.bom.map((line, index) => (
               <tr key={`${line.item}-${index}`}>
-                <td>{line.imageUrl ? <img className="proposal-bom-thumb" src={line.imageUrl} alt={line.item} /> : null}</td>
-                <td><strong>{line.item}</strong>{line.manufacturer ? <span className="muted"> - {line.manufacturer}</span> : null}</td>
-                <td>{line.description || line.notes || "-"}</td>
-                <td>{line.qty}</td>
-                <td>{line.hasDatasheet ? <a href={line.datasheetUrl} target="_blank" rel="noreferrer">View datasheet</a> : "-"}</td>
+                <td data-label="Image">{line.imageUrl ? <img className="proposal-bom-thumb" src={line.imageUrl} alt={line.item} /> : null}</td>
+                <td data-label="Item"><strong>{line.item}</strong>{line.manufacturer ? <span className="muted"> - {line.manufacturer}</span> : null}</td>
+                <td data-label="Description">{line.description || line.notes || "-"}</td>
+                <td data-label="Qty">{line.qty}</td>
+                <td data-label="Datasheet">{line.hasDatasheet ? <a href={line.datasheetUrl} target="_blank" rel="noreferrer">View datasheet</a> : "-"}</td>
               </tr>
             ))}
             {snapshot.bom.length === 0 && (

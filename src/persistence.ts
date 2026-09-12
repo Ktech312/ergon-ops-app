@@ -11636,6 +11636,8 @@ export type ProposalBomLineSnapshot = {
 export type ProposalTemplateSectionSnapshot = { title: string; body: string };
 
 export type ProposalSnapshot = {
+  companyName?: string;
+  companyLogoUrl?: string;
   clientName: string;
   siteName: string;
   city: string;

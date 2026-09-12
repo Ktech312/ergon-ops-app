@@ -6232,6 +6232,24 @@ td.empty-compact-state {
   margin: 0;
 }
 
+.proposal-public-brand {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.proposal-public-brand img {
+  height: 42px;
+  max-width: 180px;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.proposal-public-brand strong {
+  font-size: 16px;
+}
+
 .submittal-response-banner {
   border-radius: 10px;
   display: inline-block;
