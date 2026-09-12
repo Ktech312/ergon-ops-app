@@ -267,12 +267,13 @@ import {
   revokeAdmin,
   createDeviceRecipeClientId,
   createDeviceRecipeSaveQueue,
+  createProjectBomLineClientId,
+  createProjectSiteSaveQueue,
   deleteEquipmentType,
   deleteInventoryItem,
   saveInventoryItems,
   saveLocalAppState,
   saveMovementsBuildsAllocations,
-  saveProjectSites,
   saveRemoteAppState,
   saveUserRoleMode,
   releaseTransactionLock,
@@ -1177,6 +1178,14 @@ function App() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => (isRemotePersistenceConfigured() ? "loading" : "local"));
+  const projectSiteSaveQueueRef = useRef<ReturnType<typeof createProjectSiteSaveQueue> | null>(null);
+  if (!projectSiteSaveQueueRef.current) {
+    projectSiteSaveQueueRef.current = createProjectSiteSaveQueue(setProjectSites, (error) => {
+      console.error("Cloud save failed for projects:", error);
+      setSyncStatus("error");
+      setAuthStatus("Some project changes could not be saved. Try again. If the problem continues, contact support.");
+    });
+  }
   const [isAdmin, setIsAdmin] = useState(false);
   const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
   const [userRoleMap, setUserRoleMap] = useState<Record<string, UserRoles>>({});
@@ -1619,11 +1628,7 @@ function App() {
       return;
     }
     const syncTimer = window.setTimeout(() => {
-      saveProjectSites(projectSites, authSession.accessToken).catch((error) => {
-        console.error("Cloud save failed for projects:", error);
-        setSyncStatus("error");
-        setAuthStatus("Some project changes could not be saved. Try again. If the problem continues, contact support.");
-      });
+      projectSiteSaveQueueRef.current?.enqueue(projectSites, authSession.accessToken);
     }, 650);
     return () => window.clearTimeout(syncTimer);
   }, [projectSites, authSession]);
@@ -5264,6 +5269,7 @@ function App() {
               bom: [
                 ...project.bom,
                 ...quote.bomLines.map((line) => ({
+                  clientId: createProjectBomLineClientId(),
                   item: line.item,
                   qty: line.qty,
                   status: "Not started" as BomLine["status"],
@@ -6000,6 +6006,7 @@ function App() {
               bom: [
                 ...project.bom,
                 {
+                  clientId: createProjectBomLineClientId(),
                   item: part.name,
                   qty: transferQty,
                   status: "From Inventory",
@@ -11880,9 +11887,9 @@ function Projects({
       siteNotes: "Draft project record. Add garage/lot details, install requirements, and BOM lines before sending to Procurement.",
       sow: blankSow,
       bom: [
-        { item: "Single Lens Camera", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add expected camera count" },
-        { item: "VPU / Edge Compute", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add processing needs" },
-        { item: "Network / PoE Hardware", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add switches, enclosures, UPS, and cable needs" },
+        { clientId: createProjectBomLineClientId(), item: "Single Lens Camera", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add expected camera count" },
+        { clientId: createProjectBomLineClientId(), item: "VPU / Edge Compute", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add processing needs" },
+        { clientId: createProjectBomLineClientId(), item: "Network / PoE Hardware", qty: 0, status: "Need Quote", requestSpeed: "Standard", notes: "Add switches, enclosures, UPS, and cable needs" },
       ],
     };
     setProjectSites((current) => [draftProject, ...current]);
@@ -12033,6 +12040,7 @@ function Projects({
               bom: [
                 ...project.bom,
                 ...bomImportRows.map((row) => ({
+                  clientId: createProjectBomLineClientId(),
                   item: row.item,
                   qty: row.qty,
                   status: "Not started" as BomLine["status"],
@@ -12089,6 +12097,12 @@ function Projects({
           ? "Will be requested as a direct-to-project purchase once approved."
           : "Will be requested for Procurement to order into warehouse stock once approved.";
     const line: BomLine = {
+      clientId:
+        editingBomIndex !== null
+          ? selectedProject.bom[editingBomIndex]?.clientId ?? selectedProject.bom[editingBomIndex]?.id ?? createProjectBomLineClientId()
+          : createProjectBomLineClientId(),
+      id: editingBomIndex !== null ? selectedProject.bom[editingBomIndex]?.id : undefined,
+      sku: editingBomIndex !== null ? selectedProject.bom[editingBomIndex]?.sku : undefined,
       item,
       qty,
       status: "Not started",

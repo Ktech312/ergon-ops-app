@@ -33,12 +33,12 @@ import { saveInventoryItems, saveProjectSites, restoreFullBackupSnapshot, type P
 //   instead of being swallowed, which is what stops a caller from ever
 //   showing a false success message after a real partial write.
 //
-// Deliberately NOT covered here: saveProjectSites' BOM delete-then-
-// reinsert. See its own "NOT COVERED" comment in persistence.ts -- a
-// row-count check there could only detect the INSERT failing, it could
-// never undo the DELETE that already ran, so it isn't a real fix and
-// isn't tested as if it were one. See PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md
-// for the separate, not-yet-implemented design for that.
+// Updated 2026-09-12: saveProjectSites' BOM lines are no longer a
+// delete-then-reinsert pair of unchecked requests -- migration 131
+// (replace_project_bom_lines) moved that into one atomic RPC call per
+// project. See the dedicated "saveProjectSites -- BOM line RPC" describe
+// block below for coverage of the new call shape; the scope-of-work tests
+// in this file are otherwise unchanged.
 //
 // Also added 2026-09-11 (task 2, overnight local-only pass): the
 // pre-existing inventory_items (item metadata) row-count check --
@@ -111,17 +111,12 @@ function installFetchRouter(routes: {
   balances?: ReturnType<typeof respond>;
   projects?: ReturnType<typeof respond>;
   scope?: ReturnType<typeof respond>;
-  bomLookup?: ReturnType<typeof respond>;
-  bomDelete?: ReturnType<typeof respond>;
-  bomInsert?: ReturnType<typeof respond>;
+  bomRpc?: ReturnType<typeof respond>;
 }) {
   const mock = vi.fn().mockImplementation(async (input) => {
     const url = String(input);
     if (url.includes("/inventory_items?on_conflict=sku")) {
       return routes.items ?? respond(true, 200, []);
-    }
-    if (url.includes("/inventory_items?select=")) {
-      return routes.bomLookup ?? respond(true, 200, []);
     }
     if (url.includes("/locations?select=")) {
       return routes.locations ?? respond(true, 200, [{ id: "loc-1" }]);
@@ -135,11 +130,8 @@ function installFetchRouter(routes: {
     if (url.includes("/project_scope_of_work?on_conflict=")) {
       return routes.scope ?? respond(true, 200, []);
     }
-    if (url.includes("/project_bom_lines?project_id=in.")) {
-      return routes.bomDelete ?? respond(true, 200, []);
-    }
-    if (url.includes("/project_bom_lines")) {
-      return routes.bomInsert ?? respond(true, 200, []);
+    if (url.includes("/rpc/replace_project_bom_lines")) {
+      return routes.bomRpc ?? respond(true, 200, { projectId: "proj-1", updatedCount: 0, insertedCount: 0, deletedCount: 0, lines: [] });
     }
     throw new Error(`Unmocked fetch call in test: ${url}`);
   });
@@ -270,6 +262,20 @@ describe("saveInventoryItems -- inventory_balances write verification", () => {
   });
 });
 
+describe("saveProjectSites -- projects write verification", () => {
+  it("throws a plain message and logs the status/body when the projects write fails outright", async () => {
+    installFetchRouter({ projects: respond(false, 500, { message: "constraint violation" }) });
+    await expect(saveProjectSites([makeSite()], "token")).rejects.toThrow("Could not save projects: 500");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("saveProjectSites: projects write failed (500)"));
+  });
+
+  it("throws and logs when the projects write returns 200 OK but wrote fewer rows than sent", async () => {
+    installFetchRouter({ projects: respond(true, 200, []) });
+    await expect(saveProjectSites([makeSite()], "token")).rejects.toThrow("Some project changes could not be saved.");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("returned 0 row(s), expected 1"));
+  });
+});
+
 describe("saveProjectSites -- project_scope_of_work write verification", () => {
   it("throws a plain message and logs the status/body when the scope-of-work write fails outright", async () => {
     installFetchRouter({
@@ -294,39 +300,108 @@ describe("saveProjectSites -- project_scope_of_work write verification", () => {
     installFetchRouter({
       projects: respond(true, 200, [{ id: "proj-1", project_name: "Test Project" }]),
       scope: respond(true, 200, [{ project_id: "proj-1" }]),
-      bomDelete: respond(true, 200, []),
     });
-    await expect(saveProjectSites([makeSite()], "token")).resolves.toBeUndefined();
+    await expect(saveProjectSites([makeSite()], "token")).resolves.toEqual([expect.objectContaining({ name: "Test Project", bom: [] })]);
     expect(console.error).not.toHaveBeenCalled();
   });
 });
 
-describe("a thrown write-verification error reaches a real caller, not just the function under test", () => {
-  // restoreFullBackupSnapshot awaits saveInventoryItems/saveProjectSites
-  // directly with no try/catch of its own -- this is the actual caller
-  // main.tsx's importBackup relies on to know a restore partially failed.
-  // Before this fix, neither underlying write ever threw for this failure
-  // shape, so restoreFullBackupSnapshot resolved normally and importBackup
-  // showed "Backup restored." even though stock levels or scope-of-work
-  // text silently didn't persist. Proving the rejection reaches this real
-  // caller is what proves that false-success path is now closed.
-  it("propagates a saveInventoryItems balance-write failure out of restoreFullBackupSnapshot", async () => {
+describe("saveProjectSites -- BOM line RPC (migration 131, replace_project_bom_lines)", () => {
+  it("sends a new BOM line (no id yet) with id: null", async () => {
+    const fetchMock = installFetchRouter({
+      projects: respond(true, 200, [{ id: "proj-1", project_name: "Test Project" }]),
+      scope: respond(true, 200, [{ project_id: "proj-1" }]),
+      bomRpc: respond(true, 200, {
+        projectId: "proj-1",
+        updatedCount: 0,
+        insertedCount: 1,
+        deletedCount: 0,
+        lines: [{ id: "line-1", item: "Widget", sku: "SKU-1", qty: 2, status: "Not started", requestSpeed: "Standard", po: null, notes: null, procurementTrack: "warehouse_stock", sentToPurchasingAt: null, shipTo: null }],
+      }),
+    });
+    await saveProjectSites([makeSite({ bom: [{ item: "Widget", qty: 2, status: "Not started", requestSpeed: "Standard" }] })], "token");
+    const rpcCall = fetchMock.mock.calls.find((call: unknown[]) => String(call[0]).includes("/rpc/replace_project_bom_lines"));
+    const body = JSON.parse((rpcCall![1] as { body: string }).body);
+    expect(body).toMatchObject({ p_project_id: "proj-1", p_lines: [expect.objectContaining({ id: null, item_name: "Widget" })] });
+  });
+
+  it("sends an existing BOM line's real id and sku", async () => {
+    const fetchMock = installFetchRouter({
+      projects: respond(true, 200, [{ id: "proj-1", project_name: "Test Project" }]),
+      scope: respond(true, 200, [{ project_id: "proj-1" }]),
+    });
+    await saveProjectSites([makeSite({ bom: [{ id: "line-1", sku: "SKU-1", item: "Widget", qty: 2, status: "Not started", requestSpeed: "Standard" }] })], "token");
+    const rpcCall = fetchMock.mock.calls.find((call: unknown[]) => String(call[0]).includes("/rpc/replace_project_bom_lines"));
+    const body = JSON.parse((rpcCall![1] as { body: string }).body);
+    expect(body).toMatchObject({ p_lines: [expect.objectContaining({ id: "line-1", sku: "SKU-1" })] });
+  });
+
+  it("backfills the RPC's returned line id/sku into the returned site", async () => {
+    installFetchRouter({
+      projects: respond(true, 200, [{ id: "proj-1", project_name: "Test Project" }]),
+      scope: respond(true, 200, [{ project_id: "proj-1" }]),
+      bomRpc: respond(true, 200, {
+        projectId: "proj-1",
+        updatedCount: 0,
+        insertedCount: 1,
+        deletedCount: 0,
+        lines: [{ id: "line-1", item: "Widget", sku: "SKU-1", qty: 2, status: "Not started", requestSpeed: "Standard", po: null, notes: null, procurementTrack: "warehouse_stock", sentToPurchasingAt: null, shipTo: null }],
+      }),
+    });
+    const saved = await saveProjectSites([makeSite({ bom: [{ item: "Widget", qty: 2, status: "Not started", requestSpeed: "Standard" }] })], "token");
+    expect(saved[0].bom).toEqual([expect.objectContaining({ id: "line-1", sku: "SKU-1" })]);
+  });
+
+  it("throws a plain message and logs detail when the RPC fails outright", async () => {
+    installFetchRouter({
+      projects: respond(true, 200, [{ id: "proj-1", project_name: "Test Project" }]),
+      scope: respond(true, 200, [{ project_id: "proj-1" }]),
+      bomRpc: respond(false, 400, { message: "these item names match more than one catalog item", code: "EC024" }),
+    });
+    await expect(
+      saveProjectSites([makeSite({ bom: [{ item: "Ambiguous Item", qty: 1, status: "Not started", requestSpeed: "Standard" }] })], "token"),
+    ).rejects.toThrow("Some project BOM changes could not be saved.");
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('replace_project_bom_lines RPC failed for "Test Project" (400)'),
+      expect.objectContaining({ code: "EC024" }),
+    );
+  });
+});
+
+// Updated 2026-09-12 (overnight reliability closeout part 2, task 3):
+// restoreFullBackupSnapshot no longer rejects when a single section
+// fails -- it catches each section's error and reports it in the
+// returned RestoreOutcome instead, so a later, independent section can
+// still be attempted (see restore-backup-snapshot.test.ts for the
+// orchestrator-level tests). These two tests now confirm the same
+// underlying failures surface as a failed section with the same plain
+// message, instead of a thrown rejection.
+describe("a write-verification failure reaches restoreFullBackupSnapshot's returned outcome, not just the function under test", () => {
+  it("reports a saveInventoryItems balance-write failure as a failed inventoryItems section", async () => {
     installFetchRouter({
       items: respond(true, 200, [{ id: "item-1", sku: "SKU-1" }]),
       balances: respond(true, 200, []),
     });
-    await expect(restoreFullBackupSnapshot({ inventoryItems: [makePart()] }, "token")).rejects.toThrow(
-      "Some inventory quantities could not be saved.",
-    );
+    const outcome = await restoreFullBackupSnapshot({ inventoryItems: [makePart()] }, "token");
+    expect(outcome.ok).toBe(false);
+    expect(outcome.sections.find((s) => s.section === "inventoryItems")).toMatchObject({
+      attempted: true,
+      succeeded: false,
+      error: "Some inventory quantities could not be saved.",
+    });
   });
 
-  it("propagates a saveProjectSites scope-of-work failure out of restoreFullBackupSnapshot", async () => {
+  it("reports a saveProjectSites scope-of-work failure as a failed projectSites section", async () => {
     installFetchRouter({
       projects: respond(true, 200, [{ id: "proj-1", project_name: "Test Project" }]),
       scope: respond(true, 200, []),
     });
-    await expect(restoreFullBackupSnapshot({ projectSites: [makeSite()] }, "token")).rejects.toThrow(
-      "Some project details could not be saved.",
-    );
+    const outcome = await restoreFullBackupSnapshot({ projectSites: [makeSite()] }, "token");
+    expect(outcome.ok).toBe(false);
+    expect(outcome.sections.find((s) => s.section === "projectSites")).toMatchObject({
+      attempted: true,
+      succeeded: false,
+      error: "Some project details could not be saved.",
+    });
   });
 });

@@ -6748,6 +6748,25 @@ export type ScopeOfWork = {
 };
 
 export type BomLine = {
+  // Stable identity used only by the browser while a brand-new line is
+  // waiting for its first database id. Loaded lines use their real id.
+  clientId?: string;
+  // The real, stable project_bom_lines.id, once known (migration 131's
+  // replace_project_bom_lines RPC). Undefined for a line that only exists
+  // in local state and hasn't round-tripped through a save yet (a
+  // brand-new line before its first successful save) -- sent back on
+  // every later save so the RPC updates that exact row (reconcile-by-id)
+  // instead of always inserting a new one.
+  id?: string;
+  // The real, stable inventory_items.sku this line's catalog item
+  // resolves to, once known -- the app-wide convention for referencing an
+  // inventory item by a stable identifier (see Part.sku,
+  // resolveInventoryItemIdBySku) rather than by its mutable display name.
+  // Undefined for a line with no catalog link yet, or one whose item name
+  // hasn't matched a catalog row (tolerated, not an error -- see
+  // migration 131). `item` remains the line's own display-name snapshot
+  // regardless of whether sku is set; sku is never used to overwrite it.
+  sku?: string;
   item: string;
   qty: number;
   status: "Need Quote" | "Not started" | "Ordered" | "Completed" | "From Inventory" | "Delivered to Office" | "Delivered to Client";
@@ -6773,6 +6792,13 @@ export type BomLine = {
   // if the saved address it was picked from is later edited or removed.
   shipTo?: string;
 };
+
+export function createProjectBomLineClientId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+}
 
 // Migration 064: the Project-side mirror of SalesQuoteLocation/Image/Item
 // (see below in this file) -- same per-garage/lot shape (camera picks,
@@ -6991,6 +7017,7 @@ type ProjectScopeRow = {
 };
 
 type ProjectBomLineRow = {
+  id: string;
   item_name: string;
   qty: number | string;
   status: string;
@@ -7001,6 +7028,7 @@ type ProjectBomLineRow = {
   procurement_track: string | null;
   purchasing_sent_at: string | null;
   ship_to: string | null;
+  inventory_item: { sku: string } | null;
 };
 
 type ProjectLocationImageRow = {
@@ -7278,11 +7306,11 @@ type ProjectSiteRow = {
 };
 
 const PROJECT_SITE_SELECT =
-  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 // Migration 087 safety: same query with the pre-087 (no `origin`) location
 // select, used as a 400 fallback in loadProjectSites.
 const PROJECT_SITE_SELECT_PRE_087 =
-  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to),project_locations(${PROJECT_LOCATION_SELECT_PRE_087}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT_PRE_087}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -7302,6 +7330,9 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
     .slice()
     .sort((a, b) => a.line_sort - b.line_sort)
     .map((line) => ({
+      clientId: line.id,
+      id: line.id,
+      sku: line.inventory_item?.sku ?? undefined,
       item: line.item_name,
       qty: Number(line.qty) || 0,
       status: (line.status as BomLine["status"]) ?? "Not started",
@@ -7388,9 +7419,9 @@ export async function loadProjectSites(accessToken?: string): Promise<ProjectSit
   return rows.map(mapProjectSiteRow);
 }
 
-export async function saveProjectSites(sites: ProjectSite[], accessToken?: string): Promise<void> {
+export async function saveProjectSites(sites: ProjectSite[], accessToken?: string): Promise<ProjectSite[]> {
   if (!isRemotePersistenceConfigured() || !accessToken || sites.length === 0) {
-    return;
+    return sites;
   }
 
   const projectPayload = sites.map((site) => ({
@@ -7498,68 +7529,159 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
     }
   }
 
-  // BOM lines have no natural per-line key to reconcile against (same
-  // limitation the original migration noted), so each save wholesale
-  // replaces a project's line set: resolve item names to inventory_item_id
-  // in bulk, delete the project's existing lines, then re-insert current ones.
+  // Migration 131 moved BOM-line replacement from two separate, completely
+  // unchecked PostgREST requests (a bulk DELETE of every existing line for
+  // the project, then a bulk INSERT of the current line set, with no
+  // transaction between them and no id preservation across a save) into
+  // one atomic, per-project RPC call (rpc/replace_project_bom_lines):
+  // reconciliation (update retained lines in place, insert new ones,
+  // delete only removed ones), item-identity validation, and the
+  // ambiguous-name rejection all happen inside a single Postgres
+  // transaction now, and a project's BOM can no longer be left silently
+  // empty by a DELETE that committed with no matching INSERT.
   //
-  // NOT COVERED by the write-verification fix above (2026-09-10 review,
-  // deliberately left alone): the DELETE below and the INSERT further down
-  // are two separate, unchecked requests with no transaction between them.
-  // If the DELETE succeeds and the INSERT then fails (or silently drops
-  // rows), a project's BOM is left genuinely empty, not just unverified.
-  // Adding a row-count check here would only prove the INSERT failed --
-  // it would NOT undo the DELETE that already ran, so it would not remove
-  // the actual risk. A real fix needs one atomic Postgres RPC (delete +
-  // insert in a single transaction), the same shape as migrations
-  // 127/128's project-conversion RPC -- see the separate proposal doc for
-  // this, not a same-pass patch here.
-  const itemNames = new Set<string>();
-  sites.forEach((site) => site.bom.forEach((line) => itemNames.add(line.item)));
-  const itemRows = itemNames.size
-    ? await fetch(
-        supabaseUrl(`inventory_items?select=id,item_name&item_name=in.(${Array.from(itemNames).map((n) => `"${n.replace(/"/g, '\\"')}"`).join(",")})`),
-        { headers: supabaseHeaders(accessToken) },
-      ).then((r) => (r.ok ? (r.json() as Promise<Array<{ id: string; item_name: string }>>) : []))
-    : [];
-  const itemIdByName = new Map(itemRows.map((row) => [row.item_name, row.id]));
-
-  const projectIds = sites.map((site) => idByName.get(site.name)).filter((id): id is string => Boolean(id));
-  if (projectIds.length > 0) {
-    await fetch(supabaseUrl(`project_bom_lines?project_id=in.(${projectIds.join(",")})`), {
-      method: "DELETE",
-      headers: supabaseHeaders(accessToken),
-    });
-  }
-
-  const bomPayload = sites.flatMap((site) => {
+  // A brand-new line (no `id` yet) is sent with `id: null`, and the RPC
+  // always inserts it as new -- unlike an equipment recipe's name-based
+  // fallback resolution, a BOM line has no natural key to fall back to, so
+  // this function backfills each returned line's real id into the
+  // returned sites. createProjectSiteSaveQueue serializes overlapping saves
+  // and reconcileSavedProjectSites matches the result through each line's
+  // stable clientId, so a still-new line is sent with id:null only once and
+  // edits made while that request is in flight are not overwritten.
+  const reconciledSites: ProjectSite[] = [];
+  for (const site of sites) {
     const projectId = idByName.get(site.name);
     if (!projectId) {
-      return [];
+      reconciledSites.push(site);
+      continue;
     }
-    return site.bom.map((line, index) => ({
-      project_id: projectId,
-      item_name: line.item,
-      inventory_item_id: itemIdByName.get(line.item) ?? null,
-      qty: line.qty,
-      status: line.status,
-      request_speed: line.requestSpeed,
-      po: line.po || null,
-      notes: line.notes || null,
-      line_sort: index,
-      procurement_track: line.procurementTrack ?? "warehouse_stock",
-      purchasing_sent_at: line.sentToPurchasingAt ?? null,
-      ship_to: line.shipTo || null,
-    }));
-  });
 
-  if (bomPayload.length > 0) {
-    await fetch(supabaseUrl("project_bom_lines"), {
+    const response = await fetch(supabaseUrl("rpc/replace_project_bom_lines"), {
       method: "POST",
-      headers: { ...supabaseHeaders(accessToken), prefer: "return=minimal" },
-      body: JSON.stringify(bomPayload),
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({
+        p_project_id: projectId,
+        p_lines: site.bom.map((line, index) => ({
+          id: line.id ?? null,
+          item_name: line.item,
+          sku: line.sku ?? null,
+          qty: line.qty,
+          status: line.status,
+          request_speed: line.requestSpeed,
+          po: line.po || null,
+          notes: line.notes || null,
+          procurement_track: line.procurementTrack ?? "warehouse_stock",
+          purchasing_sent_at: line.sentToPurchasingAt ?? null,
+          ship_to: line.shipTo || null,
+          line_sort: index,
+        })),
+      }),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
+      console.error(`saveProjectSites: replace_project_bom_lines RPC failed for "${site.name}" (${response.status}):`, body);
+      throw new Error("Some project BOM changes could not be saved.");
+    }
+    const raw = (await response.json()) as { lines: Array<{ id: string; item: string; sku: string | null; qty: number; status: string; requestSpeed: string; po: string | null; notes: string | null; procurementTrack: string; sentToPurchasingAt: string | null; shipTo: string | null }> };
+    reconciledSites.push({
+      ...site,
+      bom: raw.lines.map((line) => ({
+        id: line.id,
+        sku: line.sku ?? undefined,
+        item: line.item,
+        qty: Number(line.qty) || 0,
+        status: line.status as BomLine["status"],
+        requestSpeed: line.requestSpeed as BomLine["requestSpeed"],
+        po: line.po ?? undefined,
+        notes: line.notes ?? undefined,
+        procurementTrack: line.procurementTrack as BomLine["procurementTrack"],
+        sentToPurchasingAt: line.sentToPurchasingAt,
+        shipTo: line.shipTo ?? "",
+      })),
     });
   }
+
+  return reconciledSites;
+}
+
+// Backfill only the stable database identifiers returned by migration 131.
+// Project and line display fields may have changed while the request was in
+// flight, so they are deliberately never copied back from the server echo.
+export function reconcileSavedProjectSites(
+  current: ProjectSite[],
+  requested: ProjectSite[],
+  saved: ProjectSite[],
+): ProjectSite[] {
+  const siteBackfills = new Map<string, Map<string, Pick<BomLine, "id" | "sku">>>();
+  requested.forEach((site, siteIndex) => {
+    const siteKey = site.id ?? site.ref ?? site.name;
+    const savedSite = saved[siteIndex];
+    if (!savedSite) return;
+    const lineBackfills = new Map<string, Pick<BomLine, "id" | "sku">>();
+    site.bom.forEach((line, lineIndex) => {
+      const lineKey = line.clientId ?? line.id;
+      const savedLine = savedSite.bom[lineIndex];
+      if (lineKey && savedLine?.id) {
+        lineBackfills.set(lineKey, { id: savedLine.id, sku: savedLine.sku });
+      }
+    });
+    if (lineBackfills.size > 0) siteBackfills.set(siteKey, lineBackfills);
+  });
+  if (siteBackfills.size === 0) return current;
+
+  let changed = false;
+  const next = current.map((site) => {
+    const lineBackfills = siteBackfills.get(site.id ?? site.ref ?? site.name);
+    if (!lineBackfills) return site;
+    let siteChanged = false;
+    const bom = site.bom.map((line) => {
+      const backfill = lineBackfills.get(line.clientId ?? line.id ?? "");
+      if (!backfill || (line.id === backfill.id && line.sku === backfill.sku)) return line;
+      siteChanged = true;
+      return { ...line, id: backfill.id, sku: backfill.sku };
+    });
+    if (!siteChanged) return site;
+    changed = true;
+    return { ...site, bom };
+  });
+  return changed ? next : current;
+}
+
+export function createProjectSiteSaveQueue(
+  applyReconciled: (updater: (current: ProjectSite[]) => ProjectSite[]) => void,
+  onError: (error: unknown) => void,
+) {
+  let saving = false;
+  let pending: { sites: ProjectSite[]; accessToken: string } | null = null;
+
+  async function run(sites: ProjectSite[], accessToken: string): Promise<void> {
+    saving = true;
+    let saved: ProjectSite[] | null = null;
+    try {
+      saved = await saveProjectSites(sites, accessToken);
+      applyReconciled((current) => reconcileSavedProjectSites(current, sites, saved!));
+    } catch (error) {
+      onError(error);
+    } finally {
+      saving = false;
+    }
+    const next = pending;
+    pending = null;
+    if (next) {
+      const followUp = saved ? reconcileSavedProjectSites(next.sites, sites, saved) : next.sites;
+      void run(followUp, next.accessToken);
+    }
+  }
+
+  return {
+    enqueue(sites: ProjectSite[], accessToken: string): void {
+      if (saving) {
+        pending = { sites, accessToken };
+        return;
+      }
+      void run(sites, accessToken);
+    },
+  };
 }
 
 // --- Client Ledger (migration 089) -----------------------------------------
