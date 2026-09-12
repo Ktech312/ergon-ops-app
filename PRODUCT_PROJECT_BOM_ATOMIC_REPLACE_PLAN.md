@@ -1,6 +1,21 @@
-# Project BOM Atomic Replace — Design Proposal (not implemented)
+# Project BOM Atomic Replace — Design Proposal (migration drafted, NOT applied)
 
-Status: **Design only. No migration file exists. No SQL has been run against
+Status: **UPDATED 2026-09-12 (overnight reliability closeout): migration
+131 (`replace_project_bom_lines`), its verification test script
+(`backend/supabase/migration_131_bom_replace_tests.sql`), and the frontend
+wiring (`BomLine.id`/`sku`, `saveProjectSites` calling the RPC) are all
+DRAFTED and kept LOCAL — none of it is committed, none of it is applied to
+any database, and the frontend wiring is not deployed (it depends on the
+unapplied RPC). See `HANDOFF.md`'s 2026-09-12 entry for the exact file
+list and local-check results, and this document's own end for the
+deviations found and corrected against the live schema while drafting.
+This design itself (reconcile-by-id, one project per call, ambiguous-name
+rejection, `FOR UPDATE` locking, PM/workspace-admin authorization) is
+otherwise unchanged from the fully-reviewed plan below — nothing in the
+decided design was revised, only implemented.**
+
+Prior status (accurate through 2026-09-11, superseded by the above):
+**Design only. No migration file exists. No SQL has been run against
 any database.** This document is the reviewable plan requested alongside the
 2026-09-10 write-verification fix for `saveInventoryItems`/`saveProjectSites`
 (see `PRODUCT_ERROR_VISIBILITY_AUDIT.md` Addendum 2, A2.1). Do not implement
@@ -1003,3 +1018,55 @@ temporary-guard posture (§5), and the `BomLine` type-change prerequisite
 migration has been drafted for this design, and none should be, until
 E gives that separate, explicit go-ahead** — a thorough design review is
 not that go-ahead.
+
+## §7 — Implementation (2026-09-12): go-ahead given, migration drafted
+
+The 2026-09-12 overnight reliability closeout work order gave the
+explicit go-ahead this section's own prior correction required, and
+resolved the three still-open items above as follows: one project per
+RPC call (§4a resolved — no whole-batch atomicity attempted); the
+`BomLine` type change is implemented (`id`/`sku` added, this pass);
+`active_workspace_id()` is used as the temporary guard, exactly as §5
+recommended. Deviations found and corrected against the live schema while
+drafting `backend/supabase/migrations/131_atomic_project_bom_replace.sql`
+(this file's own illustrative SQL was explicitly marked "not runnable,
+re-verify against live schema" — these are that re-verification's
+findings, not new design decisions):
+
+1. **`projects` has no `deleted_at` column** — confirmed no migration ever
+   adds one. This document's illustrative `where id = p_project_id and
+   deleted_at is null for update` would fail outright against the real
+   schema; the real migration locks and looks up the project by id alone.
+2. **Authorization uses `is_workspace_admin(workspace_id)`, not
+   `is_app_admin(auth.uid())`** — a deliberate consistency choice with
+   migration 130's own later, reviewed correction (which replaced exactly
+   this same legacy-global-admin check for the identical reason: it is
+   the wrong gate for a workspace-scoped decision), not a re-litigation of
+   migration 127 itself. "PM" is still checked via the same
+   `workspace_member_roles` join both migrations already use.
+3. **EC0xx codes re-verified immediately before drafting**: `grep -rhoE
+   "errcode = '[A-Z0-9]+'" backend/supabase/migrations/*.sql` confirmed
+   EC001-EC016 in use (EC001-EC007 migration 127, EC008-EC016 migration
+   130) — EC017 was genuinely free, confirming this document's own
+   §2/§6 note. The migration claims EC017-EC024 (EC007 itself reused, not
+   reclaimed, for the same workspace-resolution-ambiguous case 127/130
+   already use it for). **EC025 is the next free code** for any future RPC.
+4. **Structural validation uses one shared error code (EC020)** covering
+   every malformed-line/invalid-enum sub-case, matching migration 130's
+   own established precedent (its EC011 similarly covers several distinct
+   structural failures) — resolving this document's own "one code per
+   case, or one shared code" open question by following that precedent.
+5. An item name matching **zero** catalog rows is tolerated (null link,
+   not a rejection) — only an **ambiguous** (multiple-match) name rejects
+   the whole call. This matches `saveProjectSites`' own current, unchanged
+   behavior and the still-undecided optional-association warning policy
+   (`PRODUCT_ERROR_VISIBILITY_AUDIT.md` A2.6) — this migration does not
+   preempt that decision, it only handles the different case (an invalid
+   or ambiguous stable identifier), which was always meant to be a hard
+   rejection regardless of how the zero-match question is eventually
+   decided.
+
+**Not yet applied.** The migration, test script, and frontend wiring are
+drafted and kept local for E's review — see `HANDOFF.md`'s 2026-09-12
+entry for the full file list, local check results, and the exact single
+next action for E.
