@@ -19725,6 +19725,50 @@ type NewSiteInput = typeof EMPTY_NEW_QUOTE_DRAFT;
 // saveAll() falls back to ".jpg" (canvas.toBlob always produces jpeg).
 type CapturedPhoto = { id: string; blob: Blob; previewUrl: string; name: string; extension?: string };
 
+// Mobile performance (2026-09-12, overnight reliability closeout
+// continuation, task 7 remainder): a phone's gallery photo can be
+// 10+MB at 4000px+ on the long edge -- fine for the photo itself, but
+// needlessly slow to upload over a job-site connection and to later
+// re-download inside this app. Resizes down to at most maxDimension on
+// the long edge (never upscales) and re-encodes as JPEG. Never throws:
+// a file the browser can't decode as an image (some HEIC files, in
+// browsers without HEIC decode support) or an already-small file is
+// returned completely unchanged -- reference-equal to the input, which
+// callers use to detect whether re-encoding actually happened (to know
+// whether the file's original extension is still accurate).
+function resizeImageFile(file: Blob, maxDimension = 1920, quality = 0.85): Promise<Blob> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    // `Image` is shadowed at module scope by the lucide-react icon
+    // component of the same name -- window.Image is the real DOM
+    // constructor.
+    const img = new window.Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDimension / Math.max(img.naturalWidth, img.naturalHeight));
+      if (!Number.isFinite(scale) || scale >= 1) {
+        resolve(file);
+        return;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const context = canvas.getContext("2d");
+      if (!context) {
+        resolve(file);
+        return;
+      }
+      context.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => resolve(blob ?? file), "image/jpeg", quality);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file);
+    };
+    img.src = url;
+  });
+}
+
 function sanitizePhotoNameSegment(value: string): string {
   return value.replace(/[\\/:*?"<>|]+/g, "-").trim();
 }
@@ -20054,9 +20098,16 @@ function CameraCaptureModal({
     if (!video || !video.videoWidth) {
       return;
     }
+    // Mobile performance: encode straight at a capped resolution instead of
+    // the camera's native (often 1920x1080+) frame size -- same
+    // maxDimension convention as resizeImageFile, applied here directly
+    // since we're already drawing to a fresh canvas rather than re-decoding
+    // an already-encoded file.
+    const maxDimension = 1920;
+    const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight));
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) {
       return;
@@ -20084,7 +20135,7 @@ function CameraCaptureModal({
   // default their rename field to the original file name (minus
   // extension) instead of blank, per E's request -- the file "already has
   // a name," renaming should be an edit, not starting from scratch.
-  function addPickedFiles(files: File[]): boolean {
+  async function addPickedFiles(files: File[]): Promise<boolean> {
     const accepted = files.filter(isAllowedPhotoFile);
     if (accepted.length < files.length) {
       window.alert("Photos only accept image files. Use Files for PDF, Word, Excel, CAD, and other documents.");
@@ -20092,24 +20143,35 @@ function CameraCaptureModal({
     if (accepted.length === 0) {
       return false;
     }
-    const newPhotos: CapturedPhoto[] = accepted.map((file) => ({
-      id: makeId("photo"),
-      blob: file,
-      previewUrl: URL.createObjectURL(file),
-      name: sanitizePhotoNameSegment(stripFileExtension(file.name)),
-      extension: extensionOfFileName(file.name) || ".jpg",
-    }));
+    // Mobile performance: a gallery photo can be many MB at 4000px+ --
+    // resize before it ever becomes an upload candidate. resizeImageFile
+    // never throws and returns the original file unchanged (same
+    // reference) if it's already small enough or can't be decoded (e.g.
+    // some HEIC files), so this is always at least as safe as before.
+    const newPhotos: CapturedPhoto[] = await Promise.all(
+      accepted.map(async (file) => {
+        const resized = await resizeImageFile(file);
+        const wasResized = resized !== file;
+        return {
+          id: makeId("photo"),
+          blob: resized,
+          previewUrl: URL.createObjectURL(resized),
+          name: sanitizePhotoNameSegment(stripFileExtension(file.name)),
+          extension: wasResized ? ".jpg" : extensionOfFileName(file.name) || ".jpg",
+        };
+      }),
+    );
     setPhotos((current) => [...current, ...newPhotos]);
     return true;
   }
 
-  function handleFilePicked(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFilePicked(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) {
       return;
     }
-    const added = addPickedFiles([file]);
+    const added = await addPickedFiles([file]);
     if (added && !batchMode) {
       setPhase("review");
     }
@@ -20120,13 +20182,13 @@ function CameraCaptureModal({
   // opens the real file picker, not the camera) and goes straight to the
   // same rename/review screen captured photos use, whether it's one file
   // or a batch.
-  function handleFilesUploaded(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFilesUploaded(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
     if (files.length === 0) {
       return;
     }
-    const added = addPickedFiles(files);
+    const added = await addPickedFiles(files);
     if (added) {
       stopCamera();
       setPhase("review");
@@ -21245,7 +21307,14 @@ function ProjectShippingSection({
     }
     setIsUploadingPhoto(true);
     setPhotoUploadStatus("");
-    const ok = await onUploadPhoto(selectedShipment.id, file);
+    // Mobile performance: same resize-before-upload treatment as Site
+    // Builder/Locations photos (CameraCaptureModal) -- resizeImageFile
+    // returns the original file unchanged (same reference) if it's already
+    // small enough or can't be decoded, so uploadFile === file below means
+    // nothing changed and the original name/type are kept.
+    const resizedBlob = await resizeImageFile(file);
+    const uploadFile = resizedBlob === file ? file : new File([resizedBlob], `${stripFileExtension(file.name)}.jpg`, { type: "image/jpeg" });
+    const ok = await onUploadPhoto(selectedShipment.id, uploadFile);
     setIsUploadingPhoto(false);
     if (!ok) {
       // Not necessarily a real failure -- handleUploadProjectShipmentPhoto
