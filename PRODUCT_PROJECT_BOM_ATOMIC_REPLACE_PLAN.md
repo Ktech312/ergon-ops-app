@@ -78,6 +78,68 @@ correct because it has the right shape (§3 step 5, §5a). New verification
 cases added for all of the above (§6 items 12-15). Still design only — no
 migration created, no RPC implemented.
 
+**Sixth revision note (2026-09-11, overnight autonomous pass, task 4 —
+fresh adversarial review against the implementation-readiness checklist,
+correcting two real gaps this pass found; no migration/frontend change
+made).** Every item on the checklist this pass was asked to verify
+(retained-lines-by-id, null/absent-id-only-inserts,
+nonexistent/cross-project-id-rejection, duplicate-id-rejection,
+malformed-payload-rejection, inventory-id/SKU existence+consistency,
+name-fallback ambiguity, `task_hardware_dependencies` FK survival,
+deletion-of-only-removed-lines, authoritative-returned-rows, per-project
+locking, same-payload-retry, empty-BOM behavior, single-workspace guard,
+future `projects.workspace_id` requirement, per-project-vs-multi-project
+atomicity, direct EXECUTE grants, and transaction-safe real-concurrent
+verification) was re-checked against current source, not assumed correct
+from the prior five rounds. Sixteen of those were already correctly
+covered and needed no change. Two real gaps were found by cross-checking
+§3's proposed `p_lines` field list and validation steps against the
+**actual current client code** (`saveProjectSites`, `src/persistence.ts`),
+not just against the schema:
+
+1. **`line_sort` was missing from `p_lines` entirely.** Today's live code
+   (`persistence.ts`, `site.bom.map((line, index) => ({ ...,  line_sort:
+   index, ... }))`) writes every line's array position as `line_sort` on
+   every save. §3's proposed field list (the `p_lines` comment) named
+   every other real column from §2a's own schema trace **except this
+   one** — an oversight, not a deliberate exclusion (nothing in this
+   document ever argued `line_sort` should stop being tracked, and the
+   return value in step 8 already reads `pbl.line_sort` back and orders
+   by it, which only makes sense if something is expected to write it).
+   Without this fix, the reconcile-by-id design could preserve every
+   line's real `id` (§3's whole point) while silently losing the user's
+   chosen display order on every save — a real, user-visible regression
+   this document would otherwise have shipped by omission. Fixed in §3
+   below: `line_sort` is now an explicit field on every `p_lines` element,
+   assigned by the client from array position exactly as today's code
+   already does, and both the update and insert branches in step 7 now
+   name it explicitly instead of leaving it inside an elided "...".
+2. **Enum-valued fields were validated for type, not for value, in step
+   4a.** `status`, `request_speed`, and `procurement_track` are all
+   `check (... in (...))`-constrained columns at the database level
+   (§2a). Step 4a's "malformed line objects" check, as originally
+   written, only caught a field of the *wrong type* (e.g. a number where
+   text was expected) via `jsonb_to_recordset`'s own cast failure — a
+   syntactically-valid-but-not-in-the-allowed-set string (e.g.
+   `status: "bogus"`) would pass step 4a untouched and only be caught
+   later, by the table's own `CHECK` constraint, **during the actual
+   write in step 7** — after the update/insert/delete reconciliation has
+   already begun executing (the whole call still rolls back per §4's
+   transaction guarantee, so this is not a data-integrity bug, but it
+   directly contradicts this document's own stated goal for step 4a:
+   catching every structural problem *before* any write is attempted,
+   and translating every rejection into a controlled `EC0xx` code rather
+   than letting a raw Postgres constraint-violation message reach the
+   client). Fixed in §3 step 4a below: the three enum-valued fields are
+   now explicitly checked against their known allowed-value sets as part
+   of structural validation, before step 5 or step 7 ever runs.
+
+New verification cases added for both (§6 items 16-17). Neither fix
+changes this document's overall design, scope, or any prior decision —
+both are corrections to an oversight in the existing reconcile-by-id
+outline, not new functionality. Still design only — no migration created,
+no RPC implemented, no frontend change made.
+
 ## 1. The risk this is meant to close
 
 `saveProjectSites` (`src/persistence.ts`, "BOM lines have no natural per-line
@@ -293,7 +355,14 @@ create or replace function public.replace_project_bom_lines(
                  --             only, display content otherwise -- see
                  --             §5a), qty, status, request_speed, po,
                  --             notes, procurement_track, ship_to,
-                 --             purchasing_sent_at }, in display order
+                 --             purchasing_sent_at, line_sort }, in
+                 --             display order -- line_sort is assigned
+                 --             client-side from array position, exactly
+                 --             as today's saveProjectSites already does
+                 --             (persistence.ts: `line_sort: index`); it
+                 --             is a real column (§2a) this design
+                 --             omitted until the 2026-09-11 review (see
+                 --             the sixth revision note above)
 )
 returns jsonb
 language plpgsql
@@ -344,12 +413,29 @@ begin
   --    reconciliation logic, rejects the whole call on any failure here:
   --    a. Malformed line objects: each element of p_lines must parse into
   --       the expected shape (a real uuid or null for id, a real numeric
-  --       qty, status/request_speed/procurement_track within their known
-  --       enum values, etc.) -- jsonb_to_recordset's own cast failures
-  --       naturally raise here if a field is the wrong type; catch and
-  --       translate into a controlled error (new EC code) rather than
-  --       letting a raw cast-error message reach the client. Collect
-  --       offending line indices/reasons into v_malformed_lines.
+  --       qty, a real integer line_sort, etc.) -- jsonb_to_recordset's
+  --       own cast failures naturally raise here if a field is the wrong
+  --       type; catch and translate into a controlled error (new EC
+  --       code) rather than letting a raw cast-error message reach the
+  --       client. Collect offending line indices/reasons into
+  --       v_malformed_lines.
+  --       CORRECTED 2026-09-11 (task 4 adversarial review): a right-typed
+  --       but out-of-range value for an enum-constrained column is a
+  --       DIFFERENT failure from a wrong-typed one, and was missing here
+  --       entirely in the prior draft -- status/request_speed/
+  --       procurement_track are each `check (... in (...))`-constrained
+  --       at the table level (§2a), and a value of the correct type
+  --       (text) that isn't one of the allowed values would otherwise
+  --       sail through this step untouched and only be caught by that
+  --       table constraint during the actual write in step 7 -- i.e.
+  --       AFTER reconciliation has already begun, and surfaced to the
+  --       client as a raw Postgres constraint-violation message instead
+  --       of a controlled EC0xx code. Explicitly check each line's
+  --       status/request_speed/procurement_track against its known
+  --       allowed-value set HERE, before step 5 or step 7 ever runs, and
+  --       collect any violation into v_malformed_lines exactly like a
+  --       type mismatch -- same rejection path, same "nothing written
+  --       yet" guarantee.
   --    b. Duplicate non-null ids: select id, count(*) from
   --       jsonb_to_recordset(p_lines) as t(id uuid, ...) where t.id is
   --       not null group by id having count(*) > 1 -- any result means
@@ -417,16 +503,24 @@ begin
   -- 7. Reconcile, all three statements against the same locked project,
   --    inside this function's one implicit transaction -- only reached
   --    once steps 4-6 found nothing to reject:
-  --    - update public.project_bom_lines set qty = ..., status = ..., ...
+  --    - update public.project_bom_lines set qty = ..., status = ...,
+  --      line_sort = t.line_sort, ...
   --      where id = (t.id) and project_id = p_project_id
-  --      from jsonb_to_recordset(p_lines) as t(id uuid, ...)
+  --      from jsonb_to_recordset(p_lines) as t(id uuid, line_sort int, ...)
   --      where t.id is not null;
   --      get diagnostics v_updated_count = row_count;
+  --      -- CORRECTED 2026-09-11 (task 4): line_sort is now named
+  --      -- explicitly, not left inside an elided "..." -- a retained
+  --      -- line's display position can change on a save (the user
+  --      -- reordered it) even when its id, and thus its identity, did
+  --      -- not, and the prior draft's elision made it easy to miss that
+  --      -- this column needs writing on the update branch too, not only
+  --      -- the insert branch.
   --    - insert into public.project_bom_lines (project_id, item_name,
-  --      inventory_item_id, qty, ...)
-  --      select p_project_id, ... from jsonb_to_recordset(p_lines)
-  --      as t(id uuid, ...) where t.id is null
-  --      returning id, inventory_item_id, item_name, qty, status, ...
+  --      inventory_item_id, qty, line_sort, ...)
+  --      select p_project_id, ..., t.line_sort, ... from jsonb_to_recordset(p_lines)
+  --      as t(id uuid, line_sort int, ...) where t.id is null
+  --      returning id, inventory_item_id, item_name, qty, status, line_sort, ...
   --      into ...; -- capture the newly-generated ids/rows for the
   --      -- return value in step 8, not just a count.
   --      get diagnostics v_inserted_count = row_count;
@@ -827,6 +921,29 @@ further here beyond the list of what it must cover:
     resolve to any row at all (typo, deleted catalog item) -> same
     rejection, distinct error detail so the two are diagnosable
     separately if implemented with distinct codes.
+16. **New, 2026-09-11 (task 4 adversarial review) — line_sort survives
+    reconciliation on both branches**: a payload that reorders an
+    existing line (same real `id`, a different `line_sort` than it
+    currently has) together with one brand-new line inserted at a
+    specific position -> after the call, the retained line's `line_sort`
+    reflects its NEW position (not its old one, and not left unchanged
+    by the update branch), the new line's `line_sort` reflects its
+    inserted position, and the returned `lines` array (step 8, ordered by
+    `pbl.line_sort`) reflects the caller's intended display order exactly
+    -- this is the direct proof the gap found in this review (line_sort
+    silently dropped from the design) is actually closed, not merely
+    reworded.
+17. **New, 2026-09-11 (task 4 adversarial review) — invalid enum value is
+    rejected before any write, not surfaced as a raw constraint error**:
+    a line whose `status` (or `request_speed`, or `procurement_track`) is
+    a syntactically valid string but not one of the column's allowed
+    values -> the whole call is rejected with a controlled `EC0xx` error
+    naming the offending field, existing BOM lines for the project
+    completely unchanged, and -- the specific proof this test exists
+    for -- no raw Postgres `CHECK` constraint-violation text reaches the
+    client. A companion run with the same invalid value alongside several
+    otherwise-valid lines confirms the rejection is whole-call, not a
+    partial write of the valid lines with the bad one dropped.
 
 ## 7. What this document is not
 
@@ -850,3 +967,30 @@ part of this document, and not yet done. None of this is itself a
 go-ahead to implement — that must still be a separate, explicit decision
 from E, and should include explicit sign-off on the `BomLine` type change
 this design now depends on, not just the SQL shape.
+
+**2026-09-11 addendum (overnight autonomous pass, task 4): a fresh
+adversarial review against a checklist of implementation-readiness
+concerns found this document's TECHNICAL DETAIL sound** — sixteen of
+eighteen checked items required no change — but this is a statement
+about internal consistency and schema-groundedness, not a claim of
+approval or readiness to draft a migration. Two real gaps were also
+found (line_sort silently missing from `p_lines` despite being a real,
+currently-written column; enum-valued fields checked for type but not
+for allowed value in the structural-validation step), by comparing this
+design against today's actual `saveProjectSites` code, not just against
+the schema. Both are now fixed in §3 and covered by new test cases
+§6.16-17 (sixth revision note, above). This is the value of re-reading
+the live client code on every review pass, not just the schema and the
+document's own prior claims — neither gap would have been caught by
+re-reading the migrations alone.
+
+**Correction (2026-09-11, later same day, review): this document remains
+design-ready-for-decision, not approved and not implementation-ready.**
+"Substantively ready" above described the document's internal
+consistency, not a green light. It is still unapproved and design-only:
+the batch-vs-per-call atomicity question (§4a), the `active_workspace_id()`
+temporary-guard posture (§5), and the `BomLine` type-change prerequisite
+(§3, this section) all still require E's explicit decision. **No
+migration has been drafted for this design, and none should be, until
+E gives that separate, explicit go-ahead** — a thorough design review is
+not that go-ahead.

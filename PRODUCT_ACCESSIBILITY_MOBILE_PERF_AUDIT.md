@@ -233,3 +233,146 @@ user/vendor-supplied PDFs (sales quote extraction, purchase order attachments) �
 severity item here to review, even though a mechanical `npm audit fix` is available. **No fixes
 were applied**, per the read-only scope of this audit and the explicit instruction not to run
 `npm audit fix` or automated upgrades.
+
+---
+
+## Part F — `xlsx` dependency deep-dive (task 7, overnight autonomous pass, 2026-09-11)
+
+Read-only follow-up on the C1/Part D findings above, at the depth those sections didn't go into.
+No package was installed, removed, or upgraded to produce this.
+
+### Installed version and every import/call site
+
+`package.json:28` — `"xlsx": "^0.18.5"`. Confirmed via `npm ls xlsx`: exactly `xlsx@0.18.5` is
+resolved, no transitive duplicate. **Exactly one import site in the whole codebase**:
+`src/main.tsx:3`, `import * as XLSX from "xlsx";` — a static, eager import (loads for every
+session, not just the two flows that use it — this is the same fact C1 already flagged as a
+bundle-size issue).
+
+**Exactly two usage sites, both read-only, both the same shape**:
+- `handleBomFileSelect` (`main.tsx:11832-11864`) — BOM spreadsheet import on the Project detail
+  page.
+- `handleCatalogFileSelect` (`main.tsx:18622` on) — bulk Product Catalog import.
+
+Both call `XLSX.read(buffer, { type: "array" })` then `XLSX.utils.sheet_to_json(sheet, { defval:
+"" })` on the **first sheet only**, then map loosely-matched column headers (case/whitespace-
+insensitive `find()` over candidate header names) into typed rows. **No write/export path exists
+anywhere** — this app never generates a `.xlsx` file with this library, only reads one a user
+selects. That materially narrows the feature surface a replacement would need to cover.
+
+### Whether workbook inputs are user-controlled
+
+**Yes, entirely.** Both call sites are wired to a plain `<input type="file">` `onChange` handler;
+`file.arrayBuffer()` is read directly from whatever the browser's file picker returned, with
+**no server round-trip** (parsing happens entirely client-side, per the code's own comment at
+`main.tsx:11828-11831`: "no upload endpoint, no server round-trip"). The parsed result is only
+ever shown as a preview and requires an explicit "commit" action before anything is written to
+app state — but the vulnerable *parsing* step itself (where a Prototype Pollution or ReDoS
+payload would actually trigger) happens before that preview/commit gate, not after it, so the
+preview step does not act as a safety check against either vulnerability.
+
+### Existing file-size/type/row limits
+
+**None found, on either call site.** No `file.size` check before calling `.arrayBuffer()`, no
+file-extension/MIME-type allowlist beyond letting `XLSX.read()` throw (caught generically and
+shown as "Could not parse that file. Make sure it's a valid .xlsx or .csv."), and no cap on the
+number of rows `sheet_to_json` returns before mapping over all of them. A user could select an
+arbitrarily large file and the browser tab would attempt to fully parse it.
+
+### The exact known vulnerabilities and realistic exposure in this app
+
+`npm audit`'s JSON output for `xlsx` (re-confirmed this pass, not just cited from Part D):
+
+| Advisory | CVSS | Fixed in | CWE |
+|---|---|---|---|
+| Prototype Pollution in SheetJS (`GHSA-4r6h-8v6p-xvw6`) | 7.8 (`AV:L/AC:L/PR:N/UI:R`) | `>=0.19.3` | CWE-1321 |
+| SheetJS ReDoS (`GHSA-5pgg-2g8v-p4x9`) | 7.5 (`AV:N/AC:L/PR:N/UI:N`) | `>=0.20.2` | CWE-1333 |
+
+**Realistic exposure in this specific app, not the abstract CVSS scenario**: both vulnerabilities
+require the vulnerable parsing code to actually run on attacker-controlled spreadsheet bytes.
+Because both call sites require a real, logged-in Ergon user to deliberately pick a file via
+their own OS file dialog — there is no passive/drive-by trigger, no server ever parses an
+uploaded file, and no unauthenticated path reaches this code at all — the practical attack
+requires **social engineering a legitimate internal user** (e.g. "here's the BOM spreadsheet for
+this job" from a compromised or malicious vendor/subcontractor email, or a booby-trapped catalog
+export) into importing a file they believe is legitimate. That is a real, credible vector for a
+company that regularly receives spreadsheets from external parties (vendors, subcontractors) —
+just not a remote, unauthenticated one. Impact if triggered: Prototype Pollution can corrupt
+`Object.prototype` for the rest of that page's JavaScript execution (unpredictable app behavior,
+potentially exploitable for further client-side attacks depending on what other code reads
+polluted properties); ReDoS can hang or crash that user's browser tab while parsing, a
+availability/annoyance impact scoped to that one tab, not the server or other users.
+
+### Compensating controls possible without replacing the library
+
+None of these fix the underlying parser vulnerabilities, but all reduce exposure and are safe to
+build without touching the dependency itself:
+
+1. **File-size cap before parsing** (e.g. reject anything over ~5-10MB with a clear message) —
+   trivial, `file.size` is available before `.arrayBuffer()` is ever called.
+2. **File-extension allowlist** (`.xlsx`/`.xls`/`.csv` only, reject anything else before handing
+   bytes to `XLSX.read`) — narrows, doesn't eliminate, the input surface.
+3. **Dynamic `import("xlsx")` instead of the eager static import** (already recommended in C1 for
+   bundle-size reasons) — this has a genuine, if partial, security benefit too: the vulnerable
+   parsing code would only ever load into memory for the ~2 flows that use it, not for every
+   session on page load, slightly narrowing when the code is even present to be triggered.
+4. **A row-count cap** on the parsed result (e.g. refuse/truncate past a few thousand rows) —
+   reduces the ReDoS blast radius (less content for a pathological regex to run against) without
+   fixing the root cause.
+5. **User education**: since the realistic vector is a socially-engineered file from an external
+   party, a one-line UI warning ("Only import files from a source you trust") costs nothing and
+   matches the actual threat model better than a technical control would alone.
+
+None of these are a substitute for a real fix — they're worth doing regardless of which option
+below is chosen, since they cost little and reduce blast radius immediately.
+
+### Credible maintained replacements
+
+1. **Stay on SheetJS, but stop installing from the public npm registry.** Confirmed this pass via
+   `npm view xlsx versions`: **the npm registry's own `xlsx` package tops out at `0.18.5` — there
+   is no newer, patched version published to npm at all**, which is exactly why `npm audit`
+   reports `"fixAvailable": false` (a normal `npm update`/version bump cannot fix this). SheetJS
+   has continued fixing these CVEs in versions only distributed through their own CDN
+   (`https://cdn.sheetjs.com/`), not the npm registry. **This would mean changing `package.json`'s
+   `xlsx` entry from a registry version to a direct URL/tarball dependency** pointing at a current
+   SheetJS CDN release — the API (`XLSX.read`, `XLSX.utils.sheet_to_json`) is unchanged, so this
+   is close to a zero-code-change fix, but it does change *how* the dependency is installed
+   (a URL dependency, not a semver range), which itself has tradeoffs (no automatic security
+   advisories from GitHub/npm for a URL dependency, reliance on SheetJS's own CDN uptime during
+   `npm install`, and it's a slightly unusual pattern for whoever maintains this repo next to
+   understand at a glance).
+2. **Migrate to `exceljs`** — a genuinely different, actively-maintained library on the standard
+   npm registry, MIT licensed. Real migration effort: `exceljs`'s API is different from SheetJS's
+   (`workbook.xlsx.load(buffer)` then iterating worksheet rows/cells, not `sheet_to_json`), so
+   both call sites would need rewriting, not just a version bump — a small, contained change given
+   there are only two call sites and both are read-only, but not zero-effort. `exceljs` is
+   primarily designed for Node; using it in a browser bundle needs verification that its browser
+   build doesn't pull in Node-only dependencies (`fs`, etc.) that would bloat or break the Vite
+   build — worth a small spike before committing to this path, not assumed to just work.
+3. **Do nothing beyond the compensating controls above.** Given the exposure requires a
+   deliberate, socially-engineered user action and there is no server-side parsing at all, this is
+   a defensible short-term position if E prefers not to spend migration effort right now — but it
+   leaves a real, currently-unfixable-by-`npm audit fix` vulnerability in the dependency tree
+   indefinitely.
+
+### Migration effort, bundle impact, licensing, and test needs (comparing options 1 and 2)
+
+| | Option 1: SheetJS CDN URL dependency | Option 2: migrate to `exceljs` |
+|---|---|---|
+| Code changes | None (same API) | Both call sites rewritten (different parsing API) |
+| Bundle size | Unknown without checking — SheetJS's newer builds have historically been similar or smaller; would need to actually measure post-change, not assume | Unknown without checking — `exceljs`'s footprint for a browser bundle needs verification given its Node-first design |
+| Licensing | Apache-2.0, unchanged from today | MIT — compatible, no new obligation |
+| Install reliability | Depends on SheetJS's CDN being reachable at `npm install` time — a new external dependency in the install process that doesn't exist today | Normal npm registry install, no new risk |
+| Test needs | Re-run both import flows against real sample files (BOM spreadsheet, catalog export) to confirm identical parsed output — low effort, existing manual test files likely still work | Same manual re-test, plus verify no Node-polyfill issues surface in the actual Vite production build, not just local dev |
+| Ongoing maintenance | Tied to SheetJS continuing to publish CDN-distributed fixes indefinitely — same trust dependency as today, just via a different channel | Normal npm-registry maintenance, more conventional going forward |
+
+### Recommendation — clearly marked for E's decision, not decided here
+
+No option above is selected. Given only two read-only call sites exist and the exposure requires
+a deliberate internal user action (not a passive/remote trigger), this is a real but not urgent
+fix — worth scheduling deliberately rather than reacting to it as an emergency. If forced to rank:
+**Option 1 (SheetJS CDN URL dependency) is the lowest-effort real fix** since it needs no code
+changes to either call site, but it trades a conventional npm dependency for a URL-pinned one.
+**Option 3 (compensating controls only, deferred replacement)** is the reasonable choice if E
+would rather not touch the install mechanism at all right now. **This decision — which option, and
+on what timeline — is explicitly left to E, not made by this audit.**
