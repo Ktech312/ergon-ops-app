@@ -4506,12 +4506,31 @@ export async function addTaskHardwareDependency(
     }),
   });
   if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`addTaskHardwareDependency: insert failed for task ${dependency.taskId} (${response.status}): ${bodyText}`);
     throw new Error(`Could not link hardware to task: ${response.status}`);
   }
   const rows = (await response.json()) as TaskHardwareDependencyRow[];
+  if (!rows[0]) {
+    console.error(`addTaskHardwareDependency: insert for task ${dependency.taskId} returned no row.`);
+    throw new Error("Could not link hardware to task.");
+  }
   return mapTaskDependencyRow(rows[0]);
 }
 
+// Reviewed 2026-09-12 (overnight reliability closeout, task 5): this PATCH
+// used to be completely unchecked -- the response was awaited and
+// discarded, so a failure (RLS, network, expired session) looked
+// identical to a success. Its one caller, runTaskHardwareAutomation
+// (main.tsx), is fire-and-forget and not awaited with no .catch, so this
+// stays non-throwing by design (a mechanical throw here would surface as
+// an unhandled promise rejection, a worse failure mode than today's
+// silent no-op) -- this only makes a real failure visible in the console
+// for diagnosis. The caller's own unconditional local-state update on a
+// failed PATCH (a real client/server desync risk) is unchanged --
+// documented as a known follow-up, not fixed here (fixing it would mean
+// changing the automation's fire-and-forget shape, which is a workflow
+// decision, not an isolated .ok-check addition).
 export async function updateTaskHardwareDependencyStatus(
   id: string,
   fulfillmentStatus: TaskHardwareDependency["fulfillmentStatus"],
@@ -4520,11 +4539,15 @@ export async function updateTaskHardwareDependencyStatus(
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
-  await fetch(supabaseUrl(`task_hardware_dependencies?id=eq.${id}`), {
+  const response = await fetch(supabaseUrl(`task_hardware_dependencies?id=eq.${id}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ fulfillment_status: fulfillmentStatus }),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateTaskHardwareDependencyStatus: PATCH failed for dependency ${id} (${response.status}): ${bodyText}`);
+  }
 }
 
 // Natural-key bridges (same pattern as resolveProjectId) so the Linked
@@ -5087,6 +5110,8 @@ export async function createPurchaseRequestRemote(
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`createPurchaseRequestRemote: insert failed (${response.status}): ${bodyText}`);
     throw new Error(`Could not save purchase request: ${response.status}`);
   }
   const rows = (await response.json()) as PurchaseRequestRow[];
@@ -5142,11 +5167,14 @@ export async function updatePurchaseRequestRemote(
     });
   }
   if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updatePurchaseRequestRemote: PATCH failed for request ${id} (${response.status}): ${bodyText}`);
     throw new Error(`Could not update purchase request: ${response.status}`);
   }
   // A permissions-blocked PATCH still returns 200/204 with zero rows changed.
   const rows = (await response.json().catch(() => [])) as Array<{ id: string }>;
   if (rows.length === 0) {
+    console.error(`updatePurchaseRequestRemote: PATCH for request ${id} affected 0 rows -- likely blocked by RLS.`);
     throw new Error("That change didn't affect anything -- you may not have permission.");
   }
 }
@@ -7180,9 +7208,21 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
     body: JSON.stringify(projectPayload),
   });
   if (!projectResponse.ok) {
+    const bodyText = await projectResponse.text().catch(() => "");
+    console.error(`saveProjectSites: projects write failed (${projectResponse.status}): ${bodyText}`);
     throw new Error(`Could not save projects: ${projectResponse.status}`);
   }
   const savedRows = (await projectResponse.json()) as Array<{ id: string; project_name: string }>;
+  // Reviewed 2026-09-12 (overnight reliability closeout, task 5): added
+  // for consistency with every other upsert in this file -- a single
+  // `INSERT ... ON CONFLICT` statement fails atomically as one unit, so
+  // this is a coverage gap being closed, not a confirmed partial-write bug
+  // (unlike the BOM lines' former delete-then-reinsert, which really could
+  // leave a project's BOM silently empty -- see migration 131).
+  if (savedRows.length !== sites.length) {
+    console.error(`saveProjectSites: projects write returned ${savedRows.length} row(s), expected ${sites.length} -- integrity check failed.`);
+    throw new Error("Some project changes could not be saved.");
+  }
   const idByName = new Map(savedRows.map((row) => [row.project_name, row.id]));
 
   const scopePayload = sites
@@ -7370,11 +7410,25 @@ export async function updateProjectLedgerInfo(
   if (Object.keys(payload).length === 0) {
     return;
   }
-  await fetch(supabaseUrl(`projects?id=eq.${projectId}`), {
+  // Reviewed 2026-09-12 (overnight reliability closeout, task 5):
+  // technical diagnostic only, not a behavior change -- a caller-side fix
+  // (revert the optimistic Client Ledger update on failure) was attempted
+  // 2026-09-11 and reverted after review found the revert-on-failure
+  // design concurrency-unsafe (a stale in-flight revert could overwrite a
+  // second, later, already-succeeded edit). That redesign is still open
+  // and is NOT reattempted here -- this only makes a real PATCH failure
+  // visible in the console for diagnosis, matching the same
+  // logging-only treatment already used for recordNotificationDelivery/
+  // addTaskActivity. The caller's optimistic update is unchanged.
+  const response = await fetch(supabaseUrl(`projects?id=eq.${projectId}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updateProjectLedgerInfo: PATCH failed for project ${projectId} (${response.status}): ${bodyText}`);
+  }
 }
 
 // Per-unit, serial-level installed hardware -- the genuinely new piece.
@@ -8380,6 +8434,8 @@ async function getOrCreateVendorId(name: string, accessToken: string): Promise<s
     body: JSON.stringify({ name: trimmed }),
   });
   if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`getOrCreateVendorId: vendors upsert failed for "${trimmed}" (${response.status}): ${bodyText}`);
     return null;
   }
   const rows = (await response.json()) as Array<{ id: string }>;
@@ -8458,6 +8514,20 @@ export async function createPurchaseOrder(
     unit_cost: line.unitCost,
     line_sort: index,
   }));
+  // Reviewed 2026-09-12 (overnight reliability closeout, task 5): this
+  // write's failure used to be completely swallowed -- the response was
+  // checked but a failure fell through to no-op, and the function's
+  // return value then FABRICATED success by falling back to
+  // `input.lines` (the client's own draft data, never actually written)
+  // as if it had been saved. A purchasing team member would see a
+  // "created" purchase order with line items on screen while
+  // purchase_order_lines was actually empty in the database. Now: a
+  // failure is logged with real status/body, and lineRows honestly stays
+  // empty -- the returned order reflects what is actually in the
+  // database (an order header with zero lines), not what was attempted.
+  // The order header write above already committed by this point
+  // (non-atomic across these two requests, unchanged by this fix) --
+  // this only stops the RETURNED DATA from lying about it.
   let lineRows: PurchaseOrderLineRow[] = [];
   if (linePayload.length > 0) {
     const lineResponse = await fetch(supabaseUrl("purchase_order_lines"), {
@@ -8467,6 +8537,9 @@ export async function createPurchaseOrder(
     });
     if (lineResponse.ok) {
       lineRows = (await lineResponse.json()) as PurchaseOrderLineRow[];
+    } else {
+      const bodyText = await lineResponse.text().catch(() => "");
+      console.error(`createPurchaseOrder: purchase_order_lines write failed for order ${orderId} (${lineResponse.status}): ${bodyText}`);
     }
   }
 
@@ -8484,7 +8557,7 @@ export async function createPurchaseOrder(
     sourceFile: input.sourceFile,
     shipTo: input.shipTo,
     paymentNote: input.paymentNote,
-    lines: lineRows.length > 0 ? lineRows.map(mapPurchaseOrderLineRow) : input.lines.map((line) => ({ ...line, receivedQty: 0 })),
+    lines: lineRows.map(mapPurchaseOrderLineRow),
     sourceRequestId: input.sourceRequestId,
     createdByEmail: input.createdByEmail,
     files: [],
@@ -8525,6 +8598,10 @@ export async function updatePurchaseOrderLineReceivedQty(lineId: string, receive
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify({ quantity_received: receivedQty }),
   });
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`updatePurchaseOrderLineReceivedQty: PATCH failed for line ${lineId} (${response.status}): ${bodyText}`);
+  }
   return response.ok;
 }
 
@@ -8553,10 +8630,16 @@ export async function createPurchaseOrderReceipt(
     }),
   });
   if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    console.error(`createPurchaseOrderReceipt: purchase_order_receipts insert failed for order ${input.purchaseOrderId} (${response.status}): ${bodyText}`);
     return null;
   }
   const rows = (await response.json()) as PurchaseOrderReceiptRow[];
-  return rows[0] ? mapPurchaseOrderReceiptRow(rows[0]) : null;
+  if (!rows[0]) {
+    console.error(`createPurchaseOrderReceipt: purchase_order_receipts insert for order ${input.purchaseOrderId} returned no row.`);
+    return null;
+  }
+  return mapPurchaseOrderReceiptRow(rows[0]);
 }
 
 export async function createPurchaseOrderHold(
