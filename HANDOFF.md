@@ -1,7 +1,7 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-09-12, Queue A10 -- Client Ledger serialized save queue (**Code: commit pending --
-see git log for the actual hash once committed.**
+Last updated: 2026-09-12, Queue A10 -- Client Ledger serialized save queue (**Code: commit `43df8ea`,
+pushed.**
 
 Implements `PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md` Option B, replacing the earlier (2026-09-11,
 reverted) per-field revert-on-failure attempt with a queue serialized per `projectId`.

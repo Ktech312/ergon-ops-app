@@ -312,7 +312,7 @@ same current state.
 
 ### A10. Implement the Client Ledger serialized save queue
 
-**Status: DONE — commit pending, see `HANDOFF.md` for the hash once committed.**
+**Status: DONE — `43df8ea`.**
 `createClientLedgerSaveQueue` (`src/persistence.ts`) implemented per Option B, wired into
 `handleUpdateProjectLedgerInfo` (`src/main.tsx`) via a new `clientLedgerSaveQueueRef`.
 `updateProjectLedgerInfo` now throws and returns the confirmed row instead of logging-and-swallowing.
