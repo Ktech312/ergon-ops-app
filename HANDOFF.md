@@ -1,5 +1,15 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue A4 closed -- accessible ordering for Proposal Template sections (**Code: commit `a36cd3a`, deployed.**
+
+`updateProposalTemplateSection()` already accepted `sequenceOrder` and `proposal_template_sections` already ordered by it -- no persistence-layer change needed, only frontend Move up/Move down buttons (same swap pattern as Queue A3), pessimistic and checked, with a best-effort revert if the second write fails after the first succeeded. Existing sent proposals are unaffected regardless: `createQuoteProposal()` freezes section content into `content_snapshot` at send time, an entirely separate code path this change never touches.
+
+3 new tests for `updateProposalTemplateSection` itself (zero coverage until now): sends `sequence_order` when reordering, returns false on failure, omits `sequence_order` when only title/body change.
+
+`npx tsc -b` clean. `NODE_OPTIONS="--max-old-space-size=6144" npx vitest run --no-file-parallelism`: **358/358 passing** (+3). `npx eslint .`: 0 errors, 73 pre-existing warnings. `npm run build`: clean.
+
+Pushed to `main`; HEAD and `origin/main` confirmed at `a36cd3a`. Deployed as a fresh Vercel Ready/Production deployment; live bundle grepped for the new `proposal-template-section-reorder` class (present). **Verified live in the authenticated session**: the Admin page's Proposal Template section now shows 6 Move up/down button pairs matching its 6 real sections, rendered correctly with real production content. Two unrelated `401` errors appeared in the console during this load (`upsertKnownUser`, `ensureTeamMemberForSelf`'s `team_members` lookup) -- both are pre-existing, already-documented best-effort background calls (see `task2-unchecked-write-fixes.test.ts`'s own "stays best-effort" tests) unrelated to this change's code path; the rest of the Admin page rendered and functioned normally. **Did not click Move up/down** -- that would perform a real write to currently-in-use proposal boilerplate content, out of bounds for a verification pass per the standing rule against mutating real records for testing.
+
 Last updated: 2026-09-12, Queue A3 closed -- accessible ordering for Sales quote BOM lines (**Code: commit `a9a3f67`, deployed.**
 
 `line_sort` existed as a real column on `sales_quote_bom_lines` since migration 048 but was never read or written by the frontend (`PRODUCT_MASTER_COMPLETION_PLAN.md` §5 Batch 10). Added `lineSort` to the `SalesQuoteBomLine` type/mapper, sorted `bomLines` by it (matching the existing `locations` convention), and added `reorderSalesQuoteBomLine()` -- swaps exactly the two affected rows' `line_sort` values, sequential and checked, with a best-effort revert (and a clear logged warning if the revert itself fails) if the second write fails after the first succeeded. Move up/Move down buttons in the Quote BOM list are plain keyboard-accessible `<button>`s, disabled at the first/last boundary, pessimistic (local state only updates after the swap is confirmed). No drag-and-drop library added.
