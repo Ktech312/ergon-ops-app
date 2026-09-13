@@ -1,5 +1,25 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue B6 -- Inventory pagination design (**Docs only, commit pending -- see
+git log for the actual hash once committed.**
+
+New `PRODUCT_INVENTORY_PAGINATION_DESIGN.md`. Traced all 114 uses of `inventoryItems` in `main.tsx`
+before proposing anything: ~30 by-ref/name lookups, two independent full-array client-filtered table
+views (Inventory page, Reports/Purchasing page -- the actual pagination targets), ~6 full-list
+`<select>` dropdowns, global search, and several full-array aggregates (low stock, distinct tags,
+one-off items, vendor options). Recommends NOT paginating `inventoryItems`/`loadInventoryItems`
+itself (would silently break the other ~110 consumers) -- instead a second, independent cursor-
+paginated + server-side-searched query used only by the two table views. Defines the cursor shape
+`(item_name, id)`, a selected-item hydration rule for a row outside the loaded page (fetch it
+directly by ref, pin it visibly, same principle the existing CatalogItemPicker/PeoplePicker already
+use), empty/loading/error states matching existing app conventions, and an interaction sketch (debounced
+search, Load More button over infinite scroll, matching this app's existing preference for explicit
+controls). Flags, but does not fix, a real pre-existing risk found while tracing: `loadInventoryItems`
+has no `limit` today, so if PostgREST has any configured default row cap, an inventory count past it
+would already silently truncate with nothing surfacing it -- named as a candidate follow-up, not
+solved here. Does not cap the existing alphabetical query, per the task's own instruction. **No
+production code, no migration, no test file.**
+
 Last updated: 2026-09-12, Queue B5 -- Backup restore resume/checkpoint specification (**Docs only,
 commit pending -- see git log for the actual hash once committed.**
 
