@@ -1,5 +1,38 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue B7-B10 -- Support/Engineering/Marketing module designs + security and
+dependency follow-up (**Docs only, commit pending -- see git log for the actual hash once
+committed.**
+
+Four new docs, closing out all of Queue B:
+
+- **`PRODUCT_SUPPORT_MODULE_DESIGN.md`** (B7): first design for the `support` role's own module --
+  entry from a Client Ledger project, ties into existing `installed_assets`/warranty data with zero
+  new join concepts, reuses `project_submittals`' status/version shape, one append-only activity
+  table for notes/status/communication/scheduled visits/parts-labor. Permissions and workflow
+  deliberately not decided, per the task's own instruction.
+- **`PRODUCT_ENGINEERING_MODULE_DESIGN.md`** (B8): first design for `engineering`/
+  `product_development` (two existing roles, kept separate on purpose, matching their already-
+  different Inventory permissions) -- product/solution requests through technical review to a Catalog
+  release link, explicitly kept arm's-length from Project implementation (cited via foreign key, never
+  merged), with a forward handoff link to Support once B7 is built.
+- **`PRODUCT_MARKETING_SALES_DESIGN.md`** (B9): maps lead/campaign/contact/qualification into the
+  existing `clients`/`sales_quotes` tables (built in migration 102 specifically to stop client-name
+  duplication) rather than a parallel company concept -- conversion creates or reuses a `clients` row
+  with zero re-typed data. No HubSpot integration built or promised, per the task's explicit
+  instruction; dedup against `clients` is automatic (existing unique-name constraint), dedup between
+  two leads for the same company is human-confirmed, not auto-merged.
+- **`PRODUCT_SECURITY_DEPENDENCY_FOLLOWUP.md`** (B10): re-validated the `xlsx` finding (still exactly
+  2 call sites, recommendation unchanged) and found 6 additional `npm audit` advisories not in the
+  prior audit (nodemailer x4, pdfjs-dist, nanoid, postcss, browserslist, baseline-browser-mapping --
+  all non-breaking `npm audit fix`-able, none applied here). Reviewed all 7 security-definer functions
+  added/redefined since the last broad audit (migrations 127-134): all correctly set
+  `search_path=''`, fully qualify every reference, grant execute to `authenticated` only, and use safe
+  error messages -- a clean result. Confirmed `has_role()` remains unhardened (unchanged, already-
+  known finding) but every one of the 7 new functions deliberately avoids calling it, each with its
+  own comment explaining why -- the discipline has held. **No package installed/replaced, no
+  migration drafted or run, for any of the four documents.**
+
 Last updated: 2026-09-12, Queue B6 -- Inventory pagination design (**Docs only, commit pending -- see
 git log for the actual hash once committed.**
 
