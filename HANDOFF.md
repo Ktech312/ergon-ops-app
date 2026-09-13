@@ -1,7 +1,7 @@
 # Ergon Ops — Handoff Doc
 
 Last updated: 2026-09-12, Queue A15 -- final post-continuation reconciliation (**Docs only, commit
-pending -- see git log for the actual hash once committed.**
+`11a940c`, pushed.**
 
 Reconciled `CONTINUOUS_CODER_HANDOFF.md` (header, §4 baseline, each of A10-A15's own `Status:` lines,
 and a new "Manual database actions awaiting E's review, in order" subsection under §8 consolidating

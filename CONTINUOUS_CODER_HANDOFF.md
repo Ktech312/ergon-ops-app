@@ -427,7 +427,7 @@ role vocabulary, or authorization results. Park the reviewed package for E and c
 
 ### A15. Final post-continuation reconciliation
 
-**Status: DONE — this pass.** Updated this file's header/§4 baseline/§8 (new "manual database
+**Status: DONE — `11a940c`.** Updated this file's header/§4 baseline/§8 (new "manual database
 actions" subsection) and each of A10–A14's own `Status:` lines; `PRODUCT_MASTER_COMPLETION_PLAN.md`
 (Client Ledger reliability row and Batch 2 marked DONE, xlsx/inventory-performance rows corrected to
 reflect A12/A13); `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` (the one material gap it named —
