@@ -1,7 +1,7 @@
 # Ergon Ops — Continuous Coder Handoff
 
 Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) SHIPPED. QUEUE C2 IS THE ACTIVE HANDOFF —
-C2.2–C2.4 PREPARED, NOT RUN.** Prepared: 2026-09-12, updated 2026-09-13. E approved the recommended
+C2.2–C2.5 PREPARED, NOT RUN.** Prepared: 2026-09-12, updated 2026-09-13. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
 `sales_quotes`, `accepted_proposal_total` on `projects`, frozen totals in every new
@@ -10,17 +10,18 @@ doc reconciliation). Migration 136 and its canonical test passed; the prepared c
 to `main` and Vercel deployed them.
 Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2026-09-13).
 
-Queue C2's share-link lifecycle foundation (C2.2–C2.4) is now fully drafted: migrations 137, 138,
-and 139 plus their three canonical test scripts, committed locally (`362e702`, not yet pushed —
-SQL-only commit, no dependent frontend code exists yet). None of the three migrations are applied.
-Migration 137 is the next single file to hand E for review per the established one-file-at-a-time
-gate; see "Manual database actions" below for the full ordered list and exact sequencing.
+Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: migrations 137, 138,
+139, and 140 plus their four canonical test scripts, committed locally (`362e702`, `f09f574`,
+`d564b8b`; not yet pushed — SQL-only commits, no dependent frontend code exists yet). None of the
+four migrations are applied. Migration 137 is the next single file to hand E for review per the
+established one-file-at-a-time gate; see "Manual database actions" below for the full ordered list
+and exact sequencing.
 
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134, 135, and 136 are applied and verified. Migrations 137,
-138, and 139 are drafted, committed locally, and awaiting E's review/run in that order — see
-"Manual database actions." Continue Queue C2 below (C2.5 onward) while 137 is pending. Do not rerun
+138, 139, and 140 are drafted, committed locally, and awaiting E's review/run in that order — see
+"Manual database actions." Continue Queue C2 below (C2.6 onward) while 137 is pending. Do not rerun
 134/135/136 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -274,6 +275,31 @@ never submit a response. Ship enforcement, action RPCs, and customer wording tog
 can appear to work while public access remains unchanged.
 
 ### C2.5 — Version supersession and quote deletion
+
+**Status: DONE — drafted, NOT run. Requires 137, 138, and 139 live first.**
+`backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql` +
+`backend/supabase/migration_140_share_link_version_supersession_and_quote_cascade_tests.sql`. Two
+independent pieces: (1) a `sales_quotes` trigger (`cascade_quote_soft_delete`) that auto-disables
+every still-active proposal-link token for a quote the moment it's soft-deleted (`deleted_at` goes
+null → non-null), logging a `temporarily_disabled` action with reason `'Quote deleted'`; restoring the
+quote (`deleted_at` back to null) intentionally fires no trigger action at all, matching the decided
+"restore never auto-reactivates" rule; an already permanently_revoked/superseded token is untouched.
+(2) `create_and_send_submittal_version(project_id, content_snapshot, client_name, client_email)` /
+`create_and_send_quote_proposal_version(quote_id, ...)` -- one atomic RPC each that creates the new
+version row (server-computed `version = max+1`, closing a real client-computed-version race the old
+two-step flow left open), creates its token, and marks every OTHER version's still-live
+(`active`/`temporarily_disabled`) token `superseded` pointing at the new one, all in one transaction --
+deliberately NOT three separate client round-trips, which would reopen a window where both an old and
+new version's links are simultaneously respondable. These two RPCs are the actual replacement for
+today's `createSubmittal`+`createSubmittalShareToken` / `createQuoteProposal`+
+`createQuoteProposalShareToken` two-step frontend flow; migration 138's narrower, single-purpose
+`create_submittal_share_token`/`create_quote_proposal_share_token` remain valid, unmodified primitives,
+just not what the frontend will call for the version-creation flow once switched over. Test proves
+first-version creation, second-version supersession (with `get_submittal_by_token` confirming
+`outcome=superseded` on the old token), a third version leaving an already-revoked second version's
+token untouched (no loophole), nonexistent-project/quote rejection, cross-entity authorization denial,
+the mirrored proposal-side flow, the quote-cascade disable-then-restore-stays-disabled sequence, and
+grant boundaries. Committed locally (`d564b8b`), not pushed.
 
 Make a newer proposal/submittal version supersede the prior version's response ability while keeping
 the old content viewable under the decided wording. Soft-deleting a quote disables its proposal links
@@ -1023,6 +1049,12 @@ committed locally, awaiting E's review — 137 is the next single file to hand E
    `outcome` column must ship in the same reviewed batch as this migration (a separate commit,
    pushed only once E confirms 139 and its test — `backend/supabase/migration_
    139_share_link_lifecycle_actions_tests.sql` — both succeeded).
+7. **Migration 140 — PENDING, AFTER 139.** `backend/supabase/migrations/
+   140_share_link_version_supersession_and_quote_cascade.sql` — auto-supersede-on-new-version RPCs
+   plus the quote soft-delete cascade trigger (see C2.5 above). Requires 137, 138, and 139 live
+   first. Its test script,
+   `backend/supabase/migration_140_share_link_version_supersession_and_quote_cascade_tests.sql`,
+   follows only after E reports 140 itself succeeded.
 
 ## 9. Consolidated reporting format
 
@@ -1044,6 +1076,8 @@ item remains.
 ## 10. Start instruction for the next coder
 
 Read this file, then the top current-status entries in `HANDOFF.md`, then
-`PRODUCT_MASTER_COMPLETION_PLAN.md`. Verify Git and begin at Queue C2.1 above. Treat A1–A15,
-B1–B10, and C1 as completed records rather than a queue to repeat. Continue until every independent
-C2 item is implemented or left at its required single-file manual database gate.
+`PRODUCT_MASTER_COMPLETION_PLAN.md`. Verify Git and begin at Queue C2.6 above (C2.1–C2.5 are drafted
+records now — migrations 137–140 committed locally, awaiting E's review in order starting with 137;
+do not redo them). Treat A1–A15, B1–B10, and C1 as completed records rather than a queue to repeat.
+Continue until every independent C2 item is implemented or left at its required single-file manual
+database gate.

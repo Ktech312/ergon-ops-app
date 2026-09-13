@@ -4,10 +4,23 @@
 
 Start with `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad**. Migrations 134, 135, and 136
 are complete and verified in production. Queue C1 (frozen Sales pricing) is fully deployed. Queue C2's
-share-link lifecycle foundation is drafted: migrations 137, 138, and 139 plus their canonical test
-scripts are committed locally (`362e702`, not yet pushed) and awaiting E's review, one file at a
-time, starting with 137. Do not re-run migrations 134/135/136 after they've each been confirmed, and
-do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
+share-link lifecycle foundation is drafted: migrations 137, 138, 139, and 140 plus their canonical
+test scripts are committed locally (`362e702`, `f09f574`, `d564b8b`; not yet pushed) and awaiting E's
+review, one file at a time, starting with 137. Do not re-run migrations 134/135/136 after they've
+each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
+
+Last updated: 2026-09-13, Queue C2.5 -- version supersession + quote soft-delete cascade drafted, NOT
+run. `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql` adds a
+`sales_quotes` trigger that auto-disables a deleted quote's still-active proposal links (restore
+never re-enables them) and two atomic RPCs, `create_and_send_submittal_version`/`create_and_send_
+quote_proposal_version`, that create a new version row + its token + supersede every other version's
+still-live token in one transaction -- replacing today's three-separate-steps-worth-of-risk two-step
+client flow (create row, then create token, previously with no supersession step at all). Requires
+migrations 137-139 live first. Test script:
+`backend/supabase/migration_140_share_link_version_supersession_and_quote_cascade_tests.sql`. Neither
+has been run. Committed locally as `d564b8b`; not pushed (sequenced after 137-139 in the one-file-
+at-a-time hand-off). Full detail in `CONTINUOUS_CODER_HANDOFF.md` C2.5. No TypeScript/test/build
+changes in this pass -- SQL-only, same as the C2.2-C2.4 entry directly below.
 
 Last updated: 2026-09-13, Queue C2.2-C2.4 -- share-link lifecycle foundation drafted, NOT run.
 `backend/supabase/migrations/137_share_link_lifecycle_schema.sql` (inert schema: token status/
