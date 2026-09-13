@@ -133,7 +133,13 @@ of 12 flagged desktop clickable-rows are now keyboard-operable, DONE this pass**
 performance is measured, not assumed (Dashboard's activity feed is now memoized and `loadTasks` is
 now bounded, **both DONE this pass**; two other unbounded-growth table loads and unresized photo
 uploads remain open). `PRODUCT_ACCESSIBILITY_MOBILE_PERF_AUDIT.md` has the full list; this plan's
-§2 row tracks exactly what remains.
+§2 row tracks exactly what remains. **A real, silent mobile overflow bug was found and fixed this
+pass** (Queue A6 in `CONTINUOUS_CODER_HANDOFF.md`) — the shared `stack-table-mobile` `data-label`
+cell layout let a long value (proposal BOM table Description/Item columns especially) overflow its
+container at mobile widths, invisibly clipped by the sitewide `overflow-x: hidden`. Confirmed with
+an isolated before/after browser reproduction (not screenshotted against production, since no real
+proposal exists to click through) and fixed by stacking label above value instead of beside it —
+applies sitewide to every table using this shared class.
 
 ### Phase 7 — Service/Support and client ledger expansion
 **Gate**: A closed-out project can be handed to a Support/Service workflow with its own status
