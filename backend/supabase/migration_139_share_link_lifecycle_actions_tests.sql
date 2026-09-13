@@ -72,7 +72,20 @@ begin
       skipped_names := array_append(skipped_names, 'all-sections (no real PM/Sales user found or grantable)');
     else
       -- Fixtures: one quote+proposal (status 'sent', so a response can
-      -- actually be attempted), one project+submittal (also 'sent').
+      -- actually be attempted), one project+submittal (also 'sent'). Run
+      -- fixture creation through a real authenticated workspace admin --
+      -- sales_quotes has the migration-117 ownership trigger, which derives
+      -- workspace_id from auth.uid() and correctly rejects the SQL-editor's
+      -- default postgres context (auth.uid() null, zero workspace
+      -- memberships) because it has no workspace membership; projects has
+      -- its own pm/admin write policy. Both `request.jwt.claims` and
+      -- `request.jwt.claim.sub` are set at every caller switch below,
+      -- matching migration 138's own corrected test -- this Supabase
+      -- project's auth.uid() needs both forms set consistently.
+      perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
+      perform set_config('role', 'authenticated', true);
+
       insert into public.sales_quotes (client_name, site_name, status)
         values ('ZZ Test Client', 'ZZ_TEST_QUOTE_' || substr(md5(random()::text), 1, 10), 'open')
         returning id into test_quote_id;
@@ -87,12 +100,16 @@ begin
         values (test_project_id, 1, 'sent', '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com')
         returning id into test_submittal_id;
 
+      perform set_config('role', original_role, true);
+
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.create_quote_proposal_share_token(test_proposal_id) into token_a;
       perform set_config('role', original_role, true);
 
       perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.create_submittal_share_token(test_submittal_id) into token_b;
       perform set_config('role', original_role, true);
@@ -107,6 +124,7 @@ begin
       -- Section 2: disable, then the read outcome becomes 'unavailable',
       -- and a second disable call reports already_not_active.
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.disable_share_link(token_a, 'ZZ test reason') into action_result;
       perform set_config('role', original_role, true);
@@ -120,6 +138,7 @@ begin
       end if;
 
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.disable_share_link(token_a) into action_result;
       perform set_config('role', original_role, true);
@@ -139,6 +158,7 @@ begin
       -- Section 3: re-enable restores 'found', and a second re-enable is
       -- a no-op (already_not_disabled).
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.re_enable_share_link(token_a) into action_result;
       perform set_config('role', original_role, true);
@@ -152,6 +172,7 @@ begin
 
       -- Section 4: permanently revoke -- terminal, cannot be re-enabled.
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.permanently_revoke_share_link(token_a, 'ZZ revoke reason') into action_result;
       perform set_config('role', original_role, true);
@@ -160,6 +181,7 @@ begin
       end if;
 
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.re_enable_share_link(token_a) into action_result;
       perform set_config('role', original_role, true);
@@ -174,6 +196,7 @@ begin
       end if;
 
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.permanently_revoke_share_link(token_a) into action_result;
       perform set_config('role', original_role, true);
@@ -185,6 +208,7 @@ begin
       -- superseded and points at the new token; the new token resolves
       -- 'found'; the old resolves 'superseded'.
       perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.regenerate_share_link(token_b) into new_token;
       perform set_config('role', original_role, true);
@@ -234,6 +258,7 @@ begin
       caught := false;
       begin
         perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+        perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
         perform set_config('role', 'authenticated', true);
         perform public.disable_share_link(token_a);
       exception when others then
@@ -247,6 +272,7 @@ begin
       caught := false;
       begin
         perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+        perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
         perform set_config('role', 'authenticated', true);
         perform public.disable_share_link(new_token);
       exception when others then
@@ -292,6 +318,7 @@ begin
   end if;
 
   raise notice 'ALL MIGRATION 139 SHARE-LINK LIFECYCLE TESTS PASSED -- ZERO SECTIONS SKIPPED';
-end $$;
+end;
+$$;
 
 rollback;
