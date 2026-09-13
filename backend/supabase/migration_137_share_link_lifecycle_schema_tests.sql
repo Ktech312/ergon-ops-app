@@ -223,22 +223,14 @@ begin
     perform set_config('request.jwt.claims', json_build_object('sub', non_admin_user_id::text)::text, true);
     perform set_config('role', 'authenticated', true);
 
-    caught := false;
-    begin
-      update public.workspace_share_link_settings
-        set default_expiration_open_documents = interval '1 day'
-        where workspace_id = (select id from public.workspaces where status = 'active' limit 1);
-      get diagnostics existing_token_count = row_count;
-      if existing_token_count = 0 then
-        caught := true;
-      end if;
-    exception when others then
-      caught := true;
-    end;
+    update public.workspace_share_link_settings
+      set default_expiration_open_documents = interval '1 day'
+      where workspace_id = (select id from public.workspaces where status = 'active' limit 1);
+    get diagnostics existing_token_count = row_count;
 
     perform set_config('role', original_role, true);
 
-    if not caught then
+    if existing_token_count <> 0 then
       raise exception 'TEST FAILED: a non-admin authenticated user was able to write workspace_share_link_settings -- expected admin-only write to be enforced.';
     end if;
   end if;
