@@ -1,5 +1,17 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue A5 closed -- read-only proposal-version comparison (**Code: commit `a0baa92`, deployed.**
+
+New `compareProposalSnapshots(before, after)` (`src/persistence.ts`) is a pure function over two frozen `ProposalSnapshot` values -- never creates, updates, approves, rejects, disables, or regenerates a link. Neither BOM lines nor template sections carry a stable id in the snapshot, so matching uses item name / section title as the closest available stable key, with a documented limitation (a renamed item/title reports as one removal + one addition, not a single "changed" entry).
+
+UI: a "Compare versions" toggle appears in the Quote Proposal section once a quote has 2+ proposal versions, defaulting to the newest two, with explicit selectors for any other pair. Shows changed top-level fields, added/removed/changed BOM lines, and added/removed/changed template sections -- explicitly labeled "an operational comparison... not a certified legal document diff," per the task's own requirement not to overclaim.
+
+7 new tests (`src/proposal-version-comparison.test.ts`): identical versions, added/removed sections and BOM lines, changed field/line/section values, and a proposal missing the optional `companyName`/`companyLogoUrl` fields (sent before that snapshot addition existed) comparing cleanly instead of crashing.
+
+`npx tsc -b` clean. `NODE_OPTIONS="--max-old-space-size=6144" npx vitest run --no-file-parallelism`: **365/365 passing** (+7). `npx eslint .`: 0 errors, 73 pre-existing warnings. `npm run build`: clean.
+
+Pushed to `main`; HEAD and `origin/main` confirmed at `a0baa92`. Deployed as a fresh Vercel Ready/Production deployment; live bundle grepped for `Compare versions` (2 matches). Fresh authenticated browser load: "Cloud synced", no new console errors. **Not exercised interactively** -- this is genuinely read-only (safe to click), but none of the 4 real quotes in production have a sent proposal yet, so there is no real multi-version data to compare against; verification rests on the 7 unit tests plus the clean deploy.
+
 Last updated: 2026-09-12, Queue A4 closed -- accessible ordering for Proposal Template sections (**Code: commit `a36cd3a`, deployed.**
 
 `updateProposalTemplateSection()` already accepted `sequenceOrder` and `proposal_template_sections` already ordered by it -- no persistence-layer change needed, only frontend Move up/Move down buttons (same swap pattern as Queue A3), pessimistic and checked, with a best-effort revert if the second write fails after the first succeeded. Existing sent proposals are unaffected regardless: `createQuoteProposal()` freezes section content into `content_snapshot` at send time, an entirely separate code path this change never touches.
