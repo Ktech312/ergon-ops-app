@@ -1,26 +1,18 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) ALL CODE-COMPLETE.** Prepared: 2026-09-12,
+Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) SHIPPED. QUEUE C2 IS THE ACTIVE HANDOFF.** Prepared: 2026-09-12,
 updated 2026-09-13. E approved the recommended pricing statement below and C1.1–C1.9 executed
 continuously against it (frozen Sales pricing: `unit_price`/`price_source` on
 `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on `sales_quotes`, `accepted_proposal_total`
 on `projects`, frozen totals in every new `ProposalSnapshot`, Sales Quote Builder UI, customer
-proposal display, KPI fixes, 22 new tests, full doc reconciliation). **Code and tests are committed
-locally but NOT pushed** — migration 136 must be reviewed and run by E first; see "Manual database
-actions" under §8 for exactly why and what to do once it lands. Queue A/B remain fully complete as
-recorded below; nothing there needs revisiting.
-Current verified repository baseline: local `main` ahead of `origin/main` by the Queue C1 commits
-(see `HANDOFF.md`'s newest entry for the exact local HEAD) — **do not push** until migration 136 is
-confirmed run.
-Production: `https://ergon-ops-app.vercel.app/` (does not yet reflect Queue C1 — still pre-pricing).
+proposal display, KPI fixes, 22 new tests, full doc reconciliation). Migration 136 and its canonical
+test passed; the prepared commits were pushed to `main` and Vercel deployed them.
+Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2026-09-13).
 
 ## Next-session launchpad
 
-**Repository checkpoint:** migrations 134 and 135 have both been applied and verified in production.
-Migration 136 (Sales pricing) and its corrected canonical SQL test both passed in production on
-2026-09-13. Push the already-committed Queue C1 frontend immediately (§3's delivery rule,
-`PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md`), verify the Vercel deployment, then continue to the
-next Queue C wave (§7) without waiting for a separate instruction. Do not rerun either SQL file.
+**Repository checkpoint:** migrations 134, 135, and 136 are applied and verified. Queue C1 is live.
+Start Queue C2 below. Do not rerun any of those SQL files and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
 
@@ -147,12 +139,13 @@ Summary panel.
 
 ### C1.8 — Verification and deployment
 
-**Status: CODE/TESTS DONE — DEPLOYMENT BLOCKED on migration 136.** 22 new tests (`sales-pricing.test.ts`,
+**Status: SHIPPED.** 22 new tests (`sales-pricing.test.ts`,
 extended `proposal-version-comparison.test.ts`, extended `task2-unchecked-write-fixes.test.ts`) --
-398/398 full suite passing, `tsc -b` clean, `eslint` 0 errors, `npm run build` clean. **Not pushed**:
-pushing now would deploy frontend code that queries columns migration 136 hasn't created yet,
-400-ing every Sales page load in production. Push and verify Vercel/browser only after E confirms the
-migration succeeded.
+398/398 full suite passing, `tsc -b` clean, `eslint` 0 errors, `npm run build` clean. Migration 136
+and its corrected SQL test passed; pushed through `473c0f4`. Vercel served bundle
+`index-zEv2L1p6.js`, containing the new pricing/accepted-total UI; fresh browser boot had zero console
+warnings or errors. Authenticated Sales use and one real priced proposal remain acceptance evidence,
+not prerequisites for continuing engineering work.
 
 - Focused tests for mapping, editing, totals/rounding, overrides, old snapshots, comparison, no cost
   leakage, failures, mobile labels, and conversion outcome.
@@ -163,13 +156,11 @@ migration succeeded.
 
 ### C1.9 — Closeout and automatic continuation
 
-**Status: DONE for everything not gated on deployment.** `HANDOFF.md`, this file, the master plan,
+**Status: DONE AND DEPLOYED.** `HANDOFF.md`, this file, the master plan,
 `PRODUCT_SALES_DISCOVERY.md`, `PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md`, and the critical-flow
 coverage matrix all updated. `PRODUCT_MARKETING_CLAIMS.md` checked -- no pricing-related claim exists
 there to correct. Reported shipped/prepared/verified/acceptance-pending separately, per this
-section's own instruction (see the report at the end of this session's transcript). Automatic
-continuation to the next Queue C wave is itself blocked on the migration-136/push gate -- see
-"Manual database actions" under §8.
+section's own instruction. Queue C2 below is now the automatic continuation.
 
 - Update `HANDOFF.md`, the master plan, Sales discovery/experience, pricing plan, marketing claims,
   and the critical-flow coverage matrix.
@@ -177,7 +168,84 @@ continuation to the next Queue C wave is itself blocked on the migration-136/pus
 - Then continue to the next approved Queue C workstream. Do not end by asking what to do next while
   a previously decided share-link or reliability preparation task remains available.
 
-### Work permitted before E answers the pricing statement
+## Queue C2 — Share-link lifecycle foundation (active next coder queue)
+
+The business rules are already decided in
+`PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md`; the dependency order is reconciled in
+`PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md`. Do not send those questions back to E. This queue covers
+the independent lifecycle work in Stages A–D and the direct-write closure needed to trust it. It does
+not implement the Sales-to-assigned-PM handoff, Billing clearance, conversion approval, or Phase 3
+tenant isolation.
+
+### C2.1 — Refresh the real baseline
+
+Read the latest definitions of `public_share_tokens`, `sales_quote_proposals`,
+`project_submittals`, all four public lookup/response RPCs, both token-creation writers, quote soft
+delete/restore, and the current RLS policies. Confirm the next free migration number; `137` is only a
+working expectation. Reconcile stale claims in the two source documents before writing SQL.
+
+### C2.2 — Inert lifecycle schema package
+
+Draft one migration and one separate canonical rollback-only SQL test. The migration adds the
+decided token states and metadata, workspace expiration defaults, view/action audit tables,
+constraints, indexes, minimum grants, and safe RLS. Existing tokens backfill to `active`; existing
+`expires_at` values remain unchanged. This package must not change token resolution or client-visible
+behavior. Review search paths, grants, output-column ambiguity, trigger ordering, FK delete behavior,
+and empty-production-table fixtures. Leave it committed locally but unpushed until E runs the single
+migration and then its single test.
+
+### C2.3 — Server-owned token creation and expiration
+
+After C2.2 is live, replace direct token INSERTs with hardened RPCs that derive entity/workspace,
+generate the token server-side, apply the open-document default expiration, and return the token.
+Never trust caller-supplied workspace, status, actor, or expiration. Preserve old completed-document
+links; completed-link retention is a separate scheduled transition, not a destructive rewrite.
+
+### C2.4 — Atomic lifecycle actions and read outcomes
+
+Implement disable, re-enable, permanent revoke, and regenerate/supersede as hardened RPCs with
+server-derived authorization, required reasons where decided, append-only audit events, and
+first-writer-safe predicates. Extend both public lookup and response paths consistently: superseded,
+expired, and neutral unavailable states must be distinguishable enough for the decided customer copy
+without exposing internal reasons or customer data. A disabled/revoked/expired/superseded link may
+never submit a response. Ship enforcement, action RPCs, and customer wording together so no control
+can appear to work while public access remains unchanged.
+
+### C2.5 — Version supersession and quote deletion
+
+Make a newer proposal/submittal version supersede the prior version's response ability while keeping
+the old content viewable under the decided wording. Soft-deleting a quote disables its proposal links
+and records joinable quote/link audit events. Restoring the quote never silently re-enables them; a
+Sales user must deliberately re-enable and create the matching audit event.
+
+### C2.6 — Internal controls and history
+
+Add the decided per-version controls: Disable/Re-enable together; Permanently Revoke and Generate New
+Link separated and confirmation-gated; activity summary plus history. Proposal controls are Sales;
+do not grant PM proposal authority. For submittals, implement only the authority that can be proven
+from current schema; defer the assigned-PM cutover portion to Stage 2 rather than approximating it as
+“any PM.” Preserve keyboard, mobile, screen-reader, email, and frozen-snapshot behavior.
+
+### C2.7 — Close direct-write bypasses
+
+After the sanctioned RPCs are live, narrow direct writes to `public_share_tokens`,
+`sales_quote_proposals`, and `project_submittals`. In the same reviewed sequence, finish the already-
+designed authorization-table policy closure and bridge-aware `accept_invite()` replacement so neither
+legacy nor workspace roles can drift through a raw client write. Keep SELECT changes and Phase 3 data
+containment out of this migration. Require SQL tests plus a real authenticated REST rejection check
+and an actual invite-acceptance check before calling it closed.
+
+### C2.8 — Delivery and continuation
+
+For every database checkpoint, present E exactly one clickable file and one plain instruction. Never
+open several files or paste alternate SQL into chat. After E reports the migration succeeded, present
+exactly its one test file. A clean `Success. No rows returned` counts when the script hard-fails every
+assertion and genuine skip; do not ask E to hunt for NOTICE output. Push dependent frontend only
+after its database gate passes, verify the production bundle and fresh browser console, update all
+handoff/status docs, then continue to the next independent C2 item. If waiting on a manual migration,
+continue preparing later C2 tests/docs or another independent Queue C wave instead of stopping.
+
+### Historical pre-approval boundary (closed)
 
 If the next coder starts before E answers, they may complete C1.1's source trace and draft the
 read-only preflight/test matrix, reconcile stale documentation, and verify that migrations 134/135
@@ -857,14 +925,14 @@ Queue A/B work.
 
 ### Manual database actions
 
-Migrations 134 and 135 are done. **Migration 136 is the one new pending action from Queue C1.**
+Migrations 134, 135, and 136 are done and verified. **There is no pending manual database action.**
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
 2. **Migration 135 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
-3. **Migration 136 — AWAITING E'S REVIEW/RUN.** `backend/supabase/migrations/136_sales_pricing_
-   foundations.sql` (confirm 136 is still the next free number at execution time) implements the
+3. **Migration 136 — DONE AND VERIFIED.** `backend/supabase/migrations/136_sales_pricing_
+   foundations.sql` implements the
    frozen Sales pricing statement E approved 2026-09-13: `unit_price`/`price_source` (+ override
    audit) on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on `sales_quotes`,
    `accepted_proposal_total` on `projects`, a backfill labeling every pre-existing BOM line
@@ -872,12 +940,9 @@ Migrations 134 and 135 are done. **Migration 136 is the one new pending action f
    as verified), and a redefinition of `create_project_from_quote` carrying the accepted proposal's
    frozen total onto the Project. Verification script:
    `backend/supabase/migration_136_sales_pricing_foundations_tests.sql`.
-   **The corresponding frontend code is already committed locally but deliberately NOT pushed to
-   `main`** — it queries the new columns directly (no fallback-select tolerance was built, unlike
-   the `PRE_087`/`PRE_091`/`PRE_092` patterns elsewhere), so pushing before this migration runs would
-   break every Sales page load in production with a PostgREST 400. Push immediately once E confirms
-   both the migration and its test script succeeded — do not wait for a separate instruction to do
-   so, and do not re-ask whether to push once success is confirmed.
+   The migration and corrected canonical test both returned `Success. No rows returned`; the test
+   hard-fails every assertion and genuine skip. The Queue C1 frontend was then pushed and verified
+   in Vercel production. Do not run either SQL file again.
 
 ## 9. Consolidated reporting format
 
@@ -899,6 +964,6 @@ item remains.
 ## 10. Start instruction for the next coder
 
 Read this file, then the top current-status entries in `HANDOFF.md`, then
-`PRODUCT_MASTER_COMPLETION_PLAN.md`. Verify Git and begin at A1. If A1 lacks an authenticated
-session, record that fact in one line and begin A2 immediately. Continue until all available A and B
-work is complete.
+`PRODUCT_MASTER_COMPLETION_PLAN.md`. Verify Git and begin at Queue C2.1 above. Treat A1–A15,
+B1–B10, and C1 as completed records rather than a queue to repeat. Continue until every independent
+C2 item is implemented or left at its required single-file manual database gate.

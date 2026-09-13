@@ -4,16 +4,16 @@
 
 Start with `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad**. Migrations 134 and 135 are
 complete. Queue C1 (frozen Sales pricing, E approved 2026-09-13) is fully code/test-complete and
-committed **locally only** — migration 136 and its corrected canonical verification script both
-passed in production on 2026-09-13 with zero errors and zero genuine skips. Push the prepared Queue
-C1 commits, verify Vercel/browser, then continue to the next Queue C wave without a separate
-instruction. Do not re-run
+deployed. Migration 136 and its corrected canonical verification script both passed in production
+on 2026-09-13 with zero errors and zero genuine skips. Queue C1 was pushed through `473c0f4`; Vercel
+served the new pricing bundle and a fresh browser boot was clean. Begin Queue C2 in
+`CONTINUOUS_CODER_HANDOFF.md` without re-asking settled link-policy questions. Do not re-run
 migrations 134/135/136 after they've each been confirmed, and do not send the already-decided
 D1/D2/D6/D7/D10/D11/D15 items back to E.
 
-Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing, code-complete; migration 136 and its
-canonical SQL verification both passed (**Code/tests: commits `ba33fdd` + `e19d4a2`, local `main`
-only -- NOT pushed yet. Migration: APPLIED AND VERIFIED.**
+Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing shipped; migration 136 and its canonical
+SQL verification passed (**Code/tests: `ba33fdd` + `e19d4a2`; deployment/status through `473c0f4`.
+Production bundle: `index-zEv2L1p6.js`. Migration: APPLIED AND VERIFIED.**
 
 **Independent migration-136 review correction (2026-09-13, local only):** the first draft's prose
 claimed finite money constraints and a real override audit, but its SQL still allowed PostgreSQL

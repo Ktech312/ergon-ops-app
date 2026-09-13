@@ -1,13 +1,16 @@
 # Frozen Sales Pricing — Implementation Plan (Queue B2 design; implemented Queue C1)
 
-Status: **MIGRATION APPLIED AND VERIFIED; FRONTEND AWAITING PUSH/DEPLOYMENT.** E approved the recommended pricing statement on
+Status: **SHIPPED AND LIVE.** E approved the recommended pricing statement on
 2026-09-13 (catalog price starts each line; Sales may override with an audit record; each sent
 proposal version freezes its own prices; customers see unit price/line total/subtotal/discount/tax/
 final total; costs/margin stay internal; the accepted total carries to the Project as a read-only
 reference; approval thresholds remain a separate later decision) and Queue C1.1–C1.9 executed
 continuously against it. Code, tests, and the migration package are complete and committed locally.
 Migration 136 and its corrected canonical SQL verification both passed in production on 2026-09-13.
-The frontend is now safe to push and deploy. See `HANDOFF.md` for the exact verification record.
+The frontend was pushed through `473c0f4`; Vercel served `index-zEv2L1p6.js`, direct bundle checks
+found the pricing and accepted-total UI, and a fresh browser boot had zero console warnings/errors.
+Authenticated Sales use and one real priced proposal remain user-acceptance evidence, not an
+engineering blocker. See `HANDOFF.md` for the exact verification record.
 
 ## 1. Current state, traced
 

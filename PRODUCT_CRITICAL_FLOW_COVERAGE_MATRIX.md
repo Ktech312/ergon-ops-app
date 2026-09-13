@@ -36,16 +36,16 @@ block, and `send-submittal-email.js`'s sign-off uses the frozen name with an "Er
 tests in `tests/api/send-submittal-email.test.js` mirror `send-proposal-email.test.js`'s own coverage
 exactly. Kept here for history; the gap this section originally named is no longer open.
 
-## Addendum (2026-09-13, Queue C1) — frozen Sales pricing, not yet a "completed critical flow"
+## Addendum (2026-09-13, Queue C1) — frozen Sales pricing shipped
 
-Not added as a seventh row above — this matrix covers the six flows already live in production as of
-its original writing; Sales pricing is implemented locally but not yet deployed (migration 136 is
-awaiting E's review/run). For when it does deploy: `sales-pricing.test.ts` and the extended
+Not added as a seventh row above because the original matrix was scoped to six reliability flows.
+Sales pricing is now deployed: migration 136 and its corrected canonical test passed, and the new
+Vercel bundle was verified. `sales-pricing.test.ts` and the extended
 `proposal-version-comparison.test.ts` cover the same gap categories this matrix already checks for —
 frozen-value correctness, old-snapshot compatibility (a pre-pricing proposal compares/renders
 cleanly), and no cost/margin leakage into any customer-reachable payload (asserted directly, not just
-by convention). `migration_136_sales_pricing_foundations_tests.sql` covers the SQL side once run,
-including the accepted-proposal-total conversion carry-through. Real-world use (a rep actually
+by convention). `migration_136_sales_pricing_foundations_tests.sql` passed in production, including
+the accepted-proposal-total conversion carry-through. Real-world use (a rep actually
 pricing a live quote, a real client seeing a priced proposal) remains unexercised, same standing
 limitation every other flow in this matrix already lists.
 
