@@ -14,16 +14,17 @@ Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: m
 139, and 140 plus their four canonical test scripts, committed and pushed on `main` (`362e702`,
 `f09f574`, `d564b8b`, status reconciliation through `814af14`; no dependent frontend code exists
 yet). Migration 137 and corrective migration 141 are applied and fully verified by the corrected
-canonical migration-137 test. Migration 138 is applied and its canonical test is corrected after a
-fixture-only JWT simulation failure; one clean rerun of that test is the current gate. Migrations
+canonical migration-137 test. Migration 138 is applied; its canonical test was independently
+verified clean (2026-09-13, method under "Manual database actions" item 6) and is ready for E to
+run for the authoritative production confirmation. Migrations
 139–140 are not applied. See "Manual database actions"
 below for the full ordered list and exact sequencing.
 
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134, 135, 136, 137, and corrective 141 are applied and verified.
-Migration 138 is applied and under verification; its corrected canonical test is the next single
-manual file. Migrations 139 and 140 are drafted, committed and
+Migration 138 is applied; its canonical test is independently verified clean and is the next single
+manual file for E to run. Migrations 139 and 140 are drafted, committed and
 pushed, and awaiting E's review/run in that order — see "Manual database actions." Continue Queue C2
 below (C2.6 onward) while the 138 test result is pending. Do not rerun
 134/135/136 and do not re-ask D7's settled link rules.
@@ -1021,8 +1022,9 @@ Queue A/B work.
 
 Migrations 134, 135, 136, 137, and corrective 141 are done and verified. **The corrected migration-137
 canonical test returned `Success. No rows returned` from the exact repository file, with every
-assertion and skip configured to hard-fail. Migration 138 is applied and its corrected test is the
-current gate. Migrations 139 and 140 remain drafted, committed, pushed, and unapplied.**
+assertion and skip configured to hard-fail. Migration 138 is applied; its corrected test is
+independently verified clean (2026-09-13) and is the current gate for E to run for real. Migrations
+139 and 140 remain drafted, committed, pushed, and unapplied.**
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
@@ -1049,16 +1051,41 @@ current gate. Migrations 139 and 140 remain drafted, committed, pushed, and unap
    141_fix_share_link_table_grants.sql` closed the real table-ACL gap found by migration 137's first
    canonical-test run. Migration 137's corrected test verifies the closed grants and passed. Do not
    run migration 141 or the migration-137 test again.
-6. **Migration 138 — APPLIED; CORRECTED TEST IS NEXT.** `backend/supabase/migrations/
-   138_share_link_server_owned_creation.sql` — server-owned token-creation RPCs (see C2.3 above).
-   Requires 137 live first. Its test script,
+6. **Migration 138 — APPLIED. Test independently verified clean (2026-09-13), ready to run.**
+   `backend/supabase/migrations/138_share_link_server_owned_creation.sql` — server-owned
+   token-creation RPCs (see C2.3 above). Requires 137 live first. Its test script,
    `backend/supabase/migration_138_share_link_server_owned_creation_tests.sql`, now creates its
    workspace-owned quote under a real authenticated admin and deterministically tests PM-only and
-   non-privileged callers. Every caller switch now sets both `request.jwt.claims` and
-   `request.jwt.claim.sub`; the previous run set only the former, so `auth.uid()` was null and the
+   non-privileged callers. Every caller switch sets both `request.jwt.claims` and
+   `request.jwt.claim.sub`; an earlier run set only the former, so `auth.uid()` was null and the
    existing workspace-ownership trigger correctly rejected the synthetic quote. A later parser error
    at the block terminator was corrected by using explicit `end;` / `$$;` and normalizing the file to
-   UTF-8/LF. Run only this corrected test. A clean `Success. No rows returned` closes migration 138.
+   UTF-8/LF.
+   **Independent verification performed this pass:** since no live Supabase credentials or CLI/Docker
+   connection are available in this environment, the exact, unmodified file on disk was run against a
+   real local PostgreSQL 18 engine ([PGlite](https://pglite.dev/), no Docker required) inside a
+   from-scratch schema reconstructed by tracing the actual applied migrations that define every
+   table/function/policy this test touches (`app_admins`/`app_user_roles` from 010/040,
+   `is_app_admin`/`has_role` from 124/135, `active_workspace_id`/the workspace-ownership guard trigger
+   from 124/117, `project_submittals`/`sales_quote_proposals`/`public_share_tokens` from 025/053, plus
+   the real project-level default table grants to `anon`/`authenticated` that migration 141's own
+   header confirms exist outside any migration file) — then applying migrations 137 and 138 verbatim
+   and running this exact test file verbatim against it. Result: the script completed with **zero
+   errors** and the real `NOTICE: ALL MIGRATION 138 SHARE-LINK CREATION TESTS PASSED -- ZERO SECTIONS
+   SKIPPED` fired, across every section (PM submittal-token creation, Sales proposal-token creation,
+   nonexistent-id/EC003, non-privileged/EC001 denial with role stripping+restore, PM-only/EC001
+   proposal denial with role stripping+restore, anon-grant denial). No further change was made to the
+   file — none was needed. This is a faithful reconstruction of the specific schema this test
+   depends on, not a literal run against the real production database (no credentials to it exist in
+   this session), so running it for real in the Supabase SQL editor remains the final authoritative
+   confirmation; this verification is offered as the strongest evidence obtainable without that
+   access, run to remove doubt before handing the file back rather than risking a fifth failed
+   round-trip. One real risk this exercise surfaced and is worth ruling out first: if the live
+   workspace currently has fewer than two non-admin real workspace members, this script will
+   correctly (by its own hard-fail-on-skip design) report `SECTIONS SKIPPED` rather than a clean
+   pass — that would be a real data-availability condition, not a construction bug, and the fix would
+   be adding a second/third real workspace member (or accepting the honest skip), not editing the SQL.
+   A clean `Success. No rows returned` (with the PASSED notice, zero skips) closes migration 138.
 7. **Migration 139 — PENDING, AFTER 138.** `backend/supabase/migrations/
    139_share_link_lifecycle_actions.sql` — atomic lifecycle actions plus the `outcome`-bearing
    extension of all four public share-link RPCs (see C2.4 above). Requires 137 and 138 live first.
