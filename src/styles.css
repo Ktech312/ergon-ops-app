@@ -7170,11 +7170,26 @@ body:has(.modal-backdrop) .install-banner {
      needs it and this puts a small caption above it in stacked mode. Text
      cells that are already self-evident (names, emails, statuses) don't
      need it. */
+  /* Queue A6 (2026-09-12): was align-items:center + justify-content:
+     space-between, putting the label and value side by side on one
+     row. A long value (the proposal BOM table's Description/Item
+     columns in particular) then overflowed its container horizontally
+     -- silently, since html has overflow-x:hidden sitewide, so the
+     tail of a long description was invisibly clipped with no visible
+     sign anything was missing. Confirmed with an isolated, faithful
+     reproduction of this exact markup/CSS at a 375px viewport before
+     and after this change (before: document.documentElement.scrollWidth
+     > window.innerWidth; after: equal). Stacking the label above the
+     value instead of beside it removes the side-by-side flex-item
+     width constraint entirely, so no value length can overflow --
+     applies to every existing stack-table-mobile usage sitewide (a
+     shared class), not just the proposal page, and is strictly safer
+     for all of them. */
   .stack-table-mobile td[data-label] {
-    align-items: center;
+    align-items: flex-start;
     display: flex !important;
-    gap: 8px;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .stack-table-mobile td[data-label]::before {
