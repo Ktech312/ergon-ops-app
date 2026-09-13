@@ -1,7 +1,7 @@
 # Ergon Ops — Handoff Doc
 
 Last updated: 2026-09-12, Queue A14 -- `has_role()` hardening, prepared as a manual migration package
-(**Docs/SQL only, commit pending -- see git log for the actual hash once committed. NOT RUN.**
+(**Docs/SQL only, commit `4b96fbe`, pushed. NOT RUN.**
 
 New `backend/supabase/migrations/135_harden_has_role_search_path.sql` (confirm 135 is still the next
 free migration number at execution time) and

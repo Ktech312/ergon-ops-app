@@ -407,7 +407,7 @@ cleanly. Record advisories that remain.
 
 ### A14. Prepare `has_role()` hardening as a manual migration package
 
-**Status: DONE (prepared, NOT run) — see `HANDOFF.md` for the doc commit hash.**
+**Status: DONE (prepared, NOT run) — `4b96fbe`.**
 `backend/supabase/migrations/135_harden_has_role_search_path.sql` (confirm 135 is still free at
 execution time) preserves exact logic/signature, adds `search_path=''` + full qualification +
 minimum grants. Its test script proves representative true/false checks, the actual grant-state
