@@ -12,7 +12,8 @@ migrations 134/135/136 after they've each been confirmed, and do not send the al
 D1/D2/D6/D7/D10/D11/D15 items back to E.
 
 Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing, code-complete, migration 136 awaiting
-E's review (**Code/tests: committed locally, NOT pushed. Migration: drafted, NOT run.**
+E's review (**Code/tests: commit `ba33fdd`, local `main` only -- NOT pushed. Migration: drafted, NOT
+run.**
 
 E approved the recommended pricing statement (catalog price starts each line; Sales may override
 with an audit record; each sent proposal version freezes its own prices; customers see unit price/
