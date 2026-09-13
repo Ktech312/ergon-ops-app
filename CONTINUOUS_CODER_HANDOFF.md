@@ -13,16 +13,16 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
 Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: migrations 137, 138,
 139, and 140 plus their four canonical test scripts, committed and pushed on `main` (`362e702`,
 `f09f574`, `d564b8b`, status reconciliation through `814af14`; no dependent frontend code exists
-yet). Migration 137 is applied; its first verification run found the inherited table-ACL gap now
-addressed by corrective migration 141. Migrations 138–140 are not applied. Migration 141 is the next
+yet). Migration 137 and corrective migration 141 are applied and fully verified by the corrected
+canonical migration-137 test. Migrations 138–140 are not applied. Migration 138 is the next
 single file to hand E under the established one-file-at-a-time gate; see "Manual database actions"
 below for the full ordered list and exact sequencing.
 
 ## Next-session launchpad
 
-**Repository checkpoint:** migrations 134, 135, and 136 are applied and verified. Migrations 137,
-138, 139, and 140 are drafted, committed and pushed, and awaiting E's review/run in that order — see
-"Manual database actions." Continue Queue C2 below (C2.6 onward) while 137 is pending. Do not rerun
+**Repository checkpoint:** migrations 134, 135, 136, 137, and corrective 141 are applied and verified.
+Migrations 138, 139, and 140 are drafted, committed and pushed, and awaiting E's review/run in that
+order — see "Manual database actions." Continue Queue C2 below (C2.6 onward) while 138 is pending. Do not rerun
 134/135/136 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -1016,9 +1016,9 @@ Queue A/B work.
 
 ### Manual database actions
 
-Migrations 134, 135, and 136 are done and verified. **Migrations 137 and corrective 141 are applied.
-The corrected migration-137 canonical test is the next single file; its previous run exposed and
-then corrected a reversed RLS row-count assertion. Migrations 138, 139, and 140 remain drafted,
+Migrations 134, 135, 136, 137, and corrective 141 are done and verified. **The corrected migration-137
+canonical test returned `Success. No rows returned` from the exact repository file, with every
+assertion and skip configured to hard-fail. Migrations 138, 139, and 140 remain drafted,
 committed, pushed, and unapplied.**
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
@@ -1037,16 +1037,16 @@ committed, pushed, and unapplied.**
    The migration and corrected canonical test both returned `Success. No rows returned`; the test
    hard-fails every assertion and genuine skip. The Queue C1 frontend was then pushed and verified
    in Vercel production. Do not run either SQL file again.
-4. **Migration 137 — APPLIED; VERIFICATION BLOCKED ON 141.** `backend/supabase/migrations/
+4. **Migration 137 — DONE AND VERIFIED.** `backend/supabase/migrations/
    137_share_link_lifecycle_schema.sql` — inert share-link lifecycle schema (see C2.2 above for full
    contents). Changes no existing RPC and no client-visible behavior. E ran it successfully. Its
-   first test exposed the default-grant gap described under migration 141 below.
-5. **Migration 141 — APPLIED; MIGRATION-137 TEST NEXT.** `backend/supabase/migrations/
+   first test exposed the default-grant gap described under migration 141 below. The corrected final
+   test passed from the exact repository file; do not run it again.
+5. **Migration 141 — DONE AND VERIFIED.** `backend/supabase/migrations/
    141_fix_share_link_table_grants.sql` closed the real table-ACL gap found by migration 137's first
-   canonical-test run. Rerun the corrected
-   `backend/supabase/migration_137_share_link_lifecycle_schema_tests.sql`; its prior second run found
-   a reversed row-count assertion in the test itself, now fixed. Only a clean pass closes 137.
-6. **Migration 138 — PENDING, AFTER 137/141 VERIFY.** `backend/supabase/migrations/
+   canonical-test run. Migration 137's corrected test verifies the closed grants and passed. Do not
+   run migration 141 or the migration-137 test again.
+6. **Migration 138 — NEXT MANUAL ACTION.** `backend/supabase/migrations/
    138_share_link_server_owned_creation.sql` — server-owned token-creation RPCs (see C2.3 above).
    Requires 137 live first. Its test script,
    `backend/supabase/migration_138_share_link_server_owned_creation_tests.sql`, follows only after E

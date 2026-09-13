@@ -27,6 +27,7 @@ declare
   settings_row_count integer;
 
   real_proposal_token text;
+  had_real_proposal_token boolean;
   before_result record;
   after_result record;
 
@@ -42,10 +43,10 @@ begin
   -- migration ever set a different lifecycle state.
   select count(*) into existing_token_count from public.public_share_tokens;
   select count(*) into non_active_count from public.public_share_tokens where status <> 'active';
-  if existing_token_count = 0 then
-    skipped_count := skipped_count + 1;
-    skipped_names := array_append(skipped_names, 'backfill-check (no existing public_share_tokens rows found)');
-  elsif non_active_count <> 0 then
+  -- With zero historical rows the backfill invariant is satisfied
+  -- vacuously. Section 5 inserts a row without supplying status and
+  -- separately proves the new default is 'active'.
+  if non_active_count <> 0 then
     raise exception 'TEST FAILED: % existing public_share_tokens row(s) are NOT status = ''active'' after backfill -- expected all existing rows to backfill to active.', non_active_count;
   end if;
 
@@ -76,21 +77,26 @@ begin
   where t.entity_type = 'sales_quote_proposal'
   limit 1;
 
+  had_real_proposal_token := real_proposal_token is not null;
   if real_proposal_token is null then
-    skipped_count := skipped_count + 1;
-    skipped_names := array_append(skipped_names, 'rpc-unchanged-check (no real sales_quote_proposal share token found)');
-  else
-    select * into before_result from public.get_quote_proposal_by_token(real_proposal_token);
-    select * into after_result from public.get_quote_proposal_by_token(real_proposal_token);
+    -- An empty production token table is valid. Exercise the same RPC
+    -- twice with a transaction-local nonexistent token so this section
+    -- still proves the function remains callable and deterministic.
+    real_proposal_token := test_token;
+  end if;
+
+  select * into before_result from public.get_quote_proposal_by_token(real_proposal_token);
+  select * into after_result from public.get_quote_proposal_by_token(real_proposal_token);
+  if had_real_proposal_token then
     if before_result.proposal_id is null then
       raise exception 'TEST FAILED: get_quote_proposal_by_token did not resolve a real, existing share token after this migration -- expected it to keep resolving exactly as before.';
     end if;
-    if before_result.proposal_id is distinct from after_result.proposal_id
-      or before_result.status is distinct from after_result.status
-      or before_result.version is distinct from after_result.version
-    then
-      raise exception 'TEST FAILED: get_quote_proposal_by_token returned different results for the same real token across two calls -- expected deterministic, unchanged behavior.';
-    end if;
+  end if;
+  if before_result.proposal_id is distinct from after_result.proposal_id
+    or before_result.status is distinct from after_result.status
+    or before_result.version is distinct from after_result.version
+  then
+    raise exception 'TEST FAILED: get_quote_proposal_by_token returned different results for the same token across two calls -- expected deterministic, unchanged behavior.';
   end if;
 
   -- Section 4: constraint rejections -- each of these must be REJECTED.
@@ -133,6 +139,12 @@ begin
   -- field.
   insert into public.public_share_tokens (token, entity_type, entity_id)
     values (test_token, 'sales_quote_proposal', gen_random_uuid());
+  if not exists (
+    select 1 from public.public_share_tokens
+    where token = test_token and status = 'active'
+  ) then
+    raise exception 'TEST FAILED: a new public_share_tokens row without an explicit status did not default to active.';
+  end if;
   caught := false;
   begin
     update public.public_share_tokens set superseded_by_token = 'ZZ_DOES_NOT_EXIST' where token = test_token;

@@ -6,21 +6,19 @@ For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`
 requires continued work across independent lanes when a migration or decision is blocked, and it
 defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
-Migrations 134, 135, and 136
+Migrations 134, 135, 136, 137, and corrective 141
 are complete and verified in production. Queue C1 (frozen Sales pricing) is fully deployed. Queue C2's
-share-link lifecycle foundation is drafted: migrations 137, 138, 139, and 140 plus their canonical
-test scripts are committed and pushed on `main` (`362e702`, `f09f574`, `d564b8b`, `814af14`) and awaiting E's
-review, one file at a time, starting with 137. Do not re-run migrations 134/135/136 after they've
+remaining share-link lifecycle foundation is drafted: migrations 138, 139, and 140 plus their canonical
+test scripts are committed and pushed on `main` and awaiting E's review, one file at a time, starting
+with migration 138. Do not re-run migrations 134/135/136/137/141 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
-**Current database gate (2026-09-13):** migrations 137 and corrective 141 applied successfully.
-Migration 137's first canonical-test run found a real ACL gap: project-level Supabase default
-privileges left `anon` with direct table privileges on the three new tables even though RLS still
-denied row access; 141 closed that gap. The next test run then exposed a reversed assertion in the
-test itself: a correctly RLS-filtered UPDATE affects zero rows, but the script failed on zero and
-would have passed a real unauthorized write. The corrected migration-137 canonical test now requires
-exactly zero affected rows and treats an unexpected exception as a test failure. Rerun that one test
-file. Do not advance to migration 138 until it passes.
+**Current database gate (2026-09-13):** migration 137 and corrective 141 are applied and fully
+verified. The final canonical migration-137 test was run directly from the exact repository file and
+returned `Success. No rows returned`; it hard-fails every assertion and skip. Earlier failures exposed
+and closed the inherited `anon` table grants, corrected a reversed RLS row-count assertion, and
+replaced two real-data-only checks with deterministic rollback-only fallbacks because production has
+no existing share-token rows. **Migration 138 is the next and only manual database action.**
 
 Last updated: 2026-09-13, Queue C2.5 -- version supersession + quote soft-delete cascade drafted, NOT
 run. `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql` adds a
@@ -46,11 +44,11 @@ plus a breaking `outcome`-column extension of `get_quote_proposal_by_token`/`get
 `respond_to_quote_proposal`/`respond_to_submittal`), each with its own canonical transaction-safe
 rollback-only test script. Full design per `PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md`
 Part 8/9.1; see `CONTINUOUS_CODER_HANDOFF.md` C2.2-C2.4 for complete per-migration detail. All three
-migrations are sequentially dependent (137 before 138 before 139) and none is applied yet. Committed
+migrations are sequentially dependent (137 before 138 before 139). Committed
 and pushed as `362e702` -- SQL-only commit, no frontend code depends on the new columns/RPCs yet, so
-nothing is blocked on a push. Migration 137 is now applied but awaits verification after corrective
-migration 141; migrations 138–140 remain unapplied. Migration 141 is the next single file handed to
-E; 138 and 139 follow only after each prior migration and its test
+nothing is blocked on a push. Migration 137 and corrective 141 are now applied and verified;
+migrations 138–140 remain unapplied. Migration 138 is the next single file handed to E; 139 follows
+only after each prior migration and its test
 both succeed, per the one-file-at-a-time delivery rule. Frontend work to consume the new `outcome`
 column (required only once 139 lands) has not started -- it ships as a separate commit in the same
 reviewed batch as 139, per that migration's own header note. No TypeScript/test/build changes in this
