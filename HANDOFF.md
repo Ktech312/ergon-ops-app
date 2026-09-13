@@ -1,5 +1,23 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue B3 -- Share-link implementation readiness reconciliation (**Docs
+only, commit pending -- see git log for the actual hash once committed.**
+
+Updated `PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` (not a new file -- a reconciliation, per the
+task) against the decision doc's Part 8 (all eight recorded policies), Part 12 (migration 129 policy-
+closure, still design-only, its number reused four times already), and the real current schema.
+Findings: the authorization bridge (migrations 124-126) is now confirmed live, satisfying one of
+Stage E's two prerequisites; `public_share_tokens`/`sales_quote_proposals` are still fully open
+(`using (true)`) and `project_submittals` is narrower but doesn't match the decided Sales-then-PM
+handoff model at all (Sales has zero write access today); Stage 2's three fields are confirmed still
+completely absent from the schema; and a correction to Stage A/B's assumed scope -- the token-read
+RPCs (migrations 119/122) already filter on `expires_at`, so enforcement code exists and only needs
+extending with a `status` check, not building from scratch. Added an explicit 11-step dependency
+order across Stage 2 and Stages A-G, and named the exact step that first changes real customer-facing
+behavior (the `where`-clause extension in step 3, once `status` exists). **No production code, no
+migration, no test file** -- authority/handoff schema and link behavior remain unbuilt per the task's
+own instruction.
+
 Last updated: 2026-09-12, Queue B2 -- Frozen Sales pricing implementation plan (**Docs only, commit
 pending -- see git log for the actual hash once committed.**
 
