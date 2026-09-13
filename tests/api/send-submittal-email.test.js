@@ -82,6 +82,31 @@ describe("send-submittal-email", () => {
     expect(call.html).not.toContain("FAKE-REF");
   });
 
+  it("signs off with the submittal's own frozen companyName instead of a hardcoded product name (Queue A11)", async () => {
+    global.fetch = vi.fn(routerFor({
+      roleKeys: ["pm"],
+      submittalRows: [{ client_name: "Real Client", client_email: "real-client@external.test", content_snapshot: { projectName: "Real Project", companyName: "Acme Integrators" } }],
+    }));
+    const res = createMockRes();
+    await handler(createMockReq({ body: { submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    expect(res.statusCode).toBe(200);
+    const call = sendEmail.mock.calls[0][0];
+    expect(call.html).toContain("Thanks,<br/>Acme Integrators");
+    expect(call.html).not.toContain("Ergon Ops");
+  });
+
+  it("falls back to Ergon for a submittal sent before companyName existed in the snapshot", async () => {
+    global.fetch = vi.fn(routerFor({
+      roleKeys: ["pm"],
+      submittalRows: [{ client_name: "Real Client", client_email: "real-client@external.test", content_snapshot: { projectName: "Real Project" } }],
+    }));
+    const res = createMockRes();
+    await handler(createMockReq({ body: { submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    expect(res.statusCode).toBe(200);
+    const call = sendEmail.mock.calls[0][0];
+    expect(call.html).toContain("Thanks,<br/>Ergon");
+  });
+
   it("admin bypasses the role list entirely", async () => {
     global.fetch = vi.fn(routerFor({
       isAdmin: true,

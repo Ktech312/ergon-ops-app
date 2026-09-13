@@ -5097,6 +5097,11 @@ function App() {
       const existing = await loadSubmittalsForProject(projectId, authSession.accessToken);
       const nextVersion = existing.length ? Math.max(...existing.map((entry) => entry.version)) + 1 : 1;
       const snapshot: SubmittalSnapshot = {
+        // Queue A11: mirrors buildProposalSnapshot's already-deployed
+        // company-identity freeze below -- frozen once here at creation
+        // time, never re-read from `branding` again afterward.
+        companyName: branding.companyName,
+        companyLogoUrl: branding.logoStoragePath ? companyLogoUrl(branding.logoStoragePath) ?? "" : "",
         projectName: project.name,
         projectRef: project.ref,
         clientName: project.client,
@@ -25647,12 +25652,20 @@ function SubmittalPublicPage({ token }: { token: string }) {
   }
 
   const snapshot = data.contentSnapshot;
+  // Queue A11: same fallback ProposalPublicPage's proposalCompanyName
+  // already uses -- absent entirely on a submittal created before this
+  // field existed.
+  const submittalCompanyName = snapshot.companyName?.trim() || "Ergon";
   const respondedDateLabel = respondedAt ? new Date(respondedAt).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : "";
   const respondedByLabel = respondedByName ? ` by ${respondedByName}` : "";
 
   return (
     <div className="submittal-public-page">
       <header className="submittal-public-header">
+        <div className="proposal-public-brand">
+          {snapshot.companyLogoUrl && <img src={snapshot.companyLogoUrl} alt={`${submittalCompanyName} logo`} />}
+          <strong>{submittalCompanyName}</strong>
+        </div>
         <h1>{snapshot.projectName}</h1>
         <p>Submittal v{data.version}{snapshot.clientName ? ` - ${snapshot.clientName}` : ""}</p>
       </header>

@@ -3761,6 +3761,12 @@ export type SubmittalSowSnapshot = {
 export type SubmittalBomLineSnapshot = { item: string; qty: number; status: string };
 
 export type SubmittalSnapshot = {
+  // Queue A11 (2026-09-12): optional, same convention as ProposalSnapshot's
+  // companyName/companyLogoUrl -- absent entirely on a submittal created
+  // before this field existed, so every reader must fall back safely (see
+  // SubmittalPublicPage and send-submittal-email.js), never assume present.
+  companyName?: string;
+  companyLogoUrl?: string;
   projectName: string;
   projectRef: string;
   clientName: string;

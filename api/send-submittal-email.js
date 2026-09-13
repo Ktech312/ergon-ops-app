@@ -88,6 +88,12 @@ export default async function handler(req, res) {
   const clientName = submittal.client_name || "there";
   const projectName = submittal.content_snapshot?.projectName || "your project";
   const projectRef = submittal.content_snapshot?.projectRef || "";
+  // Queue A11 (2026-09-12): mirrors send-proposal-email.js's Queue A7 fix --
+  // content_snapshot.companyName is frozen at send time (same convention
+  // the public submittal page itself uses), it just wasn't used here.
+  // Falls back to "Ergon" only for a submittal sent before that snapshot
+  // field existed.
+  const companyName = (submittal.content_snapshot?.companyName || "").trim() || "Ergon";
 
   const result = await sendEmail({
     to: clientEmail,
@@ -96,7 +102,7 @@ export default async function handler(req, res) {
       <p>Hi ${clientName},</p>
       <p>Please review the scope of work and bill of materials for <strong>${projectName}</strong>${projectRef ? ` (${projectRef})` : ""}.</p>
       <p><a href="${shareUrl}">Review and respond to the submittal</a></p>
-      <p>Thanks,<br/>Ergon Ops</p>
+      <p>Thanks,<br/>${companyName}</p>
     `,
   });
 

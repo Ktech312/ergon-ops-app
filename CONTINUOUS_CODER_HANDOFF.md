@@ -99,9 +99,13 @@ The next coder should verify this baseline before editing rather than redoing co
   a real bug, found and fixed, not just a polish pass).
 - A read-only proposal-version comparison (`compareProposalSnapshots`) is live in the Quote Proposal
   section once a quote has 2+ versions (Queue A5).
-- The customer-facing proposal email's sign-off uses the real frozen `companyName` instead of a
-  hardcoded product name (Queue A7). `send-submittal-email.js`'s equivalent sign-off is a known,
-  deliberately-unfixed gap -- `SubmittalSnapshot` has no company-branding fields at all yet.
+- The customer-facing proposal AND submittal email sign-offs both use the real frozen `companyName`
+  instead of a hardcoded product name (Queue A7, then Queue A11 for submittals). `SubmittalSnapshot`
+  now carries the same optional `companyName`/`companyLogoUrl` fields `ProposalSnapshot` does, and
+  `SubmittalPublicPage` renders them via the same shared `.proposal-public-brand` block.
+- Client Ledger field edits are serialized per-project through `createClientLedgerSaveQueue` (Queue
+  A10) -- an older failed save can no longer overwrite a newer edit, and the previously log-only
+  failure now surfaces a plain banner.
 - `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` documents what's proven by TS tests, SQL tests, prod
   verification, and what still needs real-world use, for all six Queue A8 flows.
 - **Queue B (B1-B10) produced ten design/spec/audit documents, none implemented**:
@@ -332,6 +336,14 @@ tests, then ship under §3's delivery rule. If source inspection reveals a real 
 choice not covered by that plan, document it and continue to A11; do not stop the entire queue.
 
 ### A11. Freeze company identity into submittals
+
+**Status: DONE — commit pending, see `HANDOFF.md` for the hash once committed.** Mirrored the
+Queue A7 proposal pattern exactly: `SubmittalSnapshot` gains optional `companyName`/`companyLogoUrl`,
+`handleCreateSubmittal` freezes current branding at creation, `SubmittalPublicPage` renders the same
+shared `.proposal-public-brand` block, `send-submittal-email.js`'s sign-off uses the frozen name with
+an Ergon fallback. 2 new email tests; 378/378 passing, tsc/eslint/build/smoke all clean. Not verified
+against a real submittal in the browser (no share token available without fabricating one against
+production data) -- stated plainly in `HANDOFF.md`, not overclaimed.
 
 **Status: READY — start automatically after A10.** Queue A7 closed proposal branding but found the
 parallel submittal gap: `SubmittalSnapshot` has no company name/logo, and the submittal email still

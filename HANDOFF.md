@@ -1,7 +1,37 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-09-12, Queue A10 -- Client Ledger serialized save queue (**Code: commit `43df8ea`,
-pushed.**
+Last updated: 2026-09-12, Queue A11 -- freeze company identity into submittals (**Code: commit
+pending -- see git log for the actual hash once committed.**
+
+Mirrors the already-deployed Queue A7 proposal-branding pattern for submittals, closing the parallel
+gap A7 itself found and deliberately left unfixed. `SubmittalSnapshot` (`src/persistence.ts`) gains
+optional `companyName`/`companyLogoUrl` fields, exactly like `ProposalSnapshot`'s own convention.
+`handleCreateSubmittal` (`src/main.tsx`) now freezes `branding.companyName`/logo into every newly
+created snapshot, same call shape as `buildProposalSnapshot`. `SubmittalPublicPage` renders the same
+`.proposal-public-brand` logo/name block `ProposalPublicPage` already uses (the CSS class was already
+shared, unscoped to either page) with the same `.trim() || "Ergon"` fallback for a submittal created
+before this field existed. `api/send-submittal-email.js`'s sign-off now reads the frozen
+`content_snapshot.companyName`, falling back to "Ergon", instead of a hardcoded "Ergon Ops" -- the
+exact fix A7 already applied to `send-proposal-email.js`. An already-sent submittal's own snapshot is
+never touched -- only newly created ones freeze the current branding, matching the "never alter an
+already-sent snapshot" requirement exactly (frozen-at-creation, no rewrite path exists for either
+document type). Submittal ownership, approval, response, link, and PM handoff behavior are
+unchanged -- confirmed by inspection, not just by description, since none of those code paths were
+touched.
+
+2 new tests in `tests/api/send-submittal-email.test.js` (frozen companyName used; falls back to
+Ergon for a pre-existing snapshot), mirroring `send-proposal-email.test.js`'s own A7 tests exactly.
+No frontend unit test exists for `handleCreateSubmittal`'s snapshot construction, matching
+`buildProposalSnapshot`'s own precedent -- neither function is exported or testable in isolation from
+the full component; the email-side test is the same regression coverage A7 relied on.
+
+`npx tsc -b` clean. `NODE_OPTIONS="--max-old-space-size=6144" npx vitest run --no-file-parallelism`:
+**378/378 passing** (+2). `npx eslint .`: 0 errors, 73 pre-existing warnings, unchanged. `npm run
+build`: clean. `npm run test:smoke`: 6/6 passing. **Not verified against a real submittal in the
+browser** -- doing so would require either a real client-facing share token (none available without
+creating one against production data) or fabricating one, which this task's own boundaries prohibit;
+the email test and the shared, already-proven `.proposal-public-brand` CSS class are the standing
+evidence instead, stated plainly rather than overclaimed.
 
 Implements `PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md` Option B, replacing the earlier (2026-09-11,
 reverted) per-field revert-on-failure attempt with a queue serialized per `projectId`.
