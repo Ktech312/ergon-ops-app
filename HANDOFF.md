@@ -1,5 +1,21 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue A7 closed -- productization identity sweep (**Code: commit `48cece8`, deployed.**
+
+Full sweep across `src/main.tsx` and every `api/*.js` template for hardcoded "Ergon"/company-identity strings, sorted into the task's three categories:
+
+- **Pre-login/product chrome** (sign-in gate logo, PWA install banner) -- correctly stays "Ergon" regardless of customer, no change.
+- **Internal team notifications** (`send-notification-email.js`/`-slack.js`/`-push.js` -- explicitly scoped to known Ergon platform users only, confirmed by their own existing code/comments) -- correctly Ergon-branded, no change. `send-invite-email.js` already receives and uses the real `company_branding` name from its one real caller -- already correct, found while checking, not a gap.
+- **Customer-facing `send-proposal-email.js`** hardcoded "Ergon Ops" in its sign-off despite already selecting `content_snapshot`, which (since this session's earlier branding work) already carries the frozen `companyName`. Fixed to use it, falling back to "Ergon" only for a pre-existing proposal sent before that snapshot field existed -- matching `ProposalPublicPage`'s own fallback exactly.
+
+**One real, deliberately NOT-fixed gap, flagged for Queue B rather than silently patched**: `send-submittal-email.js`'s sign-off is also hardcoded "Ergon Ops," but `SubmittalSnapshot` (unlike `ProposalSnapshot`) has no `companyName`/`companyLogoUrl` field at all -- there is no already-available data source to pull from here without adding a new snapshot field and wiring it through `buildSubmittalSnapshot` and the public submittal page, the same scope of work Sales Batch 8 did for proposals specifically. Not attempted this pass since it needs a schema-shape addition, not a safe use-what's-already-there correction.
+
+**Checked and confirmed NOT a bug**: `sales-quote-extract.js`'s "EnSight"/"EnSightful" strings are real catalog product names used as AI-extraction matching hints, not a company-identity leak.
+
+2 new tests (`tests/api/send-proposal-email.test.js`): uses the frozen `companyName` when present, falls back to "Ergon" when the snapshot predates it. `npx tsc -b` clean. `NODE_OPTIONS="--max-old-space-size=6144" npx vitest run --no-file-parallelism`: **367/367 passing** (+2). `npx eslint .`: 0 errors, 73 pre-existing warnings. `npm run build`: clean.
+
+Pushed to `main`; HEAD and `origin/main` confirmed at `48cece8`. Deployed as a fresh Vercel Ready/Production deployment (build succeeded, confirming the serverless function's syntax is valid). **Not exercised with a real email send** -- no real quote has a sent proposal to trigger this code path against, and sending a real email is an explicit-permission action regardless; verification rests on the 11 passing tests for this handler (9 existing + 2 new) and a successful deploy.
+
 Last updated: 2026-09-12, Queue A6 closed -- found and fixed a real silent mobile overflow bug (**Code: commit `7e350e9`, deployed.**
 
 **Found via a genuine isolated reproduction, not speculation**: built a temporary static HTML file (under `public/`, removed after verification, never committed) copying the proposal BOM table's exact markup and the real `stack-table-mobile`/`data-label` CSS rules verbatim, served through the local dev server, and screenshotted at a real 375px mobile viewport in the Browser pane. Confirmed a real overflow: `.stack-table-mobile td[data-label]`'s `align-items:center; justify-content:space-between` flex layout let a long value (the proposal page's Description/Item columns in particular) overflow its container horizontally -- `document.documentElement.scrollWidth` (calculated wider than the viewport) exceeded `window.innerWidth`. **This is silent in production specifically because `html` has `overflow-x:hidden` sitewide** -- the tail of a long description gets invisibly clipped, not visibly broken, so a rep or client reviewing a proposal on their phone would see truncated content with no sign anything was missing.
