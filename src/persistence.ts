@@ -6985,6 +6985,12 @@ export type ProjectSite = {
   billingCellPhone?: string;
   billingWorkPhone?: string;
   billingOfficePhone?: string;
+  // Queue C1 (migration 136): the accepted proposal version's own frozen
+  // grandTotal, copied onto the Project at conversion time -- a read-only
+  // historical reference (Sales owns the real number; nothing on the
+  // Projects side ever edits this). Null when no proposal was ever
+  // approved for the source quote, or it predates this feature.
+  acceptedProposalTotal?: number | null;
 };
 
 // Migration 072: PM shipping requests, fulfilled by Warehouse/
@@ -7357,14 +7363,15 @@ type ProjectSiteRow = {
   billing_cell_phone: string | null;
   billing_work_phone: string | null;
   billing_office_phone: string | null;
+  accepted_proposal_total: number | string | null;
 };
 
 const PROJECT_SITE_SELECT =
-  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,accepted_proposal_total,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 // Migration 087 safety: same query with the pre-087 (no `origin`) location
 // select, used as a 400 fallback in loadProjectSites.
 const PROJECT_SITE_SELECT_PRE_087 =
-  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT_PRE_087}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,accepted_proposal_total,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT_PRE_087}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -7437,6 +7444,8 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
     billingCellPhone: row.billing_cell_phone ?? "",
     billingWorkPhone: row.billing_work_phone ?? "",
     billingOfficePhone: row.billing_office_phone ?? "",
+    acceptedProposalTotal:
+      row.accepted_proposal_total === null || row.accepted_proposal_total === undefined ? null : Number(row.accepted_proposal_total),
   };
 }
 
@@ -9490,6 +9499,18 @@ export type SalesQuoteBomLine = {
   // written by the frontend until the accessible Move up/down controls
   // (main.tsx) -- see reorderSalesQuoteBomLine below.
   lineSort: number;
+  // Queue C1 (2026-09-13, migration 136): frozen Sales pricing. unitPrice
+  // defaults from the linked catalog item's current computed sell price at
+  // add time ("catalog_default"); a rep may deliberately type a different
+  // value ("manual_override", stamped with who/when). "legacy_unverified"
+  // is reserved for rows the migration's own backfill produced -- an
+  // estimate of what the catalog would charge today, explicitly NOT
+  // claimed as the price actually quoted at the time -- and should never
+  // be written by the frontend going forward.
+  unitPrice: number;
+  priceSource: "catalog_default" | "manual_override" | "legacy_unverified";
+  priceOverriddenBy: string | null;
+  priceOverriddenAt: string | null;
 };
 
 export type SalesQuote = {
@@ -9548,6 +9569,11 @@ export type SalesQuote = {
   // Carries over to the Project when created from a Closed - Won quote,
   // same one-time-copy pattern as the SaaS fields.
   saleAmount: number | null;
+  // Migration 136: quote-level, not per-line -- matches how a real deal is
+  // actually negotiated. Frozen into each sent proposal version's own
+  // snapshot; never recomputed from a live value after the fact.
+  discountPercent: number;
+  taxRate: number;
 };
 
 type SalesQuoteLocationImageRow = {
@@ -9603,6 +9629,10 @@ type SalesQuoteBomLineRow = {
   line_sort: number;
   catalog_item_id: string | null;
   source_location_id: string | null;
+  unit_price: number | string;
+  price_source: string;
+  price_overridden_by: string | null;
+  price_overridden_at: string | null;
 };
 
 type SalesQuoteRow = {
@@ -9633,6 +9663,8 @@ type SalesQuoteRow = {
   saas_contract_amount: number | string | null;
   saas_billing_frequency: string | null;
   sale_amount: number | string | null;
+  discount_percent: number | string | null;
+  tax_rate: number | string | null;
 };
 
 function mapSalesQuoteLocationImageRow(row: SalesQuoteLocationImageRow): SalesQuoteLocationImage {
@@ -9700,6 +9732,10 @@ function mapSalesQuoteBomLineRow(row: SalesQuoteBomLineRow): SalesQuoteBomLine {
     catalogItemId: row.catalog_item_id ?? null,
     sourceLocationId: row.source_location_id ?? null,
     lineSort: row.line_sort,
+    unitPrice: Number(row.unit_price) || 0,
+    priceSource: (row.price_source as SalesQuoteBomLine["priceSource"]) ?? "legacy_unverified",
+    priceOverriddenBy: row.price_overridden_by ?? null,
+    priceOverriddenAt: row.price_overridden_at ?? null,
   };
 }
 
@@ -9734,11 +9770,13 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
     saasContractAmount: row.saas_contract_amount === null || row.saas_contract_amount === undefined ? null : Number(row.saas_contract_amount),
     saasBillingFrequency: (row.saas_billing_frequency as SalesQuote["saasBillingFrequency"]) ?? "",
     saleAmount: row.sale_amount === null || row.sale_amount === undefined ? null : Number(row.sale_amount),
+    discountPercent: Number(row.discount_percent) || 0,
+    taxRate: Number(row.tax_rate) || 0,
   };
 }
 
 const SALES_QUOTE_SELECT =
-  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,saas_type,saas_contract_amount,saas_billing_frequency,sale_amount,sales_quote_locations(id,quote_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id)";
+  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,saas_type,saas_contract_amount,saas_billing_frequency,sale_amount,discount_percent,tax_rate,sales_quote_locations(id,quote_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id,unit_price,price_source,price_overridden_by,price_overridden_at)";
 
 // Migration 088: soft-deleted quotes/locations/items/images/bom-lines
 // filtered out here rather than dropped from the select, so
@@ -9873,6 +9911,8 @@ export async function createSalesQuote(
     saasContractAmount: null,
     saasBillingFrequency: "",
     saleAmount: null,
+    discountPercent: 0,
+    taxRate: 0,
   };
 }
 
@@ -10007,7 +10047,15 @@ export async function updateSalesQuoteProposalFields(
 // Pre-Sales Quick Estimate calculator pre-filling a quote's BOM in one shot.
 export async function addSalesQuoteBomLines(
   quoteId: string,
-  lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null; sourceLocationId?: string | null }>,
+  lines: Array<{
+    item: string;
+    qty: number;
+    notes?: string;
+    catalogItemId?: string | null;
+    sourceLocationId?: string | null;
+    unitPrice?: number;
+    priceSource?: SalesQuoteBomLine["priceSource"];
+  }>,
   nextLineSort: number,
   accessToken?: string,
 ): Promise<SalesQuoteBomLine[]> {
@@ -10026,6 +10074,13 @@ export async function addSalesQuoteBomLines(
         line_sort: nextLineSort + index,
         catalog_item_id: line.catalogItemId || null,
         source_location_id: line.sourceLocationId || null,
+        // Callers that don't pass a price at all (e.g. "Pull Location
+        // Hardware"/Pre-Sales Quick Estimate bulk-generated lines,
+        // migrations 057/pre-sales rules) get 0/manual_override, same as
+        // any other free-text line -- pricing those bulk-generation paths
+        // is a separate, not-yet-scoped follow-up, not part of this batch.
+        unit_price: line.unitPrice ?? 0,
+        price_source: line.priceSource ?? "manual_override",
       })),
     ),
   });
@@ -10096,7 +10151,15 @@ export async function updateSalesQuoteBomLineCatalogLink(id: string, catalogItem
 
 export async function updateSalesQuoteBomLine(
   id: string,
-  updates: { item: string; qty: number; notes: string; catalogItemId: string | null },
+  updates: {
+    item: string;
+    qty: number;
+    notes: string;
+    catalogItemId: string | null;
+    unitPrice: number;
+    priceSource: SalesQuoteBomLine["priceSource"];
+    overriddenByUserId?: string | null;
+  },
   accessToken?: string,
 ): Promise<SalesQuoteBomLine> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
@@ -10106,6 +10169,9 @@ export async function updateSalesQuoteBomLine(
   if (!item || !Number.isFinite(updates.qty) || updates.qty <= 0) {
     throw new Error("Enter an item name and a quantity greater than zero.");
   }
+  if (!Number.isFinite(updates.unitPrice) || updates.unitPrice < 0) {
+    throw new Error("Enter a unit price of zero or more.");
+  }
   const response = await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
     method: "PATCH",
     headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
@@ -10114,6 +10180,14 @@ export async function updateSalesQuoteBomLine(
       qty: updates.qty,
       notes: updates.notes.trim() || null,
       catalog_item_id: updates.catalogItemId || null,
+      unit_price: updates.unitPrice,
+      price_source: updates.priceSource,
+      // The override audit stamp only ever reflects a REAL manual
+      // override -- reverting a line back to exactly the catalog default
+      // clears both fields rather than leaving a stale "overridden by/at"
+      // pair on a line that is no longer actually overridden.
+      price_overridden_by: updates.priceSource === "manual_override" ? (updates.overriddenByUserId ?? null) : null,
+      price_overridden_at: updates.priceSource === "manual_override" ? new Date().toISOString() : null,
     }),
   });
   if (!response.ok) {
@@ -11838,6 +11912,13 @@ export type ProposalBomLineSnapshot = {
   manufacturer: string;
   hasDatasheet: boolean;
   datasheetUrl: string;
+  // Queue C1 (migration 136): frozen at send time from the quote BOM
+  // line's own unit_price, exactly like every other field above -- never
+  // recomputed from a live catalog price or a later quote edit. Optional:
+  // absent entirely on a proposal sent before this feature existed (never
+  // 0, which would falsely claim a real, quoted price of zero).
+  unitPrice?: number;
+  lineTotal?: number;
 };
 
 export type ProposalTemplateSectionSnapshot = { title: string; body: string };
@@ -11852,6 +11933,18 @@ export type ProposalSnapshot = {
   proposalSummary: string;
   bom: ProposalBomLineSnapshot[];
   templateSections: ProposalTemplateSectionSnapshot[];
+  // Queue C1 (migration 136): computed once at send time from the quote's
+  // BOM lines and its own discount_percent/tax_rate, then frozen -- never
+  // recomputed later. Optional, same reasoning as companyName: absent on
+  // any proposal sent before this feature existed. Internal cost/margin
+  // (unitCost/markupPercent) are deliberately never included here or
+  // anywhere else customer-reachable.
+  subtotal?: number;
+  discountPercent?: number;
+  discountAmount?: number;
+  taxRate?: number;
+  taxAmount?: number;
+  grandTotal?: number;
 };
 
 export type SalesQuoteProposal = {
@@ -11983,7 +12076,23 @@ export type ProposalTemplateSectionDiff =
   | { kind: "unchanged"; title: string };
 
 export type ProposalSnapshotComparison = {
-  fieldChanges: Partial<Record<"companyName" | "clientName" | "siteName" | "city" | "quoteRef" | "proposalSummary", ProposalFieldChange>>;
+  fieldChanges: Partial<
+    Record<
+      | "companyName"
+      | "clientName"
+      | "siteName"
+      | "city"
+      | "quoteRef"
+      | "proposalSummary"
+      | "subtotal"
+      | "discountPercent"
+      | "discountAmount"
+      | "taxRate"
+      | "taxAmount"
+      | "grandTotal",
+      ProposalFieldChange
+    >
+  >;
   bomLines: ProposalBomLineDiff[];
   templateSections: ProposalTemplateSectionDiff[];
 };
@@ -11996,17 +12105,58 @@ const PROPOSAL_BOM_LINE_COMPARED_FIELDS: Array<keyof ProposalBomLineSnapshot> = 
   "imageUrl",
   "hasDatasheet",
   "datasheetUrl",
+  "unitPrice",
+  "lineTotal",
 ];
+
+// Queue C1 (migration 136): the frozen Sales pricing math, extracted as a
+// pure function so it's directly testable (buildProposalSnapshot in
+// main.tsx is otherwise inline in the giant App component, same as
+// buildSubmittalSnapshot's own equivalent -- neither is exported or
+// testable in isolation, per this repo's established precedent). Rounds
+// to the cent at each stage (line total, then subtotal, then discount/tax
+// amounts, then grand total) rather than only at the end, so the
+// displayed subtotal/discount/tax always sum to exactly the displayed
+// grand total. Never computes or returns anything cost/margin-shaped.
+export function computeProposalTotals(
+  lines: Array<{ unitPrice: number; qty: number }>,
+  discountPercent: number,
+  taxRate: number,
+): { lineTotals: number[]; subtotal: number; discountAmount: number; taxAmount: number; grandTotal: number } {
+  const round2 = (value: number) => Math.round(value * 100) / 100;
+  const lineTotals = lines.map((line) => round2(line.unitPrice * line.qty));
+  const subtotal = round2(lineTotals.reduce((sum, total) => sum + total, 0));
+  const discountAmount = round2(subtotal * (discountPercent / 100));
+  const taxAmount = round2((subtotal - discountAmount) * (taxRate / 100));
+  const grandTotal = round2(subtotal - discountAmount + taxAmount);
+  return { lineTotals, subtotal, discountAmount, taxAmount, grandTotal };
+}
 
 export function compareProposalSnapshots(before: ProposalSnapshot, after: ProposalSnapshot): ProposalSnapshotComparison {
   const fieldChanges: ProposalSnapshotComparison["fieldChanges"] = {};
-  (["companyName", "clientName", "siteName", "city", "quoteRef", "proposalSummary"] as const).forEach((field) => {
-    // companyName (and companyLogoUrl, not compared as a visible field
-    // here) are optional -- absent entirely on a proposal sent before
-    // that snapshot field existed. Missing is treated as "" for
-    // comparison, not as a crash or a false "unknown" state.
-    const beforeValue = before[field] ?? "";
-    const afterValue = after[field] ?? "";
+  (
+    [
+      "companyName",
+      "clientName",
+      "siteName",
+      "city",
+      "quoteRef",
+      "proposalSummary",
+      "subtotal",
+      "discountPercent",
+      "discountAmount",
+      "taxRate",
+      "taxAmount",
+      "grandTotal",
+    ] as const
+  ).forEach((field) => {
+    // companyName/companyLogoUrl and all the pricing fields are optional --
+    // absent entirely on a proposal sent before that snapshot field
+    // existed. Missing is treated as "" for comparison (via String(),
+    // uniform across the string and number fields in this same list),
+    // never a crash or a false "unknown"/"$0" state.
+    const beforeValue = String(before[field] ?? "");
+    const afterValue = String(after[field] ?? "");
     if (beforeValue !== afterValue) {
       fieldChanges[field] = { before: beforeValue, after: afterValue };
     }
@@ -12294,6 +12444,8 @@ export async function updateSalesQuoteInfo(
     saasContractAmount: number | null;
     saasBillingFrequency: SalesQuote["saasBillingFrequency"];
     saleAmount: number | null;
+    discountPercent: number;
+    taxRate: number;
   }>,
   accessToken?: string,
 ): Promise<void> {
@@ -12319,6 +12471,8 @@ export async function updateSalesQuoteInfo(
   if (updates.saasContractAmount !== undefined) payload.saas_contract_amount = updates.saasContractAmount;
   if (updates.saasBillingFrequency !== undefined) payload.saas_billing_frequency = updates.saasBillingFrequency || null;
   if (updates.saleAmount !== undefined) payload.sale_amount = updates.saleAmount;
+  if (updates.discountPercent !== undefined) payload.discount_percent = updates.discountPercent;
+  if (updates.taxRate !== undefined) payload.tax_rate = updates.taxRate;
   if (Object.keys(payload).length === 0) {
     return;
   }

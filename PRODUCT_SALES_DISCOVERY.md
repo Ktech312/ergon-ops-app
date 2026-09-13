@@ -57,7 +57,17 @@ Based on HubSpot's current CRM/Sales Hub feature set (companies/contacts as firs
 
 ### 1.3 What PandaDoc provides that Ergon's Sales module does not
 
-- **No pricing shown to the customer at all.** This is the single largest gap. `buildProposalSnapshot()` (`main.tsx:4928-4956`) builds the BOM rows sent to the client with only `item`, `qty`, `description`, `imageUrl`, `datasheetUrl` — **no price, no line total, no grand total, no tax, no payment-terms number are ever included in `content_snapshot`.** `ProposalPublicPage`'s rendered table has columns `[thumbnail, Item, Description, Qty, Datasheet]` — no price column exists in the markup. Every dollar figure in the app is computed for *internal* dashboard KPIs only and is deliberately excluded from anything the client sees (per the code comment at `053_sales_quote_proposals.sql:145-146`: "never quote internal cost/markup data"). In its current form, Ergon cannot replace PandaDoc for the job PandaDoc actually does — quoting a customer a price.
+- **No pricing shown to the customer at all — CLOSED, Queue C1 (2026-09-13), not yet deployed.** This
+  was the single largest gap. `buildProposalSnapshot()` now includes `unitPrice`/`lineTotal` per BOM
+  row and `subtotal`/`discountPercent`/`discountAmount`/`taxRate`/`taxAmount`/`grandTotal` at the
+  top level, frozen once per proposal version; `ProposalPublicPage` renders all of it (older,
+  price-free versions still render exactly as before — never an invented total). Internal cost/
+  markup remain excluded from `content_snapshot` and every customer-reachable payload, unchanged.
+  **Migration 136 (`sales_quote_bom_lines.unit_price`/`price_source`, `sales_quotes.discount_percent`/
+  `tax_rate`, `projects.accepted_proposal_total`) is drafted and awaiting E's review/run — the
+  frontend code is complete but not pushed until it lands**, see `PRODUCT_SALES_PRICING_
+  IMPLEMENTATION_PLAN.md` and `HANDOFF.md`'s Queue C1 entry. This finding is kept here for history,
+  not deleted, per the standing "correct, don't erase" documentation rule.
 - **No customer-facing pricing interactivity** — no toggleable optional upgrades, no quantity editing by the customer, no accept-a-subset-of-line-items flow.
 - **No real e-signature.** The "signature" is a typed name + captured IP + a SHA-256 hash of the approved content — legally weaker than PandaDoc's certificate-backed, identity-verified e-signature (no email-verification loop back to the named signer, no multi-party/countersignature support, no signing-order routing).
 - **No PDF generation.** The proposal is an HTML page with a browser Print/Save-as-PDF affordance (explicitly noted as intentional v1 scope in `053_sales_quote_proposals.sql:8-10`: "no PDF-generation library exists in this app yet").

@@ -1,26 +1,29 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **A1–A15 AND B1–B10 ALL COMPLETE.** Prepared: 2026-09-12. A10–A15 (the reopened continuation)
-are now done: A10 (Client Ledger serialized save queue), A11 (submittal company-identity freeze,
-mirroring the proposal pattern), A12 (removed the silent inventory row-cap), A13 (three compatible
-security dependency commits, `xlsx` deliberately excluded), A14 (`has_role()` hardening now applied
-and verified as migration 135), A15 (the reconciliation pass; the manual-action subsection under §8
-now records both completed migrations). **Nothing remains unblocked in
-Queue A or Queue B.** The next coder should resume at the **decision register** (§8) — most items now
-have a reviewable design document or a shipped implementation behind them — and then **Queue C** (§7).
-Current verified repository baseline: `main` / `origin/main` at `bfd4265` with a clean working tree.
-Production: `https://ergon-ops-app.vercel.app/`
+Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) ALL CODE-COMPLETE.** Prepared: 2026-09-12,
+updated 2026-09-13. E approved the recommended pricing statement below and C1.1–C1.9 executed
+continuously against it (frozen Sales pricing: `unit_price`/`price_source` on
+`sales_quote_bom_lines`, `discount_percent`/`tax_rate` on `sales_quotes`, `accepted_proposal_total`
+on `projects`, frozen totals in every new `ProposalSnapshot`, Sales Quote Builder UI, customer
+proposal display, KPI fixes, 22 new tests, full doc reconciliation). **Code and tests are committed
+locally but NOT pushed** — migration 136 must be reviewed and run by E first; see "Manual database
+actions" under §8 for exactly why and what to do once it lands. Queue A/B remain fully complete as
+recorded below; nothing there needs revisiting.
+Current verified repository baseline: local `main` ahead of `origin/main` by the Queue C1 commits
+(see `HANDOFF.md`'s newest entry for the exact local HEAD) — **do not push** until migration 136 is
+confirmed run.
+Production: `https://ergon-ops-app.vercel.app/` (does not yet reflect Queue C1 — still pre-pricing).
 
-## Next-session launchpad (after migrations 134 and 135)
+## Next-session launchpad
 
-**Repository checkpoint:** migrations 134 and 135 have both been applied and their canonical
-transaction-safe test scripts passed in production. Do not run them again. Pull `main`, verify Git,
-and read the newest entries at the top of `HANDOFF.md` before doing anything else.
+**Repository checkpoint:** migrations 134 and 135 have both been applied and verified in production.
+Migration 136 (Sales pricing) is drafted, reviewed, and committed locally — **awaiting E's review and
+run**. Once E confirms migration 136 and its test script both succeeded, push the already-committed
+Queue C1 frontend immediately (§3's delivery rule, `PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md`),
+verify the Vercel deployment, then continue to the next Queue C wave (§7) without waiting for a
+separate instruction.
 
-The next product implementation is **frozen Sales pricing**. It is the largest remaining gap between
-Ergon's current proposal flow and the user's goal of replacing the HubSpot/PandaDoc back-and-forth.
-The business model still needs one explicit answer from E because it controls what Sales may charge
-and what a customer sees. The recommended approval phrase is:
+The pricing statement E approved 2026-09-13:
 
 > Approve recommended pricing: catalog price starts each line; Sales may override with an audit
 > record; each sent proposal version freezes its own prices; customers see unit price, line total,
@@ -28,11 +31,14 @@ and what a customer sees. The recommended approval phrase is:
 > total carries to the Project as a read-only reference; approval thresholds remain a separate later
 > decision.
 
-If E approves that statement, execute **C1.1–C1.9 below continuously**. Do not ask again between
-sub-batches. If E changes one clause, update only the affected part of
-`PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md`, then continue.
+C1.1–C1.9 below are kept as the executed record, each now marked DONE with what actually shipped.
 
 ### C1.1 — Refresh and preflight
+
+**Status: DONE.** Re-read every named definition fresh from current source (not stale memory);
+confirmed 136 as the next free migration number; packaged
+`backend/supabase/preflight_136_sales_pricing.sql` (read-only, not run — no authorized Supabase path
+this session, per the task's own instruction).
 
 - Confirm HEAD/origin and a clean tree.
 - Re-read the latest live definitions of `sales_quotes`, `sales_quote_bom_lines`,
@@ -45,6 +51,10 @@ sub-batches. If E changes one clause, update only the affected part of
   package it for E if manual execution is required.
 
 ### C1.2 — Finalize the migration contract
+
+**Status: DONE.** Backfill explicitly labels every pre-existing row `'legacy_unverified'`, never
+`'catalog_default'` (an inferred historical price is never claimed as verified); constraints for
+finite/nonnegative/precision-bounded money and rates; no internal cost/markup column added anywhere.
 
 The migration design must explicitly cover existing rows, not merely add defaults:
 
@@ -62,6 +72,13 @@ Use an explicit legacy/unverified state or require review where history cannot b
 
 ### C1.3 — Draft one migration and one canonical SQL test
 
+**Status: DONE — NOT RUN.** `backend/supabase/migrations/136_sales_pricing_foundations.sql` +
+`backend/supabase/migration_136_sales_pricing_foundations_tests.sql`, mirroring the established
+transaction-safe/real-fixture/hard-fail-on-skip convention. Covers catalog default, manual override
+audit, constraint rejection, backfill labeling, accepted-total carry-through (including an
+old-snapshot-with-no-grandTotal case), and a grant-state regression guard. Give E only the migration
+file first; its test script only after E reports success — per this section's own instruction.
+
 - One numbered migration, one transaction, idempotent where practical.
 - One separate transaction-safe verification script with synthetic fixtures and a trailing rollback.
 - The test must hard-fail on every failed assertion and every skipped section.
@@ -75,6 +92,11 @@ real results before any dependent frontend deploy.
 
 ### C1.4 — Frontend types and persistence
 
+**Status: DONE.** `SalesQuoteBomLine`/`SalesQuote` types, mappers, and `SALES_QUOTE_SELECT` extended;
+`addSalesQuoteBomLines`/`updateSalesQuoteBomLine` accept and validate price; catalog-linked bulk
+generators (Pull Location Hardware) default from `computeCatalogSellPrice`; `price_source` decided
+by comparing the saved value against today's catalog default at save time, never typed directly.
+
 - Extend quote/BOM row types and selectors for price fields.
 - Keep money values precise at storage boundaries; centralize display formatting.
 - Default a newly catalog-linked line from the catalog's current sell price exactly once.
@@ -85,6 +107,11 @@ real results before any dependent frontend deploy.
 
 ### C1.5 — Internal Sales Quote Builder
 
+**Status: DONE.** Unit Price + Line Total in the BOM editor and add-line row; an "(overridden)"/
+"(unverified -- review price)" indicator; Discount %/Tax % + a live subtotal/discount/tax/total
+preview in the Edit Site modal (alongside the existing Sale Amount/SaaS Contract sections). No new
+role/permission invented -- margin visibility unchanged from its existing gate.
+
 - Add Unit Price and Line Total to the BOM editor.
 - Add quote subtotal, discount percentage, tax rate/amount, and final total.
 - Show catalog-default vs. manual-override state and who/when changed it.
@@ -93,6 +120,10 @@ real results before any dependent frontend deploy.
 
 ### C1.6 — Customer proposal
 
+**Status: DONE.** `ProposalPublicPage` renders price/total columns and a totals block only when
+`snapshot.grandTotal !== undefined` (an older price-free version renders exactly as before, never an
+invented total); always reads the frozen snapshot, never the live quote/catalog.
+
 - Render unit price, line total, subtotal, discount, tax, and final total from the frozen proposal
   snapshot only.
 - Never calculate from the live catalog or live quote on the public page.
@@ -100,6 +131,13 @@ real results before any dependent frontend deploy.
 - Verify mobile widths and print/PDF output; keep company branding and response controls intact.
 
 ### C1.7 — Proposal versions, reporting, and conversion
+
+**Status: DONE.** `compareProposalSnapshots` extended (zero new UI needed -- already field-driven);
+`avgDealSize` now reads each quote's own frozen price/discount/tax instead of live catalog joins
+(`estimatedProfitYtd`/margin deliberately left on live catalog cost -- out of scope for the approved
+statement, documented inline); `create_project_from_quote` carries the accepted proposal's frozen
+`grandTotal` onto the new Project as `accepted_proposal_total`, surfaced read-only in the Financial
+Summary panel.
 
 - Extend the existing proposal comparison to show price/total changes.
 - Replace Sales KPI calculations that currently infer value from live catalog prices with the
@@ -110,6 +148,13 @@ real results before any dependent frontend deploy.
 
 ### C1.8 — Verification and deployment
 
+**Status: CODE/TESTS DONE — DEPLOYMENT BLOCKED on migration 136.** 22 new tests (`sales-pricing.test.ts`,
+extended `proposal-version-comparison.test.ts`, extended `task2-unchecked-write-fixes.test.ts`) --
+398/398 full suite passing, `tsc -b` clean, `eslint` 0 errors, `npm run build` clean. **Not pushed**:
+pushing now would deploy frontend code that queries columns migration 136 hasn't created yet,
+400-ing every Sales page load in production. Push and verify Vercel/browser only after E confirms the
+migration succeeded.
+
 - Focused tests for mapping, editing, totals/rounding, overrides, old snapshots, comparison, no cost
   leakage, failures, mobile labels, and conversion outcome.
 - Full TypeScript, Vitest, ESLint, build, and smoke suite under §3.
@@ -118,6 +163,14 @@ real results before any dependent frontend deploy.
   walkthrough if available; distinguish it from real Sales acceptance.
 
 ### C1.9 — Closeout and automatic continuation
+
+**Status: DONE for everything not gated on deployment.** `HANDOFF.md`, this file, the master plan,
+`PRODUCT_SALES_DISCOVERY.md`, `PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md`, and the critical-flow
+coverage matrix all updated. `PRODUCT_MARKETING_CLAIMS.md` checked -- no pricing-related claim exists
+there to correct. Reported shipped/prepared/verified/acceptance-pending separately, per this
+section's own instruction (see the report at the end of this session's transcript). Automatic
+continuation to the next Queue C wave is itself blocked on the migration-136/push gate -- see
+"Manual database actions" under §8.
 
 - Update `HANDOFF.md`, the master plan, Sales discovery/experience, pricing plan, marketing claims,
   and the critical-flow coverage matrix.
@@ -803,17 +856,29 @@ Queue A/B work.
 | D14 | Engineering first release | Product/solution request + technical review + Catalog release link | Engineering module |
 | D15 | **Already decided for now:** Commercial SaaS billing | Remains deferred until explicit authorization; do not ask again during current operational-product work | SaaS commercialization only |
 
-### Manual database actions — completed record
+### Manual database actions
 
-Both Queue A migration packages were applied and verified. This record prevents a later coder from
-asking E to run either one again.
+Migrations 134 and 135 are done. **Migration 136 is the one new pending action from Queue C1.**
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
 2. **Migration 135 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
-
-No manual database action remains from Queue A.
+3. **Migration 136 — AWAITING E'S REVIEW/RUN.** `backend/supabase/migrations/136_sales_pricing_
+   foundations.sql` (confirm 136 is still the next free number at execution time) implements the
+   frozen Sales pricing statement E approved 2026-09-13: `unit_price`/`price_source` (+ override
+   audit) on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on `sales_quotes`,
+   `accepted_proposal_total` on `projects`, a backfill labeling every pre-existing BOM line
+   `'legacy_unverified'` (never `'catalog_default'` — an inferred historical price is never claimed
+   as verified), and a redefinition of `create_project_from_quote` carrying the accepted proposal's
+   frozen total onto the Project. Verification script:
+   `backend/supabase/migration_136_sales_pricing_foundations_tests.sql`.
+   **The corresponding frontend code is already committed locally but deliberately NOT pushed to
+   `main`** — it queries the new columns directly (no fallback-select tolerance was built, unlike
+   the `PRE_087`/`PRE_091`/`PRE_092` patterns elsewhere), so pushing before this migration runs would
+   break every Sales page load in production with a PostgREST 400. Push immediately once E confirms
+   both the migration and its test script succeeded — do not wait for a separate instruction to do
+   so, and do not re-ask whether to push once success is confirmed.
 
 ## 9. Consolidated reporting format
 

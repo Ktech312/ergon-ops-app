@@ -121,3 +121,63 @@ describe("compareProposalSnapshots -- missing optional fields from older proposa
     expect(result.fieldChanges.companyName).toEqual({ before: "", after: "Ergon" });
   });
 });
+
+// Queue C1.8 (2026-09-13): frozen Sales pricing (migration 136) extended
+// compareProposalSnapshots with unitPrice/lineTotal (per BOM line) and
+// subtotal/discountPercent/discountAmount/taxRate/taxAmount/grandTotal
+// (top-level) -- these tests prove the extension, and that a proposal sent
+// before pricing existed still compares cleanly against one sent after.
+describe("compareProposalSnapshots -- pricing (Queue C1)", () => {
+  it("reports a changed unitPrice/lineTotal on a BOM line", () => {
+    const before = makeSnapshot({
+      bom: [
+        { item: "Camera A", qty: 2, notes: "", imageUrl: "", description: "Entry camera", manufacturer: "Acme", hasDatasheet: false, datasheetUrl: "", unitPrice: 100, lineTotal: 200 },
+      ],
+    });
+    const after = makeSnapshot({
+      bom: [
+        { item: "Camera A", qty: 2, notes: "", imageUrl: "", description: "Entry camera", manufacturer: "Acme", hasDatasheet: false, datasheetUrl: "", unitPrice: 120, lineTotal: 240 },
+      ],
+    });
+    const result = compareProposalSnapshots(before, after);
+    const cameraDiff = result.bomLines.find((diff) => diff.item === "Camera A");
+    expect(cameraDiff).toMatchObject({ kind: "changed", changedFields: expect.arrayContaining(["unitPrice", "lineTotal"]) });
+  });
+
+  it("reports changed subtotal/discountAmount/taxAmount/grandTotal as top-level field changes", () => {
+    const before = makeSnapshot({ subtotal: 200, discountPercent: 0, discountAmount: 0, taxRate: 0, taxAmount: 0, grandTotal: 200 });
+    const after = makeSnapshot({ subtotal: 200, discountPercent: 10, discountAmount: 20, taxRate: 8, taxAmount: 14.4, grandTotal: 194.4 });
+    const result = compareProposalSnapshots(before, after);
+    expect(result.fieldChanges.discountPercent).toEqual({ before: "0", after: "10" });
+    expect(result.fieldChanges.discountAmount).toEqual({ before: "0", after: "20" });
+    expect(result.fieldChanges.taxAmount).toEqual({ before: "0", after: "14.4" });
+    expect(result.fieldChanges.grandTotal).toEqual({ before: "200", after: "194.4" });
+    // subtotal itself is unchanged (200 both times) -- must NOT appear.
+    expect(result.fieldChanges.subtotal).toBeUndefined();
+  });
+
+  it("compares a pre-pricing proposal against a priced one without crashing or inventing a false $0 diff", () => {
+    const olderProposal: ProposalSnapshot = {
+      clientName: "Acme Co",
+      siteName: "Main St Garage",
+      city: "Chicago",
+      quoteRef: "SQ-2026-0001",
+      proposalSummary: "Initial proposal.",
+      bom: [{ item: "Camera A", qty: 2, notes: "", imageUrl: "", description: "", manufacturer: "", hasDatasheet: false, datasheetUrl: "" }],
+      templateSections: [],
+      // No pricing fields at all -- sent before migration 136.
+    };
+    const newerProposal = makeSnapshot({
+      bom: [{ item: "Camera A", qty: 2, notes: "", imageUrl: "", description: "", manufacturer: "", hasDatasheet: false, datasheetUrl: "", unitPrice: 100, lineTotal: 200 }],
+      subtotal: 200,
+      grandTotal: 200,
+    });
+    expect(() => compareProposalSnapshots(olderProposal, newerProposal)).not.toThrow();
+    const result = compareProposalSnapshots(olderProposal, newerProposal);
+    // Missing -> present is a real, correctly-reported change (absence
+    // compared as "", never treated as an equal-to-zero non-change).
+    expect(result.fieldChanges.grandTotal).toEqual({ before: "", after: "200" });
+    const cameraDiff = result.bomLines.find((diff) => diff.item === "Camera A");
+    expect(cameraDiff).toMatchObject({ kind: "changed", changedFields: expect.arrayContaining(["unitPrice", "lineTotal"]) });
+  });
+});

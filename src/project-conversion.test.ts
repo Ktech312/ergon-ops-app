@@ -44,6 +44,8 @@ function makeQuote(overrides: Partial<SalesQuote> = {}): SalesQuote {
     saasContractAmount: null,
     saasBillingFrequency: "",
     saleAmount: null,
+    discountPercent: 0,
+    taxRate: 0,
     ...overrides,
   };
 }

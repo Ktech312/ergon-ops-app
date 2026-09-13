@@ -142,7 +142,7 @@ describe("updateSalesQuoteBomLineCatalogLink", () => {
 });
 
 describe("updateSalesQuoteBomLine", () => {
-  it("updates item, quantity, notes, and catalog link in one checked write", async () => {
+  it("updates item, quantity, notes, catalog link, and price in one checked write", async () => {
     const savedRow = {
       id: "line-1",
       quote_id: "quote-1",
@@ -152,39 +152,74 @@ describe("updateSalesQuoteBomLine", () => {
       line_sort: 0,
       catalog_item_id: "item-1",
       source_location_id: null,
+      unit_price: 150,
+      price_source: "manual_override",
+      price_overridden_by: "user-1",
+      price_overridden_at: "2026-09-13T00:00:00.000Z",
     };
     const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, [savedRow]));
     globalThis.fetch = fetchMock;
 
-    await expect(updateSalesQuoteBomLine("line-1", { item: " Camera ", qty: 3, notes: " North entrance ", catalogItemId: "item-1" }, "token"))
-      .resolves.toMatchObject({ id: "line-1", item: "Camera", qty: 3, notes: "North entrance", catalogItemId: "item-1" });
+    await expect(
+      updateSalesQuoteBomLine(
+        "line-1",
+        { item: " Camera ", qty: 3, notes: " North entrance ", catalogItemId: "item-1", unitPrice: 150, priceSource: "manual_override", overriddenByUserId: "user-1" },
+        "token",
+      ),
+    ).resolves.toMatchObject({ id: "line-1", item: "Camera", qty: 3, notes: "North entrance", catalogItemId: "item-1", unitPrice: 150, priceSource: "manual_override" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
       item_name: "Camera",
       qty: 3,
       notes: "North entrance",
       catalog_item_id: "item-1",
+      unit_price: 150,
+      price_source: "manual_override",
+      price_overridden_by: "user-1",
+      price_overridden_at: expect.any(String),
     });
+  });
+
+  it("clears the override stamp when price_source reverts to catalog_default", async () => {
+    const savedRow = {
+      id: "line-1", quote_id: "quote-1", item_name: "Camera", qty: 1, notes: null, line_sort: 0,
+      catalog_item_id: "item-1", source_location_id: null, unit_price: 100, price_source: "catalog_default",
+      price_overridden_by: null, price_overridden_at: null,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, [savedRow]));
+    globalThis.fetch = fetchMock;
+    await updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: "item-1", unitPrice: 100, priceSource: "catalog_default" }, "token");
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.price_overridden_by).toBeNull();
+    expect(body.price_overridden_at).toBeNull();
   });
 
   it("rejects invalid input before making a request", async () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock;
-    await expect(updateSalesQuoteBomLine("line-1", { item: " ", qty: 0, notes: "", catalogItemId: null }, "token"))
+    await expect(updateSalesQuoteBomLine("line-1", { item: " ", qty: 0, notes: "", catalogItemId: null, unitPrice: 0, priceSource: "manual_override" }, "token"))
       .rejects.toThrow("Enter an item name and a quantity greater than zero.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a negative unit price before making a request", async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null, unitPrice: -5, priceSource: "manual_override" }, "token"))
+      .rejects.toThrow("Enter a unit price of zero or more.");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("logs technical detail and throws plain text when the write fails", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(false, 500, { message: "constraint detail" }));
-    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null }, "token"))
+    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null, unitPrice: 0, priceSource: "manual_override" }, "token"))
       .rejects.toThrow("Could not save this BOM line.");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("updateSalesQuoteBomLine failed for line line-1 (500)"));
   });
 
   it("rejects a successful response that did not update exactly one row", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, []));
-    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null }, "token"))
+    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null, unitPrice: 0, priceSource: "manual_override" }, "token"))
       .rejects.toThrow("Could not save this BOM line.");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("affected 0 rows for line line-1; expected exactly 1"));
   });

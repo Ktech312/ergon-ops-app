@@ -136,6 +136,7 @@ import {
   updateSalesQuoteBomLine,
   reorderSalesQuoteBomLine,
   compareProposalSnapshots,
+  computeProposalTotals,
   type ProposalSnapshotComparison,
   updateSalesQuoteBomLineCatalogLink,
   createScheduleTemplate,
@@ -3338,7 +3339,25 @@ function App() {
     }
     setSalesQuoteStatus("Pulling location hardware into the Quote BOM...");
     try {
-      const lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null; sourceLocationId?: string | null }> = [];
+      const lines: Array<{
+        item: string;
+        qty: number;
+        notes?: string;
+        catalogItemId?: string | null;
+        sourceLocationId?: string | null;
+        unitPrice?: number;
+        priceSource?: SalesQuoteBomLine["priceSource"];
+      }> = [];
+      // Queue C1.4: a pulled-in line defaults its price from the catalog's
+      // current sell price, same as any other newly catalog-linked line --
+      // "Item removed from catalog" (catalogItem missing) has nothing to
+      // default from, so it stays 0/manual_override like a free-text line.
+      const defaultPriceFor = (catalogItemId: string | null): { unitPrice: number; priceSource: SalesQuoteBomLine["priceSource"] } => {
+        const catalogItem = catalogItemId ? catalogItems.find((item) => item.id === catalogItemId) : undefined;
+        return catalogItem
+          ? { unitPrice: computeCatalogSellPrice(catalogItem, inventoryItems), priceSource: "catalog_default" }
+          : { unitPrice: 0, priceSource: "manual_override" };
+      };
 
       for (const location of quote.locations) {
         const locationLabel = location.name || (location.locationType === "garage" ? "Garage" : "Lot");
@@ -3354,6 +3373,7 @@ function App() {
             notes: `${locationLabel} -- ${capability}`,
             catalogItemId,
             sourceLocationId: location.id,
+            ...defaultPriceFor(catalogItemId),
           });
         };
         // qty is always 1 here -- there's no separate "how many FLI/LPR/
@@ -3376,6 +3396,7 @@ function App() {
                 notes: lineLabel,
                 catalogItemId: lineItem.catalogItemId,
                 sourceLocationId: location.id,
+                ...defaultPriceFor(lineItem.catalogItemId),
               });
             }
             if (lineItem.accessoryCatalogItemId && lineItem.accessoryQty > 0) {
@@ -3386,6 +3407,7 @@ function App() {
                 notes: `${lineLabel} accessory`,
                 catalogItemId: lineItem.accessoryCatalogItemId,
                 sourceLocationId: location.id,
+                ...defaultPriceFor(lineItem.accessoryCatalogItemId),
               });
             }
           }
@@ -3470,7 +3492,17 @@ function App() {
   // Shared by the manual "add line" form and the Pre-Sales Quick Estimate
   // calculator below -- both just need to append lines to a quote's
   // persisted BOM.
-  async function handleAddSalesQuoteBomLines(quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) {
+  async function handleAddSalesQuoteBomLines(
+    quoteId: string,
+    lines: Array<{
+      item: string;
+      qty: number;
+      notes?: string;
+      catalogItemId?: string | null;
+      unitPrice?: number;
+      priceSource?: SalesQuoteBomLine["priceSource"];
+    }>,
+  ) {
     if (!authSession || lines.length === 0) {
       return;
     }
@@ -3511,13 +3543,25 @@ function App() {
   async function handleUpdateSalesQuoteBomLine(
     quoteId: string,
     lineId: string,
-    updates: { item: string; qty: number; notes: string; catalogItemId: string | null },
+    updates: { item: string; qty: number; notes: string; catalogItemId: string | null; unitPrice: number },
   ): Promise<boolean> {
     if (!authSession) {
       return false;
     }
+    // Queue C1.4: price_source is decided here, not typed by the rep --
+    // comparing the saved value against what the linked catalog item would
+    // default to TODAY (a free-text line, with no catalog link, is always
+    // manual_override -- there is nothing to compare against).
+    const linkedCatalogItem = updates.catalogItemId ? catalogItems.find((item) => item.id === updates.catalogItemId) : undefined;
+    const catalogDefaultPrice = linkedCatalogItem ? computeCatalogSellPrice(linkedCatalogItem, inventoryItems) : null;
+    const priceSource: SalesQuoteBomLine["priceSource"] =
+      catalogDefaultPrice !== null && Math.abs(updates.unitPrice - catalogDefaultPrice) < 0.005 ? "catalog_default" : "manual_override";
     try {
-      const saved = await updateSalesQuoteBomLine(lineId, updates, authSession.accessToken);
+      const saved = await updateSalesQuoteBomLine(
+        lineId,
+        { ...updates, priceSource, overriddenByUserId: priceSource === "manual_override" ? authSession.userId : null },
+        authSession.accessToken,
+      );
       setSalesQuotes((current) => current.map((entry) => (
         entry.id === quoteId
           ? { ...entry, bomLines: entry.bomLines.map((line) => (line.id === lineId ? saved : line)) }
@@ -3598,6 +3642,8 @@ function App() {
       saasContractAmount: number | null;
       saasBillingFrequency: SalesQuote["saasBillingFrequency"];
       saleAmount: number | null;
+      discountPercent: number;
+      taxRate: number;
     }>,
   ) {
     // Correction (2026-09-11, review): this used to update local state
@@ -5165,6 +5211,20 @@ function App() {
   // a share-token link, and let the client click Approve/Reject/Request
   // Revision on a public page with no login.
   function buildProposalSnapshot(quote: SalesQuote): ProposalSnapshot {
+    // Queue C1 (migration 136): every price figure here is computed once,
+    // from the quote's CURRENT unit_price/discount_percent/tax_rate, and
+    // then frozen into this version's own snapshot -- a later edit to any
+    // of those (or a later catalog price change) never alters an
+    // already-sent version. computeProposalTotals (persistence.ts) is the
+    // single, directly-tested source of this math -- no cost/margin field
+    // is computed or included anywhere in this object.
+    const { lineTotals, subtotal, discountAmount, taxAmount, grandTotal } = computeProposalTotals(
+      quote.bomLines.map((line) => ({ unitPrice: line.unitPrice, qty: line.qty })),
+      quote.discountPercent,
+      quote.taxRate,
+    );
+    const bomWithTotals = quote.bomLines.map((line, index) => ({ line, lineTotal: lineTotals[index] }));
+
     return {
       companyName: branding.companyName,
       companyLogoUrl: branding.logoStoragePath ? companyLogoUrl(branding.logoStoragePath) ?? "" : "",
@@ -5173,7 +5233,7 @@ function App() {
       city: quote.city,
       quoteRef: quote.quoteRef,
       proposalSummary: quote.proposalSummary,
-      bom: quote.bomLines.map((line) => {
+      bom: bomWithTotals.map(({ line, lineTotal }) => {
         const linked = line.catalogItemId ? catalogItems.find((item) => item.id === line.catalogItemId) : undefined;
         const datasheetUrl = linked
           ? linked.datasheetUrl || (linked.datasheetStoragePath ? getCatalogDatasheetPublicUrl(linked.datasheetStoragePath) ?? "" : "")
@@ -5187,12 +5247,20 @@ function App() {
           manufacturer: linked?.manufacturer ?? "",
           hasDatasheet: Boolean(datasheetUrl),
           datasheetUrl,
+          unitPrice: line.unitPrice,
+          lineTotal,
         };
       }),
       templateSections: proposalTemplateSections
         .slice()
         .sort((a, b) => a.sequenceOrder - b.sequenceOrder)
         .map((section) => ({ title: section.title, body: section.body })),
+      subtotal,
+      discountPercent: quote.discountPercent,
+      discountAmount,
+      taxRate: quote.taxRate,
+      taxAmount,
+      grandTotal,
     };
   }
 
@@ -14403,6 +14471,13 @@ function ClientLedger({
           <Metric icon={<Boxes size={20} />} label="Allocated Budget" value={money(selectedProject.allocated)} />
           <Metric icon={<CalendarDays size={20} />} label="SaaS MRR" value={money(saasMonthlyAmount(selectedProject))} />
           <Metric icon={<CalendarDays size={20} />} label="SaaS ARR" value={money(saasMonthlyAmount(selectedProject) * 12)} />
+          {/* Queue C1.7: read-only reference onto the accepted Sales
+              proposal's own frozen total -- copied once at conversion,
+              never editable from this side. Absent (not shown) when no
+              proposal was ever approved for the source quote. */}
+          {selectedProject.acceptedProposalTotal !== null && selectedProject.acceptedProposalTotal !== undefined && (
+            <Metric icon={<DollarSign size={20} />} label="Accepted Proposal Total" value={money(selectedProject.acceptedProposalTotal)} />
+          )}
         </div>
       </section>
 
@@ -18792,7 +18867,7 @@ function SalesHome({
   onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectConversionOutcome>;
   onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
-  onUpdateSalesQuoteBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null }) => Promise<boolean>;
+  onUpdateSalesQuoteBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null; unitPrice: number }) => Promise<boolean>;
   onReorderSalesQuoteBomLine: (quoteId: string, lineId: string, direction: "up" | "down") => void;
   onUpdateSalesQuoteBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateSalesQuoteProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
@@ -18856,6 +18931,16 @@ function SalesHome({
   // item (unit cost x markup are known there) -- free-text lines like
   // "Project Management Hours" have no cost data to estimate from, so they
   // contribute $0 rather than being guessed at.
+  //
+  // Queue C1.7 (2026-09-13): this still reads the catalog item's CURRENT
+  // unit_cost/markup_percent, not a value locked at quote time -- the
+  // approved Sales pricing statement scoped only unit_price/discount/tax
+  // freezing (customer-facing figures), not a cost/margin snapshot on the
+  // BOM line itself (an internal-only concern, deliberately left for a
+  // separate, not-yet-scoped decision -- see PRODUCT_MASTER_COMPLETION_
+  // PLAN.md's Sales pricing row). This KPI can still silently drift if a
+  // catalog cost/markup changes after a quote closes, same known
+  // limitation as before this pass.
   const estimatedProfitYtd = salesQuotes
     .filter((quote) => quote.status === "closed_won" && quote.closedAt && new Date(quote.closedAt).getFullYear() === currentYear)
     .reduce((quoteSum, quote) => {
@@ -18881,13 +18966,17 @@ function SalesHome({
   const closedLostQuotes = salesQuotes.filter((quote) => quote.status === "closed_lost");
   const decidedQuoteCount = closedWonQuotes.length + closedLostQuotes.length;
   const winRatePercent = decidedQuoteCount > 0 ? Math.round((closedWonQuotes.length / decidedQuoteCount) * 100) : null;
-  const quoteSellValue = (quote: SalesQuote) =>
-    quote.bomLines.reduce((sum, line) => {
-      const catalogItem = line.catalogItemId ? catalogItemById.get(line.catalogItemId) : undefined;
-      return catalogItem ? sum + computeCatalogSellPrice(catalogItem, inventoryItems) * line.qty : sum;
-    }, 0);
+  // Queue C1.7: now reads each quote's own frozen unit_price/discount/tax
+  // instead of recomputing from the live catalog price -- a catalog price
+  // change after a quote closes no longer silently rewrites its
+  // contribution to this KPI. Uses the real final total (post-discount,
+  // post-tax), matching what the deal actually sold for, not a raw
+  // line-item sum.
+  const quoteGrandTotal = (quote: SalesQuote) =>
+    computeProposalTotals(quote.bomLines.map((line) => ({ unitPrice: line.unitPrice, qty: line.qty })), quote.discountPercent, quote.taxRate)
+      .grandTotal;
   const avgDealSize =
-    closedWonQuotes.length > 0 ? closedWonQuotes.reduce((sum, quote) => sum + quoteSellValue(quote), 0) / closedWonQuotes.length : 0;
+    closedWonQuotes.length > 0 ? closedWonQuotes.reduce((sum, quote) => sum + quoteGrandTotal(quote), 0) / closedWonQuotes.length : 0;
 
   return (
     <div className="content-grid">
@@ -18970,6 +19059,7 @@ function SalesHome({
         presalesStatus={presalesStatus}
         onGenerateBaselineBom={onGenerateBaselineBomForQuote}
         catalogItems={catalogItems}
+        inventoryItems={inventoryItems}
         onUploadImage={onUploadSalesQuoteImage}
         onUpdateImageDescription={onUpdateSalesQuoteImageDescription}
         onDownloadImage={onDownloadSalesQuoteImage}
@@ -22833,6 +22923,7 @@ function SalesQuoteBuilder({
   presalesStatus,
   onGenerateBaselineBom,
   catalogItems,
+  inventoryItems,
   onUploadImage,
   onUpdateImageDescription,
   onDownloadImage,
@@ -22881,9 +22972,12 @@ function SalesQuoteBuilder({
   onUpdateStatus: (quoteId: string, status: SalesQuote["status"]) => Promise<boolean>;
   onDeleteQuote: (quoteId: string) => void;
   onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectConversionOutcome>;
-  onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
+  onAddBomLines: (
+    quoteId: string,
+    lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null; unitPrice?: number; priceSource?: SalesQuoteBomLine["priceSource"] }>,
+  ) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
-  onUpdateBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null }) => Promise<boolean>;
+  onUpdateBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null; unitPrice: number }) => Promise<boolean>;
   onReorderBomLine: (quoteId: string, lineId: string, direction: "up" | "down") => void;
   onUpdateBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
@@ -22901,6 +22995,8 @@ function SalesQuoteBuilder({
       saasContractAmount: number | null;
       saasBillingFrequency: SalesQuote["saasBillingFrequency"];
       saleAmount: number | null;
+      discountPercent: number;
+      taxRate: number;
     }>,
   ) => void;
   siteIntakeSchema: FormSchema | null;
@@ -22916,6 +23012,7 @@ function SalesQuoteBuilder({
   presalesStatus: string;
   onGenerateBaselineBom: (quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
   catalogItems: CatalogItem[];
+  inventoryItems: Part[];
   onUploadImage: (
     quoteId: string,
     locationId: string,
@@ -22956,9 +23053,9 @@ function SalesQuoteBuilder({
   const [presalesTier, setPresalesTier] = useState("");
   const [presalesNodeCount, setPresalesNodeCount] = useState(1);
   const [presalesCloudSync, setPresalesCloudSync] = useState(false);
-  const [bomLineDraft, setBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "" });
+  const [bomLineDraft, setBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "", unitPrice: 0 });
   const [editingBomLineId, setEditingBomLineId] = useState<string | null>(null);
-  const [editingBomLineDraft, setEditingBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "" });
+  const [editingBomLineDraft, setEditingBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "", unitPrice: 0 });
   const [isSavingBomLine, setIsSavingBomLine] = useState(false);
   const [proposalClientEmailDraft, setProposalClientEmailDraft] = useState("");
   const [proposalSummaryDraft, setProposalSummaryDraft] = useState("");
@@ -23008,6 +23105,9 @@ function SalesQuoteBuilder({
   // from the SaaS contract above (a distinct recurring service). Carries
   // to the Project on conversion, stays editable there independently.
   const [saleAmountDraft, setSaleAmountDraft] = useState<number | null>(null);
+  // Queue C1 (migration 136): quote-level discount/tax -- edited here,
+  // frozen into each sent proposal version's own snapshot at send time.
+  const [pricingDraft, setPricingDraft] = useState<{ discountPercent: number; taxRate: number }>({ discountPercent: 0, taxRate: 0 });
   // #168 -- the Site Intake Questionnaire used to render fully expanded
   // inline (a lot of scrolling on a long site); now it's a compact trigger
   // that opens a pop-up, same pattern as the Edit Site modal above.
@@ -23084,6 +23184,7 @@ function SalesQuoteBuilder({
       saasBillingFrequency: selectedQuote?.saasBillingFrequency ?? "",
     });
     setSaleAmountDraft(selectedQuote?.saleAmount ?? null);
+    setPricingDraft({ discountPercent: selectedQuote?.discountPercent ?? 0, taxRate: selectedQuote?.taxRate ?? 0 });
   }, [selectedQuote]);
 
   function openQuote(id: string) {
@@ -23149,7 +23250,7 @@ function SalesQuoteBuilder({
     if (!selectedQuote || !siteInfoDraft.clientName.trim() || !siteInfoDraft.siteName.trim()) {
       return;
     }
-    onUpdateQuoteInfo(selectedQuote.id, { ...siteInfoDraft, ...saasDraft, saleAmount: saleAmountDraft });
+    onUpdateQuoteInfo(selectedQuote.id, { ...siteInfoDraft, ...saasDraft, saleAmount: saleAmountDraft, ...pricingDraft });
     setIsEditingSiteInfo(false);
   }
 
@@ -23553,18 +23654,50 @@ function SalesQuoteBuilder({
                         <select
                           aria-label="Catalog link"
                           value={editingBomLineDraft.catalogItemId}
-                          onChange={(event) => setEditingBomLineDraft((current) => ({ ...current, catalogItemId: event.target.value }))}
+                          onChange={(event) => {
+                            const catalogItemId = event.target.value;
+                            // Choosing a catalog link defaults the price to
+                            // that item's current sell price -- a rep who
+                            // then edits it further becomes a manual
+                            // override, decided at Save time in
+                            // handleUpdateSalesQuoteBomLine, not here.
+                            const linked = catalogItemId ? activeCatalogItems.find((item) => item.id === catalogItemId) : undefined;
+                            setEditingBomLineDraft((current) => ({
+                              ...current,
+                              catalogItemId,
+                              unitPrice: linked ? computeCatalogSellPrice(linked, inventoryItems) : current.unitPrice,
+                            }));
+                          }}
                         >
                           <option value="">No catalog link (labor/service line)</option>
                           {activeCatalogItems.map((item) => (
                             <option key={item.id} value={item.id}>{item.productName}</option>
                           ))}
                         </select>
+                        <label className="quote-bom-line-price-field">
+                          Unit price
+                          <input
+                            aria-label="Unit price"
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            value={editingBomLineDraft.unitPrice}
+                            onChange={(event) => setEditingBomLineDraft((current) => ({ ...current, unitPrice: Number(event.target.value) }))}
+                          />
+                        </label>
+                        <small className="muted">Line total {money(editingBomLineDraft.unitPrice * editingBomLineDraft.qty)}</small>
                         <div className="quote-bom-line-edit-actions">
                           <button
                             className="primary-action mini-action"
                             type="button"
-                            disabled={isSavingBomLine || !editingBomLineDraft.item.trim() || !Number.isFinite(editingBomLineDraft.qty) || editingBomLineDraft.qty <= 0}
+                            disabled={
+                              isSavingBomLine ||
+                              !editingBomLineDraft.item.trim() ||
+                              !Number.isFinite(editingBomLineDraft.qty) ||
+                              editingBomLineDraft.qty <= 0 ||
+                              !Number.isFinite(editingBomLineDraft.unitPrice) ||
+                              editingBomLineDraft.unitPrice < 0
+                            }
                             onClick={async () => {
                               setIsSavingBomLine(true);
                               const saved = await onUpdateBomLine(selectedQuote.id, line.id, {
@@ -23572,6 +23705,7 @@ function SalesQuoteBuilder({
                                 qty: editingBomLineDraft.qty,
                                 notes: editingBomLineDraft.notes,
                                 catalogItemId: editingBomLineDraft.catalogItemId || null,
+                                unitPrice: editingBomLineDraft.unitPrice,
                               });
                               setIsSavingBomLine(false);
                               if (saved) setEditingBomLineId(null);
@@ -23587,6 +23721,11 @@ function SalesQuoteBuilder({
                         <div>
                           <strong>{line.item}</strong>
                           <span>Qty {line.qty}{line.notes ? ` -- ${line.notes}` : ""}</span>
+                          <span>
+                            {money(line.unitPrice)} each -- {money(line.unitPrice * line.qty)} total
+                            {line.priceSource === "manual_override" && <em className="muted"> (overridden)</em>}
+                            {line.priceSource === "legacy_unverified" && <em className="muted"> (unverified -- review price)</em>}
+                          </span>
                           {line.sourceLocationId && (
                             <small className="muted">
                               {sourceLocation ? `Pulled from ${sourceLocation.name || "a location"}` : "Pulled from a location (since removed)"}
@@ -23625,7 +23764,7 @@ function SalesQuoteBuilder({
                             type="button"
                             onClick={() => {
                               setEditingBomLineId(line.id);
-                              setEditingBomLineDraft({ item: line.item, qty: line.qty, notes: line.notes, catalogItemId: line.catalogItemId ?? "" });
+                              setEditingBomLineDraft({ item: line.item, qty: line.qty, notes: line.notes, catalogItemId: line.catalogItemId ?? "", unitPrice: line.unitPrice });
                             }}
                           >
                             Edit
@@ -23643,16 +23782,48 @@ function SalesQuoteBuilder({
               <input placeholder="Item name" value={bomLineDraft.item} onChange={(event) => setBomLineDraft({ ...bomLineDraft, item: event.target.value })} />
               <input type="number" min={0.01} step={0.01} value={bomLineDraft.qty} onChange={(event) => setBomLineDraft({ ...bomLineDraft, qty: Number(event.target.value) || 1 })} />
               <input placeholder="Notes (optional)" value={bomLineDraft.notes} onChange={(event) => setBomLineDraft({ ...bomLineDraft, notes: event.target.value })} />
-              <CatalogItemPicker items={activeCatalogItems} value={bomLineDraft.catalogItemId} onChange={(catalogItemId) => setBomLineDraft({ ...bomLineDraft, catalogItemId })} placeholder="Catalog link (optional)" />
+              <CatalogItemPicker
+                items={activeCatalogItems}
+                value={bomLineDraft.catalogItemId}
+                onChange={(catalogItemId) => {
+                  const linked = catalogItemId ? activeCatalogItems.find((item) => item.id === catalogItemId) : undefined;
+                  setBomLineDraft((current) => ({ ...current, catalogItemId, unitPrice: linked ? computeCatalogSellPrice(linked, inventoryItems) : current.unitPrice }));
+                }}
+                placeholder="Catalog link (optional)"
+              />
+              <input
+                aria-label="Unit price"
+                type="number"
+                min={0}
+                step={0.01}
+                placeholder="Unit price"
+                value={bomLineDraft.unitPrice}
+                onChange={(event) => setBomLineDraft({ ...bomLineDraft, unitPrice: Number(event.target.value) })}
+              />
               <button
                 className="secondary-action mini-action"
                 type="button"
-                disabled={!bomLineDraft.item.trim()}
+                disabled={!bomLineDraft.item.trim() || !Number.isFinite(bomLineDraft.unitPrice) || bomLineDraft.unitPrice < 0}
                 onClick={() => {
                   onAddBomLines(selectedQuote.id, [
-                    { item: bomLineDraft.item.trim(), qty: bomLineDraft.qty, notes: bomLineDraft.notes.trim() || undefined, catalogItemId: bomLineDraft.catalogItemId || undefined },
+                    {
+                      item: bomLineDraft.item.trim(),
+                      qty: bomLineDraft.qty,
+                      notes: bomLineDraft.notes.trim() || undefined,
+                      catalogItemId: bomLineDraft.catalogItemId || undefined,
+                      unitPrice: bomLineDraft.unitPrice,
+                      // Same catalog-default-vs-override comparison as the
+                      // edit form, computed here since this is the only
+                      // add-line call site that offers a price field a rep
+                      // could have changed before clicking Add.
+                      priceSource: (() => {
+                        const linked = bomLineDraft.catalogItemId ? activeCatalogItems.find((item) => item.id === bomLineDraft.catalogItemId) : undefined;
+                        const catalogDefault = linked ? computeCatalogSellPrice(linked, inventoryItems) : null;
+                        return catalogDefault !== null && Math.abs(bomLineDraft.unitPrice - catalogDefault) < 0.005 ? "catalog_default" : "manual_override";
+                      })(),
+                    },
                   ]);
-                  setBomLineDraft({ item: "", qty: 1, notes: "", catalogItemId: "" });
+                  setBomLineDraft({ item: "", qty: 1, notes: "", catalogItemId: "", unitPrice: 0 });
                 }}
               >
                 + Add line
@@ -24178,6 +24349,48 @@ function SalesQuoteBuilder({
                     </select>
                   </label>
                 </div>
+              </div>
+            </div>
+            <div className="modal-section">
+              <span className="modal-section-title">Pricing</span>
+              <p className="muted">Applies to the whole quote, not per line -- frozen into each sent proposal version at send time; a later edit here never changes an already-sent version.</p>
+              <div className="tight-form-rows">
+                <div className="tight-form-row">
+                  <label className="tight-field tight-field-medium">
+                    <span>Discount %</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.01"
+                      value={pricingDraft.discountPercent}
+                      onChange={(event) => setPricingDraft((current) => ({ ...current, discountPercent: Number(event.target.value) || 0 }))}
+                    />
+                  </label>
+                  <label className="tight-field tight-field-medium">
+                    <span>Tax %</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.01"
+                      value={pricingDraft.taxRate}
+                      onChange={(event) => setPricingDraft((current) => ({ ...current, taxRate: Number(event.target.value) || 0 }))}
+                    />
+                  </label>
+                </div>
+                {(() => {
+                  const { subtotal, discountAmount, taxAmount, grandTotal } = computeProposalTotals(
+                    selectedQuote.bomLines.map((line) => ({ unitPrice: line.unitPrice, qty: line.qty })),
+                    pricingDraft.discountPercent,
+                    pricingDraft.taxRate,
+                  );
+                  return (
+                    <p className="muted">
+                      Subtotal {money(subtotal)} -- Discount {money(discountAmount)} -- Tax {money(taxAmount)} -- <strong>Total {money(grandTotal)}</strong>
+                    </p>
+                  );
+                })()}
               </div>
             </div>
             <div className="modal-actions">
@@ -25863,6 +26076,11 @@ function ProposalPublicPage({ token }: { token: string }) {
 
   const snapshot = data.contentSnapshot;
   const proposalCompanyName = snapshot.companyName?.trim() || "Ergon";
+  // Queue C1.6: a proposal sent before pricing existed has no grandTotal
+  // key in its frozen snapshot at all -- absence, not a real 0, so this is
+  // the correct signal for "this version predates pricing," never treated
+  // as "priced at zero."
+  const hasPricing = snapshot.grandTotal !== undefined;
   const respondedDateLabel = respondedAt ? new Date(respondedAt).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : "";
   const respondedByLabel = respondedByName ? ` by ${respondedByName}` : "";
 
@@ -25909,8 +26127,21 @@ function ProposalPublicPage({ token }: { token: string }) {
 
       <section className="submittal-public-section">
         <h2>Bill of Material</h2>
+        {/* Queue C1.6: pricing columns render only when this proposal
+            version actually has them -- a version sent before this feature
+            existed has no unitPrice/lineTotal/grandTotal in its frozen
+            snapshot at all, and must show its original price-free table
+            exactly as before, never an invented $0. Always read from this
+            snapshot only -- never the live quote or catalog. */}
         <table className="proposal-bom-table stack-table-mobile">
-          <thead><tr><th></th><th>Item</th><th>Description</th><th>Qty</th><th>Datasheet</th></tr></thead>
+          <thead>
+            <tr>
+              <th></th><th>Item</th><th>Description</th><th>Qty</th>
+              {hasPricing && <th>Unit Price</th>}
+              {hasPricing && <th>Line Total</th>}
+              <th>Datasheet</th>
+            </tr>
+          </thead>
           <tbody>
             {snapshot.bom.map((line, index) => (
               <tr key={`${line.item}-${index}`}>
@@ -25918,14 +26149,28 @@ function ProposalPublicPage({ token }: { token: string }) {
                 <td data-label="Item"><strong>{line.item}</strong>{line.manufacturer ? <span className="muted"> - {line.manufacturer}</span> : null}</td>
                 <td data-label="Description">{line.description || line.notes || "-"}</td>
                 <td data-label="Qty">{line.qty}</td>
+                {hasPricing && <td data-label="Unit Price">{line.unitPrice !== undefined ? money(line.unitPrice) : "-"}</td>}
+                {hasPricing && <td data-label="Line Total">{line.lineTotal !== undefined ? money(line.lineTotal) : "-"}</td>}
                 <td data-label="Datasheet">{line.hasDatasheet ? <a href={line.datasheetUrl} target="_blank" rel="noreferrer">View datasheet</a> : "-"}</td>
               </tr>
             ))}
             {snapshot.bom.length === 0 && (
-              <tr><td colSpan={5} className="empty-compact-state">No line items on this proposal.</td></tr>
+              <tr><td colSpan={hasPricing ? 7 : 5} className="empty-compact-state">No line items on this proposal.</td></tr>
             )}
           </tbody>
         </table>
+        {hasPricing && (
+          <div className="proposal-totals">
+            <p>Subtotal <span>{money(snapshot.subtotal ?? 0)}</span></p>
+            {(snapshot.discountAmount ?? 0) > 0 && (
+              <p>Discount ({snapshot.discountPercent ?? 0}%) <span>-{money(snapshot.discountAmount ?? 0)}</span></p>
+            )}
+            {(snapshot.taxAmount ?? 0) > 0 && (
+              <p>Tax ({snapshot.taxRate ?? 0}%) <span>{money(snapshot.taxAmount ?? 0)}</span></p>
+            )}
+            <p className="proposal-grand-total"><strong>Total</strong> <strong>{money(snapshot.grandTotal ?? 0)}</strong></p>
+          </div>
+        )}
       </section>
 
       {snapshot.templateSections.map((section) => (

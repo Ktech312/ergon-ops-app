@@ -2,12 +2,92 @@
 
 ## Next coder session
 
-Start with `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad (after migrations 134 and 135)**.
-Both manual Queue A migrations are complete. The next main build is frozen Sales pricing, with
-C1.1–C1.9 laid out as one continuous implementation sequence. Before E answers the single pricing
-statement, the coder may do only C1.1's source/read-only preparation; after approval, continue through
-all nine sub-batches without asking between them. Do not re-run migrations 134/135 and do not send
-the already-decided D7/D11/D15 items back to E.
+Start with `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad**. Migrations 134 and 135 are
+complete. Queue C1 (frozen Sales pricing, E approved 2026-09-13) is fully code/test-complete and
+committed **locally only** — migration 136 is drafted and awaiting E's review/run; **do not push
+`main` until E confirms it succeeded** (the frontend now depends on its new columns — pushing early
+would 400 every Sales page load in production). Once E confirms, push immediately, verify Vercel/
+browser, then continue to the next Queue C wave without a separate instruction. Do not re-run
+migrations 134/135/136 after they've each been confirmed, and do not send the already-decided
+D1/D2/D6/D7/D10/D11/D15 items back to E.
+
+Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing, code-complete, migration 136 awaiting
+E's review (**Code/tests: committed locally, NOT pushed. Migration: drafted, NOT run.**
+
+E approved the recommended pricing statement (catalog price starts each line; Sales may override
+with an audit record; each sent proposal version freezes its own prices; customers see unit price/
+line total/subtotal/discount/tax/final total; costs/margin stay internal; the accepted total carries
+to the Project as a read-only reference; approval thresholds remain separate) and Queue C1.1-C1.9
+executed continuously against it, per `CONTINUOUS_CODER_HANDOFF.md`'s own launchpad instructions.
+
+**Migration** (`backend/supabase/migrations/136_sales_pricing_foundations.sql`, confirm 136 is still
+free at execution time): adds `unit_price`/`price_source`/`price_overridden_by`/`price_overridden_at`
+to `sales_quote_bom_lines`; `discount_percent`/`tax_rate` to `sales_quotes`; `accepted_proposal_total`
+to `projects`; backfills every pre-existing BOM line's price from the catalog's current computed
+sell price (simplified vs. the frontend's exact `cost_source='inventory_unit_cost'` resolution --
+documented as a deliberate, lower-risk approximation) with `price_source = 'legacy_unverified'`,
+**never** `'catalog_default'` (an inferred historical price is never claimed as verified); redefines
+`create_project_from_quote` (preserving migration 134's entire body byte-for-byte) to also carry the
+accepted proposal's frozen `grandTotal` onto the new Project, wrapped in its own exception handler so
+a malformed future snapshot value can never abort a real conversion. Verification script:
+`backend/supabase/migration_136_sales_pricing_foundations_tests.sql` -- transaction-safe, real
+fixtures, proves constraint rejection, the backfill's labeling discipline, catalog-default vs.
+manual-override, the accepted-total carry-through (including an old-snapshot-with-no-grandTotal
+case and idempotent retry), a non-admin/non-pm regression guard, and that `anon`'s execute grant on
+`create_project_from_quote` is unchanged.
+
+**Frontend** (`src/persistence.ts`, `src/main.tsx`, `src/styles.css`): `SalesQuoteBomLine`/`SalesQuote`
+types, `SALES_QUOTE_SELECT`, and their mappers extended; `addSalesQuoteBomLines`/
+`updateSalesQuoteBomLine` accept and validate a unit price, with `price_source` decided by comparing
+the saved value against `computeCatalogSellPrice`'s current result at save time (never typed
+directly by a rep); the "Pull Location Hardware into Quote BOM" bulk generator now defaults price the
+same way. Sales Quote Builder: Unit Price + Line Total in the BOM line editor and add-line row, an
+"(overridden)"/"(unverified -- review price)" indicator, and a Discount %/Tax % section with a live
+subtotal/discount/tax/total preview in the existing Edit Site modal. `buildProposalSnapshot` now
+calls a new exported, directly-tested `computeProposalTotals` (persistence.ts) instead of duplicating
+the rounding math inline -- the Sales Quote Builder's own live preview and the `avgDealSize` KPI both
+call the same function, so there is exactly one source of this arithmetic. `ProposalPublicPage`
+renders price/line-total columns and a subtotal/discount/tax/total block only when
+`snapshot.grandTotal !== undefined` (an older, price-free proposal version renders exactly as it
+always has -- never an invented total). `compareProposalSnapshots` needed no new UI -- it was already
+field-driven, so extending its compared-field lists was the entire integration cost. `avgDealSize`
+now reads each quote's own frozen price/discount/tax instead of a live catalog join;
+`estimatedProfitYtd`/margin deliberately still reads live catalog cost, since cost-locking was not
+part of the approved statement (documented inline, tracked in `PRODUCT_MASTER_COMPLETION_PLAN.md` as
+a separate, not-yet-scoped follow-up). The converted Project's Financial Summary panel shows the new
+`accepted_proposal_total` read-only, matching the existing `saleAmount`/`saasContractAmount`
+one-time-copy convention.
+
+22 new tests: `src/sales-pricing.test.ts` (`computeProposalTotals` rounding/math, no-cost-leakage key
+assertion, `addSalesQuoteBomLines` price pass-through, `loadSalesQuotes` mapping); 3 new cases in
+`src/proposal-version-comparison.test.ts` (changed unit price/line total, changed top-level totals,
+a pre-pricing proposal comparing cleanly against a priced one); 4 new/updated cases in
+`src/task2-unchecked-write-fixes.test.ts` (price pass-through, override-stamp clearing, negative-
+price rejection). `npx tsc -b` clean. `NODE_OPTIONS="--max-old-space-size=6144" npx vitest run
+--no-file-parallelism`: **398/398 passing** (+22). `npx eslint .`: 0 errors, 72 pre-existing warnings
+(one fewer than before this pass, incidental). `npm run build`: clean.
+
+**Deliberately not attempted this pass**: a fallback-select pattern (like `PRE_087`/`PRE_091`/
+`PRE_092` elsewhere) that would let this frontend code tolerate migration 136 not having run yet --
+judged higher-risk and more complex than simply holding the push until the migration lands, matching
+this repository's own established one-migration-at-a-time review discipline. Mobile/print rendering
+of the new proposal totals block was reasoned through (same `data-label`/`stack-table-mobile`
+mechanism every other column already uses) but not live-browser-verified -- no authenticated session
+with real, unpriced-vs-priced quote data was available to check against without creating synthetic
+production records, which this task's boundaries prohibit.
+
+**Not pushed to `main`.** Pushing now would deploy frontend code that queries `unit_price`/
+`price_source`/`discount_percent`/`tax_rate`/`accepted_proposal_total` before those columns exist,
+which would make PostgREST reject every `sales_quotes`/`sales_quote_bom_lines` request with a 400 --
+breaking the entire Sales page in production. Per `CONTINUOUS_CODER_HANDOFF.md`'s own operating rule
+("never leave frontend code depending on a database migration that has not been applied") and C1.3's
+explicit instruction ("give E only the migration file first... record the real results before any
+dependent frontend deploy"), this is a genuine blocker, not a discretionary pause. **Action needed
+from E:** review and run `136_sales_pricing_foundations.sql`, report the result; then review and run
+its test script, report that result. Once both succeed, the next coder (or this session, if still
+active) pushes immediately and verifies the Vercel deployment -- no further approval needed for that
+step, since the business decision was already made and only the mechanical migration-then-deploy
+order was gating it.
 
 Last updated: 2026-09-12, migration 135 **APPLIED AND VERIFIED IN PRODUCTION.** E ran
 `backend/supabase/migrations/135_harden_has_role_search_path.sql` successfully and then ran the

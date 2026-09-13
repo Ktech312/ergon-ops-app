@@ -1,13 +1,15 @@
-# Frozen Sales Pricing — Implementation Plan (Queue B2, NOT IMPLEMENTED)
+# Frozen Sales Pricing — Implementation Plan (Queue B2 design; implemented Queue C1)
 
-Status: **DESIGN ONLY. No production code, no migration.** Written for `CONTINUOUS_CODER_HANDOFF.md`
-Queue B item B2, blocked on decision **D2** (§8 of that document). D2's recommended working direction
-is already recorded — "Catalog price is the starting default; Sales may deliberately override with
-audit; each sent proposal version freezes its own prices/costs" — this document turns that one-line
-recommendation into a reviewable schema/API/UI specification, per B2's own instruction. Nothing below
-should be built until E answers D2. This is the single highest-priority gap named in
-`PRODUCT_SALES_DISCOVERY.md` (§1.1/§3.1 item 1): **no price of any kind ever reaches a customer inside
-Ergon today.**
+Status: **IMPLEMENTED LOCALLY, NOT YET DEPLOYED.** E approved the recommended pricing statement on
+2026-09-13 (catalog price starts each line; Sales may override with an audit record; each sent
+proposal version freezes its own prices; customers see unit price/line total/subtotal/discount/tax/
+final total; costs/margin stay internal; the accepted total carries to the Project as a read-only
+reference; approval thresholds remain a separate later decision) and Queue C1.1–C1.9 executed
+continuously against it. Code, tests, and the migration package are complete and committed locally.
+**Not pushed to `main` yet** — migration 136 must be reviewed and run by E first (frontend code now
+depends on its new columns; pushing before it runs would 400 every Sales page load in production,
+per this repo's own established migration-then-frontend sequencing discipline). See `HANDOFF.md`'s
+Queue C1 entry for exact file-by-file detail and the current blocker.
 
 ## 1. Current state, traced
 
