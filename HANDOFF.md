@@ -1,5 +1,41 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue B1 -- Client Ledger save-recovery design specification (**Docs only,
+commit pending -- see git log for the actual hash once committed.**
+
+New `PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md`: traces the current unserialized per-field PATCH
+caller (`handleUpdateProjectLedgerInfo`/`updateProjectLedgerInfo`), explains exactly why the
+2026-09-11 revert-on-failure attempt was unsafe (a stale revert can stomp a second, later,
+already-succeeded edit), lays out the full per-project state machine (idle/saving/pending/success/
+failure/retry), compares per-field revert-on-failure against a serialized latest-snapshot save queue
+(the same shape as the existing `createDeviceRecipeSaveQueue`/`createProjectSiteSaveQueue`), and
+recommends the latter -- matching D1's already-recorded direction in `CONTINUOUS_CODER_HANDOFF.md`.
+Lists the six test cases that would need to exist once implemented. **No production code, no new
+test file, no migration** -- D1 is not yet answered; this is the review artifact D1 needs, not an
+implementation.
+
+Last updated: 2026-09-12, Queue A9 closed -- reconciled `CONTINUOUS_CODER_HANDOFF.md` against Queue A
+(**Code: commit `08b9891`, pushed.**
+
+Header and §4 baseline updated to state A1-A8 are all closed; each of A1-A9's own sections now
+carries a `Status: DONE` line naming its closing commit hash(es), so a coder reading only that file
+sees accurate current state without cross-referencing this document. Checked `HANDOFF.md` and
+`PRODUCT_MASTER_COMPLETION_PLAN.md` for stale "not implemented"/"next action" wording against Queue
+A's actual outcome -- both were already current from each batch's own incremental update, so nothing
+further needed correcting. Docs-only change; no test/build/deploy cycle applies.
+
+Last updated: 2026-09-12, Queue A8 closed -- critical-flow coverage matrix (**Code: commit `3e3d940`.**
+
+Added `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` covering the six named completed critical flows
+(quote-to-project conversion, Project BOM replacement, Equipment Recipe save queue, PO receiving
+failure state, proposal/submittal response mapping, backup restore structured outcome) against the
+specific gap categories the task named -- stale response mapping, failure preserving local state,
+idempotent retry, old snapshot compatibility. Reviewed existing test assertions in depth rather than
+adding tests that would duplicate SQL coverage; the one material gap found (`SubmittalSnapshot`
+missing `companyName`/`companyLogoUrl`, same gap already named under A7) is documented rather than
+silently padded around. No test files changed this batch; `npx tsc -b` / vitest / eslint / build were
+already green from A7 and this batch added no code.
+
 Last updated: 2026-09-12, Queue A7 closed -- productization identity sweep (**Code: commit `48cece8`, deployed.**
 
 Full sweep across `src/main.tsx` and every `api/*.js` template for hardcoded "Ergon"/company-identity strings, sorted into the task's three categories:
