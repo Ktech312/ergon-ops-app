@@ -10182,10 +10182,10 @@ export async function updateSalesQuoteBomLine(
       catalog_item_id: updates.catalogItemId || null,
       unit_price: updates.unitPrice,
       price_source: updates.priceSource,
-      // The override audit stamp only ever reflects a REAL manual
-      // override -- reverting a line back to exactly the catalog default
-      // clears both fields rather than leaving a stale "overridden by/at"
-      // pair on a line that is no longer actually overridden.
+      // Migration 136's trigger treats these as requested values only:
+      // Postgres replaces them with auth.uid()/database time for an
+      // authenticated manual override, so the browser cannot forge the
+      // audit attribution. Reverting to the catalog default clears both.
       price_overridden_by: updates.priceSource === "manual_override" ? (updates.overriddenByUserId ?? null) : null,
       price_overridden_at: updates.priceSource === "manual_override" ? new Date().toISOString() : null,
     }),

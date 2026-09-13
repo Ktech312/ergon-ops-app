@@ -19,17 +19,57 @@ begin;
 --    'legacy_unverified' (backfilled below for every row that existed before
 --    this column did -- see the backfill's own comment for why this is
 --    never labeled 'catalog_default').
-alter table sales_quote_bom_lines
+alter table public.sales_quote_bom_lines
   add column if not exists unit_price numeric(12,2) not null default 0
-    check (unit_price >= 0),
+    constraint sales_quote_bom_lines_unit_price_finite_nonnegative_check
+      check (unit_price >= 0 and unit_price::text not in ('NaN', 'Infinity', '-Infinity')),
   add column if not exists price_source text not null default 'legacy_unverified'
     check (price_source in ('catalog_default', 'manual_override', 'legacy_unverified')),
   add column if not exists price_overridden_by uuid references auth.users(id),
-  add column if not exists price_overridden_at timestamptz;
+  add column if not exists price_overridden_at timestamptz,
+  add constraint sales_quote_bom_lines_price_override_audit_check
+    check (
+      (price_source = 'manual_override') =
+      (price_overridden_by is not null and price_overridden_at is not null)
+    );
+
+-- The browser decides whether the edited value is a catalog default or a
+-- manual override, but it is not trusted to attribute its own audit record.
+-- For authenticated writes, Postgres always supplies the real caller and
+-- database time. Direct SQL/service-role maintenance must provide a complete
+-- pair explicitly, and the constraint above rejects incomplete metadata.
+create or replace function public.stamp_sales_quote_price_override()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.price_source = 'manual_override' then
+    if auth.uid() is not null then
+      new.price_overridden_by := auth.uid();
+      new.price_overridden_at := pg_catalog.clock_timestamp();
+    end if;
+  else
+    new.price_overridden_by := null;
+    new.price_overridden_at := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_stamp_sales_quote_price_override on public.sales_quote_bom_lines;
+create trigger trg_stamp_sales_quote_price_override
+before insert or update of unit_price, price_source, price_overridden_by, price_overridden_at
+on public.sales_quote_bom_lines
+for each row execute function public.stamp_sales_quote_price_override();
+
+revoke all on function public.stamp_sales_quote_price_override() from public;
+revoke execute on function public.stamp_sales_quote_price_override() from anon;
+revoke execute on function public.stamp_sales_quote_price_override() from authenticated;
 
 -- 2. Quote-level discount/tax -- one of each per quote, not per line,
 --    matching how a real deal is actually negotiated.
-alter table sales_quotes
+alter table public.sales_quotes
   add column if not exists discount_percent numeric(5,2) not null default 0
     check (discount_percent >= 0 and discount_percent <= 100),
   add column if not exists tax_rate numeric(5,2) not null default 0
@@ -43,9 +83,16 @@ alter table sales_quotes
 --    same convention already established for saas_contract_amount/
 --    sale_amount (migrations 073/076), which are also one-time-copied and
 --    never edited from Projects.
-alter table projects
+alter table public.projects
   add column if not exists accepted_proposal_total numeric(12,2)
-    check (accepted_proposal_total is null or accepted_proposal_total >= 0);
+    constraint projects_accepted_proposal_total_finite_nonnegative_check
+      check (
+        accepted_proposal_total is null
+        or (
+          accepted_proposal_total >= 0
+          and accepted_proposal_total::text not in ('NaN', 'Infinity', '-Infinity')
+        )
+      );
 
 -- 4. Backfill existing sales_quote_bom_lines rows. Every existing row
 --    predates unit_price entirely, so there is no real recorded price to
@@ -67,7 +114,7 @@ alter table projects
 --    the frontend's exact fuzzy-match resolution inside a migration was
 --    judged higher-risk than a slightly less precise, already-unverified
 --    number.
-update sales_quote_bom_lines bl
+update public.sales_quote_bom_lines bl
 set unit_price = round(
   case
     when pc.unit_cost > 0 then pc.unit_cost * (1 + pc.markup_percent / 100)
@@ -75,9 +122,9 @@ set unit_price = round(
   end,
   2
 )
-from product_catalog pc
+from public.product_catalog pc
 where bl.catalog_item_id = pc.id
-  and bl.deleted_at is null;
+;
 
 -- Free-text lines (no catalog link) and any catalog-linked line whose
 -- catalog_item_id no longer resolves (a deleted catalog item) keep the

@@ -46,7 +46,9 @@ directly, for free-text labor/service lines that have no catalog entry — the s
 afterward by Sales. Per D2 ("may deliberately override with audit"): store `price_source`
 (`"catalog_default"` | `"manual_override"`) and `price_overridden_at`/`price_overridden_by` — set
 only when the rep's value differs from the catalog default at write time, never inferred after the
-fact. This is an audit trail, not an approval gate — D2 does not ask for a threshold or approval step
+fact. Migration 136's database trigger replaces browser-supplied attribution with the authenticated
+user and database time, and clears stale attribution when a line returns to `catalog_default`.
+This is an audit trail, not an approval gate — D2 does not ask for a threshold or approval step
 here (that is D4's separate scope, "customer pricing detail and approval threshold").
 
 **Frozen proposal price.** `ProposalBomLineSnapshot` gains `unitPrice` and `lineTotal` (`qty *

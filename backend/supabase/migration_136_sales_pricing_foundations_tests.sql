@@ -55,6 +55,8 @@ declare
   legacy_row_count integer;
   legacy_unverified_count integer;
   anon_can_execute boolean;
+  authenticated_can_execute boolean;
+  spoofed_user_id uuid;
 begin
   select current_setting('role') into original_role;
 
@@ -131,6 +133,17 @@ begin
 
     caught := false;
     begin
+      insert into public.sales_quote_bom_lines (quote_id, item_name, qty, unit_price)
+        values (test_quote_id, 'ZZ_TEST_NAN_PRICE', 1, 'NaN'::numeric);
+    exception when check_violation then
+      caught := true;
+    end;
+    if not caught then
+      raise exception 'TEST FAILED: unit_price = NaN was accepted -- the finite-money constraint is missing or broken.';
+    end if;
+
+    caught := false;
+    begin
       insert into public.sales_quote_bom_lines (quote_id, item_name, qty, unit_price, price_source)
         values (test_quote_id, 'ZZ_TEST_BAD_SOURCE', 1, 10, 'made_up_source');
     exception when others then
@@ -160,21 +173,37 @@ begin
       raise exception 'TEST FAILED: a negative tax_rate was accepted -- the check constraint is missing or broken.';
     end if;
 
-    -- Section 2: catalog_default / manual_override are valid, and the
-    -- override audit columns can be set together.
+    -- Section 2: catalog_default / manual_override are valid, and Postgres
+    -- replaces browser-supplied audit attribution with the authenticated
+    -- caller and database time.
     insert into public.sales_quote_bom_lines (quote_id, item_name, qty, unit_price, price_source)
       values (test_quote_id, 'ZZ_TEST_CATALOG_DEFAULT_LINE', 2, 100.00, 'catalog_default')
       returning id into test_bom_line_id;
+    spoofed_user_id := gen_random_uuid();
     update public.sales_quote_bom_lines
       set unit_price = 85.00, price_source = 'manual_override',
-          price_overridden_by = quote_creator_user_id, price_overridden_at = now()
+          price_overridden_by = spoofed_user_id,
+          price_overridden_at = '2000-01-01 00:00:00+00'::timestamptz
       where id = test_bom_line_id;
     if not exists (
       select 1 from public.sales_quote_bom_lines
       where id = test_bom_line_id and price_source = 'manual_override' and unit_price = 85.00
-        and price_overridden_by = quote_creator_user_id and price_overridden_at is not null
+        and price_overridden_by = quote_creator_user_id
+        and price_overridden_by is distinct from spoofed_user_id
+        and price_overridden_at > '2000-01-01 00:00:00+00'::timestamptz
     ) then
-      raise exception 'TEST FAILED: manual_override with its audit columns did not persist as written.';
+      raise exception 'TEST FAILED: the manual override was not stamped with the authenticated caller and database time.';
+    end if;
+
+    update public.sales_quote_bom_lines
+      set price_source = 'catalog_default'
+      where id = test_bom_line_id;
+    if exists (
+      select 1 from public.sales_quote_bom_lines
+      where id = test_bom_line_id
+        and (price_overridden_by is not null or price_overridden_at is not null)
+    ) then
+      raise exception 'TEST FAILED: reverting to catalog_default did not clear stale override attribution.';
     end if;
 
     -- Section 3: backfill correctness on rows that predate this migration
@@ -339,6 +368,14 @@ begin
   select has_function_privilege('anon', 'public.create_project_from_quote(uuid)', 'execute') into anon_can_execute;
   if anon_can_execute then
     raise exception 'TEST FAILED: anon has execute privilege on create_project_from_quote(uuid) -- grant state regressed.';
+  end if;
+
+  select has_function_privilege('anon', 'public.stamp_sales_quote_price_override()', 'execute')
+    into anon_can_execute;
+  select has_function_privilege('authenticated', 'public.stamp_sales_quote_price_override()', 'execute')
+    into authenticated_can_execute;
+  if anon_can_execute or authenticated_can_execute then
+    raise exception 'TEST FAILED: the trigger-only price audit function is directly executable (anon %, authenticated %).', anon_can_execute, authenticated_can_execute;
   end if;
 
   if skipped_count > 0 then

@@ -15,6 +15,17 @@ Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing, code-complete, migra
 E's review (**Code/tests: commit `ba33fdd`, local `main` only -- NOT pushed. Migration: drafted, NOT
 run.**
 
+**Independent migration-136 review correction (2026-09-13, local only):** the first draft's prose
+claimed finite money constraints and a real override audit, but its SQL still allowed PostgreSQL
+`NaN` in `unit_price`/`accepted_proposal_total` and trusted the browser to provide the audit user and
+timestamp. The reviewed migration now rejects non-finite money values, enforces a complete audit
+pair, stamps authenticated overrides with `auth.uid()` plus database time in a trigger-only function,
+clears stale attribution on `catalog_default`, fully qualifies the altered/backfilled tables, and
+backfills soft-deleted quote lines too so a later restore cannot revive an avoidable $0 estimate.
+The canonical test now proves `NaN` rejection, spoofed-attribution replacement, stale-audit clearing,
+and minimum trigger-function grants. Local TypeScript and all 398 Vitest tests pass. Migration 136
+and its canonical SQL test remain NOT RUN; nothing from Queue C1 is pushed or deployed.
+
 E approved the recommended pricing statement (catalog price starts each line; Sales may override
 with an audit record; each sent proposal version freezes its own prices; customers see unit price/
 line total/subtotal/discount/tax/final total; costs/margin stay internal; the accepted total carries
