@@ -14,15 +14,18 @@ Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: m
 139, and 140 plus their four canonical test scripts, committed and pushed on `main` (`362e702`,
 `f09f574`, `d564b8b`, status reconciliation through `814af14`; no dependent frontend code exists
 yet). Migration 137 and corrective migration 141 are applied and fully verified by the corrected
-canonical migration-137 test. Migrations 138–140 are not applied. Migration 138 is the next
-single file to hand E under the established one-file-at-a-time gate; see "Manual database actions"
+canonical migration-137 test. Migration 138 is applied and its canonical test is corrected after a
+fixture-only JWT simulation failure; one clean rerun of that test is the current gate. Migrations
+139–140 are not applied. See "Manual database actions"
 below for the full ordered list and exact sequencing.
 
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134, 135, 136, 137, and corrective 141 are applied and verified.
-Migrations 138, 139, and 140 are drafted, committed and pushed, and awaiting E's review/run in that
-order — see "Manual database actions." Continue Queue C2 below (C2.6 onward) while 138 is pending. Do not rerun
+Migration 138 is applied and under verification; its corrected canonical test is the next single
+manual file. Migrations 139 and 140 are drafted, committed and
+pushed, and awaiting E's review/run in that order — see "Manual database actions." Continue Queue C2
+below (C2.6 onward) while the 138 test result is pending. Do not rerun
 134/135/136 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -1018,8 +1021,8 @@ Queue A/B work.
 
 Migrations 134, 135, 136, 137, and corrective 141 are done and verified. **The corrected migration-137
 canonical test returned `Success. No rows returned` from the exact repository file, with every
-assertion and skip configured to hard-fail. Migrations 138, 139, and 140 remain drafted,
-committed, pushed, and unapplied.**
+assertion and skip configured to hard-fail. Migration 138 is applied and its corrected test is the
+current gate. Migrations 139 and 140 remain drafted, committed, pushed, and unapplied.**
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
@@ -1046,11 +1049,15 @@ committed, pushed, and unapplied.**
    141_fix_share_link_table_grants.sql` closed the real table-ACL gap found by migration 137's first
    canonical-test run. Migration 137's corrected test verifies the closed grants and passed. Do not
    run migration 141 or the migration-137 test again.
-6. **Migration 138 — NEXT MANUAL ACTION.** `backend/supabase/migrations/
+6. **Migration 138 — APPLIED; CORRECTED TEST IS NEXT.** `backend/supabase/migrations/
    138_share_link_server_owned_creation.sql` — server-owned token-creation RPCs (see C2.3 above).
    Requires 137 live first. Its test script,
-   `backend/supabase/migration_138_share_link_server_owned_creation_tests.sql`, follows only after E
-   reports 138 itself succeeded.
+   `backend/supabase/migration_138_share_link_server_owned_creation_tests.sql`, now creates its
+   workspace-owned quote under a real authenticated admin and deterministically tests PM-only and
+   non-privileged callers. Every caller switch now sets both `request.jwt.claims` and
+   `request.jwt.claim.sub`; the previous run set only the former, so `auth.uid()` was null and the
+   existing workspace-ownership trigger correctly rejected the synthetic quote. Run only this
+   corrected test. A clean `Success. No rows returned` closes migration 138.
 7. **Migration 139 — PENDING, AFTER 138.** `backend/supabase/migrations/
    139_share_link_lifecycle_actions.sql` — atomic lifecycle actions plus the `outcome`-bearing
    extension of all four public share-link RPCs (see C2.4 above). Requires 137 and 138 live first.

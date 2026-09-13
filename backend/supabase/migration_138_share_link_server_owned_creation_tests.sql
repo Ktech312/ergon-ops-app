@@ -21,6 +21,11 @@ declare
   non_privileged_user_id uuid;
   pm_role_preexisted boolean;
   sales_role_preexisted boolean;
+  pm_had_sales_role boolean;
+  pm_sales_was_primary boolean;
+  pm_had_manager_role boolean;
+  pm_manager_was_primary boolean;
+  non_privileged_removed_roles jsonb := '[]'::jsonb;
 
   skipped_count integer := 0;
   skipped_names text[] := array[]::text[];
@@ -33,6 +38,7 @@ declare
   token_1 text;
   token_2 text;
   caught boolean;
+  caught_sqlstate text;
 
   workspace_default_expiration interval;
   actual_expires_at timestamptz;
@@ -53,7 +59,11 @@ begin
     -- regardless of outcome -- moot under this transaction's rollback,
     -- but matching this repo's own established discipline) rather than
     -- skipping the whole section.
-    select ur.user_id into pm_user_id from public.app_user_roles ur where ur.role_key = 'pm' limit 1;
+    select ur.user_id into pm_user_id
+    from public.app_user_roles ur
+    where ur.role_key = 'pm'
+      and not exists (select 1 from public.app_admins aa where aa.user_id = ur.user_id)
+    limit 1;
     pm_role_preexisted := pm_user_id is not null;
     if pm_user_id is null then
       select wm.user_id into pm_user_id from public.workspace_members wm
@@ -80,6 +90,16 @@ begin
       and not exists (select 1 from public.app_user_roles ur where ur.user_id = au.id and ur.role_key in ('pm', 'sales', 'manager'))
     limit 1;
 
+    -- If every real non-admin user carries at least one privileged role,
+    -- use a real workspace member and temporarily strip only those roles
+    -- during Section 4. The exact rows are restored before continuing.
+    if non_privileged_user_id is null then
+      select wm.user_id into non_privileged_user_id
+      from public.workspace_members wm
+      where not exists (select 1 from public.app_admins aa where aa.user_id = wm.user_id)
+      limit 1;
+    end if;
+
     if pm_user_id is null or sales_user_id is null then
       skipped_count := skipped_count + 1;
       skipped_names := array_append(skipped_names, 'all-sections (no real PM-role and/or Sales-role user found to test as, and no other real workspace member available to temporarily grant the role to)');
@@ -92,6 +112,14 @@ begin
       where workspace_id = public.active_workspace_id();
 
       -- Synthetic fixtures: one project + submittal, one quote + proposal.
+      -- Run fixture creation through a real authenticated workspace admin.
+      -- sales_quotes has the migration-117 ownership trigger, which derives
+      -- workspace_id from auth.uid() and correctly rejects the SQL-editor's
+      -- default postgres context because it has no workspace membership.
+      perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
+      perform set_config('role', 'authenticated', true);
+
       insert into public.projects (project_name, customer_name, site_type, app_status)
         values ('ZZ_TEST_PROJECT_' || substr(md5(random()::text), 1, 10), 'ZZ Test Client', 'Parking Garage', 'Draft')
         returning id into test_project_id;
@@ -106,10 +134,13 @@ begin
         values (test_quote_id, 1, 'draft', '{}'::jsonb)
         returning id into test_proposal_id;
 
+      perform set_config('role', original_role, true);
+
       -- Section 1: a real PM can create a submittal share token; it's
       -- entity-correct, has an expires_at matching the workspace default,
       -- and logs a 'created' action.
       perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.create_submittal_share_token(test_submittal_id) into token_1;
       perform set_config('role', original_role, true);
@@ -136,6 +167,7 @@ begin
       -- Section 2: a real Sales-role user can create a proposal share
       -- token, same shape.
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.create_quote_proposal_share_token(test_proposal_id) into token_2;
       perform set_config('role', original_role, true);
@@ -152,17 +184,43 @@ begin
 
       -- Section 3: a nonexistent submittal/proposal id is rejected, and
       -- creates no token.
+      -- Make this caller genuinely PM-only for this assertion. A real PM
+      -- may also carry Sales or Manager as a secondary role, which would
+      -- correctly authorize the proposal RPC and invalidate the fixture.
+      pm_had_sales_role := exists (
+        select 1 from public.app_user_roles
+        where user_id = pm_user_id and role_key = 'sales'
+      );
+      select coalesce((
+        select is_primary from public.app_user_roles
+        where user_id = pm_user_id and role_key = 'sales'
+      ), false) into pm_sales_was_primary;
+      pm_had_manager_role := exists (
+        select 1 from public.app_user_roles
+        where user_id = pm_user_id and role_key = 'manager'
+      );
+      select coalesce((
+        select is_primary from public.app_user_roles
+        where user_id = pm_user_id and role_key = 'manager'
+      ), false) into pm_manager_was_primary;
+
+      delete from public.app_user_roles
+      where user_id = pm_user_id and role_key in ('sales', 'manager');
+
       caught := false;
+      caught_sqlstate := null;
       begin
         perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+        perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
         perform set_config('role', 'authenticated', true);
         perform public.create_submittal_share_token(gen_random_uuid());
       exception when others then
         caught := true;
+        caught_sqlstate := sqlstate;
       end;
       perform set_config('role', original_role, true);
-      if not caught then
-        raise exception 'TEST FAILED: create_submittal_share_token succeeded for a nonexistent submittal id.';
+      if not caught or caught_sqlstate <> 'EC003' then
+        raise exception 'TEST FAILED: create_submittal_share_token nonexistent-id check returned SQLSTATE %, expected EC003.', coalesce(caught_sqlstate, '<none>');
       end if;
 
       -- Section 4: authorization -- a non-privileged user is rejected for
@@ -171,46 +229,86 @@ begin
       -- either way.
       if non_privileged_user_id is null then
         skipped_count := skipped_count + 1;
-        skipped_names := array_append(skipped_names, 'non-privileged-denial (no real user without pm/sales/manager/admin found)');
+        skipped_names := array_append(skipped_names, 'non-privileged-denial (no real non-admin workspace member found)');
       else
+        select coalesce(jsonb_agg(jsonb_build_object(
+          'role_key', ur.role_key,
+          'is_primary', ur.is_primary
+        )), '[]'::jsonb)
+        into non_privileged_removed_roles
+        from public.app_user_roles ur
+        where ur.user_id = non_privileged_user_id
+          and ur.role_key in ('pm', 'sales', 'manager');
+
+        delete from public.app_user_roles
+        where user_id = non_privileged_user_id
+          and role_key in ('pm', 'sales', 'manager');
+
         caught := false;
+        caught_sqlstate := null;
         begin
           perform set_config('request.jwt.claims', json_build_object('sub', non_privileged_user_id::text)::text, true);
+          perform set_config('request.jwt.claim.sub', non_privileged_user_id::text, true);
           perform set_config('role', 'authenticated', true);
           perform public.create_submittal_share_token(test_submittal_id);
         exception when others then
           caught := true;
+          caught_sqlstate := sqlstate;
         end;
         perform set_config('role', original_role, true);
-        if not caught then
-          raise exception 'TEST FAILED: a non-privileged user was able to create a submittal share token.';
+        if not caught or caught_sqlstate <> 'EC001' then
+          raise exception 'TEST FAILED: non-privileged submittal-token check returned SQLSTATE %, expected EC001.', coalesce(caught_sqlstate, '<none>');
         end if;
 
         caught := false;
+        caught_sqlstate := null;
         begin
           perform set_config('request.jwt.claims', json_build_object('sub', non_privileged_user_id::text)::text, true);
+          perform set_config('request.jwt.claim.sub', non_privileged_user_id::text, true);
           perform set_config('role', 'authenticated', true);
           perform public.create_quote_proposal_share_token(test_proposal_id);
         exception when others then
           caught := true;
+          caught_sqlstate := sqlstate;
         end;
         perform set_config('role', original_role, true);
-        if not caught then
-          raise exception 'TEST FAILED: a non-privileged user was able to create a proposal share token.';
+        if not caught or caught_sqlstate <> 'EC001' then
+          raise exception 'TEST FAILED: non-privileged proposal-token check returned SQLSTATE %, expected EC001.', coalesce(caught_sqlstate, '<none>');
         end if;
+
+        insert into public.app_user_roles (user_id, role_key, is_primary)
+        select non_privileged_user_id, restored.role_key, restored.is_primary
+        from jsonb_to_recordset(non_privileged_removed_roles)
+          as restored(role_key text, is_primary boolean)
+        on conflict (user_id, role_key) do update set is_primary = excluded.is_primary;
       end if;
 
       caught := false;
+      caught_sqlstate := null;
       begin
         perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+        perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
         perform set_config('role', 'authenticated', true);
         perform public.create_quote_proposal_share_token(test_proposal_id);
       exception when others then
         caught := true;
+        caught_sqlstate := sqlstate;
       end;
       perform set_config('role', original_role, true);
-      if not caught then
-        raise exception 'TEST FAILED: a PM-only (non-admin, non-sales, non-manager) caller was able to create a proposal share token -- PM has no proposal authority per the decided ownership model.';
+
+      if pm_had_sales_role then
+        insert into public.app_user_roles (user_id, role_key, is_primary)
+        values (pm_user_id, 'sales', pm_sales_was_primary)
+        on conflict (user_id, role_key) do update set is_primary = excluded.is_primary;
+      end if;
+      if pm_had_manager_role then
+        insert into public.app_user_roles (user_id, role_key, is_primary)
+        values (pm_user_id, 'manager', pm_manager_was_primary)
+        on conflict (user_id, role_key) do update set is_primary = excluded.is_primary;
+      end if;
+
+      if not caught or caught_sqlstate <> 'EC001' then
+        raise exception 'TEST FAILED: PM-only proposal-token check returned SQLSTATE %, expected EC001.', coalesce(caught_sqlstate, '<none>');
       end if;
 
       -- Cleanup of the temporary role grants this script may have added,

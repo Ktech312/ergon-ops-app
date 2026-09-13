@@ -8,9 +8,11 @@ defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
 Migrations 134, 135, 136, 137, and corrective 141
 are complete and verified in production. Queue C1 (frozen Sales pricing) is fully deployed. Queue C2's
-remaining share-link lifecycle foundation is drafted: migrations 138, 139, and 140 plus their canonical
-test scripts are committed and pushed on `main` and awaiting E's review, one file at a time, starting
-with migration 138. Do not re-run migrations 134/135/136/137/141 after they've
+remaining share-link lifecycle foundation is drafted: migrations 139 and 140 plus their canonical
+test scripts are committed and pushed on `main`. Migration 138 is applied; its canonical test exposed
+a test-fixture JWT simulation bug and the repository copy is corrected and ready for one clean rerun.
+Do not re-run
+migrations 134/135/136/137/141/138 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
 **Current database gate (2026-09-13):** migration 137 and corrective 141 are applied and fully
@@ -18,7 +20,12 @@ verified. The final canonical migration-137 test was run directly from the exact
 returned `Success. No rows returned`; it hard-fails every assertion and skip. Earlier failures exposed
 and closed the inherited `anon` table grants, corrected a reversed RLS row-count assertion, and
 replaced two real-data-only checks with deterministic rollback-only fallbacks because production has
-no existing share-token rows. **Migration 138 is the next and only manual database action.**
+no existing share-token rows. **Migration 138 is applied. Its test fixture now creates the
+workspace-owned quote as a real authenticated admin, builds deterministic PM-only and non-privileged
+authorization fixtures, and sets both Supabase JWT simulation values (`request.jwt.claims` and
+`request.jwt.claim.sub`) at every caller switch. The prior run failed because `auth.uid()` saw a null
+caller; it made no persistent changes because the script is transaction-wrapped. Run only the exact
+corrected migration-138 test next.**
 
 Last updated: 2026-09-13, Queue C2.5 -- version supersession + quote soft-delete cascade drafted, NOT
 run. `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql` adds a

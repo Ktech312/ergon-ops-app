@@ -24,8 +24,9 @@ At preparation time:
   remains a natural-use acceptance check, not a reason to create production data.
 - Migrations 137 and corrective 141 are applied and verified. The final corrected canonical test
   returned `Success. No rows returned` from the exact repository file. Do not run either again.
-  Migrations 138–140 and their tests are drafted and pushed but remain unapplied. Do not advance to
-  Migration 138 is now the next manual action.
+  Migration 138 is applied. Its canonical test is corrected after a fixture-only JWT simulation
+  failure and is the next single manual file. Migrations 139–140 and their tests are drafted and
+  pushed but remain unapplied.
 - Queue C2.1–C2.5 are completed preparation records. Begin with C2.6 preparation, then continue
   through the independent lanes below.
 
@@ -76,12 +77,12 @@ and pushes/deployments of code that is fully independent of unapplied schema.
 Migrations 137–140 form one ordered chain, with corrective migration 141 inserted after the already-
 applied 137. They are not tonight's stopping point.
 
-1. Do not hand E several SQL files. Migration 137's canonical test has passed. The next action is
-   exactly migration 138. For every canonical test, a clean
+1. Do not hand E several SQL files. Migration 137's canonical test has passed and migration 138 is
+   applied. Run only the corrected migration-138 test next. For every canonical test, a clean
    `Success. No rows returned` is a pass because the script hard-fails assertions and genuine skips;
    never ask E to find NOTICE output.
-2. Only after that test passes does migration 138 become the next single action, followed by its
-   test; then 139 and its test; then 140 and its test.
+2. Only after the migration-138 test passes does migration 139 become the next single action,
+   followed by its test; then 140 and its test.
 3. The frontend must not switch to the new RPC/output contracts until the required migration has
    passed. Prepare mappers, pure state transitions, component contracts, and tests locally without
    wiring them into the live calls.
