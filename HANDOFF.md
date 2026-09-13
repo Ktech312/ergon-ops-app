@@ -1,5 +1,17 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue A2 closed -- client_id carry-through migration package prepared (**Migration drafted, NOT run. Kept local for E's review, per the standing rule.**
+
+`backend/supabase/migrations/134_project_conversion_client_id_carry_through.sql` -- confirmed via `grep` across every migration file that no migration between 127 and 133 ever redefines `create_project_from_quote()`'s body (128/130/131 only touch the trigger chain and other RPCs), so 127's function text is still the live definition. This migration preserves that entire function body byte-for-byte except for one change: `client_id` added to both the column list and values list of the `insert into public.projects` statement (fresh-creation branch only), carrying the source quote's own `client_id` (already selected via the existing `select *` into `v_quote`) onto the new Project row. Confirmed both `projects.client_id` and `sales_quotes.client_id` already exist, nullable, since migration `102_clients.sql` -- not assumed. Every authorization check, active-workspace resolution, idempotency short-circuit, unique-violation/receipt/error-code, and result-shape guarantee already live is unchanged.
+
+Deliberately NOT included: a human-readable `quote_ref` on Projects (decision D3 in `CONTINUOUS_CODER_HANDOFF.md` -- `projects` has no destination column for it at all, only `source_sales_quote_id`, an id; needs a new column and a naming decision).
+
+**Verification script**: `backend/supabase/migration_134_client_id_carry_through_tests.sql` -- transaction-safe (`begin;`/`rollback;`), reuses the real-PM-fixture-discovery pattern from `migration_127_conversion_tests.sql` (never fabricates an `auth.users` row), proves: a quote with `client_id` produces a project with the same `client_id`; a quote without it converts successfully with a null `client_id` (not an error, not an invented value); an idempotent retry returns the same project id and does not change its `client_id`; and one regression guard that a non-admin/non-pm caller is still rejected and creates nothing (not a full re-run of 127's own exhaustive authorization matrix, which is unaffected by this change).
+
+**A real bug was found and fixed while writing this script, before it was ever run**: the first draft declared a local variable named `client_id`, which collides with the real `client_id` column this script reads back from both `sales_quotes` and `projects` -- PL/pgSQL's default `variable_conflict='error'` setting would have turned every such `SELECT ... client_id ...` into a hard "column reference is ambiguous" error. Renamed the variable to `v_client_id` throughout (column references left untouched) -- the same class of bug flagged in migration 130's own test-script review, caught here by the same discipline before ever reaching Supabase.
+
+**The single next action for E, when ready**: review `backend/supabase/migrations/134_project_conversion_client_id_carry_through.sql` and, if approved, run that migration file alone. The verification script comes after, as its own separate action, once migration success is confirmed.)
+
 Last updated: 2026-09-12, Queue A1 closed -- migration 133's browser-verification gap (**Read-only production verification only. No code, no migration, no write.**
 
 With the authenticated session already connected (Claude in Chrome, `ehren@ensight-technologies.com`), performed two separate fresh full-page reloads of `https://ergon-ops-app.vercel.app/` (once at `#dashboard`, once at `#admin`):
