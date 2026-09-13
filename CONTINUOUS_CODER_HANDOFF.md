@@ -11,6 +11,128 @@ have a reviewable design document or a shipped implementation behind them — an
 Current verified repository baseline: `main` / `origin/main` at `bfd4265` with a clean working tree.
 Production: `https://ergon-ops-app.vercel.app/`
 
+## Next-session launchpad (after migrations 134 and 135)
+
+**Repository checkpoint:** migrations 134 and 135 have both been applied and their canonical
+transaction-safe test scripts passed in production. Do not run them again. Pull `main`, verify Git,
+and read the newest entries at the top of `HANDOFF.md` before doing anything else.
+
+The next product implementation is **frozen Sales pricing**. It is the largest remaining gap between
+Ergon's current proposal flow and the user's goal of replacing the HubSpot/PandaDoc back-and-forth.
+The business model still needs one explicit answer from E because it controls what Sales may charge
+and what a customer sees. The recommended approval phrase is:
+
+> Approve recommended pricing: catalog price starts each line; Sales may override with an audit
+> record; each sent proposal version freezes its own prices; customers see unit price, line total,
+> subtotal, percentage discount, tax, and final total; costs/margin stay internal; the accepted final
+> total carries to the Project as a read-only reference; approval thresholds remain a separate later
+> decision.
+
+If E approves that statement, execute **C1.1–C1.9 below continuously**. Do not ask again between
+sub-batches. If E changes one clause, update only the affected part of
+`PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md`, then continue.
+
+### C1.1 — Refresh and preflight
+
+- Confirm HEAD/origin and a clean tree.
+- Re-read the latest live definitions of `sales_quotes`, `sales_quote_bom_lines`,
+  `sales_quote_proposals`, `ProposalSnapshot`, `compareProposalSnapshots`, quote creation/editing,
+  proposal creation, dashboard Sales KPIs, and `create_project_from_quote()` including migration 134.
+- Confirm the next free migration number; do not assume `136` if another migration landed.
+- Produce a read-only preflight query that reports: existing BOM line count, catalog-linked vs.
+  free-text line count, null/missing catalog defaults, and quotes/proposals affected by backfill.
+- Never run that query or inspect real pricing data without an available authorized Supabase path;
+  package it for E if manual execution is required.
+
+### C1.2 — Finalize the migration contract
+
+The migration design must explicitly cover existing rows, not merely add defaults:
+
+- quote BOM line unit price;
+- price source/audit metadata;
+- quote-level percentage discount and tax rate;
+- Project-side accepted proposal total, if the approved statement includes it;
+- constraints for finite, nonnegative, precision-bounded money/rates;
+- deterministic treatment of pre-feature catalog-linked and free-text rows;
+- backward compatibility for existing proposals whose snapshots have no pricing fields;
+- no internal cost/markup in any customer-reachable snapshot or public RPC.
+
+Do not label an inferred historical value as though it were the price actually quoted at the time.
+Use an explicit legacy/unverified state or require review where history cannot be reconstructed.
+
+### C1.3 — Draft one migration and one canonical SQL test
+
+- One numbered migration, one transaction, idempotent where practical.
+- One separate transaction-safe verification script with synthetic fixtures and a trailing rollback.
+- The test must hard-fail on every failed assertion and every skipped section.
+- Cover catalog default, manual override audit, free-text line, invalid money/rates, old snapshot
+  compatibility, version freezing, no cost leakage, and accepted-total carry-through if approved.
+- Review variable/column-name collisions, search paths, grants, RLS effects, constraints, and every
+  downstream trigger/function before giving E the file.
+
+Give E only the migration file first. After E reports success, give only its test script. Record the
+real results before any dependent frontend deploy.
+
+### C1.4 — Frontend types and persistence
+
+- Extend quote/BOM row types and selectors for price fields.
+- Keep money values precise at storage boundaries; centralize display formatting.
+- Default a newly catalog-linked line from the catalog's current sell price exactly once.
+- Preserve a deliberate manual override when item details or catalog prices later change.
+- Checked pessimistic writes: failed saves leave the editor open and the visible confirmed value
+  unchanged; technical detail logs, plain user message displays.
+- Update proposal snapshot mapping without ever adding `unitCost`, markup, or margin.
+
+### C1.5 — Internal Sales Quote Builder
+
+- Add Unit Price and Line Total to the BOM editor.
+- Add quote subtotal, discount percentage, tax rate/amount, and final total.
+- Show catalog-default vs. manual-override state and who/when changed it.
+- Show cost/margin only to the already-authorized internal audience; do not invent new roles here.
+- Maintain keyboard/mobile behavior and the existing Move/Edit/Save/Cancel controls.
+
+### C1.6 — Customer proposal
+
+- Render unit price, line total, subtotal, discount, tax, and final total from the frozen proposal
+  snapshot only.
+- Never calculate from the live catalog or live quote on the public page.
+- Preserve older price-free proposal versions without crashes or invented totals.
+- Verify mobile widths and print/PDF output; keep company branding and response controls intact.
+
+### C1.7 — Proposal versions, reporting, and conversion
+
+- Extend the existing proposal comparison to show price/total changes.
+- Replace Sales KPI calculations that currently infer value from live catalog prices with the
+  appropriate frozen quote/proposal values; document exactly which version/status each KPI uses.
+- When an accepted proposal exists and carry-through was approved, store its final total on the
+  converted Project as a read-only historical reference. Preserve migration 127/128/134's atomic,
+  idempotent conversion guarantees.
+
+### C1.8 — Verification and deployment
+
+- Focused tests for mapping, editing, totals/rounding, overrides, old snapshots, comparison, no cost
+  leakage, failures, mobile labels, and conversion outcome.
+- Full TypeScript, Vitest, ESLint, build, and smoke suite under §3.
+- Push coherent commits only after the database migration and SQL test have passed.
+- Verify Vercel production bundle plus a fresh browser load. Use an authenticated read-only
+  walkthrough if available; distinguish it from real Sales acceptance.
+
+### C1.9 — Closeout and automatic continuation
+
+- Update `HANDOFF.md`, the master plan, Sales discovery/experience, pricing plan, marketing claims,
+  and the critical-flow coverage matrix.
+- Report shipped, locally prepared, production-verified, and acceptance-pending separately.
+- Then continue to the next approved Queue C workstream. Do not end by asking what to do next while
+  a previously decided share-link or reliability preparation task remains available.
+
+### Work permitted before E answers the pricing statement
+
+If the next coder starts before E answers, they may complete C1.1's source trace and draft the
+read-only preflight/test matrix, reconcile stale documentation, and verify that migrations 134/135
+remain recorded correctly. They must not create the pricing migration, alter production types/UI,
+or choose discount/tax/customer-display rules. Once that preparation is complete, use §8 to present
+only the genuinely open decisions; never relist D7, D11, or D15 as unanswered.
+
 This is the page the next coder should open first. `PRODUCT_MASTER_COMPLETION_PLAN.md` remains the
 full product roadmap and evidence inventory. This page turns that roadmap into a continuous work
 queue so work does not stop merely because one item needs E's decision, a manual Supabase step, an

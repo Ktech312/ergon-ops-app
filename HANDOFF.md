@@ -1,5 +1,14 @@
 # Ergon Ops — Handoff Doc
 
+## Next coder session
+
+Start with `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad (after migrations 134 and 135)**.
+Both manual Queue A migrations are complete. The next main build is frozen Sales pricing, with
+C1.1–C1.9 laid out as one continuous implementation sequence. Before E answers the single pricing
+statement, the coder may do only C1.1's source/read-only preparation; after approval, continue through
+all nine sub-batches without asking between them. Do not re-run migrations 134/135 and do not send
+the already-decided D7/D11/D15 items back to E.
+
 Last updated: 2026-09-12, migration 135 **APPLIED AND VERIFIED IN PRODUCTION.** E ran
 `backend/supabase/migrations/135_harden_has_role_search_path.sql` successfully and then ran the
 complete canonical `backend/supabase/migration_135_harden_has_role_search_path_tests.sql`, reporting
