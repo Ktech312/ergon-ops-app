@@ -4,16 +4,16 @@
 
 Start with `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad**. Migrations 134 and 135 are
 complete. Queue C1 (frozen Sales pricing, E approved 2026-09-13) is fully code/test-complete and
-committed **locally only** — migration 136 was applied successfully by E on 2026-09-13 and its
-canonical verification script is now the sole remaining database gate; **do not push `main` until
-that script passes**. Once E confirms it, push immediately, verify Vercel/browser, then continue to
-the next Queue C wave without a separate instruction. Do not re-run
+committed **locally only** — migration 136 and its corrected canonical verification script both
+passed in production on 2026-09-13 with zero errors and zero genuine skips. Push the prepared Queue
+C1 commits, verify Vercel/browser, then continue to the next Queue C wave without a separate
+instruction. Do not re-run
 migrations 134/135/136 after they've each been confirmed, and do not send the already-decided
 D1/D2/D6/D7/D10/D11/D15 items back to E.
 
-Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing, code-complete, migration 136 applied;
-canonical SQL verification pending (**Code/tests: commits `ba33fdd` + `e19d4a2`, local `main` only
--- NOT pushed. Migration: APPLIED; test script: NOT YET RUN.**
+Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing, code-complete; migration 136 and its
+canonical SQL verification both passed (**Code/tests: commits `ba33fdd` + `e19d4a2`, local `main`
+only -- NOT pushed yet. Migration: APPLIED AND VERIFIED.**
 
 **Independent migration-136 review correction (2026-09-13, local only):** the first draft's prose
 claimed finite money constraints and a real override audit, but its SQL still allowed PostgreSQL
@@ -32,7 +32,9 @@ script treated that valid empty-table state as a skipped backfill test. The test
 there is nothing historical to backfill, it now inserts a transaction-local fixture with the columns
 omitted and proves the database defaults produce `unit_price=0`, `price_source='legacy_unverified'`,
 and null audit fields. The script still hard-fails every real assertion failure and every genuine
-skip, and still ends in `rollback`; rerun of this corrected file is the only current manual action.
+skip, and still ends in `rollback`. E reran that corrected file and received `Success. No rows
+returned`, which is a clean pass because every failed assertion and every genuine skip raises a hard
+SQL error. Migration 136 is therefore applied and fully verified; do not run either SQL file again.
 
 E approved the recommended pricing statement (catalog price starts each line; Sales may override
 with an audit record; each sent proposal version freezes its own prices; customers see unit price/

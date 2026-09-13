@@ -1,15 +1,13 @@
 # Frozen Sales Pricing — Implementation Plan (Queue B2 design; implemented Queue C1)
 
-Status: **IMPLEMENTED LOCALLY, NOT YET DEPLOYED.** E approved the recommended pricing statement on
+Status: **MIGRATION APPLIED AND VERIFIED; FRONTEND AWAITING PUSH/DEPLOYMENT.** E approved the recommended pricing statement on
 2026-09-13 (catalog price starts each line; Sales may override with an audit record; each sent
 proposal version freezes its own prices; customers see unit price/line total/subtotal/discount/tax/
 final total; costs/margin stay internal; the accepted total carries to the Project as a read-only
 reference; approval thresholds remain a separate later decision) and Queue C1.1–C1.9 executed
 continuously against it. Code, tests, and the migration package are complete and committed locally.
-**Not pushed to `main` yet** — migration 136 must be reviewed and run by E first (frontend code now
-depends on its new columns; pushing before it runs would 400 every Sales page load in production,
-per this repo's own established migration-then-frontend sequencing discipline). See `HANDOFF.md`'s
-Queue C1 entry for exact file-by-file detail and the current blocker.
+Migration 136 and its corrected canonical SQL verification both passed in production on 2026-09-13.
+The frontend is now safe to push and deploy. See `HANDOFF.md` for the exact verification record.
 
 ## 1. Current state, traced
 
