@@ -26,6 +26,14 @@ The canonical test now proves `NaN` rejection, spoofed-attribution replacement, 
 and minimum trigger-function grants. Local TypeScript and all 398 Vitest tests pass. Migration 136
 and its canonical SQL test remain NOT RUN; nothing from Queue C1 is pushed or deployed.
 
+**Migration-136 live checkpoint:** E applied the migration successfully. The first canonical-test
+run then stopped only because production had zero pre-existing `sales_quote_bom_lines` rows and the
+script treated that valid empty-table state as a skipped backfill test. The test was corrected: when
+there is nothing historical to backfill, it now inserts a transaction-local fixture with the columns
+omitted and proves the database defaults produce `unit_price=0`, `price_source='legacy_unverified'`,
+and null audit fields. The script still hard-fails every real assertion failure and every genuine
+skip, and still ends in `rollback`; rerun of this corrected file is the only current manual action.
+
 E approved the recommended pricing statement (catalog price starts each line; Sales may override
 with an audit record; each sent proposal version freezes its own prices; customers see unit price/
 line total/subtotal/discount/tax/final total; costs/margin stay internal; the accepted total carries

@@ -35,6 +35,7 @@ declare
 
   v_client_id uuid;
   test_bom_line_id uuid;
+  legacy_default_line_id uuid;
   test_quote_id uuid;
   test_quote_no_proposal_id uuid;
   test_quote_old_snapshot_id uuid;
@@ -213,12 +214,27 @@ begin
     -- never claims an inferred historical price was verified. Our own
     -- Section 1/2 fixtures (created just above, this same transaction) are
     -- explicitly excluded so they can't accidentally satisfy this check.
+    -- An empty production table is a valid state: there was nothing to
+    -- backfill. In that case, prove the same legacy-safe behavior through
+    -- the new columns' database defaults instead of marking a test skipped.
     select count(*) into legacy_row_count
       from public.sales_quote_bom_lines
       where id <> test_bom_line_id and quote_id <> test_quote_id and created_at < now() - interval '1 minute';
     if legacy_row_count = 0 then
-      skipped_count := skipped_count + 1;
-      skipped_names := array_append(skipped_names, 'backfill-check (no pre-existing sales_quote_bom_lines rows found)');
+      insert into public.sales_quote_bom_lines (quote_id, item_name, qty)
+        values (test_quote_id, 'ZZ_TEST_LEGACY_DEFAULT_LINE', 1)
+        returning id into legacy_default_line_id;
+      if not exists (
+        select 1
+        from public.sales_quote_bom_lines bl
+        where bl.id = legacy_default_line_id
+          and bl.unit_price = 0
+          and bl.price_source = 'legacy_unverified'
+          and bl.price_overridden_by is null
+          and bl.price_overridden_at is null
+      ) then
+        raise exception 'TEST FAILED: with no historical BOM rows to backfill, a column-default fixture did not receive the safe legacy_unverified/zero-price/null-audit state.';
+      end if;
     else
       select count(*) into legacy_unverified_count
         from public.sales_quote_bom_lines
