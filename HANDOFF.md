@@ -1,5 +1,14 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, migration 134 **APPLIED AND VERIFIED IN PRODUCTION.** E ran
+`backend/supabase/migrations/134_project_conversion_client_id_carry_through.sql` successfully and
+then ran the complete canonical `backend/supabase/migration_134_client_id_carry_through_tests.sql`,
+reporting `Success. No rows returned`. That script raises a hard exception for every failed assertion
+or skipped section, so the successful completion confirms all sections ran: a quote's `client_id`
+reaches its converted Project, null remains valid, retry preserves the same Project/client link, and
+the authorization regression guard remains intact. Its synthetic fixtures were rolled back.
+Migration 135 is the next manual database action and has not yet been run.
+
 Last updated: 2026-09-12, Queue A15 -- final post-continuation reconciliation (**Docs only, commit
 `11a940c`, pushed.**
 

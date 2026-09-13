@@ -91,8 +91,9 @@ The next coder should verify this baseline before editing rather than redoing co
 - System Health Phase A shows existing notification-delivery failures to admins.
 - Modal focus management, clickable-row keyboard behavior, photo resizing, and the core reliability
   write checks are deployed.
-- Migration 134 (`client_id` carry-through onto Projects) is drafted with its verification script
-  but **NOT applied** -- kept local for E's review, exactly like every unapplied migration before it.
+- Migration 134 (`client_id` carry-through onto Projects) is **applied and verified in production**.
+  E ran the migration and its canonical transaction-safe test script successfully; the script's
+  hard-fail-on-error/skip design confirms every section ran with zero skips.
 - Sales quote BOM lines and Proposal Template sections both support accessible Move up/down
   reordering (`line_sort`/`sequence_order`, both existed unused before Queue A3/A4).
   `stack-table-mobile`'s `data-label` cells no longer silently overflow at mobile widths (Queue A6 --
@@ -681,28 +682,19 @@ Queue A/B work.
 
 ### Manual database actions awaiting E's review, in order
 
-Two migrations sit drafted, reviewed, and parked in the repo — neither has been run. Per §2's own
-rule, only one is ever handed to E as a single clickable file/action at a time; this list exists so a
-later coder (or E) knows the intended order without re-deriving it, not as permission to hand over
-both at once.
+This list records the manual database sequence. Per §2's rule, only one action is handed to E at a
+time.
 
-1. **`backend/supabase/migrations/134_project_conversion_client_id_carry_through.sql`** (Queue A2,
-   confirm it's still the next free number — 135 has since been claimed by item 2 below, so re-check
-   before either is actually run). Adds nullable `client_id` to the Project row `create_project_from_quote`
-   already inserts, preserving every existing guarantee byte-for-byte. Lower risk, smaller blast
-   radius, and blocks nothing else — recommended first simply because it's the more self-contained of
-   the two. Verification script: `backend/supabase/migration_134_client_id_carry_through_tests.sql`.
-2. **`backend/supabase/migrations/135_harden_has_role_search_path.sql`** (Queue A14). Hardens
-   `has_role()`'s `search_path`/qualification and tightens its grants; zero behavior change to any
-   real authorization result (traced and tested). Independent of item 1 — either can run first without
-   affecting the other — listed second only because it touches a security-authorization helper used by
-   eight other migrations' worth of RLS policies, which warrants a slightly more deliberate review pass
-   even though the change itself is narrow. Verification script:
+1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
+   in production. No further action remains.
+2. **NEXT: `backend/supabase/migrations/135_harden_has_role_search_path.sql`** (Queue A14). Hardens
+   `has_role()`'s `search_path`/qualification and tightens its grants while preserving authorization
+   behavior. Verification script (only after the migration succeeds):
    `backend/supabase/migration_135_harden_has_role_search_path_tests.sql`.
 
-Both follow the same review discipline as every other migration this session: present one file, wait
+The remaining migration follows the same review discipline: present one file, wait
 for E to run it and report success, then present its own verification script — never both files of
-the same migration, and never the second migration, in the same message.
+the same migration in one message.
 
 ## 9. Consolidated reporting format
 
