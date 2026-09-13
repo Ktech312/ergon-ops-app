@@ -1093,6 +1093,20 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    (a separate commit, pushed only once E confirms 139 and its test — `backend/supabase/migration_
    139_share_link_lifecycle_actions_tests.sql` — both succeeded). Give E only the migration file
    first; its test script only after E reports the migration itself succeeded.
+   **Its test was proactively fixed (2026-09-13) before ever being sent**, before it could repeat
+   138's own two-round-trip saga: the same missing-identity-simulation bug around fixture creation
+   (no admin impersonation before the `sales_quotes`/`projects` inserts, so the migration-117
+   workspace-ownership trigger would have rejected them) and the same `end $$;` terminator bug were
+   both present and are now fixed (both `request.jwt.claims` and `request.jwt.claim.sub` set at every
+   caller switch; `end;` / `$$;`). Independently verified the same way as 138's test — run
+   unmodified against a real local PostgreSQL 18 engine (PGlite) on a reconstructed schema that also
+   needed adding `notification_rules`/`notifications`/`get_users_by_role`/`get_admin_emails`
+   (migrations 024/123, called by `respond_to_quote_proposal`/`respond_to_submittal`) — and it
+   completed with zero errors and the real `NOTICE: ALL MIGRATION 139 SHARE-LINK LIFECYCLE TESTS
+   PASSED -- ZERO SECTIONS SKIPPED` fired. Same caveat as 138: this is a schema reconstruction, not a
+   literal production run, so E's own run remains the authoritative confirmation; the same sparse-
+   workspace skip risk applies (fewer than two non-admin real members → honest `SECTIONS SKIPPED`,
+   not a bug).
 8. **Migration 140 — PENDING, AFTER 139.** `backend/supabase/migrations/
    140_share_link_version_supersession_and_quote_cascade.sql` — auto-supersede-on-new-version RPCs
    plus the quote soft-delete cascade trigger (see C2.5 above). Requires 137, 138, and 139 live
