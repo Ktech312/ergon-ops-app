@@ -249,6 +249,13 @@ Baseline when that queue was created: `main` and `origin/main` at `02fe578`, cle
 production `https://ergon-ops-app.vercel.app/`. Verify this before starting because later commits may
 supersede the baseline.
 
+**Queue continuation after the 2026-09-12 A1–A9/B1–B10 pass:** that pass did not exhaust all safe
+work. `CONTINUOUS_CODER_HANDOFF.md` now contains A10–A15: implement the Client Ledger serialized
+save queue, freeze branding into submittals, transparently fetch all Inventory catalog pages, apply
+compatible security dependency fixes except `xlsx`, prepare (do not run) the `has_role()` hardening
+migration package, then reconcile. D7's share-link rules and D11's RLS process were already decided;
+D15 remains deliberately deferred. Do not send those three back to E as unanswered questions.
+
 Last updated: 2026-09-12, migration 133 APPLIED AND VERIFIED IN PRODUCTION (**Code: commits `6f06c5e` (deployed, see the entry below), `677e487` (migration + corrected test script, committed after E ran them). Nothing further needed on this item.**
 
 E ran `backend/supabase/migrations/133_manager_primary_role_and_admin_bootstrap.sql` directly against production Supabase: "Success. No rows returned" -- confirms both the `bridge_set_primary_role` redefinition and the one-time `ehren@ensight-technologies.com` admin-bootstrap insert succeeded (the migration's own `do $$ ... $$` block would have raised an exception on any failure, including the target email not being found).

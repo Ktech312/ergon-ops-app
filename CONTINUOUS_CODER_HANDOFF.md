@@ -1,15 +1,14 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **QUEUE A AND QUEUE B BOTH COMPLETE.** Prepared: 2026-09-12. Updated 2026-09-12 (same day):
-A1-A9 closed first (shipped/deployed code + the A9 reconciliation pass itself), then B1-B10 closed
-(every one a design/spec/audit document, per Queue B's own scope -- none required or performed
-production code, a migration run, or a package change). See each item's own `Status: DONE` line below
-for its commit hash, and `HANDOFF.md` for full evidence. **Nothing remains unblocked in Queue A or
-Queue B.** The next coder should resume at the **decision register** (§8) -- most of D1-D15 now have
-a reviewable design document behind them, ready for E to actually answer -- and then **Queue C**
-(§7), not Queue A/B, which have nothing left to do without new decisions.
-Current verified repository baseline: `main` / `origin/main` at `aa3748f` with a clean working tree
-(pending this file's own commit for the B-item status markers above).
+Status: **ACTIVE — QUEUE A REOPENED WITH A10–A15.** Prepared: 2026-09-12. A1–A9 and B1–B10 are
+complete in the forms recorded below. The first pass then incorrectly concluded that every remaining
+item required E's decision. A review of its own findings identified more safe work: Client Ledger's
+recommended queue is a technical reliability choice, submittal branding can mirror the approved
+proposal pattern, Inventory can fetch all pages without choosing a new UI, compatible security
+updates can exclude the decision-gated `xlsx` replacement, and `has_role()` hardening can be prepared
+without being run. Continue at **A10**, not the decision register.
+Current verified repository baseline before this correction: `main` / `origin/main` at `83b8ada`
+with a clean working tree.
 Production: `https://ergon-ops-app.vercel.app/`
 
 This is the page the next coder should open first. `PRODUCT_MASTER_COMPLETION_PLAN.md` remains the
@@ -311,13 +310,84 @@ banner or superseded marker where needed. Verify commit hashes and migration fil
 **Done:** a new coder reading only this page, the top of `HANDOFF.md`, and the master plan gets the
 same current state.
 
+### A10. Implement the Client Ledger serialized save queue
+
+**Status: READY — start automatically.** Queue B1 removed the earlier uncertainty: the serialized,
+latest-snapshot queue is the only design that prevents an older failed request from overwriting a
+newer edit, and it changes no business workflow. This is now a technical reliability implementation,
+not a business decision.
+
+Implement `PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md` Option B. Scope the queue per `projectId`,
+coalesce pending field changes, reconcile only confirmed server rows, never blindly revert, surface
+one visible plain-language failure, and keep different projects independent. Add the six specified
+tests, then ship under §3's delivery rule. If source inspection reveals a real business-behavior
+choice not covered by that plan, document it and continue to A11; do not stop the entire queue.
+
+### A11. Freeze company identity into submittals
+
+**Status: READY — start automatically after A10.** Queue A7 closed proposal branding but found the
+parallel submittal gap: `SubmittalSnapshot` has no company name/logo, and the submittal email still
+uses a fixed sign-off.
+
+Mirror the already-deployed proposal pattern:
+
+- add backward-compatible optional company name/logo fields to newly created submittal snapshots;
+- render frozen identity on the public submittal page where the proposal page already does;
+- use the frozen company name in the submittal email sign-off;
+- retain a safe legacy fallback for old snapshots;
+- never alter an already-sent snapshot when Admin branding later changes.
+
+Do not change submittal ownership, approval, response, link, or PM handoff behavior. Add snapshot/
+email mapping tests and ship under §3.
+
+### A12. Remove the silent inventory row-cap without changing the UI
+
+**Status: READY — start automatically after A11.** Queue B6 confirmed `loadInventoryItems` can be
+silently truncated by PostgREST's configured maximum. A paginated UI is a later UX decision, but
+returning the complete dataset to today's existing consumers is a correctness fix.
+
+Change `loadInventoryItems` to fetch deterministic, non-overlapping pages until the final short page
+instead of relying on one unbounded request. Preserve its public return type and alphabetical order,
+deduplicate defensively by stable row id, fail visibly on any page error, and add a finite safety
+guard that throws rather than silently returning a partial catalog. Tests must cover one page,
+multiple full pages plus a short final page, an exact-full-page boundary, duplicate defense, and a
+later-page failure. Do not redesign any picker or add infinite scrolling in this batch.
+
+### A13. Apply compatible security dependency updates, excluding `xlsx`
+
+**Status: READY WITH STRICT SCOPE.** Queue B10 found new advisories with non-breaking fixes available.
+Update only packages that can be remediated within their current compatible major versions. Keep
+`xlsx` unchanged pending D6. Do not use a force/major audit fix. Review the resulting lockfile and
+run the full §3 suite, plus the PDF/email paths affected by `pdfjs-dist` or `nodemailer` where a
+focused test exists. Commit each logically independent dependency group so it can be reverted
+cleanly. Record advisories that remain.
+
+### A14. Prepare `has_role()` hardening as a manual migration package
+
+**Status: PREPARE ONLY — do not run.** Queue B10 reconfirmed the old helper lacks the hardened
+`search_path=''`/fully-qualified pattern now required of newer authorization functions and is used by
+many policies.
+
+Trace the latest live signature and every overload/caller. Draft one migration that preserves exact
+logic/signature while setting an empty search path, fully qualifying every object, and reproducing
+the minimum grants. Draft one canonical transaction-safe test proving representative true/false
+role checks through real authenticated execution plus routine-grant state. Do not alter policies,
+role vocabulary, or authorization results. Park the reviewed package for E and continue to A15.
+
+### A15. Final post-continuation reconciliation
+
+Update this file, `HANDOFF.md`, the master plan, Queue B source documents, and the critical-flow
+coverage matrix with A10–A14's actual outcomes. Consolidate manual database actions into one ordered
+list, but still present only one migration action at a time when E is ready. If any code-only item is
+unfinished, name the concrete technical blocker and resume another independent item before ending.
+
 ## 6. Queue B — prepare while implementation items are blocked
 
 **Status: B1-B10 all complete as of this pass — see each item's own `Status: DONE` line below for its
 commit hash.** Every Queue B deliverable is a design/spec/audit document; none required or performed
 production code, a migration run, or a package change, per this section's own scope rule. The next
-coder should resume at the decision register (§8) and Queue C (§7), not Queue B, which has nothing
-left unblocked.
+coder should resume at A10–A15 above. Queue B remains useful as the implementation specification
+behind those tasks and for later decision-gated waves; it does not need to be rewritten.
 
 These tasks keep useful work moving. They may produce designs, test matrices, prototypes isolated
 from production code, or migration drafts explicitly marked **NOT RUN**. They may not silently choose
@@ -332,8 +402,8 @@ serialized latest-snapshot save queue, matching D1's recorded direction. No prod
 Trace the current caller, overlapping debounced saves, and the earlier reverted attempt. Produce an
 exact state machine for: idle, saving revision N, newer local edit exists, success, failure, retry.
 Compare per-field rollback with an in-flight queue and recommend one using concrete examples. Include
-tests that would prove no older failed request can overwrite a newer edit. No production code until
-D1 is answered.
+tests that would prove no older failed request can overwrite a newer edit. This design task is done;
+the resulting technical direction is cleared for implementation in A10.
 
 ### B2. Frozen Sales pricing implementation package
 
@@ -533,21 +603,21 @@ Queue A/B work.
 
 | ID | Decision | Recommended working direction | Blocks |
 |---|---|---|---|
-| D1 | Client Ledger failure recovery: per-field revert or serialized save queue? | Serialized, latest-snapshot save queue; never let an older failure overwrite a newer local edit | Client Ledger implementation |
+| D1 | **Resolved as a technical reliability choice:** Client Ledger failure recovery | Implement the serialized, latest-snapshot save queue in A10; never let an older failure overwrite a newer local edit | Nothing after A10 ships |
 | D2 | Frozen quote pricing: when may price change before send, and what is frozen? | Catalog price is the starting default; Sales may deliberately override with audit; each sent proposal version freezes its own prices/costs | Pricing migration/UI |
 | D3 | Add a human-readable quote reference to Projects, and what column name? | Add nullable `source_quote_ref`; keep `source_sales_quote_id` as the durable link | Quote-ref carry-through |
 | D4 | Customer pricing detail and approval threshold | Show line price + subtotal + total; Manager approval only above a configured discount/margin threshold | Proposal price display/approval |
 | D5 | `bundle_components`: expand into real lines or relabel as notes? | Expand only after structured component data replaces the current free-text format; meanwhile relabel so it does not imply automation | Bundle behavior |
 | D6 | `xlsx` dependency | Replace with `exceljs` after a real-file proof of both import paths | Dependency remediation |
-| D7 | Share-link policies | Use the eight recorded decisions in the canonical share-link decision document; reconcile any stale master-plan wording before implementation | Link lifecycle |
+| D7 | **Already decided:** Share-link policies | Use the eight recorded decisions and seven follow-up decisions in the canonical share-link document; do not ask E to decide them again | Stage 2 schema/review, not a missing policy answer |
 | D8 | System Health down alert recipients/channel | Email every workspace admin by default; later allow a configurable on-call list/channels | System Health alerting |
 | D9 | Backup restore unresolved references | Allow a clearly warned per-section skip/retry during restore; live entry remains strict | Restore checkpointing |
-| D10 | Inventory pagination UX | Server-side search + cursor pagination; preserve selected rows outside the current page | Inventory performance |
-| D11 | Phase 3 RLS rollout process | Review and approve one complete table group at a time; Clients/Sales Quote graph first | Tenant isolation/onboarding |
+| D10 | Inventory pagination UX | A12 first removes silent truncation transparently; later use server-side search + cursor pagination while preserving selected rows | Later UI/performance work, not A12 correctness |
+| D11 | **Already established process:** Phase 3 RLS rollout | Discuss first, then review and approve one complete table group at a time; Clients/Sales Quote graph first | Tenant isolation/onboarding implementation discussion |
 | D12 | E-signature legal weight and server PDF | Keep typed acceptance until the business confirms stronger legal requirements; evaluate PDF separately | Advanced proposal features |
 | D13 | Support first release | Ticket/request lifecycle linked to Client Ledger, Project, site, and installed asset | Support module |
 | D14 | Engineering first release | Product/solution request + technical review + Catalog release link | Engineering module |
-| D15 | Commercial SaaS billing | Remains deferred until explicit authorization | SaaS commercialization |
+| D15 | **Already decided for now:** Commercial SaaS billing | Remains deferred until explicit authorization; do not ask again during current operational-product work | SaaS commercialization only |
 
 ## 9. Consolidated reporting format
 

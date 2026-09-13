@@ -1,10 +1,10 @@
 # Client Ledger Save Recovery — Design Specification (Queue B1, NOT IMPLEMENTED)
 
-Status: **DESIGN ONLY. No production code.** Written for `CONTINUOUS_CODER_HANDOFF.md` Queue B item
-B1, blocked on decision **D1** (§8 of that document). D1's recommended working direction is already
-recorded — "serialized, latest-snapshot save queue; never let an older failure overwrite a newer
-local edit" — this document exists to make that recommendation concrete enough to review and approve
-or reject, not to pre-empt it. Nothing below should be built until E answers D1.
+Status: **DESIGN COMPLETE; CLEARED FOR TECHNICAL IMPLEMENTATION IN QUEUE A10. No production code in
+this document.** Written for `CONTINUOUS_CODER_HANDOFF.md` Queue B item B1. The earlier framing called
+the choice a business decision, but the completed comparison shows it is a reliability mechanism:
+the serialized latest-snapshot queue preserves the existing Client Ledger workflow while preventing
+an older failed request from overwriting a newer edit. Implement Option B under Queue A10.
 
 ## 1. The current caller, traced
 
@@ -111,7 +111,7 @@ schema change, no new table, no migration.
 
 ## 5. Tests that would prove no older failed request can overwrite a newer edit
 
-To be added alongside the implementation once D1 is confirmed (none of these exist yet):
+To be added alongside the Queue A10 implementation (none existed when this design was written):
 
 1. Two sequential edits to the *same* field on the *same* project, first PATCH fails, second
    succeeds → final state reflects the second edit's value, not a revert to the pre-first-edit value.
@@ -134,8 +134,7 @@ To be added alongside the implementation once D1 is confirmed (none of these exi
 
 ## 6. What this document deliberately does not do
 
-It does not implement `createClientLedgerSaveQueue`, does not change `handleUpdateProjectLedgerInfo`
-or `updateProjectLedgerInfo`, and does not add or run any test file. D1 asks specifically whether
-serialized-queue is the right model at all (versus, say, deciding per-field revert is acceptable with
-additional version-guarding, or deciding the current log-only behavior is acceptable given how rarely
-a Client Ledger PATCH actually fails) — that choice belongs to E, not to this pass.
+It does not itself implement `createClientLedgerSaveQueue`, change
+`handleUpdateProjectLedgerInfo`/`updateProjectLedgerInfo`, or add a test file. That work now belongs to
+Queue A10. The rejected revert model remains here as historical reasoning so it is not accidentally
+reintroduced.
