@@ -1,18 +1,27 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) SHIPPED. QUEUE C2 IS THE ACTIVE HANDOFF.** Prepared: 2026-09-12,
-updated 2026-09-13. E approved the recommended pricing statement below and C1.1–C1.9 executed
-continuously against it (frozen Sales pricing: `unit_price`/`price_source` on
-`sales_quote_bom_lines`, `discount_percent`/`tax_rate` on `sales_quotes`, `accepted_proposal_total`
-on `projects`, frozen totals in every new `ProposalSnapshot`, Sales Quote Builder UI, customer
-proposal display, KPI fixes, 22 new tests, full doc reconciliation). Migration 136 and its canonical
-test passed; the prepared commits were pushed to `main` and Vercel deployed them.
+Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) SHIPPED. QUEUE C2 IS THE ACTIVE HANDOFF —
+C2.2–C2.4 PREPARED, NOT RUN.** Prepared: 2026-09-12, updated 2026-09-13. E approved the recommended
+pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
+`unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
+`sales_quotes`, `accepted_proposal_total` on `projects`, frozen totals in every new
+`ProposalSnapshot`, Sales Quote Builder UI, customer proposal display, KPI fixes, 22 new tests, full
+doc reconciliation). Migration 136 and its canonical test passed; the prepared commits were pushed
+to `main` and Vercel deployed them.
 Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2026-09-13).
+
+Queue C2's share-link lifecycle foundation (C2.2–C2.4) is now fully drafted: migrations 137, 138,
+and 139 plus their three canonical test scripts, committed locally (`362e702`, not yet pushed —
+SQL-only commit, no dependent frontend code exists yet). None of the three migrations are applied.
+Migration 137 is the next single file to hand E for review per the established one-file-at-a-time
+gate; see "Manual database actions" below for the full ordered list and exact sequencing.
 
 ## Next-session launchpad
 
-**Repository checkpoint:** migrations 134, 135, and 136 are applied and verified. Queue C1 is live.
-Start Queue C2 below. Do not rerun any of those SQL files and do not re-ask D7's settled link rules.
+**Repository checkpoint:** migrations 134, 135, and 136 are applied and verified. Migrations 137,
+138, and 139 are drafted, committed locally, and awaiting E's review/run in that order — see
+"Manual database actions." Continue Queue C2 below (C2.5 onward) while 137 is pending. Do not rerun
+134/135/136 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
 
@@ -186,6 +195,18 @@ working expectation. Reconcile stale claims in the two source documents before w
 
 ### C2.2 — Inert lifecycle schema package
 
+**Status: DONE — drafted, NOT run.** `backend/supabase/migrations/137_share_link_lifecycle_schema.sql`
++ `backend/supabase/migration_137_share_link_lifecycle_schema_tests.sql`. Adds `status`/`disabled_*`/
+`revoked_*`/`superseded_by_token` to `public_share_tokens` (backfilled to `active` via the column
+default, no separate UPDATE); new `workspace_share_link_settings` (admin-write/authenticated-read,
+mirroring `company_branding`'s migration-039 pattern, seeded for today's one active workspace);
+new `share_link_views`/`share_link_actions` audit tables (authenticated-read only — no write policy;
+only future security-definer RPCs can write). Touches no existing RPC body and adds no anon grant.
+Test proves the full existing-row backfill, one settings row per active workspace, a real proposal
+token still resolving identically twice, every check-constraint rejection, the `superseded_by_token`
+self-referencing FK, minimum-grants, and non-admin-cannot-write-settings. Committed locally (`362e702`),
+not pushed. This is the next single file to hand E.
+
 Draft one migration and one separate canonical rollback-only SQL test. The migration adds the
 decided token states and metadata, workspace expiration defaults, view/action audit tables,
 constraints, indexes, minimum grants, and safe RLS. Existing tokens backfill to `active`; existing
@@ -196,12 +217,53 @@ migration and then its single test.
 
 ### C2.3 — Server-owned token creation and expiration
 
+**Status: DONE — drafted, NOT run. Requires 137 live first.**
+`backend/supabase/migrations/138_share_link_server_owned_creation.sql` +
+`backend/supabase/migration_138_share_link_server_owned_creation_tests.sql`. `generate_share_token()`
+(two native `gen_random_uuid()` calls concatenated, no pgcrypto dependency);
+`create_submittal_share_token(uuid)` (PM/admin, mirroring the submittal write gate);
+`create_quote_proposal_share_token(uuid)` (Sales/manager/admin — the DECIDED narrower ownership model,
+ahead of the old wide-open proposal write policy being closed later in C2.7). Both derive workspace
+via `active_workspace_id()`, set `expires_at` from `workspace_share_link_settings.
+default_expiration_open_documents`, and log a `created` row to `share_link_actions`. The OLD direct-
+INSERT client writers (`createSubmittalShareToken`/`createQuoteProposalShareToken` in
+`src/persistence.ts`) are untouched and still the live path — switching the frontend to call these
+RPCs instead happens only alongside C2.7's direct-write closure, not before. Test proves creation
+success/entity-correctness/expiration-matching/action-logging for both RPCs, nonexistent-id
+rejection, authorization denial (non-privileged user, and PM-denied-for-proposal), and anon-grant
+denial. Committed locally (`362e702`), not pushed.
+
 After C2.2 is live, replace direct token INSERTs with hardened RPCs that derive entity/workspace,
 generate the token server-side, apply the open-document default expiration, and return the token.
 Never trust caller-supplied workspace, status, actor, or expiration. Preserve old completed-document
 links; completed-link retention is a separate scheduled transition, not a destructive rewrite.
 
 ### C2.4 — Atomic lifecycle actions and read outcomes
+
+**Status: DONE — drafted, NOT run. Requires 137 and 138 live first.**
+`backend/supabase/migrations/139_share_link_lifecycle_actions.sql` +
+`backend/supabase/migration_139_share_link_lifecycle_actions_tests.sql`. Shared
+`assert_can_manage_share_link(p_entity_type)` helper (centralizes the same Sales/manager/admin vs.
+PM/admin check C2.3 already enforces at creation); `disable_share_link`/`re_enable_share_link`
+(fully reversible pair, first-writer-safe WHERE guards); `permanently_revoke_share_link` (terminal —
+structurally, not just by convention, blocks any later re-enable); `regenerate_share_link` (creates a
+new token, marks the old one `superseded` — for C2.5's version-supersession flow specifically, NOT
+the manual revoke-and-regenerate UI button, which stays two separate calls in C2.6). `get_quote_
+proposal_by_token`/`get_submittal_by_token` gain a new leading `outcome` column (`found`/
+`invalid_token`/`expired`/`superseded`/`unavailable` — the last one deliberately covers both
+`temporarily_disabled` and `permanently_revoked`, per the decided "client never told which" rule).
+`respond_to_quote_proposal`/`respond_to_submittal` gain the same `outcome` extension, reject a
+response on any non-active link, and extend `expires_at` to the workspace's longer completed-document
+default on a real successful response (best-effort — a settings-lookup failure never blocks the
+response itself). Both GET RPCs and both respond RPCs are a **breaking signature change** (new
+leading column) — the frontend's `PublicQuoteProposalResult`/`PublicSubmittalResult`/
+`ProposalResponseOutcome` parsing and the two public-page components must be updated in the same
+reviewed batch as this migration, but as a separate commit, shipped only after E confirms 139 and its
+test both succeeded. Test proves every disable/re-enable/revoke/regenerate transition and its
+already-X no-op outcome, outcome discrimination on both GET RPCs, response-rejection on a disabled
+link (with proof the entity's own status didn't change), the completed-document expiration extension,
+cross-entity authorization denial (PM cannot manage a proposal link, Sales cannot manage a submittal
+link), and grant boundaries. Committed locally (`362e702`), not pushed.
 
 Implement disable, re-enable, permanent revoke, and regenerate/supersede as hardened RPCs with
 server-derived authorization, required reasons where decided, append-only audit events, and
@@ -925,7 +987,8 @@ Queue A/B work.
 
 ### Manual database actions
 
-Migrations 134, 135, and 136 are done and verified. **There is no pending manual database action.**
+Migrations 134, 135, and 136 are done and verified. **Migrations 137, 138, and 139 are drafted and
+committed locally, awaiting E's review — 137 is the next single file to hand E.**
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
@@ -943,6 +1006,23 @@ Migrations 134, 135, and 136 are done and verified. **There is no pending manual
    The migration and corrected canonical test both returned `Success. No rows returned`; the test
    hard-fails every assertion and genuine skip. The Queue C1 frontend was then pushed and verified
    in Vercel production. Do not run either SQL file again.
+4. **Migration 137 — PENDING, NEXT UP.** `backend/supabase/migrations/
+   137_share_link_lifecycle_schema.sql` — inert share-link lifecycle schema (see C2.2 above for full
+   contents). Changes no existing RPC and no client-visible behavior. Give E only this migration file
+   first; give `backend/supabase/migration_137_share_link_lifecycle_schema_tests.sql` only after E
+   reports the migration itself succeeded.
+5. **Migration 138 — PENDING, AFTER 137.** `backend/supabase/migrations/
+   138_share_link_server_owned_creation.sql` — server-owned token-creation RPCs (see C2.3 above).
+   Requires 137 live first. Its test script,
+   `backend/supabase/migration_138_share_link_server_owned_creation_tests.sql`, follows only after E
+   reports 138 itself succeeded.
+6. **Migration 139 — PENDING, AFTER 138.** `backend/supabase/migrations/
+   139_share_link_lifecycle_actions.sql` — atomic lifecycle actions plus the `outcome`-bearing
+   extension of all four public share-link RPCs (see C2.4 above). Requires 137 and 138 live first.
+   **This one is a breaking RPC signature change** — the frontend TypeScript update to parse the new
+   `outcome` column must ship in the same reviewed batch as this migration (a separate commit,
+   pushed only once E confirms 139 and its test — `backend/supabase/migration_
+   139_share_link_lifecycle_actions_tests.sql` — both succeeded).
 
 ## 9. Consolidated reporting format
 

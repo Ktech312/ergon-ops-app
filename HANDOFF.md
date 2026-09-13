@@ -2,14 +2,34 @@
 
 ## Next coder session
 
-Start with `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad**. Migrations 134 and 135 are
-complete. Queue C1 (frozen Sales pricing, E approved 2026-09-13) is fully code/test-complete and
-deployed. Migration 136 and its corrected canonical verification script both passed in production
-on 2026-09-13 with zero errors and zero genuine skips. Queue C1 was pushed through `473c0f4`; Vercel
-served the new pricing bundle and a fresh browser boot was clean. Begin Queue C2 in
-`CONTINUOUS_CODER_HANDOFF.md` without re-asking settled link-policy questions. Do not re-run
-migrations 134/135/136 after they've each been confirmed, and do not send the already-decided
-D1/D2/D6/D7/D10/D11/D15 items back to E.
+Start with `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad**. Migrations 134, 135, and 136
+are complete and verified in production. Queue C1 (frozen Sales pricing) is fully deployed. Queue C2's
+share-link lifecycle foundation is drafted: migrations 137, 138, and 139 plus their canonical test
+scripts are committed locally (`362e702`, not yet pushed) and awaiting E's review, one file at a
+time, starting with 137. Do not re-run migrations 134/135/136 after they've each been confirmed, and
+do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
+
+Last updated: 2026-09-13, Queue C2.2-C2.4 -- share-link lifecycle foundation drafted, NOT run.
+`backend/supabase/migrations/137_share_link_lifecycle_schema.sql` (inert schema: token status/
+disable/revoke/supersede columns, `workspace_share_link_settings`, `share_link_views`/
+`share_link_actions` audit tables), `138_share_link_server_owned_creation.sql`
+(`create_submittal_share_token`/`create_quote_proposal_share_token`, replacing the client's direct
+INSERT with server-derived workspace/expiration/actor), and `139_share_link_lifecycle_actions.sql`
+(`disable_share_link`/`re_enable_share_link`/`permanently_revoke_share_link`/`regenerate_share_link`,
+plus a breaking `outcome`-column extension of `get_quote_proposal_by_token`/`get_submittal_by_token`/
+`respond_to_quote_proposal`/`respond_to_submittal`), each with its own canonical transaction-safe
+rollback-only test script. Full design per `PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md`
+Part 8/9.1; see `CONTINUOUS_CODER_HANDOFF.md` C2.2-C2.4 for complete per-migration detail. All three
+migrations are sequentially dependent (137 before 138 before 139) and none is applied yet. Committed
+locally as `362e702` -- SQL-only commit, no frontend code depends on the new columns/RPCs yet, so
+nothing is blocked on a push; **not pushed** only because the push itself requires live confirmation
+this session couldn't obtain, not because of the usual migration-before-frontend risk. Migration 137
+is the next single file handed to E; 138 and 139 follow only after each prior migration and its test
+both succeed, per the one-file-at-a-time delivery rule. Frontend work to consume the new `outcome`
+column (required only once 139 lands) has not started -- it ships as a separate commit in the same
+reviewed batch as 139, per that migration's own header note. No TypeScript/test/build changes in this
+pass; the existing 398/398 Vitest suite, `tsc -b`, and `eslint` remain exactly as last verified in the
+Queue C1 entry below, since this pass touched only new, unapplied SQL files.
 
 Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing shipped; migration 136 and its canonical
 SQL verification passed (**Code/tests: `ba33fdd` + `e19d4a2`; deployment/status through `473c0f4`.
