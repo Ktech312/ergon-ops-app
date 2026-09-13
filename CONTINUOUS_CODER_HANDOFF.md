@@ -3,9 +3,9 @@
 Status: **A1–A15 AND B1–B10 ALL COMPLETE.** Prepared: 2026-09-12. A10–A15 (the reopened continuation)
 are now done: A10 (Client Ledger serialized save queue), A11 (submittal company-identity freeze,
 mirroring the proposal pattern), A12 (removed the silent inventory row-cap), A13 (three compatible
-security dependency commits, `xlsx` deliberately excluded), A14 (`has_role()` hardening drafted and
-parked, migration 135, **not run**), A15 (this reconciliation pass itself — see the "Manual database
-actions" subsection under §8 for the two parked migrations, in order). **Nothing remains unblocked in
+security dependency commits, `xlsx` deliberately excluded), A14 (`has_role()` hardening now applied
+and verified as migration 135), A15 (the reconciliation pass; the manual-action subsection under §8
+now records both completed migrations). **Nothing remains unblocked in
 Queue A or Queue B.** The next coder should resume at the **decision register** (§8) — most items now
 have a reviewable design document or a shipped implementation behind them — and then **Queue C** (§7).
 Current verified repository baseline: `main` / `origin/main` at `bfd4265` with a clean working tree.
@@ -114,8 +114,9 @@ The next coder should verify this baseline before editing rather than redoing co
 - `nodemailer`/`pdfjs-dist` bumped to fixed versions and remaining transitive build-tool advisories
   resolved via `npm audit fix` (Queue A13) -- `npm audit` now reports only `xlsx` (no fix available,
   gated on D6).
-- `has_role()`'s hardening migration is drafted and parked for E (Queue A14, migration 135) --
-  **NOT applied.**
+- `has_role()` hardening (Queue A14, migration 135) is **applied and verified in production**. Its
+  canonical test completed with every section executed and zero skips; role results and a
+  representative RLS-policy call remained correct while anonymous direct execution was closed.
 - `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` documents what's proven by TS tests, SQL tests, prod
   verification, and what still needs real-world use, for all six Queue A8 flows.
 - **Queue B (B1-B10) produced ten design/spec/audit documents, none implemented**:
@@ -680,21 +681,17 @@ Queue A/B work.
 | D14 | Engineering first release | Product/solution request + technical review + Catalog release link | Engineering module |
 | D15 | **Already decided for now:** Commercial SaaS billing | Remains deferred until explicit authorization; do not ask again during current operational-product work | SaaS commercialization only |
 
-### Manual database actions awaiting E's review, in order
+### Manual database actions — completed record
 
-This list records the manual database sequence. Per §2's rule, only one action is handed to E at a
-time.
+Both Queue A migration packages were applied and verified. This record prevents a later coder from
+asking E to run either one again.
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
-2. **NEXT: `backend/supabase/migrations/135_harden_has_role_search_path.sql`** (Queue A14). Hardens
-   `has_role()`'s `search_path`/qualification and tightens its grants while preserving authorization
-   behavior. Verification script (only after the migration succeeds):
-   `backend/supabase/migration_135_harden_has_role_search_path_tests.sql`.
+2. **Migration 135 — DONE.** The migration and canonical verification script both ran successfully
+   in production. No further action remains.
 
-The remaining migration follows the same review discipline: present one file, wait
-for E to run it and report success, then present its own verification script — never both files of
-the same migration in one message.
+No manual database action remains from Queue A.
 
 ## 9. Consolidated reporting format
 

@@ -1,5 +1,15 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, migration 135 **APPLIED AND VERIFIED IN PRODUCTION.** E ran
+`backend/supabase/migrations/135_harden_has_role_search_path.sql` successfully and then ran the
+complete canonical `backend/supabase/migration_135_harden_has_role_search_path_tests.sql`, reporting
+`Success. No rows returned`. The script raises a hard exception for every failed assertion or skipped
+section, so this confirms all sections ran: real role-holder/non-holder results remain correct,
+`anon` no longer has direct EXECUTE, `authenticated` retains EXECUTE, and a representative live RLS
+policy that calls `has_role()` still evaluates without changing its authorization outcome. Synthetic
+test effects rolled back. Migrations 134 and 135 are both complete; no manual database action remains
+from Queue A.
+
 Last updated: 2026-09-12, migration 134 **APPLIED AND VERIFIED IN PRODUCTION.** E ran
 `backend/supabase/migrations/134_project_conversion_client_id_carry_through.sql` successfully and
 then ran the complete canonical `backend/supabase/migration_134_client_id_carry_through_tests.sql`,
