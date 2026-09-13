@@ -1,5 +1,42 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue A13 -- compatible security dependency updates, excluding `xlsx`
+(**Code: three commits, `28232b5`/`f3457e7`/`e6bda50`, pushed.**
+
+Three logically independent, separately revertable batches, per the task's own instruction:
+
+1. **`28232b5`** -- `nodemailer` 9.0.5 -> 9.1.1, fixing all four advisories found in the Queue B10
+   refresh (file/URL-access-disable bypass via legacy signature, IDN/punycode domain allow-list
+   bypass, address-parser O(n^2) DoS, RFC 5322 comment-parsing domain-validation bypass) -- still
+   within the current major version. This app's only usage (`api/_lib/mailer.js`) is a minimal,
+   stable surface (`createTransport({service:"gmail",...}).sendMail({to, subject, html})`, no
+   attachments, no URL embeds, one plain-string recipient) unaffected by any of the four fixed
+   behaviors -- confirmed by reading the actual code, not assumed. Manually verified
+   `createTransport`/`sendMail` still resolve post-bump.
+2. **`f3457e7`** -- `pdfjs-dist` 6.1.200 -> 6.3.289, fixing the arbitrary-JS-execution-on-a-malicious-
+   PDF advisory, still within the current major version. This app's only usage
+   (`src/main.tsx extractPdfText`) is the stable core `getDocument`/`getPage`/`getTextContent` text-
+   extraction API -- confirmed by a clean `tsc -b` and a successful build (both the `pdf.worker` and
+   `pdf` chunks rebuilt without error).
+3. **`e6bda50`** -- `npm audit fix` (no `--force`) for the remaining transitive build-tool advisories:
+   `postcss` 8.5.19->8.5.28, `browserslist` 4.28.6->4.28.9, `nanoid` 3.3.16->3.3.19,
+   `baseline-browser-mapping` 2.10.43->2.11.23, plus minor `caniuse-lite`/`electron-to-chromium`/
+   `update-browserslist-db` bumps -- all nested inside `vite`/`@vitejs/plugin-react`'s own dependency
+   trees, none a direct dependency, no major version anywhere. `package.json` itself is untouched by
+   this commit; only the lockfile changed. The resulting build produced byte-identical asset hashes to
+   the pre-fix build, confirming zero effect on the shipped bundle.
+
+`xlsx` deliberately left unchanged -- no fix available on npm regardless (see
+`PRODUCT_XLSX_REPLACEMENT_EVALUATION.md`), and even if one existed this is explicitly gated on D6.
+**`npm audit` now reports exactly 1 remaining high-severity vulnerability (`xlsx`)**, down from 7 at
+the start of this batch.
+
+Each of the three commits independently passed the full §3 suite: `npx tsc -b` clean;
+`NODE_OPTIONS="--max-old-space-size=6144" npx vitest run --no-file-parallelism`: 384/384 passing after
+every commit, unchanged; `npx eslint .`: 0 errors, 73 pre-existing warnings, unchanged after every
+commit; `npm run build`: clean after every commit; `npm run test:smoke`: 6/6 passing after every
+commit.
+
 Last updated: 2026-09-12, Queue A12 -- remove the silent inventory row-cap (**Code: commit `b7449f1`,
 pushed.**
 

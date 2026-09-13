@@ -1,9 +1,13 @@
 # Security & Dependency Follow-Up (Queue B10, 2026-09-12)
 
-Status: **READ-ONLY AUDIT. Nothing installed, removed, upgraded, or migrated.** Written for
-`CONTINUOUS_CODER_HANDOFF.md` Queue B10. Ties to decision **D6** (§8, `xlsx` dependency — evaluation
-already recommends `exceljs`, no decision made). Findings only, per the task's own instruction; any
-database fix stays a manual migration package, and no package is installed or replaced here.
+Status: **READ-ONLY AUDIT (as originally written). The 6 findings in §1.2 below were subsequently
+applied under Queue A10-15 (task A13) — see `HANDOFF.md`'s Queue A13 entry for the three commits.**
+Written for `CONTINUOUS_CODER_HANDOFF.md` Queue B10, then acted on once the follow-up task (A13,
+strict-scope, non-`xlsx`, non-force) confirmed doing so needed no product decision — the fixes below
+are still described exactly as originally found, for the record. Ties to decision **D6** (§8, `xlsx`
+dependency — evaluation already recommends `exceljs`, still no decision made — `xlsx` remains
+untouched). Any database fix stays a manual migration package; §2's security-definer review remains
+findings-only, nothing there was a database change.
 
 ## 1. Dependency audit refresh
 

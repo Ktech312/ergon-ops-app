@@ -387,6 +387,12 @@ later-page failure. Do not redesign any picker or add infinite scrolling in this
 
 ### A13. Apply compatible security dependency updates, excluding `xlsx`
 
+**Status: DONE — `28232b5`/`f3457e7`/`e6bda50`.** Three separately revertable commits: `nodemailer`
+9.0.5→9.1.1, `pdfjs-dist` 6.1.200→6.3.289, then `npm audit fix` (no `--force`) for the remaining
+transitive build-tool deps (postcss/browserslist/nanoid/baseline-browser-mapping). `xlsx` untouched.
+`npm audit` now reports 1 remaining vulnerability (`xlsx`, down from 7). Full §3 suite (384/384,
+tsc/eslint/build/smoke) passed independently after each commit.
+
 **Status: READY WITH STRICT SCOPE.** Queue B10 found new advisories with non-breaking fixes available.
 Update only packages that can be remediated within their current compatible major versions. Keep
 `xlsx` unchanged pending D6. Do not use a force/major audit fix. Review the resulting lockfile and
