@@ -25,6 +25,7 @@ declare
   non_active_count integer;
   active_workspace_count integer;
   settings_row_count integer;
+  visible_settings_count integer;
   unauthorized_write_count integer;
 
   real_proposal_token text;
@@ -224,21 +225,18 @@ begin
     perform set_config('request.jwt.claims', json_build_object('sub', non_admin_user_id::text)::text, true);
     perform set_config('role', 'authenticated', true);
 
-    unauthorized_write_count := -1;
-    begin
-      update public.workspace_share_link_settings
-        set default_expiration_open_documents = interval '1 day'
-        where workspace_id = (select id from public.workspaces where status = 'active' limit 1);
-      get diagnostics unauthorized_write_count = row_count;
-    exception when others then
-      -- Section 6 already proved authenticated has the required table
-      -- UPDATE grant. Any exception here is therefore a broken test setup
-      -- or an unexpected policy/runtime error, not proof that RLS correctly
-      -- filtered the non-admin update. Restore the SQL-editor role before
-      -- reporting the real failure.
+    select count(*) into visible_settings_count
+    from public.workspace_share_link_settings;
+
+    if visible_settings_count <> settings_row_count then
       perform set_config('role', original_role, true);
-      raise exception 'TEST FAILED: non-admin settings-write check could not execute: %', sqlerrm;
-    end;
+      raise exception 'TEST FAILED: a non-admin authenticated user could not read all workspace_share_link_settings rows.';
+    end if;
+
+    update public.workspace_share_link_settings
+      set default_expiration_open_documents = interval '1 day'
+      where workspace_id = (select id from public.workspaces where status = 'active' limit 1);
+    get diagnostics unauthorized_write_count = row_count;
 
     perform set_config('role', original_role, true);
 
