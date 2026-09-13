@@ -1,5 +1,20 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue B2 -- Frozen Sales pricing implementation plan (**Docs only, commit
+pending -- see git log for the actual hash once committed.**
+
+New `PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md`: turns D2's recorded direction into a full schema/
+API/UI specification for the single largest gap named in `PRODUCT_SALES_DISCOVERY.md` -- no price of
+any kind reaches a customer inside Ergon today. Defines catalog-default price (already exists,
+unchanged), an editable quote-line price with an audit trail for manual overrides, a proposal price
+frozen at send time exactly like every other snapshot field, quote-level discount/tax (not per-line),
+confirms internal cost/margin never enters the customer-facing snapshot (extending the existing
+053-migration comment's guarantee), notes version comparison (Queue A5) needs only two field-list
+additions to pick up price changes automatically, and treats Project conversion carry-through as a
+small new open question rather than deciding it. Includes migration pseudocode (not runnable) and a
+6-case test matrix to write once implemented. **No production code, no migration, no test file** --
+D2 is not yet answered.
+
 Last updated: 2026-09-12, Queue B1 -- Client Ledger save-recovery design specification (**Docs only,
 commit pending -- see git log for the actual hash once committed.**
 
