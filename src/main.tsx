@@ -134,6 +134,7 @@ import {
   deleteSalesQuoteBomLine,
   deleteSalesQuoteBomLinesByLocationSource,
   updateSalesQuoteBomLine,
+  reorderSalesQuoteBomLine,
   updateSalesQuoteBomLineCatalogLink,
   createScheduleTemplate,
   createSubmittal,
@@ -3493,6 +3494,48 @@ function App() {
       setSalesQuoteStatus(error instanceof Error ? error.message : "Could not save this BOM line.");
       return false;
     }
+  }
+
+  // Accessible Move up/Move down for the Quote BOM list (§5 Batch 10) --
+  // pessimistic on purpose: local state (and therefore the visible
+  // order) is only updated after the paired swap is confirmed, so a
+  // failed reorder leaves the list exactly as it was, with a plain
+  // error shown instead of a silently-wrong order.
+  async function handleReorderSalesQuoteBomLine(quoteId: string, lineId: string, direction: "up" | "down") {
+    if (!authSession) {
+      return;
+    }
+    const quote = salesQuotes.find((entry) => entry.id === quoteId);
+    if (!quote) {
+      return;
+    }
+    const sorted = [...quote.bomLines].sort((a, b) => a.lineSort - b.lineSort);
+    const index = sorted.findIndex((line) => line.id === lineId);
+    const neighborIndex = direction === "up" ? index - 1 : index + 1;
+    if (index === -1 || neighborIndex < 0 || neighborIndex >= sorted.length) {
+      return;
+    }
+    const line = sorted[index];
+    const neighbor = sorted[neighborIndex];
+    const ok = await reorderSalesQuoteBomLine(line.id, line.lineSort, neighbor.id, neighbor.lineSort, authSession.accessToken);
+    if (!ok) {
+      setSalesQuoteStatus("Could not reorder the Quote BOM. Try again.");
+      return;
+    }
+    setSalesQuotes((current) =>
+      current.map((entry) =>
+        entry.id === quoteId
+          ? {
+              ...entry,
+              bomLines: entry.bomLines.map((entryLine) => {
+                if (entryLine.id === line.id) return { ...entryLine, lineSort: neighbor.lineSort };
+                if (entryLine.id === neighbor.id) return { ...entryLine, lineSort: line.lineSort };
+                return entryLine;
+              }),
+            }
+          : entry,
+      ),
+    );
   }
 
   async function handleUpdateSalesQuoteProposalFields(quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) {
@@ -7597,6 +7640,7 @@ function App() {
             onAddSalesQuoteBomLines={handleAddSalesQuoteBomLines}
             onDeleteSalesQuoteBomLine={handleDeleteSalesQuoteBomLine}
             onUpdateSalesQuoteBomLine={handleUpdateSalesQuoteBomLine}
+            onReorderSalesQuoteBomLine={handleReorderSalesQuoteBomLine}
             onUpdateSalesQuoteBomLineCatalogLink={handleUpdateSalesQuoteBomLineCatalogLink}
             onUpdateSalesQuoteProposalFields={handleUpdateSalesQuoteProposalFields}
             onUpdateSalesQuoteInfo={handleUpdateSalesQuoteInfo}
@@ -18548,6 +18592,7 @@ function SalesHome({
   onAddSalesQuoteBomLines,
   onDeleteSalesQuoteBomLine,
   onUpdateSalesQuoteBomLine,
+  onReorderSalesQuoteBomLine,
   onUpdateSalesQuoteBomLineCatalogLink,
   onUpdateSalesQuoteProposalFields,
   onUpdateSalesQuoteInfo,
@@ -18631,6 +18676,7 @@ function SalesHome({
   onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateSalesQuoteBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null }) => Promise<boolean>;
+  onReorderSalesQuoteBomLine: (quoteId: string, lineId: string, direction: "up" | "down") => void;
   onUpdateSalesQuoteBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateSalesQuoteProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
   onUpdateSalesQuoteInfo: (
@@ -18790,6 +18836,7 @@ function SalesHome({
         onAddBomLines={onAddSalesQuoteBomLines}
         onDeleteBomLine={onDeleteSalesQuoteBomLine}
         onUpdateBomLine={onUpdateSalesQuoteBomLine}
+        onReorderBomLine={onReorderSalesQuoteBomLine}
         onUpdateBomLineCatalogLink={onUpdateSalesQuoteBomLineCatalogLink}
         onUpdateProposalFields={onUpdateSalesQuoteProposalFields}
         onUpdateQuoteInfo={onUpdateSalesQuoteInfo}
@@ -22652,6 +22699,7 @@ function SalesQuoteBuilder({
   onAddBomLines,
   onDeleteBomLine,
   onUpdateBomLine,
+  onReorderBomLine,
   onUpdateBomLineCatalogLink,
   onUpdateProposalFields,
   onUpdateQuoteInfo,
@@ -22719,6 +22767,7 @@ function SalesQuoteBuilder({
   onAddBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
   onUpdateBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null }) => Promise<boolean>;
+  onReorderBomLine: (quoteId: string, lineId: string, direction: "up" | "down") => void;
   onUpdateBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
   onUpdateQuoteInfo: (
@@ -23351,7 +23400,7 @@ function SalesQuoteBuilder({
               <small className="muted">Rolls up every location's camera picks + Sign/Space Sensor/Misc lines. Safe to click again after editing a location -- it only replaces the lines it previously pulled in.</small>
             </div>
             <ul className="line-list">
-              {selectedQuote.bomLines.map((line) => {
+              {selectedQuote.bomLines.map((line, index) => {
                 const linkedItem = line.catalogItemId ? catalogItems.find((item) => item.id === line.catalogItemId) : undefined;
                 const sourceLocation = line.sourceLocationId ? selectedQuote.locations.find((location) => location.id === line.sourceLocationId) : undefined;
                 const isEditing = editingBomLineId === line.id;
@@ -23430,6 +23479,24 @@ function SalesQuoteBuilder({
                           {linkedItem && <small className="muted">Pulls image, description &amp; datasheet from: {linkedItem.productName}</small>}
                         </div>
                         <div className="quote-bom-line-actions">
+                          <button
+                            className="icon-button-sm"
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => onReorderBomLine(selectedQuote.id, line.id, "up")}
+                            aria-label={`Move ${line.item} up`}
+                          >
+                            &uarr;
+                          </button>
+                          <button
+                            className="icon-button-sm"
+                            type="button"
+                            disabled={index === selectedQuote.bomLines.length - 1}
+                            onClick={() => onReorderBomLine(selectedQuote.id, line.id, "down")}
+                            aria-label={`Move ${line.item} down`}
+                          >
+                            &darr;
+                          </button>
                           <button
                             className="secondary-action mini-action"
                             type="button"

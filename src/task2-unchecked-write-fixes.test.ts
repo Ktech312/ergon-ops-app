@@ -6,6 +6,7 @@ import {
   updateVendor,
   updateSalesQuoteBomLineCatalogLink,
   updateSalesQuoteBomLine,
+  reorderSalesQuoteBomLine,
   deleteSalesQuoteBomLinesByLocationSource,
   ensureTeamMemberForSelf,
 } from "./persistence";
@@ -185,6 +186,77 @@ describe("updateSalesQuoteBomLine", () => {
     await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null }, "token"))
       .rejects.toThrow("Could not save this BOM line.");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("affected 0 rows for line line-1; expected exactly 1"));
+  });
+});
+
+describe("reorderSalesQuoteBomLine", () => {
+  // Queue A3 (2026-09-12): accessible Move up/down for the Quote BOM
+  // list. Swaps exactly the two affected rows' line_sort values,
+  // sequentially and checked -- these tests lock in the pessimistic
+  // partial-failure handling, not just the happy path.
+  function lineRow(id: string, lineSort: number) {
+    return { id, quote_id: "quote-1", item_name: "Item", qty: 1, notes: null, line_sort: lineSort, catalog_item_id: null, source_location_id: null };
+  }
+
+  it("swaps both rows' line_sort and returns true when both writes succeed", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(respond(true, 200, [lineRow("line-1", 2)]))
+      .mockResolvedValueOnce(respond(true, 200, [lineRow("line-2", 1)]));
+    globalThis.fetch = fetchMock;
+
+    await expect(reorderSalesQuoteBomLine("line-1", 1, "line-2", 2, "token")).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("line-1");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ line_sort: 2 });
+    expect(String(fetchMock.mock.calls[1][0])).toContain("line-2");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ line_sort: 1 });
+  });
+
+  it("returns false and makes no second request when the first PATCH fails outright", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(false, 500, { message: "db error" }));
+    globalThis.fetch = fetchMock;
+
+    await expect(reorderSalesQuoteBomLine("line-1", 1, "line-2", 2, "token")).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns false when the first PATCH succeeds but affects zero rows", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, []));
+    globalThis.fetch = fetchMock;
+
+    await expect(reorderSalesQuoteBomLine("line-1", 1, "line-2", 2, "token")).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("attempts to revert the first row when the second PATCH fails, and still returns false", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(respond(true, 200, [lineRow("line-1", 2)])) // first swap succeeds
+      .mockResolvedValueOnce(respond(false, 500, { message: "db error" })) // second swap fails
+      .mockResolvedValueOnce(respond(true, 200, [lineRow("line-1", 1)])); // revert succeeds
+    globalThis.fetch = fetchMock;
+
+    await expect(reorderSalesQuoteBomLine("line-1", 1, "line-2", 2, "token")).resolves.toBe(false);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2][0])).toContain("line-1");
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({ line_sort: 1 });
+    // No "inconsistent" error logged -- the revert itself succeeded.
+    expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining("inconsistent"));
+  });
+
+  it("logs a clear inconsistency warning if the second PATCH fails AND the revert also fails", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(respond(true, 200, [lineRow("line-1", 2)])) // first swap succeeds
+      .mockResolvedValueOnce(respond(false, 500, { message: "db error" })) // second swap fails
+      .mockResolvedValueOnce(respond(false, 500, { message: "db error" })); // revert also fails
+    globalThis.fetch = fetchMock;
+
+    await expect(reorderSalesQuoteBomLine("line-1", 1, "line-2", 2, "token")).resolves.toBe(false);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("inconsistent"));
   });
 });
 

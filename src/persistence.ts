@@ -9348,6 +9348,10 @@ export type SalesQuoteBomLine = {
   // regenerate-safe (replace only the lines it previously created) instead
   // of piling up duplicates on every click.
   sourceLocationId: string | null;
+  // Existed as a real column since migration 048 but was never read or
+  // written by the frontend until the accessible Move up/down controls
+  // (main.tsx) -- see reorderSalesQuoteBomLine below.
+  lineSort: number;
 };
 
 export type SalesQuote = {
@@ -9557,6 +9561,7 @@ function mapSalesQuoteBomLineRow(row: SalesQuoteBomLineRow): SalesQuoteBomLine {
     notes: row.notes ?? "",
     catalogItemId: row.catalog_item_id ?? null,
     sourceLocationId: row.source_location_id ?? null,
+    lineSort: row.line_sort,
   };
 }
 
@@ -9574,7 +9579,7 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
     locations: (row.sales_quote_locations ?? [])
       .map(mapSalesQuoteLocationRow)
       .sort((a, b) => a.lineSort - b.lineSort),
-    bomLines: (row.sales_quote_bom_lines ?? []).map(mapSalesQuoteBomLineRow),
+    bomLines: (row.sales_quote_bom_lines ?? []).map(mapSalesQuoteBomLineRow).sort((a, b) => a.lineSort - b.lineSort),
     clientEmail: row.client_email ?? "",
     proposalSummary: row.proposal_summary ?? "",
     contactFullName: row.contact_full_name ?? "",
@@ -9984,6 +9989,70 @@ export async function updateSalesQuoteBomLine(
     throw new Error("Could not save this BOM line.");
   }
   return mapSalesQuoteBomLineRow(rows[0]);
+}
+
+// Accessible Move up/Move down for the Quote BOM list -- line_sort has
+// existed as a real column since migration 048 but was never read or
+// written by the frontend (PRODUCT_MASTER_COMPLETION_PLAN.md §5 Batch
+// 10). A move swaps exactly the two affected rows' line_sort values
+// rather than renormalizing the whole list -- no unique constraint on
+// (quote_id, line_sort) exists (only a plain index), so a transient
+// shared value between the two writes is never rejected.
+//
+// Pessimistic and sequential on purpose: the first PATCH is checked
+// before the second ever fires, and if the second fails after the
+// first succeeded, this attempts to revert the first write back to its
+// original value (best-effort, logged either way) so a failed reorder
+// never leaves two rows silently sharing one line_sort. Returns false
+// (never throws) on any failure -- the caller must not update local
+// state or the visible order when this returns false.
+export async function reorderSalesQuoteBomLine(
+  lineId: string,
+  lineSort: number,
+  neighborLineId: string,
+  neighborLineSort: number,
+  accessToken?: string,
+): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+
+  async function patchLineSort(id: string, sort: number): Promise<boolean> {
+    const response = await fetch(supabaseUrl(`sales_quote_bom_lines?id=eq.${id}`), {
+      method: "PATCH",
+      headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+      body: JSON.stringify({ line_sort: sort }),
+    });
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      console.error(`reorderSalesQuoteBomLine: PATCH failed for line ${id} (${response.status}): ${bodyText}`);
+      return false;
+    }
+    const rows = (await response.json().catch(() => [])) as SalesQuoteBomLineRow[];
+    if (rows.length !== 1) {
+      console.error(`reorderSalesQuoteBomLine: PATCH affected ${rows.length} rows for line ${id}; expected exactly 1.`);
+      return false;
+    }
+    return true;
+  }
+
+  const firstOk = await patchLineSort(lineId, neighborLineSort);
+  if (!firstOk) {
+    return false;
+  }
+
+  const secondOk = await patchLineSort(neighborLineId, lineSort);
+  if (!secondOk) {
+    const reverted = await patchLineSort(lineId, lineSort);
+    if (!reverted) {
+      console.error(
+        `reorderSalesQuoteBomLine: line ${lineId} was moved to line_sort ${neighborLineSort} but the paired swap for ${neighborLineId} failed, and reverting ${lineId} back to ${lineSort} ALSO failed -- these two rows' line_sort values are now inconsistent and need a manual check.`,
+      );
+    }
+    return false;
+  }
+
+  return true;
 }
 
 export async function deleteSalesQuoteBomLine(id: string, label: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
