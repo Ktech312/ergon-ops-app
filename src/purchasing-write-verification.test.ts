@@ -15,11 +15,13 @@ import {
 // functions with a real, isolated gap -- a missing .ok check, missing
 // technical logging, or (createPurchaseOrder specifically) a genuinely
 // misleading success value -- each fixable without a migration, workflow
-// change, or new product decision. These tests lock in that fix set. Two
-// functions (updateTaskHardwareDependencyStatus, updateProjectLedgerInfo)
-// deliberately stay non-throwing: their callers are, respectively,
-// fire-and-forget with no .catch, and a previously-reverted caller-side
-// redesign -- see each function's own comment in persistence.ts.
+// change, or new product decision. These tests lock in that fix set. One
+// function (updateTaskHardwareDependencyStatus) deliberately stays
+// non-throwing: its caller is fire-and-forget with no .catch. A second,
+// updateProjectLedgerInfo, WAS non-throwing here for the same caller-side-
+// redesign-still-open reason -- Queue A10 (2026-09-12) shipped that
+// redesign (createClientLedgerSaveQueue, persistence.ts), so it now throws
+// like every other queued save; see its own describe block below.
 
 function respond(ok: boolean, status: number, body: unknown) {
   return {
@@ -167,16 +169,36 @@ describe("createPurchaseRequestRemote / updatePurchaseRequestRemote -- body logg
   });
 });
 
-describe("updateProjectLedgerInfo -- logs but never throws (caller-side revert redesign still open)", () => {
-  it("logs the real status/body on failure without throwing", async () => {
+describe("updateProjectLedgerInfo -- Queue A10: now throws, returns the confirmed row on success", () => {
+  it("logs the real status/body and throws a plain message on failure", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(false, 500, { message: "db error" }));
-    await expect(updateProjectLedgerInfo("proj-1", { kickoffDate: "2026-01-01" }, "token")).resolves.toBeUndefined();
+    await expect(updateProjectLedgerInfo("proj-1", { kickoffDate: "2026-01-01" }, "token")).rejects.toThrow(
+      "Some Client Ledger changes could not be saved.",
+    );
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("updateProjectLedgerInfo: PATCH failed for project proj-1 (500)"));
   });
 
-  it("does not log on success", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, {}));
-    await updateProjectLedgerInfo("proj-1", { kickoffDate: "2026-01-01" }, "token");
+  it("throws when the PATCH returns 200 OK but no row", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, []));
+    await expect(updateProjectLedgerInfo("proj-1", { kickoffDate: "2026-01-01" }, "token")).rejects.toThrow(
+      "Some Client Ledger changes could not be saved.",
+    );
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("affected 0 rows for project proj-1"));
+  });
+
+  it("returns the server's confirmed row and does not log on success", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      respond(true, 200, [{ id: "proj-1", kickoff_date: "2026-01-01", warranty_expiration_date: null, added_to_ledger: true, ledger_bucket: "active" }]),
+    );
+    const result = await updateProjectLedgerInfo("proj-1", { kickoffDate: "2026-01-01" }, "token");
+    expect(result).toEqual({ projectId: "proj-1", kickoffDate: "2026-01-01", warrantyExpirationDate: "", addedToLedger: true, ledgerBucket: "active" });
     expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("returns null (no-op) when there are no fields to update", async () => {
+    globalThis.fetch = vi.fn();
+    const result = await updateProjectLedgerInfo("proj-1", {}, "token");
+    expect(result).toBeNull();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });

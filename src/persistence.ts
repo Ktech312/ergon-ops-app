@@ -7743,13 +7743,24 @@ export async function loadProjectLedgerInfo(accessToken?: string): Promise<Proje
   }));
 }
 
+// Queue A10 (2026-09-12): the earlier caller-side revert-on-failure
+// attempt (2026-09-11) was reverted as concurrency-unsafe -- see
+// PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md for the full incident. The
+// fix is createClientLedgerSaveQueue below, which serializes saves per
+// project and never reverts on failure; this function is now its only
+// caller and throws (rather than logging and swallowing) so the queue's
+// try/catch can surface a plain failure message, matching every other
+// queued save in this file. Returns the server's own confirmed row
+// (`Prefer: return=representation`) so the queue can reconcile against
+// real values (e.g. a null-coalesced date) instead of just trusting
+// whatever was optimistically set locally.
 export async function updateProjectLedgerInfo(
   projectId: string,
   updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string; addedToLedger: boolean; ledgerBucket: "active" | "archived" | null }>,
   accessToken?: string,
-): Promise<void> {
+): Promise<ProjectLedgerInfo | null> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
-    return;
+    return null;
   }
   const payload: Record<string, unknown> = {};
   if (updates.kickoffDate !== undefined) payload.kickoff_date = updates.kickoffDate || null;
@@ -7757,27 +7768,100 @@ export async function updateProjectLedgerInfo(
   if (updates.addedToLedger !== undefined) payload.added_to_ledger = updates.addedToLedger;
   if (updates.ledgerBucket !== undefined) payload.ledger_bucket = updates.ledgerBucket;
   if (Object.keys(payload).length === 0) {
-    return;
+    return null;
   }
-  // Reviewed 2026-09-12 (overnight reliability closeout, task 5):
-  // technical diagnostic only, not a behavior change -- a caller-side fix
-  // (revert the optimistic Client Ledger update on failure) was attempted
-  // 2026-09-11 and reverted after review found the revert-on-failure
-  // design concurrency-unsafe (a stale in-flight revert could overwrite a
-  // second, later, already-succeeded edit). That redesign is still open
-  // and is NOT reattempted here -- this only makes a real PATCH failure
-  // visible in the console for diagnosis, matching the same
-  // logging-only treatment already used for recordNotificationDelivery/
-  // addTaskActivity. The caller's optimistic update is unchanged.
   const response = await fetch(supabaseUrl(`projects?id=eq.${projectId}`), {
     method: "PATCH",
-    headers: supabaseHeaders(accessToken),
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const bodyText = await response.text().catch(() => "");
     console.error(`updateProjectLedgerInfo: PATCH failed for project ${projectId} (${response.status}): ${bodyText}`);
+    throw new Error("Some Client Ledger changes could not be saved. Try again. If the problem continues, contact support.");
   }
+  const rows = (await response.json().catch(() => [])) as ProjectLedgerInfoRow[];
+  if (rows.length !== 1) {
+    console.error(`updateProjectLedgerInfo: PATCH affected ${rows.length} rows for project ${projectId}; expected exactly 1.`);
+    throw new Error("Some Client Ledger changes could not be saved. Try again. If the problem continues, contact support.");
+  }
+  const row = rows[0];
+  return {
+    projectId: row.id,
+    kickoffDate: row.kickoff_date ?? "",
+    warrantyExpirationDate: row.warranty_expiration_date ?? "",
+    addedToLedger: Boolean(row.added_to_ledger),
+    ledgerBucket: row.ledger_bucket === "active" || row.ledger_bucket === "archived" ? row.ledger_bucket : null,
+  };
+}
+
+// Serializes Client Ledger saves per projectId -- see
+// PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md §3/§4 (Option B) for the
+// full design and why the earlier per-field revert-on-failure attempt
+// was unsafe. Unlike createDeviceRecipeSaveQueue/createProjectSiteSaveQueue
+// (one save for one whole array), this queue tracks one in-flight/pending
+// state PER project, since two different projects' ledger rows must never
+// block each other, and each save is a partial-field PATCH, not a whole-
+// array replace.
+export function createClientLedgerSaveQueue(
+  applyReconciled: (updater: (current: ProjectLedgerInfo[]) => ProjectLedgerInfo[]) => void,
+  onError: (error: unknown) => void,
+) {
+  type LedgerUpdates = Partial<{ kickoffDate: string; warrantyExpirationDate: string; addedToLedger: boolean; ledgerBucket: "active" | "archived" | null }>;
+  const state = new Map<string, { saving: boolean; pending: LedgerUpdates | null }>();
+
+  async function run(projectId: string, updates: LedgerUpdates, accessToken: string): Promise<void> {
+    const entry = state.get(projectId) ?? { saving: false, pending: null };
+    entry.saving = true;
+    state.set(projectId, entry);
+    try {
+      const saved = await updateProjectLedgerInfo(projectId, updates, accessToken);
+      if (saved) {
+        // Only backfill the fields THIS save actually touched, and only
+        // if no newer, still-unsent edit for that same field is already
+        // queued -- otherwise an older save's confirmed value could
+        // briefly stomp a newer optimistic edit right before its own,
+        // already-scheduled follow-up save corrects it again. Matches
+        // reconcileSavedDeviceRecipes' own precedent of backfilling only
+        // what changed, never the whole record.
+        applyReconciled((current) => {
+          const stillPending = entry.pending;
+          return current.map((row) => {
+            if (row.projectId !== projectId) {
+              return row;
+            }
+            const merged = { ...row };
+            (Object.keys(updates) as Array<keyof LedgerUpdates>).forEach((field) => {
+              if (!stillPending || !(field in stillPending)) {
+                (merged as Record<string, unknown>)[field] = saved[field];
+              }
+            });
+            return merged;
+          });
+        });
+      }
+    } catch (error) {
+      onError(error);
+    } finally {
+      entry.saving = false;
+    }
+    const next = entry.pending;
+    entry.pending = null;
+    if (next) {
+      void run(projectId, next, accessToken);
+    }
+  }
+
+  return {
+    enqueue(projectId: string, updates: LedgerUpdates, accessToken: string): void {
+      const entry = state.get(projectId);
+      if (entry?.saving) {
+        entry.pending = { ...entry.pending, ...updates };
+        return;
+      }
+      void run(projectId, updates, accessToken);
+    },
+  };
 }
 
 // Per-unit, serial-level installed hardware -- the genuinely new piece.

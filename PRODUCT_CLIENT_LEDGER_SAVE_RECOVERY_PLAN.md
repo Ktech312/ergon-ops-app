@@ -1,10 +1,10 @@
-# Client Ledger Save Recovery — Design Specification (Queue B1, NOT IMPLEMENTED)
+# Client Ledger Save Recovery — Design Specification (Queue B1 design, implemented Queue A10)
 
-Status: **DESIGN COMPLETE; CLEARED FOR TECHNICAL IMPLEMENTATION IN QUEUE A10. No production code in
-this document.** Written for `CONTINUOUS_CODER_HANDOFF.md` Queue B item B1. The earlier framing called
-the choice a business decision, but the completed comparison shows it is a reliability mechanism:
-the serialized latest-snapshot queue preserves the existing Client Ledger workflow while preventing
-an older failed request from overwriting a newer edit. Implement Option B under Queue A10.
+Status: **IMPLEMENTED.** `createClientLedgerSaveQueue` (`src/persistence.ts`) and its wiring into
+`handleUpdateProjectLedgerInfo` (`src/main.tsx`) now exist exactly as Option B below describes, with
+all six named test cases covered in `src/client-ledger-save-queue.test.ts` — see `HANDOFF.md`'s Queue
+A10 entry for the commit. This document remains as the design record and the reasoning for why Option
+A was rejected; §5's tests are no longer "to be added," they exist.
 
 ## 1. The current caller, traced
 

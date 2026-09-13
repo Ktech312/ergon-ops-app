@@ -1,8 +1,38 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-09-12, Queue B7-B10 -- Support/Engineering/Marketing module designs + security and
-dependency follow-up (**Docs only, commit pending -- see git log for the actual hash once
-committed.**
+Last updated: 2026-09-12, Queue A10 -- Client Ledger serialized save queue (**Code: commit pending --
+see git log for the actual hash once committed.**
+
+Implements `PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md` Option B, replacing the earlier (2026-09-11,
+reverted) per-field revert-on-failure attempt with a queue serialized per `projectId`.
+`updateProjectLedgerInfo` (`src/persistence.ts`) now uses `Prefer: return=representation` and throws
+a plain message on failure instead of logging-and-swallowing, matching every other queued save in
+this file. New `createClientLedgerSaveQueue` coalesces overlapping field edits to the same project
+into one merged `pending` snapshot, never reverts local state on failure, and reconciles only the
+fields a given save actually touched -- and only when no newer, still-unsent edit for that same field
+is already queued -- against the server's own confirmed row, so a normalized value (e.g. a
+null-coalesced date) is reflected without a stale echo ever stomping a fresher optimistic edit.
+`handleUpdateProjectLedgerInfo` (`src/main.tsx`) drops back to synchronous/fire-and-forget, enqueuing
+through a new `clientLedgerSaveQueueRef`, the same pattern `deviceRecipeSaveQueueRef`/
+`projectSiteSaveQueueRef` already use.
+
+New `src/client-ledger-save-queue.test.ts` (7 tests) covers exactly the six proof cases the design
+doc named: an older failure never overwrites a newer edit to the same field; edits to different
+fields both survive; a failed save with no further edits preserves the optimistic value and surfaces
+the failure once; two different projects' saves never block each other; a third edit merges into one
+pending snapshot with only one follow-up PATCH; and reconciliation applies the server's real
+normalized value while never overwriting a field with an already-newer pending edit. Also updated the
+existing `updateProjectLedgerInfo` describe block in `purchasing-write-verification.test.ts` (now 4
+tests, was 2) to match the new throwing/representation-returning behavior.
+
+`npx tsc -b` clean. `NODE_OPTIONS="--max-old-space-size=6144" npx vitest run --no-file-parallelism`:
+**376/376 passing** (+7 net: +7 new file, +2 in the updated describe block, -2 for the two tests it
+replaced). `npx eslint .`: 0 errors, 73 pre-existing warnings, unchanged. `npm run build`: clean.
+`npm run test:smoke`: 6/6 passing against a local dev server -- this change has no markup/CSS surface,
+so the smoke suite (auth gate, navigation, mobile shell) is not expected to catch anything specific to
+it, but ran anyway per the delivery rule and confirmed no regression.
+
+
 
 Four new docs, closing out all of Queue B:
 

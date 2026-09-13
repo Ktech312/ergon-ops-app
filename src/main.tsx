@@ -79,7 +79,7 @@ import {
   restoreProjectLocation,
   loadDeletedProjectLocations,
   loadProjectLedgerInfo,
-  updateProjectLedgerInfo,
+  createClientLedgerSaveQueue,
   loadInstalledAssets,
   addInstalledAssets,
   updateInstalledAsset,
@@ -1552,7 +1552,27 @@ function App() {
     loadProjectLedgerInfo(authSession.accessToken).then(setProjectLedgerInfo).catch(() => {});
   }, [authSession]);
 
-  async function handleUpdateProjectLedgerInfo(
+  // Queue A10: serializes Client Ledger saves per projectId so an older
+  // failed save can never overwrite a newer edit -- see
+  // PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md. Created once (lazy ref
+  // init) so its in-flight/pending tracking survives re-renders, same
+  // pattern as deviceRecipeSaveQueueRef/projectSiteSaveQueueRef above.
+  const clientLedgerSaveQueueRef = useRef<ReturnType<typeof createClientLedgerSaveQueue> | null>(null);
+  if (!clientLedgerSaveQueueRef.current) {
+    clientLedgerSaveQueueRef.current = createClientLedgerSaveQueue(setProjectLedgerInfo, (error) => {
+      console.error("Cloud save failed for Client Ledger:", error);
+      setSyncStatus("error");
+      setAuthStatus("Some Client Ledger changes could not be saved. Try again. If the problem continues, contact support.");
+    });
+  }
+
+  // Saves are serialized per-project through clientLedgerSaveQueueRef (see
+  // createClientLedgerSaveQueue in persistence.ts) instead of awaiting
+  // updateProjectLedgerInfo directly -- dropped back to fire-and-forget the
+  // same way the Project Site/Equipment Recipe callers already are, since
+  // the queue itself now owns reconciling and surfacing a failure. The
+  // optimistic local update below is unchanged.
+  function handleUpdateProjectLedgerInfo(
     projectId: string,
     updates: Partial<{ kickoffDate: string; warrantyExpirationDate: string; addedToLedger: boolean; ledgerBucket: "active" | "archived" | null }>,
   ) {
@@ -1571,7 +1591,7 @@ function App() {
       };
       return existing ? current.map((entry) => (entry.projectId === projectId ? next : entry)) : [...current, next];
     });
-    await updateProjectLedgerInfo(projectId, updates, authSession.accessToken);
+    clientLedgerSaveQueueRef.current?.enqueue(projectId, updates, authSession.accessToken);
   }
 
   async function handleLoadInstalledAssets(projectId: string) {

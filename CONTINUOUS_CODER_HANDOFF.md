@@ -312,6 +312,14 @@ same current state.
 
 ### A10. Implement the Client Ledger serialized save queue
 
+**Status: DONE — commit pending, see `HANDOFF.md` for the hash once committed.**
+`createClientLedgerSaveQueue` (`src/persistence.ts`) implemented per Option B, wired into
+`handleUpdateProjectLedgerInfo` (`src/main.tsx`) via a new `clientLedgerSaveQueueRef`.
+`updateProjectLedgerInfo` now throws and returns the confirmed row instead of logging-and-swallowing.
+7 new tests in `src/client-ledger-save-queue.test.ts` cover all six proof cases the design doc named;
+`purchasing-write-verification.test.ts`'s existing describe block updated to match. 376/376 passing,
+tsc/eslint/build/smoke all clean.
+
 **Status: READY — start automatically.** Queue B1 removed the earlier uncertainty: the serialized,
 latest-snapshot queue is the only design that prevents an older failed request from overwriting a
 newer edit, and it changes no business workflow. This is now a technical reliability implementation,
