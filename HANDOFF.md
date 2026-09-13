@@ -1,5 +1,22 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue B5 -- Backup restore resume/checkpoint specification (**Docs only,
+commit pending -- see git log for the actual hash once committed.**
+
+New `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md`. Confirmed `restoreFullBackupSnapshot` already ships
+the structured per-section `RestoreOutcome` that `PRODUCT_ERROR_VISIBILITY_AUDIT.md` §A2.2c's
+checkpoint design proposed as its first item -- built on that instead of re-designing it. Defines a
+real, durable `restore_runs`/`restore_run_sections` schema (a deliberate upgrade from §A2.2c's
+original localStorage-only sketch, justified by System Health (Queue B4) needing a queryable row
+behind any admin-visible failure alert), the retry key as `(restore_run_id, section)` matching the
+granularity already shipped, resume behavior (skip succeeded sections, fully re-attempt failed/
+pending ones), cancellation (allowed only between sections, resumable exactly like an interrupted
+run), and the rule for stale references (a reference that resolved at backup time but no longer does
+at restore time is treated identically to a never-resolved one, since the dry-run preview always
+checks against current live data). Assumes D9's already-recorded recommended direction (warned
+per-section skip, not strict block) throughout. Includes a 7-case test matrix using synthetic
+snapshots only. **No production code, no migration, no test file** -- D9 is not yet answered.
+
 Last updated: 2026-09-12, Queue B4 -- System Health Phase B migration/API/UI/test sequence (**Docs
 only, commit pending -- see git log for the actual hash once committed.**
 
