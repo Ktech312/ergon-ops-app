@@ -366,7 +366,7 @@ email mapping tests and ship under §3.
 
 ### A12. Remove the silent inventory row-cap without changing the UI
 
-**Status: DONE — commit pending, see `HANDOFF.md` for the hash once committed.**
+**Status: DONE — `b7449f1`.**
 `loadInventoryItems` now fetches deterministic 500-row pages (ordered `item_name.asc,id.asc`) until a
 short final page, dedupes by real row id, throws instead of returning a partial list on any page
 failure, and has a 200-page safety guard. Both callers updated; the session-load one now surfaces a

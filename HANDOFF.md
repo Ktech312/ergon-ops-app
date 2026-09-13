@@ -1,7 +1,7 @@
 # Ergon Ops — Handoff Doc
 
-Last updated: 2026-09-12, Queue A12 -- remove the silent inventory row-cap (**Code: commit pending --
-see git log for the actual hash once committed.**
+Last updated: 2026-09-12, Queue A12 -- remove the silent inventory row-cap (**Code: commit `b7449f1`,
+pushed.**
 
 Closes the real, previously-flagged risk Queue B6 found: `loadInventoryItems` (`src/persistence.ts`)
 issued one unbounded request and would have silently truncated the catalog with no error anywhere if
