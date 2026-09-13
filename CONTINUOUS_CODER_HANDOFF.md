@@ -1,10 +1,15 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **ACTIVE EXECUTION PLAN -- Queue A1-A8 complete, A9 is this reconciliation pass itself.**
-Prepared: 2026-09-12. Updated 2026-09-12 (same day, Queue A9): A1 through A8 all closed and deployed
--- see each item's own section below for what changed and `HANDOFF.md` for full evidence. The next
-coder should resume at **Queue B** (§6) rather than Queue A, which has nothing left unblocked.
-Current verified repository baseline: `main` / `origin/main` at `3e3d940` with a clean working tree.
+Status: **QUEUE A AND QUEUE B BOTH COMPLETE.** Prepared: 2026-09-12. Updated 2026-09-12 (same day):
+A1-A9 closed first (shipped/deployed code + the A9 reconciliation pass itself), then B1-B10 closed
+(every one a design/spec/audit document, per Queue B's own scope -- none required or performed
+production code, a migration run, or a package change). See each item's own `Status: DONE` line below
+for its commit hash, and `HANDOFF.md` for full evidence. **Nothing remains unblocked in Queue A or
+Queue B.** The next coder should resume at the **decision register** (§8) -- most of D1-D15 now have
+a reviewable design document behind them, ready for E to actually answer -- and then **Queue C**
+(§7), not Queue A/B, which have nothing left to do without new decisions.
+Current verified repository baseline: `main` / `origin/main` at `aa3748f` with a clean working tree
+(pending this file's own commit for the B-item status markers above).
 Production: `https://ergon-ops-app.vercel.app/`
 
 This is the page the next coder should open first. `PRODUCT_MASTER_COMPLETION_PLAN.md` remains the
@@ -100,6 +105,15 @@ The next coder should verify this baseline before editing rather than redoing co
   deliberately-unfixed gap -- `SubmittalSnapshot` has no company-branding fields at all yet.
 - `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` documents what's proven by TS tests, SQL tests, prod
   verification, and what still needs real-world use, for all six Queue A8 flows.
+- **Queue B (B1-B10) produced ten design/spec/audit documents, none implemented**:
+  `PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md` (D1), `PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md`
+  (D2), `PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` (reconciled, D7/Stage 2), an expanded
+  `PRODUCT_SYSTEM_HEALTH_PLAN.md` (D8), `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md` (D9),
+  `PRODUCT_INVENTORY_PAGINATION_DESIGN.md` (D10), `PRODUCT_SUPPORT_MODULE_DESIGN.md` (D13),
+  `PRODUCT_ENGINEERING_MODULE_DESIGN.md` (D14), `PRODUCT_MARKETING_SALES_DESIGN.md`, and
+  `PRODUCT_SECURITY_DEPENDENCY_FOLLOWUP.md` (D6, plus 6 newly-found `npm audit` advisories not
+  previously tracked, and a clean review of every security-definer function added since the last
+  audit). Read the relevant one before touching its area, rather than re-deriving the same ground.
 
 Do not reimplement these. Verify only where the current task depends on them.
 
@@ -299,11 +313,21 @@ same current state.
 
 ## 6. Queue B — prepare while implementation items are blocked
 
+**Status: B1-B10 all complete as of this pass — see each item's own `Status: DONE` line below for its
+commit hash.** Every Queue B deliverable is a design/spec/audit document; none required or performed
+production code, a migration run, or a package change, per this section's own scope rule. The next
+coder should resume at the decision register (§8) and Queue C (§7), not Queue B, which has nothing
+left unblocked.
+
 These tasks keep useful work moving. They may produce designs, test matrices, prototypes isolated
 from production code, or migration drafts explicitly marked **NOT RUN**. They may not silently choose
 the business rule.
 
 ### B1. Client Ledger safe-revert implementation specification
+
+**Status: DONE — `9232988`.** `PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md` traces the caller,
+explains the 2026-09-11 revert-on-failure attempt's unsafety, and specifies the state machine and a
+serialized latest-snapshot save queue, matching D1's recorded direction. No production code.
 
 Trace the current caller, overlapping debounced saves, and the earlier reverted attempt. Produce an
 exact state machine for: idle, saving revision N, newer local edit exists, success, failure, retry.
@@ -313,12 +337,20 @@ D1 is answered.
 
 ### B2. Frozen Sales pricing implementation package
 
+**Status: DONE — `30caf4b`.** `PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md` defines the full model
+per D2, migration pseudocode, and a 6-case test matrix. No production code, no migration run.
+
 Turn the existing discovery into a reviewable schema/API/UI specification. Define catalog-default
 price, editable quote price, frozen proposal price, internal cost/margin visibility, tax/discount
 scope, version behavior, and conversion carry-through. Provide migration pseudocode and a test
 matrix, not a runnable migration, until D2 is answered.
 
 ### B3. Share-link implementation readiness
+
+**Status: DONE — `8879b25`.** `PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` reconciled against the live
+schema and Part 12/13: bridge (124-126) confirmed live, three tables' real RLS state checked (none
+match the decided model), Stage 2 fields confirmed absent, and an explicit 11-step dependency order
+added naming exactly which step first changes real client behavior. No production code.
 
 Reconcile the eight decided policies in
 `PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md` with the missing Stage 2 fields and current
@@ -328,6 +360,10 @@ behavior until its required review gate is met.
 
 ### B4. System Health Phase B package
 
+**Status: DONE — `5a292de`.** Added the missing failure-in-the-monitor-path section and expanded
+build sequencing into concrete function names, file locations, and a per-step test matrix. D8/alert
+channel left explicitly open, unchanged. No production code, no migration.
+
 Refine `PRODUCT_SYSTEM_HEALTH_PLAN.md` into a migration/API/UI/test sequence. Fully specify the
 90-day detailed retention plus long-term aggregate counts already decided, safe-detail redaction,
 deduplication, acknowledgment, retry eligibility, and failure-in-the-monitor path. Keep alert
@@ -336,11 +372,21 @@ or an instruction to proceed without alert delivery.
 
 ### B5. Backup restore resume/checkpoint specification
 
+**Status: DONE — `c361164`.** `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md` builds on the already-
+shipped structured `RestoreOutcome`, defines `restore_runs`/`restore_run_sections`, the
+`(restore_run_id, section)` retry key, resume, cancellation, and the stale-reference rule, per D9's
+recorded direction. No production code, no migration.
+
 Define `restore_runs`, per-section status, deterministic retry keys, resume behavior, cancellation,
 and the rule for references that no longer resolve. Use synthetic snapshots only. Do not implement
 until restore leniency D9 is answered.
 
 ### B6. Inventory pagination design
+
+**Status: DONE — `f11a1c2`.** `PRODUCT_INVENTORY_PAGINATION_DESIGN.md` traces all 114 consumers,
+recommends a second, independent cursor-paginated query for only the two table views (leaving the
+other ~110 lookup/dropdown/aggregate consumers untouched), and flags a real, un-fixed PostgREST
+row-cap risk found while tracing. Existing alphabetical query left uncapped, per instruction.
 
 Trace every `loadInventoryItems` consumer. Specify server-side search, stable cursor/order, selected
 item hydration, empty/loading/error states, and how existing dropdowns avoid losing a selected item
@@ -349,12 +395,20 @@ existing alphabetical query.
 
 ### B7. Support/Service module product design
 
+**Status: DONE — `aa3748f`.** `PRODUCT_SUPPORT_MODULE_DESIGN.md`: entry from Client Ledger, reuses
+`installed_assets`/warranty data and the `project_submittals` status shape, one append-only activity
+table for the full lifecycle. Permissions/workflow explicitly not decided, per instruction.
+
 Build the first real design document for post-close service: entry from a closed Project/Client
 Ledger record, installed asset/warranty context, ticket/request statuses, ownership, priority/SLA,
 client communication, scheduled maintenance, parts/labor, resolution, and reopen. Distinguish what
 already exists from proposed schema. Do not implement permissions or workflow before review.
 
 ### B8. Engineering/Product Development module product design
+
+**Status: DONE — `aa3748f`.** `PRODUCT_ENGINEERING_MODULE_DESIGN.md`: two roles kept separate on
+purpose (matching their already-different Inventory permissions), request-through-review-to-Catalog-
+release schema, kept arm's-length from Project implementation, forward link to Support (B7).
 
 Define who uses it and the first useful feature set: product/solution requests, requirements,
 technical review, prototype/test results, version/release readiness, links to Catalog and Projects,
@@ -363,11 +417,21 @@ screens, data objects, permissions questions, and a smallest useful first releas
 
 ### B9. Marketing-to-Sales design
 
+**Status: DONE — `aa3748f`.** `PRODUCT_MARKETING_SALES_DESIGN.md`: maps leads into the existing
+`clients`/`sales_quotes` tables (no parallel company concept), no HubSpot integration built or
+promised, dedup against `clients`' existing unique-name constraint plus a human-confirmed path for
+cross-lead duplicates.
+
 Map lead source, campaign, company/contact, qualification, opportunity, activities, ownership, and
 conversion into today's Sales Quote without re-entry. Include HubSpot coexistence/import boundaries
 and deduplication. Do not promise or build a HubSpot integration without a separate decision.
 
 ### B10. Security/dependency follow-up
+
+**Status: DONE — `aa3748f`.** `PRODUCT_SECURITY_DEPENDENCY_FOLLOWUP.md`: `xlsx` finding revalidated
+unchanged; 6 new `npm audit` advisories found and reported (none fixed); all 7 security-definer
+functions added since the last audit reviewed clean against all four criteria; `has_role()`'s known-
+unhardened status confirmed still open but correctly avoided by every one of them.
 
 Refresh the read-only dependency audit. Revalidate the `xlsx` finding and the existing `exceljs`
 evaluation against current source; do not install or replace a package. Review public RPC execute
