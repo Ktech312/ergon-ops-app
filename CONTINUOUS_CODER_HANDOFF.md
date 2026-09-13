@@ -11,8 +11,9 @@ to `main` and Vercel deployed them.
 Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2026-09-13).
 
 Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: migrations 137, 138,
-139, and 140 plus their four canonical test scripts, committed locally (`362e702`, `f09f574`,
-`d564b8b`; not yet pushed — SQL-only commits, no dependent frontend code exists yet). None of the
+139, and 140 plus their four canonical test scripts, committed and pushed on `main` (`362e702`,
+`f09f574`, `d564b8b`, status reconciliation through `814af14`; no dependent frontend code exists
+yet). None of the
 four migrations are applied. Migration 137 is the next single file to hand E for review per the
 established one-file-at-a-time gate; see "Manual database actions" below for the full ordered list
 and exact sequencing.
@@ -20,7 +21,7 @@ and exact sequencing.
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134, 135, and 136 are applied and verified. Migrations 137,
-138, 139, and 140 are drafted, committed locally, and awaiting E's review/run in that order — see
+138, 139, and 140 are drafted, committed and pushed, and awaiting E's review/run in that order — see
 "Manual database actions." Continue Queue C2 below (C2.6 onward) while 137 is pending. Do not rerun
 134/135/136 and do not re-ask D7's settled link rules.
 
@@ -205,16 +206,16 @@ new `share_link_views`/`share_link_actions` audit tables (authenticated-read onl
 only future security-definer RPCs can write). Touches no existing RPC body and adds no anon grant.
 Test proves the full existing-row backfill, one settings row per active workspace, a real proposal
 token still resolving identically twice, every check-constraint rejection, the `superseded_by_token`
-self-referencing FK, minimum-grants, and non-admin-cannot-write-settings. Committed locally (`362e702`),
-not pushed. This is the next single file to hand E.
+self-referencing FK, minimum-grants, and non-admin-cannot-write-settings. Committed and pushed
+(`362e702`), not applied. This is the next single file to hand E.
 
 Draft one migration and one separate canonical rollback-only SQL test. The migration adds the
 decided token states and metadata, workspace expiration defaults, view/action audit tables,
 constraints, indexes, minimum grants, and safe RLS. Existing tokens backfill to `active`; existing
 `expires_at` values remain unchanged. This package must not change token resolution or client-visible
 behavior. Review search paths, grants, output-column ambiguity, trigger ordering, FK delete behavior,
-and empty-production-table fixtures. Leave it committed locally but unpushed until E runs the single
-migration and then its single test.
+and empty-production-table fixtures. It is committed and pushed but remains unapplied; E runs the
+single migration and then its single test.
 
 ### C2.3 — Server-owned token creation and expiration
 
@@ -232,7 +233,7 @@ INSERT client writers (`createSubmittalShareToken`/`createQuoteProposalShareToke
 RPCs instead happens only alongside C2.7's direct-write closure, not before. Test proves creation
 success/entity-correctness/expiration-matching/action-logging for both RPCs, nonexistent-id
 rejection, authorization denial (non-privileged user, and PM-denied-for-proposal), and anon-grant
-denial. Committed locally (`362e702`), not pushed.
+denial. Committed and pushed (`362e702`), not applied.
 
 After C2.2 is live, replace direct token INSERTs with hardened RPCs that derive entity/workspace,
 generate the token server-side, apply the open-document default expiration, and return the token.
@@ -264,7 +265,7 @@ test both succeeded. Test proves every disable/re-enable/revoke/regenerate trans
 already-X no-op outcome, outcome discrimination on both GET RPCs, response-rejection on a disabled
 link (with proof the entity's own status didn't change), the completed-document expiration extension,
 cross-entity authorization denial (PM cannot manage a proposal link, Sales cannot manage a submittal
-link), and grant boundaries. Committed locally (`362e702`), not pushed.
+link), and grant boundaries. Committed and pushed (`362e702`), not applied.
 
 Implement disable, re-enable, permanent revoke, and regenerate/supersede as hardened RPCs with
 server-derived authorization, required reasons where decided, append-only audit events, and
@@ -299,7 +300,7 @@ first-version creation, second-version supersession (with `get_submittal_by_toke
 `outcome=superseded` on the old token), a third version leaving an already-revoked second version's
 token untouched (no loophole), nonexistent-project/quote rejection, cross-entity authorization denial,
 the mirrored proposal-side flow, the quote-cascade disable-then-restore-stays-disabled sequence, and
-grant boundaries. Committed locally (`d564b8b`), not pushed.
+grant boundaries. Committed and pushed (`d564b8b`), not applied.
 
 Make a newer proposal/submittal version supersede the prior version's response ability while keeping
 the old content viewable under the decided wording. Soft-deleting a quote disables its proposal links
@@ -341,8 +342,10 @@ remain recorded correctly. They must not create the pricing migration, alter pro
 or choose discount/tax/customer-display rules. Once that preparation is complete, use §8 to present
 only the genuinely open decisions; never relist D7, D11, or D15 as unanswered.
 
-This is the page the next coder should open first. `PRODUCT_MASTER_COMPLETION_PLAN.md` remains the
-full product roadmap and evidence inventory. This page turns that roadmap into a continuous work
+For a long unattended run, open **`OVERNIGHT_CODER_PLAN_2026-09-13.md` first**. It is the full
+multi-lane execution queue with fallback work and stop conditions; this file remains the detailed
+historical queue and decision register. `PRODUCT_MASTER_COMPLETION_PLAN.md` remains the full product
+roadmap and evidence inventory. This page turns that roadmap into a continuous work
 queue so work does not stop merely because one item needs E's decision, a manual Supabase step, an
 authenticated session, or a new dependency.
 
@@ -1013,8 +1016,8 @@ Queue A/B work.
 
 ### Manual database actions
 
-Migrations 134, 135, and 136 are done and verified. **Migrations 137, 138, and 139 are drafted and
-committed locally, awaiting E's review — 137 is the next single file to hand E.**
+Migrations 134, 135, and 136 are done and verified. **Migrations 137, 138, 139, and 140 are drafted,
+committed, and pushed, awaiting E's review — 137 is the next single file to hand E.**
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
@@ -1076,8 +1079,10 @@ item remains.
 ## 10. Start instruction for the next coder
 
 Read this file, then the top current-status entries in `HANDOFF.md`, then
-`PRODUCT_MASTER_COMPLETION_PLAN.md`. Verify Git and begin at Queue C2.6 above (C2.1–C2.5 are drafted
-records now — migrations 137–140 committed locally, awaiting E's review in order starting with 137;
+`PRODUCT_MASTER_COMPLETION_PLAN.md`. For a long unattended run, use
+`OVERNIGHT_CODER_PLAN_2026-09-13.md`; otherwise verify Git and begin at Queue C2.6 above (C2.1–C2.5
+are drafted records now — migrations 137–140 committed and pushed, awaiting E's review in order
+starting with 137;
 do not redo them). Treat A1–A15, B1–B10, and C1 as completed records rather than a queue to repeat.
 Continue until every independent C2 item is implemented or left at its required single-file manual
 database gate.
