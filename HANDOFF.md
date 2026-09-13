@@ -1,5 +1,41 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue A14 -- `has_role()` hardening, prepared as a manual migration package
+(**Docs/SQL only, commit pending -- see git log for the actual hash once committed. NOT RUN.**
+
+New `backend/supabase/migrations/135_harden_has_role_search_path.sql` (confirm 135 is still the next
+free migration number at execution time) and
+`backend/supabase/migration_135_harden_has_role_search_path_tests.sql`. Traced every real call site
+of `has_role()` (migration 023) via a full grep across every migration file: it is called only from
+RLS policies' own `using()`/`with check()` clauses (migrations 023/025/026/028/033/045/046/053),
+always on a table policy scoped `for all to authenticated`, never nested inside another
+`security definer` function body. Since `has_role()` is itself `security definer` but never pinned
+its own `search_path`, a caller could in principle influence which schema its one unqualified
+reference (`app_user_roles`) resolves to via their own session's `search_path` -- the same class of
+risk migration 124's own header already documents and fixes for the newer bridge functions, just never
+back-applied to this older helper.
+
+The draft migration preserves the function's exact logic, signature, and return value byte-for-byte --
+only `set search_path = ''` and fully qualifying `public.app_user_roles` are added -- and adds the
+same minimum-grants pattern every function since migration 124 uses (`revoke all from public`,
+`revoke execute from anon`, `grant execute to authenticated`). `has_role()` never had an explicit
+grant/revoke statement before (confirmed by grep), so this also closes an unused implicit
+`anon`/`public` execute path -- inert in practice, since every real policy scopes to `authenticated`
+and `auth.uid()` is null for `anon` regardless, but tightened anyway to match the established minimum-
+grants discipline.
+
+The draft test script (transaction-safe, `begin;`/`rollback;`, real fixtures via
+`app_user_roles`/`auth.users`, never a fabricated account) proves: a real warehouse-role user still
+gets `true`; a real non-warehouse, non-admin user still gets `false`; the grant state actually changed
+as intended (`has_function_privilege` confirms `anon` can no longer execute it directly, `authenticated`
+still can); and a real RLS policy that calls `has_role()` internally (`inventory_items`' own write
+policy) still produces the identical allow outcome for a real warehouse user, via an actual (rolled-
+back, `WHERE false`) UPDATE attempt -- proving the hardening changed nothing about any real
+authorization result, not just the raw function's return value in isolation.
+
+**Neither file has been run.** No policy, role vocabulary, or authorization result was altered by
+drafting these -- per the task's own scope, this is prepared and parked for E's review, not applied.
+
 Last updated: 2026-09-12, Queue A13 -- compatible security dependency updates, excluding `xlsx`
 (**Code: three commits, `28232b5`/`f3457e7`/`e6bda50`, pushed.**
 

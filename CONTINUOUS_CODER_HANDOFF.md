@@ -110,6 +110,11 @@ The next coder should verify this baseline before editing rather than redoing co
   request -- the real silent-truncation risk Queue B6 found is closed; a load failure now surfaces
   via the "Sync issue (N)" pill (`criticalLoadErrors.inventoryItems`) instead of rendering an
   indistinguishable empty catalog.
+- `nodemailer`/`pdfjs-dist` bumped to fixed versions and remaining transitive build-tool advisories
+  resolved via `npm audit fix` (Queue A13) -- `npm audit` now reports only `xlsx` (no fix available,
+  gated on D6).
+- `has_role()`'s hardening migration is drafted and parked for E (Queue A14, migration 135) --
+  **NOT applied.**
 - `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` documents what's proven by TS tests, SQL tests, prod
   verification, and what still needs real-world use, for all six Queue A8 flows.
 - **Queue B (B1-B10) produced ten design/spec/audit documents, none implemented**:
@@ -401,6 +406,14 @@ focused test exists. Commit each logically independent dependency group so it ca
 cleanly. Record advisories that remain.
 
 ### A14. Prepare `has_role()` hardening as a manual migration package
+
+**Status: DONE (prepared, NOT run) — see `HANDOFF.md` for the doc commit hash.**
+`backend/supabase/migrations/135_harden_has_role_search_path.sql` (confirm 135 is still free at
+execution time) preserves exact logic/signature, adds `search_path=''` + full qualification +
+minimum grants. Its test script proves representative true/false checks, the actual grant-state
+change (`has_function_privilege`), and that a real RLS policy calling `has_role()` still produces the
+identical outcome. Every real call site traced via full grep -- all are RLS policies scoped
+`to authenticated`, none nested inside another `security definer` function. Parked for E; not run.
 
 **Status: PREPARE ONLY — do not run.** Queue B10 reconfirmed the old helper lacks the hardened
 `search_path=''`/fully-qualified pattern now required of newer authorization functions and is used by

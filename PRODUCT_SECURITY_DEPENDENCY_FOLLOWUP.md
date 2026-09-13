@@ -97,10 +97,10 @@ here — nothing changed there to review.
 
 ## 3. What this document deliberately does not do
 
-It does not run `npm audit fix`, does not install or replace `xlsx`, `exceljs`, or any other package,
-and does not draft or run a migration for `has_role()` — hardening it (adding `search_path=''` and
-qualifying its one table reference) would be a purely additive, zero-behavior-change fix in principle,
-but per the task's own instruction any database fix stays a manual migration package for review, not
-applied here. It does not trace every call site of `has_role()` across all RLS policies — that is a
-larger, separate sweep beyond "functions added since the last audit," which is what this pass scoped
-itself to.
+As originally written (this pass, B10), it did not run `npm audit fix`, install or replace `xlsx`/
+`exceljs`, or draft a migration for `has_role()`. **Both were subsequently done under Queue A10-15**:
+A13 applied `npm audit fix` (no `--force`) plus direct `nodemailer`/`pdfjs-dist` bumps, and A14 traced
+every real call site of `has_role()` (all RLS policies, all scoped `to authenticated`, none nested
+inside another `security definer` function) and drafted `migrations/135_harden_has_role_search_path.sql`
+plus its test script — parked for E, **not run**. `xlsx` remains untouched pending D6, and Phase 3
+RLS/full-policy-sweep work remains out of scope, unchanged from this document's original framing.
