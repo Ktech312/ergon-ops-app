@@ -494,6 +494,7 @@ const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "pr
 const CRITICAL_DOMAIN_LABELS: Record<string, string> = {
   inventoryMovements: "Inventory Movement Ledger",
   projectDocuments: "Project Documents",
+  inventoryItems: "Inventory Items",
 };
 
 const RESTORE_SECTION_LABELS: Record<RestoreSectionName, string> = {
@@ -1839,7 +1840,19 @@ function App() {
     if (!authSession || !isRemotePersistenceConfigured()) {
       return;
     }
-    loadInventoryItems(authSession.accessToken).then(setInventoryItems).catch(() => {});
+    loadInventoryItems(authSession.accessToken)
+      .then((items) => {
+        setInventoryItems(items);
+        setCriticalLoadError("inventoryItems", null);
+      })
+      .catch((error) => {
+        // Queue A12: loadInventoryItems now throws instead of silently
+        // returning [] on a page failure -- surface it the same way
+        // inventoryMovements/projectDocuments already do, instead of
+        // swallowing it here and rendering an indistinguishable "empty
+        // inventory" (the exact silent-truncation risk this fix closes).
+        setCriticalLoadError("inventoryItems", error instanceof Error ? error.message : "Could not load inventory items.");
+      });
   }, [authSession]);
 
   useEffect(() => {

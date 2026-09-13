@@ -1,5 +1,39 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue A12 -- remove the silent inventory row-cap (**Code: commit pending --
+see git log for the actual hash once committed.**
+
+Closes the real, previously-flagged risk Queue B6 found: `loadInventoryItems` (`src/persistence.ts`)
+issued one unbounded request and would have silently truncated the catalog with no error anywhere if
+the real row count ever exceeded PostgREST's own configured cap. Now fetches deterministic,
+non-overlapping 500-row pages (ordered `item_name.asc,id.asc` -- the `id` tiebreak is required, not
+cosmetic, since two same-named rows could otherwise shift across a page boundary between requests and
+be skipped by both pages) until a short or empty final page. Deduplicates defensively by the row's
+real database `id` (never exposed on the returned `Part`) in case a row still appears on two pages. A
+page-fetch failure now throws (`"Could not load the full inventory catalog..."`) instead of returning
+`[]`/a partial list, and a 200-page safety guard throws rather than looping forever. The three-tier
+migration-compatibility select fallback (092/091) is preserved, resolved once from the first page and
+reused for every later page. Public return type (`Promise<Part[]>`) and visible alphabetical order
+unchanged; no picker redesigned, no infinite scroll added, per the task's own scope.
+
+Both call sites in `src/main.tsx` updated: the session-load effect now surfaces a thrown failure via
+`setCriticalLoadError("inventoryItems", ...)` (new domain added to `CRITICAL_DOMAIN_LABELS`, same
+"Sync issue (N)" pill mechanism `inventoryMovements`/`projectDocuments` already use) instead of
+silently swallowing it in an empty `.catch(() => {})` -- previously a thrown error there would have
+been indistinguishable from an honestly empty inventory, the exact failure mode this whole fix exists
+to close. The post-restore reload's existing `try/catch` already handles a thrown failure honestly
+(logs it, shows a plain non-overclaiming message) and needed no change.
+
+New `src/inventory-items-pagination.test.ts` (6 tests) covers all five named cases: one short page;
+multiple full pages plus a short final page; an exact-full-page boundary (a full page followed by an
+empty one, not assumed to be the end); duplicate defense (a row appearing on two pages counted once);
+and a later-page failure throwing instead of returning a partial catalog (plus one covering a
+first-page failure for completeness).
+
+`npx tsc -b` clean. `NODE_OPTIONS="--max-old-space-size=6144" npx vitest run --no-file-parallelism`:
+**384/384 passing** (+6). `npx eslint .`: 0 errors, 73 pre-existing warnings, unchanged. `npm run
+build`: clean. `npm run test:smoke`: 6/6 passing.
+
 Last updated: 2026-09-12, Queue A11 -- freeze company identity into submittals (**Code: commit
 `2ad1d5e`, pushed.**
 

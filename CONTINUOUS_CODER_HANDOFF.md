@@ -106,6 +106,10 @@ The next coder should verify this baseline before editing rather than redoing co
 - Client Ledger field edits are serialized per-project through `createClientLedgerSaveQueue` (Queue
   A10) -- an older failed save can no longer overwrite a newer edit, and the previously log-only
   failure now surfaces a plain banner.
+- `loadInventoryItems` (Queue A12) fetches deterministic paginated pages instead of one unbounded
+  request -- the real silent-truncation risk Queue B6 found is closed; a load failure now surfaces
+  via the "Sync issue (N)" pill (`criticalLoadErrors.inventoryItems`) instead of rendering an
+  indistinguishable empty catalog.
 - `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` documents what's proven by TS tests, SQL tests, prod
   verification, and what still needs real-world use, for all six Queue A8 flows.
 - **Queue B (B1-B10) produced ten design/spec/audit documents, none implemented**:
@@ -361,6 +365,14 @@ Do not change submittal ownership, approval, response, link, or PM handoff behav
 email mapping tests and ship under §3.
 
 ### A12. Remove the silent inventory row-cap without changing the UI
+
+**Status: DONE — commit pending, see `HANDOFF.md` for the hash once committed.**
+`loadInventoryItems` now fetches deterministic 500-row pages (ordered `item_name.asc,id.asc`) until a
+short final page, dedupes by real row id, throws instead of returning a partial list on any page
+failure, and has a 200-page safety guard. Both callers updated; the session-load one now surfaces a
+failure via `setCriticalLoadError("inventoryItems", ...)` instead of swallowing it. 6 new tests cover
+all five named cases. 384/384 passing, tsc/eslint/build/smoke all clean. No picker changed, no
+infinite scroll added.
 
 **Status: READY — start automatically after A11.** Queue B6 confirmed `loadInventoryItems` can be
 silently truncated by PostgREST's configured maximum. A paginated UI is a later UX decision, but

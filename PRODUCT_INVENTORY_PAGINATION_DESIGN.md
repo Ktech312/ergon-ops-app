@@ -112,19 +112,17 @@ Matches this app's existing conventions rather than inventing new ones:
   currently-rendered set; changing search/filter parameters discards the current page set and starts
   a fresh cursor from the beginning, rather than trying to reconcile the two.
 
-## 5. Explicit non-goal, per the task's own instruction
+## 5. Explicit non-goal, per the task's own instruction (RESOLVED by Queue A12)
 
-**Do not cap the existing alphabetical query.** `loadInventoryItems` stays exactly as unbounded as it
-is today. One real, related finding worth naming here rather than silently fixing: that query already
-has no `limit`, so if the live PostgREST instance has any configured default row cap
-(`db-max-rows`/Supabase's own default, not checked against the live project as part of this
-design-only pass), an inventory count that ever exceeds it would **already silently truncate today**,
-with none of the 114 consumers above any wiser — every lookup, dropdown, and aggregate would just be
-missing whatever fell past the cap, with no error surfaced anywhere. This is a pre-existing risk this
-design does not create and is not scoped to fix (it would require either confirming no such cap
-exists in production, or a genuinely different fix — a keyset-paginated full-load loop for
-`loadInventoryItems` itself, which is a larger change than D10 asked for) — named here as a candidate
-System Health / follow-up item, not solved by this document.
+**Do not cap the existing alphabetical query.** `loadInventoryItems` stayed unbounded as of this
+document's original writing. One real, related finding was named here rather than silently fixed:
+that query had no `limit`, so if the live PostgREST instance had any configured default row cap, an
+inventory count exceeding it would have silently truncated with no error anywhere. **Queue A12
+(2026-09-12) closed this**: `loadInventoryItems` now fetches deterministic, non-overlapping paginated
+pages internally (see `HANDOFF.md`'s Queue A12 entry) — the alphabetical order this document was told
+not to cap remains exactly as visible to every one of the 114 consumers above, but the function no
+longer trusts one unbounded request to return everything. This section is kept for history; the risk
+it named is no longer open.
 
 ## 6. Recommended default UX (interaction sketch)
 

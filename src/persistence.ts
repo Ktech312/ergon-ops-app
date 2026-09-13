@@ -5424,38 +5424,86 @@ function mapInventoryItemRow(row: InventoryItemRow): Part {
   };
 }
 
+// Queue A12 (2026-09-12): a single unbounded request relied on the real
+// inventory count never reaching PostgREST's own configured row cap --
+// if it ever did, this silently returned a truncated list with no error
+// anywhere in the app (found in Queue B6's pagination-design pass). Now
+// fetches deterministic, non-overlapping pages (ordered by item_name
+// then id -- the id tiebreak is required, not cosmetic: without a
+// deterministic secondary key, two same-named rows could shift across a
+// page boundary between requests and end up skipped by both pages, which
+// plain item_name.asc ordering cannot guarantee against) until a short
+// or empty final page, instead of trusting one request to return
+// everything. Deduplicates defensively by the row's real database id
+// (never exposed on the returned Part) in case a row ever appears on two
+// pages anyway. A page-fetch failure throws rather than returning a
+// partial catalog, and a finite page-count guard throws rather than
+// looping forever if a real bug ever produces an endless run of full
+// pages.
+const INVENTORY_ITEMS_PAGE_SIZE = 500;
+const INVENTORY_ITEMS_MAX_PAGES = 200;
+
 export async function loadInventoryItems(accessToken?: string): Promise<Part[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(supabaseUrl(`inventory_items?select=${INVENTORY_ITEM_SELECT}&order=item_name.asc`), {
-    headers: supabaseHeaders(accessToken),
-  });
+
+  function fetchPage(select: string, offset: number) {
+    return fetch(supabaseUrl(`inventory_items?select=${select}&order=item_name.asc,id.asc&limit=${INVENTORY_ITEMS_PAGE_SIZE}&offset=${offset}`), {
+      headers: supabaseHeaders(accessToken),
+    });
+  }
+
+  // Which select shape actually works is resolved once, from the first
+  // page, via the same three-tier migration-compatibility fallback the
+  // single-request version used -- then reused for every later page,
+  // since a column missing on page 1 can't reappear on page 2.
+  let select = INVENTORY_ITEM_SELECT;
+  let response = await fetchPage(select, 0);
   if (!response.ok && response.status === 400) {
-    const fallbackResponse = await fetch(supabaseUrl(`inventory_items?select=${INVENTORY_ITEM_SELECT_PRE_092}&order=item_name.asc`), {
-      headers: supabaseHeaders(accessToken),
-    });
-    if (fallbackResponse.ok) {
-      const fallbackRows = (await fallbackResponse.json()) as InventoryItemRow[];
-      return fallbackRows.map(mapInventoryItemRow);
+    select = INVENTORY_ITEM_SELECT_PRE_092;
+    response = await fetchPage(select, 0);
+    if (!response.ok && response.status === 400) {
+      select = INVENTORY_ITEM_SELECT_PRE_091;
+      response = await fetchPage(select, 0);
     }
-    if (fallbackResponse.status !== 400) {
-      return [];
-    }
-    const olderFallbackResponse = await fetch(supabaseUrl(`inventory_items?select=${INVENTORY_ITEM_SELECT_PRE_091}&order=item_name.asc`), {
-      headers: supabaseHeaders(accessToken),
-    });
-    if (!olderFallbackResponse.ok) {
-      return [];
-    }
-    const olderFallbackRows = (await olderFallbackResponse.json()) as InventoryItemRow[];
-    return olderFallbackRows.map(mapInventoryItemRow);
   }
-  if (!response.ok) {
-    return [];
+
+  const allRows: InventoryItemRow[] = [];
+  const seenIds = new Set<string>();
+  function addPage(rows: InventoryItemRow[]) {
+    for (const row of rows) {
+      if (!seenIds.has(row.id)) {
+        seenIds.add(row.id);
+        allRows.push(row);
+      }
+    }
   }
-  const rows = (await response.json()) as InventoryItemRow[];
-  return rows.map(mapInventoryItemRow);
+
+  let pagesFetched = 0;
+  let lastPageSize = INVENTORY_ITEMS_PAGE_SIZE;
+  let offset = 0;
+  while (lastPageSize === INVENTORY_ITEMS_PAGE_SIZE) {
+    if (pagesFetched > 0) {
+      response = await fetchPage(select, offset);
+    }
+    pagesFetched += 1;
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      console.error(`loadInventoryItems: page ${pagesFetched} failed (${response.status}): ${bodyText}`);
+      throw new Error("Could not load the full inventory catalog. Try again. If the problem continues, contact support.");
+    }
+    const rows = (await response.json()) as InventoryItemRow[];
+    addPage(rows);
+    lastPageSize = rows.length;
+    offset += INVENTORY_ITEMS_PAGE_SIZE;
+    if (lastPageSize === INVENTORY_ITEMS_PAGE_SIZE && pagesFetched >= INVENTORY_ITEMS_MAX_PAGES) {
+      console.error(`loadInventoryItems: exceeded ${INVENTORY_ITEMS_MAX_PAGES} pages without a short final page -- aborting instead of looping forever.`);
+      throw new Error("The inventory catalog is larger than this loader currently supports. Contact support.");
+    }
+  }
+
+  return allRows.map(mapInventoryItemRow);
 }
 
 let mainWarehouseLocationId: string | null = null;
