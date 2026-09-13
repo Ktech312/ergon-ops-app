@@ -12,22 +12,19 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
 
 Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: migrations 137, 138,
 139, and 140 plus their four canonical test scripts, committed and pushed on `main` (`362e702`,
-`f09f574`, `d564b8b`, status reconciliation through `814af14`; no dependent frontend code exists
-yet). Migration 137 and corrective migration 141 are applied and fully verified by the corrected
-canonical migration-137 test. Migration 138 is applied; its canonical test was independently
-verified clean (2026-09-13, method under "Manual database actions" item 6) and is ready for E to
-run for the authoritative production confirmation. Migrations
-139–140 are not applied. See "Manual database actions"
-below for the full ordered list and exact sequencing.
+`f09f574`, `d564b8b`, status reconciliation through `b860ad8`; no dependent frontend code exists
+yet). Migrations 137 (plus corrective 141) and 138 are **applied and fully verified in
+production** — both canonical tests returned `Success. No rows returned`, hard-fail-on-skip design
+confirms zero sections skipped. Migration 139 is next up for E's review (a breaking RPC signature
+change — see item 7 under "Manual database actions"); migration 140 remains queued behind it.
 
 ## Next-session launchpad
 
-**Repository checkpoint:** migrations 134, 135, 136, 137, and corrective 141 are applied and verified.
-Migration 138 is applied; its canonical test is independently verified clean and is the next single
-manual file for E to run. Migrations 139 and 140 are drafted, committed and
-pushed, and awaiting E's review/run in that order — see "Manual database actions." Continue Queue C2
-below (C2.6 onward) while the 138 test result is pending. Do not rerun
-134/135/136 and do not re-ask D7's settled link rules.
+**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), and 138 are applied and verified in
+production. Migration 139 is the next single manual file for E to run — see "Manual database
+actions." Migration 140 is drafted, committed and pushed, awaiting its turn after 139. Continue
+Queue C2 below (C2.6 onward) while 139 is pending. Do not rerun
+134/135/136/137/141/138 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
 
@@ -1051,7 +1048,9 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    141_fix_share_link_table_grants.sql` closed the real table-ACL gap found by migration 137's first
    canonical-test run. Migration 137's corrected test verifies the closed grants and passed. Do not
    run migration 141 or the migration-137 test again.
-6. **Migration 138 — APPLIED. Test independently verified clean (2026-09-13), ready to run.**
+6. **Migration 138 — DONE AND VERIFIED.** E ran the corrected canonical test in production and it
+   returned `Success. No rows returned` (2026-09-13) — the script's hard-fail-on-skip design confirms
+   every section ran with zero skips. Do not run migration 138 or its test again.
    `backend/supabase/migrations/138_share_link_server_owned_creation.sql` — server-owned
    token-creation RPCs (see C2.3 above). Requires 137 live first. Its test script,
    `backend/supabase/migration_138_share_link_server_owned_creation_tests.sql`, now creates its
@@ -1086,13 +1085,14 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    pass — that would be a real data-availability condition, not a construction bug, and the fix would
    be adding a second/third real workspace member (or accepting the honest skip), not editing the SQL.
    A clean `Success. No rows returned` (with the PASSED notice, zero skips) closes migration 138.
-7. **Migration 139 — PENDING, AFTER 138.** `backend/supabase/migrations/
+7. **Migration 139 — PENDING, NEXT UP.** `backend/supabase/migrations/
    139_share_link_lifecycle_actions.sql` — atomic lifecycle actions plus the `outcome`-bearing
-   extension of all four public share-link RPCs (see C2.4 above). Requires 137 and 138 live first.
-   **This one is a breaking RPC signature change** — the frontend TypeScript update to parse the new
-   `outcome` column must ship in the same reviewed batch as this migration (a separate commit,
-   pushed only once E confirms 139 and its test — `backend/supabase/migration_
-   139_share_link_lifecycle_actions_tests.sql` — both succeeded).
+   extension of all four public share-link RPCs (see C2.4 above). Requires 137 and 138 live first
+   (both now applied). **This one is a breaking RPC signature change** — the frontend TypeScript
+   update to parse the new `outcome` column must ship in the same reviewed batch as this migration
+   (a separate commit, pushed only once E confirms 139 and its test — `backend/supabase/migration_
+   139_share_link_lifecycle_actions_tests.sql` — both succeeded). Give E only the migration file
+   first; its test script only after E reports the migration itself succeeded.
 8. **Migration 140 — PENDING, AFTER 139.** `backend/supabase/migrations/
    140_share_link_version_supersession_and_quote_cascade.sql` — auto-supersede-on-new-version RPCs
    plus the quote soft-delete cascade trigger (see C2.5 above). Requires 137, 138, and 139 live
