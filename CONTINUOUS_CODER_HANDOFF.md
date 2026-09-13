@@ -1,14 +1,14 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **ACTIVE — QUEUE A REOPENED WITH A10–A15.** Prepared: 2026-09-12. A1–A9 and B1–B10 are
-complete in the forms recorded below. The first pass then incorrectly concluded that every remaining
-item required E's decision. A review of its own findings identified more safe work: Client Ledger's
-recommended queue is a technical reliability choice, submittal branding can mirror the approved
-proposal pattern, Inventory can fetch all pages without choosing a new UI, compatible security
-updates can exclude the decision-gated `xlsx` replacement, and `has_role()` hardening can be prepared
-without being run. Continue at **A10**, not the decision register.
-Current verified repository baseline before this correction: `main` / `origin/main` at `83b8ada`
-with a clean working tree.
+Status: **A1–A15 AND B1–B10 ALL COMPLETE.** Prepared: 2026-09-12. A10–A15 (the reopened continuation)
+are now done: A10 (Client Ledger serialized save queue), A11 (submittal company-identity freeze,
+mirroring the proposal pattern), A12 (removed the silent inventory row-cap), A13 (three compatible
+security dependency commits, `xlsx` deliberately excluded), A14 (`has_role()` hardening drafted and
+parked, migration 135, **not run**), A15 (this reconciliation pass itself — see the "Manual database
+actions" subsection under §8 for the two parked migrations, in order). **Nothing remains unblocked in
+Queue A or Queue B.** The next coder should resume at the **decision register** (§8) — most items now
+have a reviewable design document or a shipped implementation behind them — and then **Queue C** (§7).
+Current verified repository baseline: `main` / `origin/main` at `bfd4265` with a clean working tree.
 Production: `https://ergon-ops-app.vercel.app/`
 
 This is the page the next coder should open first. `PRODUCT_MASTER_COMPLETION_PLAN.md` remains the
@@ -427,6 +427,15 @@ role vocabulary, or authorization results. Park the reviewed package for E and c
 
 ### A15. Final post-continuation reconciliation
 
+**Status: DONE — this pass.** Updated this file's header/§4 baseline/§8 (new "manual database
+actions" subsection) and each of A10–A14's own `Status:` lines; `PRODUCT_MASTER_COMPLETION_PLAN.md`
+(Client Ledger reliability row and Batch 2 marked DONE, xlsx/inventory-performance rows corrected to
+reflect A12/A13); `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` (the one material gap it named —
+`SubmittalSnapshot` branding — marked closed by A11); `PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md`,
+`PRODUCT_INVENTORY_PAGINATION_DESIGN.md`, and `PRODUCT_SECURITY_DEPENDENCY_FOLLOWUP.md` were already
+updated inline within their own A10/A12/A13/A14 commits, not deferred to this pass. All of A10–A14
+finished with no unresolved code-only blocker — nothing to report as incomplete.
+
 Update this file, `HANDOFF.md`, the master plan, Queue B source documents, and the critical-flow
 coverage matrix with A10–A14's actual outcomes. Consolidate manual database actions into one ordered
 list, but still present only one migration action at a time when E is ready. If any code-only item is
@@ -669,6 +678,31 @@ Queue A/B work.
 | D13 | Support first release | Ticket/request lifecycle linked to Client Ledger, Project, site, and installed asset | Support module |
 | D14 | Engineering first release | Product/solution request + technical review + Catalog release link | Engineering module |
 | D15 | **Already decided for now:** Commercial SaaS billing | Remains deferred until explicit authorization; do not ask again during current operational-product work | SaaS commercialization only |
+
+### Manual database actions awaiting E's review, in order
+
+Two migrations sit drafted, reviewed, and parked in the repo — neither has been run. Per §2's own
+rule, only one is ever handed to E as a single clickable file/action at a time; this list exists so a
+later coder (or E) knows the intended order without re-deriving it, not as permission to hand over
+both at once.
+
+1. **`backend/supabase/migrations/134_project_conversion_client_id_carry_through.sql`** (Queue A2,
+   confirm it's still the next free number — 135 has since been claimed by item 2 below, so re-check
+   before either is actually run). Adds nullable `client_id` to the Project row `create_project_from_quote`
+   already inserts, preserving every existing guarantee byte-for-byte. Lower risk, smaller blast
+   radius, and blocks nothing else — recommended first simply because it's the more self-contained of
+   the two. Verification script: `backend/supabase/migration_134_client_id_carry_through_tests.sql`.
+2. **`backend/supabase/migrations/135_harden_has_role_search_path.sql`** (Queue A14). Hardens
+   `has_role()`'s `search_path`/qualification and tightens its grants; zero behavior change to any
+   real authorization result (traced and tested). Independent of item 1 — either can run first without
+   affecting the other — listed second only because it touches a security-authorization helper used by
+   eight other migrations' worth of RLS policies, which warrants a slightly more deliberate review pass
+   even though the change itself is narrow. Verification script:
+   `backend/supabase/migration_135_harden_has_role_search_path_tests.sql`.
+
+Both follow the same review discipline as every other migration this session: present one file, wait
+for E to run it and report success, then present its own verification script — never both files of
+the same migration, and never the second migration, in the same message.
 
 ## 9. Consolidated reporting format
 

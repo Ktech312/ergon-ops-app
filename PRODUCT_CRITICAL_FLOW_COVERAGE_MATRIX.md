@@ -23,14 +23,18 @@ real user) actually using the feature under real conditions this session's tooli
 | Proposal/submittal response outcome mapping | `proposal-response.test.ts` (11), `submittal-response.test.ts` (11) — **both** already cover: first-winner success, replay/concurrency-loser mapped to the ORIGINAL winner's state (not the replay's own input), invalid-token, HTTP failure vs. invalid-token distinction, network-throw-without-rejecting, and an unrecognized future outcome string treated as `error` instead of crashing | Covered by migrations 119/121/122/123's own SQL suites (proposal/submittal replay-safety, applied and verified in earlier sessions per `HANDOFF.md`) | Bundle-content verified; the public page itself was spot-checked at load time | A real client actually responding to a real sent proposal/submittal — not yet exercised (no real proposal exists to respond to) |
 | Backup restore structured outcome (`restoreFullBackupSnapshot`) | `restore-backup-snapshot.test.ts` (7) — complete success, first-section failure not blocking later sections, middle-section failure preserving an earlier success, malformed-snapshot rejection, deterministic document-number retry | N/A — this is entirely frontend orchestration over already-tested individual write functions, no dedicated RPC | Not yet exercised against a real backup file in production (the checkpoint/resume design itself remains Queue B item B5, unimplemented) | A real restore of a real exported backup snapshot — never run against production per the standing rule against destructive backup/restore testing outside a sandbox |
 
-## The one material gap actually found this pass
+## The one material gap actually found this pass — CLOSED by Queue A11
 
 **Old-snapshot compatibility for `ProposalSnapshot.companyName`/`companyLogoUrl`** (added this
-session's earlier branding work) is covered on the frontend (`proposal-version-comparison.test.ts`'s
+session's earlier branding work) was covered on the frontend (`proposal-version-comparison.test.ts`'s
 "missing optional fields from older proposals" case, and `send-proposal-email.js`'s new fallback
-test from Queue A7) but has no equivalent for `SubmittalSnapshot`, because that type never gained
-company-branding fields at all — see Queue A7's own recorded finding in `HANDOFF.md`. Not a test gap
-so much as a feature gap one layer up; tracked there, not duplicated here.
+test from Queue A7) but had no equivalent for `SubmittalSnapshot`, because that type never gained
+company-branding fields at all — see Queue A7's own recorded finding in `HANDOFF.md`. **Queue A11
+(2026-09-12) closed this**: `SubmittalSnapshot` now carries the same optional `companyName`/
+`companyLogoUrl` fields, `SubmittalPublicPage` renders them via the shared `.proposal-public-brand`
+block, and `send-submittal-email.js`'s sign-off uses the frozen name with an "Ergon" fallback — 2 new
+tests in `tests/api/send-submittal-email.test.js` mirror `send-proposal-email.test.js`'s own coverage
+exactly. Kept here for history; the gap this section originally named is no longer open.
 
 ## What this matrix deliberately does not do
 

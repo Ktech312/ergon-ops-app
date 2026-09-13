@@ -1,5 +1,19 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue A15 -- final post-continuation reconciliation (**Docs only, commit
+pending -- see git log for the actual hash once committed.**
+
+Reconciled `CONTINUOUS_CODER_HANDOFF.md` (header, §4 baseline, each of A10-A15's own `Status:` lines,
+and a new "Manual database actions awaiting E's review, in order" subsection under §8 consolidating
+migrations 134 and 135), `PRODUCT_MASTER_COMPLETION_PLAN.md` (Client Ledger reliability row and Batch
+2 marked DONE; the xlsx and mobile/accessibility-performance rows corrected to reflect Queue A12/A13),
+and `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` (the one material gap it named, `SubmittalSnapshot`
+branding, marked closed by Queue A11). `PRODUCT_CLIENT_LEDGER_SAVE_RECOVERY_PLAN.md`,
+`PRODUCT_INVENTORY_PAGINATION_DESIGN.md`, and `PRODUCT_SECURITY_DEPENDENCY_FOLLOWUP.md` were already
+updated inline within their own A10/A12/A13/A14 commits, not deferred to this pass. Verified all seven
+commit hashes cited across A10-A14 against `git log` directly -- all accurate. No code-only item from
+A10-A14 finished unresolved; nothing to report as a blocker.
+
 Last updated: 2026-09-12, Queue A14 -- `has_role()` hardening, prepared as a manual migration package
 (**Docs/SQL only, commit `4b96fbe`, pushed. NOT RUN.**
 
