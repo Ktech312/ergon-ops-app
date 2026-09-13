@@ -1,9 +1,10 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **ACTIVE EXECUTION PLAN**  
-Prepared: 2026-09-12  
-Current verified repository baseline when this page was written: `main` / `origin/main` at
-`02fe578` with a clean working tree.  
+Status: **ACTIVE EXECUTION PLAN -- Queue A1-A8 complete, A9 is this reconciliation pass itself.**
+Prepared: 2026-09-12. Updated 2026-09-12 (same day, Queue A9): A1 through A8 all closed and deployed
+-- see each item's own section below for what changed and `HANDOFF.md` for full evidence. The next
+coder should resume at **Queue B** (§6) rather than Queue A, which has nothing left unblocked.
+Current verified repository baseline: `main` / `origin/main` at `3e3d940` with a clean working tree.
 Production: `https://ergon-ops-app.vercel.app/`
 
 This is the page the next coder should open first. `PRODUCT_MASTER_COMPLETION_PLAN.md` remains the
@@ -86,12 +87,28 @@ The next coder should verify this baseline before editing rather than redoing co
 - System Health Phase A shows existing notification-delivery failures to admins.
 - Modal focus management, clickable-row keyboard behavior, photo resizing, and the core reliability
   write checks are deployed.
+- Migration 134 (`client_id` carry-through onto Projects) is drafted with its verification script
+  but **NOT applied** -- kept local for E's review, exactly like every unapplied migration before it.
+- Sales quote BOM lines and Proposal Template sections both support accessible Move up/down
+  reordering (`line_sort`/`sequence_order`, both existed unused before Queue A3/A4).
+  `stack-table-mobile`'s `data-label` cells no longer silently overflow at mobile widths (Queue A6 --
+  a real bug, found and fixed, not just a polish pass).
+- A read-only proposal-version comparison (`compareProposalSnapshots`) is live in the Quote Proposal
+  section once a quote has 2+ versions (Queue A5).
+- The customer-facing proposal email's sign-off uses the real frozen `companyName` instead of a
+  hardcoded product name (Queue A7). `send-submittal-email.js`'s equivalent sign-off is a known,
+  deliberately-unfixed gap -- `SubmittalSnapshot` has no company-branding fields at all yet.
+- `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` documents what's proven by TS tests, SQL tests, prod
+  verification, and what still needs real-world use, for all six Queue A8 flows.
 
 Do not reimplement these. Verify only where the current task depends on them.
 
 ## 5. Queue A — implement and ship without waiting for a business decision
 
 ### A1. Close migration 133's browser-verification gap
+
+**Status: DONE — `8bc6154`.** Read-only evidence recorded in `HANDOFF.md`: admin recognized, prior
+Sync issue gone, Pending Approvals renders, no new console errors.
 
 **Type:** read-only production verification.  
 **Start here:** `HANDOFF.md` top entry; Pending Approvals and Team Roster in `src/main.tsx`.
@@ -110,6 +127,9 @@ session is available, record that and proceed to A2.
 with no further delay.
 
 ### A2. Prepare `client_id` carry-through for quote-to-project conversion
+
+**Status: DONE (prepared, not run) — `bf9fe43`.** Migration 134 and its verification script are
+drafted and parked for E; see §4 baseline note. Not applied.
 
 **Type:** migration package preparation; do not run; do not block later tasks.  
 **Source:** `PRODUCT_MASTER_COMPLETION_PLAN.md` §4 item 7 / §5 Batch 4.  
@@ -139,6 +159,8 @@ frontend is shipped, and the package is parked for E. Continue to A3 without ask
 
 ### A3. Add accessible ordering controls to Sales quote BOM lines
 
+**Status: DONE — `a9a3f67` / `6a92247`.** Move up/down shipped, deployed, and verified live.
+
 **Type:** code-only, ship when verified.  
 **Source:** `PRODUCT_MASTER_COMPLETION_PLAN.md` §5 Batch 10.  
 **Primary files:** Sales Quote Builder in `src/main.tsx`; Sales quote BOM persistence in
@@ -158,6 +180,9 @@ recorded.
 
 ### A4. Add ordering controls to Proposal Template sections
 
+**Status: DONE — `a36cd3a` / `7beb909`.** Move up/down shipped, deployed, and verified live;
+existing sent proposal snapshots confirmed unchanged.
+
 **Type:** code-only, ship when verified.  
 **Primary files:** Proposal Template Admin panel in `src/main.tsx`;
 `updateProposalTemplateSection()` in `src/persistence.ts`; existing `sequence_order` field.
@@ -169,6 +194,9 @@ template approvals, workspace-scoping, or new permissions.
 **Done:** current template order persists; sent proposal snapshots remain historical; deployed.
 
 ### A5. Build proposal-version comparison from existing snapshots
+
+**Status: DONE — `a0baa92` / `8a7a42c`.** Read-only comparison view shipped and deployed;
+`compareProposalSnapshots` covered by 7 dedicated tests.
 
 **Type:** code-only/read-only feature, ship when verified.  
 **Source:** `PRODUCT_MASTER_COMPLETION_PLAN.md` §5 Batch 12.  
@@ -189,6 +217,11 @@ either; deployed.
 
 ### A6. Proposal mobile and print verification/polish
 
+**Status: DONE — `7e350e9` / `a5be390`.** Verified at 360/390/768/desktop plus print; found and
+fixed a real silent overflow bug in `stack-table-mobile`'s `data-label` cells (masked in production
+by `overflow-x: hidden`). Real Chrome window minimization blocked one direct-device re-check;
+isolated-harness evidence used instead and documented as such, not claimed as device verification.
+
 **Type:** code-only fixes arising from verification; no new feature decision.  
 **Primary files:** `ProposalPublicPage` in `src/main.tsx`; proposal CSS in `src/styles.css`.
 
@@ -201,6 +234,11 @@ problems. Preserve the existing frozen snapshot and response workflow.
 deployed. Do not describe desktop verification as mobile-device acceptance.
 
 ### A7. Productization identity and configuration sweep
+
+**Status: DONE — `48cece8` / `6b56b2b`.** Proposal email sign-off now uses the frozen
+`content_snapshot.companyName` with an "Ergon" fallback. `send-submittal-email.js`'s equivalent gap
+(no company-branding fields on `SubmittalSnapshot` at all) is a named, deliberately-unfixed
+category-3 item, not silently rewritten — tracked for Queue B/decision register.
 
 **Type:** source audit plus safe code-only corrections.  
 **Source:** `PRODUCT_ONBOARDING_CONFIG.md` §1.  
@@ -223,6 +261,10 @@ company's identity; unresolved legal/default content is explicitly listed.
 
 ### A8. Strengthen read-only acceptance coverage for completed critical flows
 
+**Status: DONE — `3e3d940`.** `PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md` documents coverage for all
+six flows; one material gap found (`SubmittalSnapshot` branding fields, same gap as A7) and named
+rather than papered over with duplicate tests.
+
 **Type:** tests and verification only.  
 **Targets:** quote-to-project conversion result mapping; Project BOM replacement; Equipment Recipe
 save queue; purchase receiving failure state; proposal response/submittal response outcome mapping;
@@ -237,6 +279,13 @@ line-for-line.
 read-only checks, and what still requires natural real-world use.
 
 ### A9. Reconcile roadmap and handoff truth
+
+**Status: DONE — this pass.** Header and §4 baseline updated; each of A1-A8 above now carries its own
+`Status: DONE` line with the closing commit hash(es); `HANDOFF.md` and
+`PRODUCT_MASTER_COMPLETION_PLAN.md` were already kept current incrementally after every batch (see
+each dated entry), so this pass is the cross-check confirming that, not a backlog of unresolved
+staleness. No false "not implemented" or stale "next action" statements found still standing for
+A1-A8 as of this reconciliation.
 
 **Type:** documentation.  
 **Files:** `HANDOFF.md`, `PRODUCT_MASTER_COMPLETION_PLAN.md`, relevant product documents.
