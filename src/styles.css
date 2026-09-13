@@ -6166,6 +6166,33 @@ td.empty-compact-state {
   gap: 8px;
 }
 
+.proposal-comparison {
+  margin-top: 10px;
+}
+
+.proposal-comparison-panel {
+  background: #faf8f4;
+  border: 1px solid #e8e1d5;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 12px;
+}
+
+.proposal-comparison-selectors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.proposal-comparison-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .submittal-row {
   background: #faf8f4;
   border: 1px solid #e8e1d5;

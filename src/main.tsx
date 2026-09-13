@@ -135,6 +135,8 @@ import {
   deleteSalesQuoteBomLinesByLocationSource,
   updateSalesQuoteBomLine,
   reorderSalesQuoteBomLine,
+  compareProposalSnapshots,
+  type ProposalSnapshotComparison,
   updateSalesQuoteBomLineCatalogLink,
   createScheduleTemplate,
   createSubmittal,
@@ -22923,6 +22925,12 @@ function SalesQuoteBuilder({
   const [proposalClientEmailDraft, setProposalClientEmailDraft] = useState("");
   const [proposalSummaryDraft, setProposalSummaryDraft] = useState("");
   const [copiedProposalId, setCopiedProposalId] = useState("");
+  // Queue A5: read-only proposal-version comparison. "" means "use the
+  // default (newest two versions)" -- an explicit selection only takes
+  // over once the rep actually picks something from either dropdown.
+  const [showProposalComparison, setShowProposalComparison] = useState(false);
+  const [compareVersionIdA, setCompareVersionIdA] = useState("");
+  const [compareVersionIdB, setCompareVersionIdB] = useState("");
   // Migration 056: addable Camera/Sign/Space Sensor/Misc lines at the
   // location level -- one small draft per section, reset after each add.
   const emptyLineDraft = { catalogItemId: "", qty: 1, locationLabel: "", accessoryCatalogItemId: "", accessoryQty: 0 };
@@ -23715,6 +23723,110 @@ function SalesQuoteBuilder({
                   </div>
                 ))}
             </div>
+            {(() => {
+              const proposalsForQuote = quoteProposals
+                .filter((proposal) => proposal.quoteId === selectedQuote.id)
+                .sort((a, b) => b.version - a.version);
+              if (proposalsForQuote.length < 2) {
+                return null;
+              }
+              const versionA = proposalsForQuote.find((proposal) => proposal.id === compareVersionIdA) ?? proposalsForQuote[1];
+              const versionB = proposalsForQuote.find((proposal) => proposal.id === compareVersionIdB) ?? proposalsForQuote[0];
+              const sameVersion = versionA.id === versionB.id;
+              const comparison: ProposalSnapshotComparison | null = sameVersion
+                ? null
+                : compareProposalSnapshots(versionA.contentSnapshot, versionB.contentSnapshot);
+              const hasDifferences =
+                comparison !== null &&
+                (Object.keys(comparison.fieldChanges).length > 0 ||
+                  comparison.bomLines.some((diff) => diff.kind !== "unchanged") ||
+                  comparison.templateSections.some((diff) => diff.kind !== "unchanged"));
+              return (
+                <div className="proposal-comparison">
+                  <button className="secondary-action mini-action" type="button" onClick={() => setShowProposalComparison((current) => !current)}>
+                    {showProposalComparison ? "Hide version comparison" : "Compare versions"}
+                  </button>
+                  {showProposalComparison && (
+                    <div className="proposal-comparison-panel">
+                      <p className="muted">Operational comparison of what changed between two stored versions -- not a certified legal document diff.</p>
+                      <div className="proposal-comparison-selectors">
+                        <label>
+                          Earlier version
+                          <select value={versionA.id} onChange={(event) => setCompareVersionIdA(event.target.value)}>
+                            {proposalsForQuote.map((proposal) => (
+                              <option key={proposal.id} value={proposal.id}>Version {proposal.version}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Later version
+                          <select value={versionB.id} onChange={(event) => setCompareVersionIdB(event.target.value)}>
+                            {proposalsForQuote.map((proposal) => (
+                              <option key={proposal.id} value={proposal.id}>Version {proposal.version}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      {sameVersion ? (
+                        <p className="empty-compact-state">Pick two different versions to compare.</p>
+                      ) : !hasDifferences ? (
+                        <p className="empty-compact-state">No differences between Version {versionA.version} and Version {versionB.version}.</p>
+                      ) : (
+                        comparison && (
+                          <div className="proposal-comparison-results">
+                            {Object.entries(comparison.fieldChanges).length > 0 && (
+                              <div>
+                                <strong>Changed fields</strong>
+                                <ul className="line-list">
+                                  {Object.entries(comparison.fieldChanges).map(([field, change]) => (
+                                    <li className="line-item" key={field}>
+                                      <span>{field}</span>
+                                      <span className="muted">"{change.before || "(none)"}" &rarr; "{change.after || "(none)"}"</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {comparison.bomLines.some((diff) => diff.kind !== "unchanged") && (
+                              <div>
+                                <strong>Bill of Material changes</strong>
+                                <ul className="line-list">
+                                  {comparison.bomLines
+                                    .filter((diff) => diff.kind !== "unchanged")
+                                    .map((diff) => (
+                                      <li className="line-item" key={diff.item}>
+                                        {diff.kind === "added" && <span>+ {diff.item} added (qty {diff.after.qty})</span>}
+                                        {diff.kind === "removed" && <span>- {diff.item} removed</span>}
+                                        {diff.kind === "changed" && <span>{diff.item}: {diff.changedFields.join(", ")} changed</span>}
+                                      </li>
+                                    ))}
+                                </ul>
+                              </div>
+                            )}
+                            {comparison.templateSections.some((diff) => diff.kind !== "unchanged") && (
+                              <div>
+                                <strong>Template section changes</strong>
+                                <ul className="line-list">
+                                  {comparison.templateSections
+                                    .filter((diff) => diff.kind !== "unchanged")
+                                    .map((diff) => (
+                                      <li className="line-item" key={diff.title}>
+                                        {diff.kind === "added" && <span>+ "{diff.title}" section added</span>}
+                                        {diff.kind === "removed" && <span>- "{diff.title}" section removed</span>}
+                                        {diff.kind === "changed" && <span>"{diff.title}" content changed</span>}
+                                      </li>
+                                    ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </section>
       )}

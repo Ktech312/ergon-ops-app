@@ -11819,6 +11819,107 @@ export async function loadProposalsForQuote(quoteId: string, accessToken?: strin
   return rows.map((row) => mapQuoteProposalRow(row, tokenRows.find((entry) => entry.entity_id === row.id)?.token ?? null));
 }
 
+// Read-only proposal-version comparison (Queue A5). Compares two frozen
+// ProposalSnapshot values only -- never creates, updates, approves,
+// rejects, disables, or regenerates a share link/token. Neither BOM
+// lines nor template sections carry a stable id in the snapshot (only
+// item/title text), so matching uses that text as the closest thing to
+// a stable key, with an explicit, documented limitation: if a line's
+// own item name (or a section's own title) changed between versions,
+// this reports it as one removal + one addition rather than a single
+// "changed" entry, since there's no id to prove it's the same row that
+// was edited. This is an operational comparison for a rep's own use,
+// not a certified legal document diff.
+export type ProposalFieldChange = { before: string; after: string };
+
+export type ProposalBomLineDiff =
+  | { kind: "added"; item: string; after: ProposalBomLineSnapshot }
+  | { kind: "removed"; item: string; before: ProposalBomLineSnapshot }
+  | { kind: "changed"; item: string; before: ProposalBomLineSnapshot; after: ProposalBomLineSnapshot; changedFields: string[] }
+  | { kind: "unchanged"; item: string };
+
+export type ProposalTemplateSectionDiff =
+  | { kind: "added"; title: string; after: ProposalTemplateSectionSnapshot }
+  | { kind: "removed"; title: string; before: ProposalTemplateSectionSnapshot }
+  | { kind: "changed"; title: string; before: ProposalTemplateSectionSnapshot; after: ProposalTemplateSectionSnapshot }
+  | { kind: "unchanged"; title: string };
+
+export type ProposalSnapshotComparison = {
+  fieldChanges: Partial<Record<"companyName" | "clientName" | "siteName" | "city" | "quoteRef" | "proposalSummary", ProposalFieldChange>>;
+  bomLines: ProposalBomLineDiff[];
+  templateSections: ProposalTemplateSectionDiff[];
+};
+
+const PROPOSAL_BOM_LINE_COMPARED_FIELDS: Array<keyof ProposalBomLineSnapshot> = [
+  "qty",
+  "notes",
+  "description",
+  "manufacturer",
+  "imageUrl",
+  "hasDatasheet",
+  "datasheetUrl",
+];
+
+export function compareProposalSnapshots(before: ProposalSnapshot, after: ProposalSnapshot): ProposalSnapshotComparison {
+  const fieldChanges: ProposalSnapshotComparison["fieldChanges"] = {};
+  (["companyName", "clientName", "siteName", "city", "quoteRef", "proposalSummary"] as const).forEach((field) => {
+    // companyName (and companyLogoUrl, not compared as a visible field
+    // here) are optional -- absent entirely on a proposal sent before
+    // that snapshot field existed. Missing is treated as "" for
+    // comparison, not as a crash or a false "unknown" state.
+    const beforeValue = before[field] ?? "";
+    const afterValue = after[field] ?? "";
+    if (beforeValue !== afterValue) {
+      fieldChanges[field] = { before: beforeValue, after: afterValue };
+    }
+  });
+
+  const beforeBomByItem = new Map(before.bom.map((line) => [line.item, line]));
+  const afterBomByItem = new Map(after.bom.map((line) => [line.item, line]));
+  const bomLines: ProposalBomLineDiff[] = [];
+  for (const [item, beforeLine] of beforeBomByItem) {
+    const afterLine = afterBomByItem.get(item);
+    if (!afterLine) {
+      bomLines.push({ kind: "removed", item, before: beforeLine });
+      continue;
+    }
+    const changedFields = PROPOSAL_BOM_LINE_COMPARED_FIELDS.filter((field) => beforeLine[field] !== afterLine[field]);
+    bomLines.push(
+      changedFields.length > 0
+        ? { kind: "changed", item, before: beforeLine, after: afterLine, changedFields }
+        : { kind: "unchanged", item },
+    );
+  }
+  for (const [item, afterLine] of afterBomByItem) {
+    if (!beforeBomByItem.has(item)) {
+      bomLines.push({ kind: "added", item, after: afterLine });
+    }
+  }
+
+  const beforeSectionsByTitle = new Map(before.templateSections.map((section) => [section.title, section]));
+  const afterSectionsByTitle = new Map(after.templateSections.map((section) => [section.title, section]));
+  const templateSections: ProposalTemplateSectionDiff[] = [];
+  for (const [title, beforeSection] of beforeSectionsByTitle) {
+    const afterSection = afterSectionsByTitle.get(title);
+    if (!afterSection) {
+      templateSections.push({ kind: "removed", title, before: beforeSection });
+      continue;
+    }
+    templateSections.push(
+      beforeSection.body !== afterSection.body
+        ? { kind: "changed", title, before: beforeSection, after: afterSection }
+        : { kind: "unchanged", title },
+    );
+  }
+  for (const [title, afterSection] of afterSectionsByTitle) {
+    if (!beforeSectionsByTitle.has(title)) {
+      templateSections.push({ kind: "added", title, after: afterSection });
+    }
+  }
+
+  return { fieldChanges, bomLines, templateSections };
+}
+
 export async function createQuoteProposal(
   input: { quoteId: string; version: number; contentSnapshot: ProposalSnapshot; clientName: string; clientEmail: string },
   accessToken?: string,
