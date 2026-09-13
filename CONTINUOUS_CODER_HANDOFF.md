@@ -337,7 +337,7 @@ choice not covered by that plan, document it and continue to A11; do not stop th
 
 ### A11. Freeze company identity into submittals
 
-**Status: DONE — commit pending, see `HANDOFF.md` for the hash once committed.** Mirrored the
+**Status: DONE — `2ad1d5e`.** Mirrored the
 Queue A7 proposal pattern exactly: `SubmittalSnapshot` gains optional `companyName`/`companyLogoUrl`,
 `handleCreateSubmittal` freezes current branding at creation, `SubmittalPublicPage` renders the same
 shared `.proposal-public-brand` block, `send-submittal-email.js`'s sign-off uses the frozen name with

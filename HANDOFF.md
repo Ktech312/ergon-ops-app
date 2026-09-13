@@ -1,7 +1,7 @@
 # Ergon Ops — Handoff Doc
 
 Last updated: 2026-09-12, Queue A11 -- freeze company identity into submittals (**Code: commit
-pending -- see git log for the actual hash once committed.**
+`2ad1d5e`, pushed.**
 
 Mirrors the already-deployed Queue A7 proposal-branding pattern for submittals, closing the parallel
 gap A7 itself found and deliberately left unfixed. `SubmittalSnapshot` (`src/persistence.ts`) gains
