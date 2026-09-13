@@ -1,5 +1,16 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue A1 closed -- migration 133's browser-verification gap (**Read-only production verification only. No code, no migration, no write.**
+
+With the authenticated session already connected (Claude in Chrome, `ehren@ensight-technologies.com`), performed two separate fresh full-page reloads of `https://ergon-ops-app.vercel.app/` (once at `#dashboard`, once at `#admin`):
+
+- Header status reads **"Cloud synced"** on both loads, not "Sync issue."
+- `read_console_messages` returned **zero messages** (not just zero errors -- the console is completely silent) on both fresh loads, confirming none of the previously-observed 403/400 write failures (`projects`, `inventory_items`, `build_transactions`, `save_equipment_recipe`) still fire.
+- Admin page: **Pending Approvals** section renders (confirms Manager/Admin visibility is intact), and the full admin-only "Assign roles, tab access, and admin rights" table now renders too (confirms `ehren@ensight-technologies.com` is recognized as a real admin, not just Manager).
+- Network requests captured during an admin-page load (`app_known_users`, `conversations`, `direct_messages` reads) all returned `200`, no `401`/`403`.
+
+No approval was created, no role was changed, and nothing was written to confirm this -- read-only checks only, per the standing rule. **A1 is closed with direct evidence; no further action needed on this item.**
+
 ## New coder: start here
 
 The continuous execution queue is [`CONTINUOUS_CODER_HANDOFF.md`](CONTINUOUS_CODER_HANDOFF.md).
