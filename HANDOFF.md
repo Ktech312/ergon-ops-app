@@ -4,16 +4,16 @@
 
 Start with `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad**. Migrations 134 and 135 are
 complete. Queue C1 (frozen Sales pricing, E approved 2026-09-13) is fully code/test-complete and
-committed **locally only** — migration 136 is drafted and awaiting E's review/run; **do not push
-`main` until E confirms it succeeded** (the frontend now depends on its new columns — pushing early
-would 400 every Sales page load in production). Once E confirms, push immediately, verify Vercel/
-browser, then continue to the next Queue C wave without a separate instruction. Do not re-run
+committed **locally only** — migration 136 was applied successfully by E on 2026-09-13 and its
+canonical verification script is now the sole remaining database gate; **do not push `main` until
+that script passes**. Once E confirms it, push immediately, verify Vercel/browser, then continue to
+the next Queue C wave without a separate instruction. Do not re-run
 migrations 134/135/136 after they've each been confirmed, and do not send the already-decided
 D1/D2/D6/D7/D10/D11/D15 items back to E.
 
-Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing, code-complete, migration 136 awaiting
-E's review (**Code/tests: commit `ba33fdd`, local `main` only -- NOT pushed. Migration: drafted, NOT
-run.**
+Last updated: 2026-09-13, Queue C1 -- frozen Sales pricing, code-complete, migration 136 applied;
+canonical SQL verification pending (**Code/tests: commits `ba33fdd` + `e19d4a2`, local `main` only
+-- NOT pushed. Migration: APPLIED; test script: NOT YET RUN.**
 
 **Independent migration-136 review correction (2026-09-13, local only):** the first draft's prose
 claimed finite money constraints and a real override audit, but its SQL still allowed PostgreSQL

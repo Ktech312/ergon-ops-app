@@ -17,8 +17,8 @@ Production: `https://ergon-ops-app.vercel.app/` (does not yet reflect Queue C1 �
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134 and 135 have both been applied and verified in production.
-Migration 136 (Sales pricing) is drafted, reviewed, and committed locally — **awaiting E's review and
-run**. Once E confirms migration 136 and its test script both succeeded, push the already-committed
+Migration 136 (Sales pricing) was applied successfully by E on 2026-09-13; its canonical SQL test is
+the only remaining database gate. Once E confirms that test succeeded, push the already-committed
 Queue C1 frontend immediately (§3's delivery rule, `PRODUCT_SALES_PRICING_IMPLEMENTATION_PLAN.md`),
 verify the Vercel deployment, then continue to the next Queue C wave (§7) without waiting for a
 separate instruction.
