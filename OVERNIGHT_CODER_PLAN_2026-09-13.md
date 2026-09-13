@@ -22,8 +22,9 @@ At preparation time:
   again.
 - Frozen Sales pricing is deployed at `https://ergon-ops-app.vercel.app/`; one real priced proposal
   remains a natural-use acceptance check, not a reason to create production data.
-- Migration 137 is applied, but its first canonical-test run exposed an inherited anonymous table-
-  privilege gap. Corrective migration 141 and the strengthened migration-137 test are prepared.
+- Migrations 137 and corrective 141 are applied. The first canonical-test run exposed an inherited
+  anonymous table-privilege gap; the next run exposed a reversed RLS row-count assertion in the test
+  itself. The strengthened, corrected migration-137 test is the next manual action.
   Migrations 138–140 and their tests are drafted and pushed but remain unapplied. Do not advance to
   138 until 141 and the corrected migration-137 test both pass.
 - Queue C2.1–C2.5 are completed preparation records. Begin with C2.6 preparation, then continue
@@ -76,17 +77,16 @@ and pushes/deployments of code that is fully independent of unapplied schema.
 Migrations 137–140 form one ordered chain, with corrective migration 141 inserted after the already-
 applied 137. They are not tonight's stopping point.
 
-1. Do not hand E several SQL files. The next action is exactly migration 141.
-2. After E reports 141 succeeded, the next action is exactly the corrected migration-137 canonical
-   test file. A clean
+1. Do not hand E several SQL files. The next action is exactly the corrected migration-137
+   canonical test file. A clean
    `Success. No rows returned` is a pass because the script hard-fails assertions and genuine skips;
    never ask E to find NOTICE output.
-3. Only after that pair passes does migration 138 become the next single action, followed by its
+2. Only after that test passes does migration 138 become the next single action, followed by its
    test; then 139 and its test; then 140 and its test.
-4. The frontend must not switch to the new RPC/output contracts until the required migration has
+3. The frontend must not switch to the new RPC/output contracts until the required migration has
    passed. Prepare mappers, pure state transitions, component contracts, and tests locally without
    wiring them into the live calls.
-5. Never create another numbered migration merely to stay busy while 137 is pending. Put later SQL
+4. Never create another numbered migration merely to stay busy while 137 is pending. Put later SQL
    into a reviewed design block or unnumbered draft notes until the active chain advances.
 
 ## 5. Pass 0 — establish evidence and protect the workspace
@@ -430,9 +430,9 @@ Use these exact sections:
 
 Do not end the report by asking what E wants to do next. State the single manual action separately:
 
-> **Your one next action:** Review and run
-> `backend/supabase/migrations/141_fix_share_link_table_grants.sql` in Supabase SQL Editor, then send
-> the result. Do not run its test yet.
+> **Your one next action:** Run
+> `backend/supabase/migration_137_share_link_lifecycle_schema_tests.sql` in Supabase SQL Editor, then
+> send the result.
 
 ## 16. Definition of a full overnight pass
 

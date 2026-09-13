@@ -1016,9 +1016,10 @@ Queue A/B work.
 
 ### Manual database actions
 
-Migrations 134, 135, and 136 are done and verified. **Migration 137 is applied but its first test run
-found an inherited `anon` table-privilege gap. Corrective migration 141 is the next single file.
-Migrations 138, 139, and 140 remain drafted, committed, pushed, and unapplied.**
+Migrations 134, 135, and 136 are done and verified. **Migrations 137 and corrective 141 are applied.
+The corrected migration-137 canonical test is the next single file; its previous run exposed and
+then corrected a reversed RLS row-count assertion. Migrations 138, 139, and 140 remain drafted,
+committed, pushed, and unapplied.**
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
@@ -1040,11 +1041,11 @@ Migrations 138, 139, and 140 remain drafted, committed, pushed, and unapplied.**
    137_share_link_lifecycle_schema.sql` — inert share-link lifecycle schema (see C2.2 above for full
    contents). Changes no existing RPC and no client-visible behavior. E ran it successfully. Its
    first test exposed the default-grant gap described under migration 141 below.
-5. **Migration 141 — PENDING, NEXT UP.** `backend/supabase/migrations/
-   141_fix_share_link_table_grants.sql` closes the real table-ACL gap found by migration 137's first
-   canonical-test run. After it succeeds, rerun the corrected
-   `backend/supabase/migration_137_share_link_lifecycle_schema_tests.sql`. Only a clean test pass
-   closes migration 137.
+5. **Migration 141 — APPLIED; MIGRATION-137 TEST NEXT.** `backend/supabase/migrations/
+   141_fix_share_link_table_grants.sql` closed the real table-ACL gap found by migration 137's first
+   canonical-test run. Rerun the corrected
+   `backend/supabase/migration_137_share_link_lifecycle_schema_tests.sql`; its prior second run found
+   a reversed row-count assertion in the test itself, now fixed. Only a clean pass closes 137.
 6. **Migration 138 — PENDING, AFTER 137/141 VERIFY.** `backend/supabase/migrations/
    138_share_link_server_owned_creation.sql` — server-owned token-creation RPCs (see C2.3 above).
    Requires 137 live first. Its test script,
