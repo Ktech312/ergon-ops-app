@@ -155,18 +155,57 @@ begin
   -- the four public RPCs need to -- that capability is added, narrowly,
   -- in C2.3/C2.4 via security-definer functions, not direct anon table
   -- access).
-  if has_table_privilege('anon', 'public.share_link_views', 'select')
-    or has_table_privilege('anon', 'public.share_link_views', 'insert')
-  then
+  if has_table_privilege(
+    'anon',
+    'public.share_link_views',
+    'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
+  ) then
     raise exception 'TEST FAILED: anon has direct table privilege on share_link_views -- expected none.';
   end if;
-  if has_table_privilege('anon', 'public.share_link_actions', 'select')
-    or has_table_privilege('anon', 'public.share_link_actions', 'insert')
-  then
+  if has_table_privilege(
+    'anon',
+    'public.share_link_actions',
+    'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
+  ) then
     raise exception 'TEST FAILED: anon has direct table privilege on share_link_actions -- expected none.';
   end if;
-  if has_table_privilege('anon', 'public.workspace_share_link_settings', 'select') then
+  if has_table_privilege(
+    'anon',
+    'public.workspace_share_link_settings',
+    'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
+  ) then
     raise exception 'TEST FAILED: anon has direct table privilege on workspace_share_link_settings -- expected none.';
+  end if;
+
+  if not has_table_privilege('authenticated', 'public.share_link_views', 'SELECT')
+    or has_table_privilege(
+      'authenticated',
+      'public.share_link_views',
+      'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
+    )
+  then
+    raise exception 'TEST FAILED: authenticated privileges on share_link_views are not SELECT-only.';
+  end if;
+  if not has_table_privilege('authenticated', 'public.share_link_actions', 'SELECT')
+    or has_table_privilege(
+      'authenticated',
+      'public.share_link_actions',
+      'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
+    )
+  then
+    raise exception 'TEST FAILED: authenticated privileges on share_link_actions are not SELECT-only.';
+  end if;
+  if not has_table_privilege('authenticated', 'public.workspace_share_link_settings', 'SELECT')
+    or not has_table_privilege('authenticated', 'public.workspace_share_link_settings', 'INSERT')
+    or not has_table_privilege('authenticated', 'public.workspace_share_link_settings', 'UPDATE')
+    or not has_table_privilege('authenticated', 'public.workspace_share_link_settings', 'DELETE')
+    or has_table_privilege(
+      'authenticated',
+      'public.workspace_share_link_settings',
+      'TRUNCATE, REFERENCES, TRIGGER'
+    )
+  then
+    raise exception 'TEST FAILED: authenticated privileges on workspace_share_link_settings are incorrect.';
   end if;
 
   -- Section 7: a non-admin authenticated user can read

@@ -22,8 +22,10 @@ At preparation time:
   again.
 - Frozen Sales pricing is deployed at `https://ergon-ops-app.vercel.app/`; one real priced proposal
   remains a natural-use acceptance check, not a reason to create production data.
-- Share-link migrations 137–140 and their rollback-only canonical tests are already drafted,
-  committed, and pushed on `main`. They are **not applied**. Do not redraft, renumber, or run them.
+- Migration 137 is applied, but its first canonical-test run exposed an inherited anonymous table-
+  privilege gap. Corrective migration 141 and the strengthened migration-137 test are prepared.
+  Migrations 138–140 and their tests are drafted and pushed but remain unapplied. Do not advance to
+  138 until 141 and the corrected migration-137 test both pass.
 - Queue C2.1–C2.5 are completed preparation records. Begin with C2.6 preparation, then continue
   through the independent lanes below.
 
@@ -71,10 +73,12 @@ and pushes/deployments of code that is fully independent of unapplied schema.
 
 ## 4. Database checkpoint protocol
 
-Migrations 137–140 form one ordered chain. They are not tonight's stopping point.
+Migrations 137–140 form one ordered chain, with corrective migration 141 inserted after the already-
+applied 137. They are not tonight's stopping point.
 
-1. Do not hand E several SQL files. The next morning action is exactly migration 137.
-2. After E reports 137 succeeded, the next action is exactly its canonical test file. A clean
+1. Do not hand E several SQL files. The next action is exactly migration 141.
+2. After E reports 141 succeeded, the next action is exactly the corrected migration-137 canonical
+   test file. A clean
    `Success. No rows returned` is a pass because the script hard-fails assertions and genuine skips;
    never ask E to find NOTICE output.
 3. Only after that pair passes does migration 138 become the next single action, followed by its
@@ -427,7 +431,7 @@ Use these exact sections:
 Do not end the report by asking what E wants to do next. State the single manual action separately:
 
 > **Your one next action:** Review and run
-> `backend/supabase/migrations/137_share_link_lifecycle_schema.sql` in Supabase SQL Editor, then send
+> `backend/supabase/migrations/141_fix_share_link_table_grants.sql` in Supabase SQL Editor, then send
 > the result. Do not run its test yet.
 
 ## 16. Definition of a full overnight pass

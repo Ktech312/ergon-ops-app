@@ -13,6 +13,14 @@ test scripts are committed and pushed on `main` (`362e702`, `f09f574`, `d564b8b`
 review, one file at a time, starting with 137. Do not re-run migrations 134/135/136 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
+**Current database gate (2026-09-13):** migration 137 applied successfully. Its canonical test then
+found a real ACL gap: project-level Supabase default privileges left `anon` with direct table
+privileges on the three new tables even though RLS still denied row access. Migration 141
+(`backend/supabase/migrations/141_fix_share_link_table_grants.sql`) is the single next file. It
+revokes inherited `PUBLIC`/`anon` access, grants authenticated users only the intended minimum table
+privileges, and changes no rows, policies, settings, or link behavior. After 141 succeeds, rerun the
+strengthened migration-137 canonical test. Do not advance to migration 138 until that test passes.
+
 Last updated: 2026-09-13, Queue C2.5 -- version supersession + quote soft-delete cascade drafted, NOT
 run. `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql` adds a
 `sales_quotes` trigger that auto-disables a deleted quote's still-active proposal links (restore
@@ -39,9 +47,9 @@ rollback-only test script. Full design per `PRODUCT_SHARE_LINK_EXPIRATION_REVOCA
 Part 8/9.1; see `CONTINUOUS_CODER_HANDOFF.md` C2.2-C2.4 for complete per-migration detail. All three
 migrations are sequentially dependent (137 before 138 before 139) and none is applied yet. Committed
 and pushed as `362e702` -- SQL-only commit, no frontend code depends on the new columns/RPCs yet, so
-nothing is blocked on a push; the SQL-only commits are now pushed, while all four migrations remain
-unapplied. Migration 137
-is the next single file handed to E; 138 and 139 follow only after each prior migration and its test
+nothing is blocked on a push. Migration 137 is now applied but awaits verification after corrective
+migration 141; migrations 138–140 remain unapplied. Migration 141 is the next single file handed to
+E; 138 and 139 follow only after each prior migration and its test
 both succeed, per the one-file-at-a-time delivery rule. Frontend work to consume the new `outcome`
 column (required only once 139 lands) has not started -- it ships as a separate commit in the same
 reviewed batch as 139, per that migration's own header note. No TypeScript/test/build changes in this

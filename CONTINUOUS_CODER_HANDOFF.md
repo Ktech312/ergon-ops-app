@@ -13,10 +13,10 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
 Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: migrations 137, 138,
 139, and 140 plus their four canonical test scripts, committed and pushed on `main` (`362e702`,
 `f09f574`, `d564b8b`, status reconciliation through `814af14`; no dependent frontend code exists
-yet). None of the
-four migrations are applied. Migration 137 is the next single file to hand E for review per the
-established one-file-at-a-time gate; see "Manual database actions" below for the full ordered list
-and exact sequencing.
+yet). Migration 137 is applied; its first verification run found the inherited table-ACL gap now
+addressed by corrective migration 141. Migrations 138–140 are not applied. Migration 141 is the next
+single file to hand E under the established one-file-at-a-time gate; see "Manual database actions"
+below for the full ordered list and exact sequencing.
 
 ## Next-session launchpad
 
@@ -1016,8 +1016,9 @@ Queue A/B work.
 
 ### Manual database actions
 
-Migrations 134, 135, and 136 are done and verified. **Migrations 137, 138, 139, and 140 are drafted,
-committed, and pushed, awaiting E's review — 137 is the next single file to hand E.**
+Migrations 134, 135, and 136 are done and verified. **Migration 137 is applied but its first test run
+found an inherited `anon` table-privilege gap. Corrective migration 141 is the next single file.
+Migrations 138, 139, and 140 remain drafted, committed, pushed, and unapplied.**
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
@@ -1035,24 +1036,28 @@ committed, and pushed, awaiting E's review — 137 is the next single file to ha
    The migration and corrected canonical test both returned `Success. No rows returned`; the test
    hard-fails every assertion and genuine skip. The Queue C1 frontend was then pushed and verified
    in Vercel production. Do not run either SQL file again.
-4. **Migration 137 — PENDING, NEXT UP.** `backend/supabase/migrations/
+4. **Migration 137 — APPLIED; VERIFICATION BLOCKED ON 141.** `backend/supabase/migrations/
    137_share_link_lifecycle_schema.sql` — inert share-link lifecycle schema (see C2.2 above for full
-   contents). Changes no existing RPC and no client-visible behavior. Give E only this migration file
-   first; give `backend/supabase/migration_137_share_link_lifecycle_schema_tests.sql` only after E
-   reports the migration itself succeeded.
-5. **Migration 138 — PENDING, AFTER 137.** `backend/supabase/migrations/
+   contents). Changes no existing RPC and no client-visible behavior. E ran it successfully. Its
+   first test exposed the default-grant gap described under migration 141 below.
+5. **Migration 141 — PENDING, NEXT UP.** `backend/supabase/migrations/
+   141_fix_share_link_table_grants.sql` closes the real table-ACL gap found by migration 137's first
+   canonical-test run. After it succeeds, rerun the corrected
+   `backend/supabase/migration_137_share_link_lifecycle_schema_tests.sql`. Only a clean test pass
+   closes migration 137.
+6. **Migration 138 — PENDING, AFTER 137/141 VERIFY.** `backend/supabase/migrations/
    138_share_link_server_owned_creation.sql` — server-owned token-creation RPCs (see C2.3 above).
    Requires 137 live first. Its test script,
    `backend/supabase/migration_138_share_link_server_owned_creation_tests.sql`, follows only after E
    reports 138 itself succeeded.
-6. **Migration 139 — PENDING, AFTER 138.** `backend/supabase/migrations/
+7. **Migration 139 — PENDING, AFTER 138.** `backend/supabase/migrations/
    139_share_link_lifecycle_actions.sql` — atomic lifecycle actions plus the `outcome`-bearing
    extension of all four public share-link RPCs (see C2.4 above). Requires 137 and 138 live first.
    **This one is a breaking RPC signature change** — the frontend TypeScript update to parse the new
    `outcome` column must ship in the same reviewed batch as this migration (a separate commit,
    pushed only once E confirms 139 and its test — `backend/supabase/migration_
    139_share_link_lifecycle_actions_tests.sql` — both succeeded).
-7. **Migration 140 — PENDING, AFTER 139.** `backend/supabase/migrations/
+8. **Migration 140 — PENDING, AFTER 139.** `backend/supabase/migrations/
    140_share_link_version_supersession_and_quote_cascade.sql` — auto-supersede-on-new-version RPCs
    plus the quote soft-delete cascade trigger (see C2.5 above). Requires 137, 138, and 139 live
    first. Its test script,
