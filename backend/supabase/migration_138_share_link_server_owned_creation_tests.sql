@@ -339,6 +339,7 @@ begin
   end if;
 
   raise notice 'ALL MIGRATION 138 SHARE-LINK CREATION TESTS PASSED -- ZERO SECTIONS SKIPPED';
-end $$;
+end;
+$$;
 
 rollback;

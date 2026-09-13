@@ -1056,8 +1056,9 @@ current gate. Migrations 139 and 140 remain drafted, committed, pushed, and unap
    workspace-owned quote under a real authenticated admin and deterministically tests PM-only and
    non-privileged callers. Every caller switch now sets both `request.jwt.claims` and
    `request.jwt.claim.sub`; the previous run set only the former, so `auth.uid()` was null and the
-   existing workspace-ownership trigger correctly rejected the synthetic quote. Run only this
-   corrected test. A clean `Success. No rows returned` closes migration 138.
+   existing workspace-ownership trigger correctly rejected the synthetic quote. A later parser error
+   at the block terminator was corrected by using explicit `end;` / `$$;` and normalizing the file to
+   UTF-8/LF. Run only this corrected test. A clean `Success. No rows returned` closes migration 138.
 7. **Migration 139 — PENDING, AFTER 138.** `backend/supabase/migrations/
    139_share_link_lifecycle_actions.sql` — atomic lifecycle actions plus the `outcome`-bearing
    extension of all four public share-link RPCs (see C2.4 above). Requires 137 and 138 live first.

@@ -24,8 +24,10 @@ no existing share-token rows. **Migration 138 is applied. Its test fixture now c
 workspace-owned quote as a real authenticated admin, builds deterministic PM-only and non-privileged
 authorization fixtures, and sets both Supabase JWT simulation values (`request.jwt.claims` and
 `request.jwt.claim.sub`) at every caller switch. The prior run failed because `auth.uid()` saw a null
-caller; it made no persistent changes because the script is transaction-wrapped. Run only the exact
-corrected migration-138 test next.**
+caller; a subsequent run exposed a parser-sensitive anonymous-block terminator. The canonical file
+now uses explicit `end;` / `$$;`, is normalized to UTF-8/LF, and passed a local PostgreSQL-compatible
+parser check through its first schema lookup. Both failed runs made no persistent changes because the
+script is transaction-wrapped. Run only the exact corrected migration-138 test next.**
 
 Last updated: 2026-09-13, Queue C2.5 -- version supersession + quote soft-delete cascade drafted, NOT
 run. `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql` adds a
