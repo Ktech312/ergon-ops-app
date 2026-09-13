@@ -6348,10 +6348,25 @@ td.empty-compact-state {
   gap: 14px;
 }
 
+.proposal-template-section-row {
+  display: flex;
+  gap: 8px;
+}
+
+.proposal-template-section-reorder {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 4px;
+  padding-top: 2px;
+}
+
 .proposal-template-section-editor {
   background: #fffdf9;
   border: 1px solid #e8e1d5;
   border-radius: 8px;
+  flex: 1;
+  min-width: 0;
   padding: 12px;
 }
 

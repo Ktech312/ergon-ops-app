@@ -4873,6 +4873,58 @@ function App() {
     }
   }
 
+  // Accessible Move up/Move down for Proposal Template sections (Queue
+  // A4) -- same swap-the-two-affected-rows pattern as the Sales quote
+  // BOM lines (Queue A3), reusing the existing updateProposalTemplateSection
+  // RPC (already accepts sequenceOrder) rather than a new persistence
+  // function. Pessimistic: local state (and the visible order) only
+  // updates after BOTH writes are confirmed; a failed second write
+  // attempts to revert the first so the two rows never end up sharing
+  // one sequence_order for longer than necessary. Existing sent
+  // proposals are unaffected regardless -- createQuoteProposal freezes
+  // section content into content_snapshot at send time (see that
+  // function and updateProposalTemplateSection's own comment), so
+  // reordering the live template can never retroactively change a
+  // proposal already sent to a client.
+  async function handleReorderProposalTemplateSection(sectionId: string, direction: "up" | "down") {
+    if (!authSession) {
+      return;
+    }
+    const sorted = [...proposalTemplateSections].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+    const index = sorted.findIndex((section) => section.id === sectionId);
+    const neighborIndex = direction === "up" ? index - 1 : index + 1;
+    if (index === -1 || neighborIndex < 0 || neighborIndex >= sorted.length) {
+      return;
+    }
+    const section = sorted[index];
+    const neighbor = sorted[neighborIndex];
+
+    const firstOk = await updateProposalTemplateSection(section.id, { sequenceOrder: neighbor.sequenceOrder }, authSession.accessToken);
+    if (!firstOk) {
+      setAdminStatus("Could not reorder the Proposal Template. Try again.");
+      return;
+    }
+    const secondOk = await updateProposalTemplateSection(neighbor.id, { sequenceOrder: section.sequenceOrder }, authSession.accessToken);
+    if (!secondOk) {
+      const reverted = await updateProposalTemplateSection(section.id, { sequenceOrder: section.sequenceOrder }, authSession.accessToken);
+      if (!reverted) {
+        console.error(
+          `handleReorderProposalTemplateSection: section ${section.id} was moved to sequence_order ${neighbor.sequenceOrder} but the paired swap for ${neighbor.id} failed, and reverting ${section.id} back ALSO failed -- these two sections' sequence_order values are now inconsistent and need a manual check.`,
+        );
+      }
+      setAdminStatus("Could not reorder the Proposal Template. Try again.");
+      return;
+    }
+
+    setProposalTemplateSections((current) =>
+      current.map((entry) => {
+        if (entry.id === section.id) return { ...entry, sequenceOrder: neighbor.sequenceOrder };
+        if (entry.id === neighbor.id) return { ...entry, sequenceOrder: section.sequenceOrder };
+        return entry;
+      }),
+    );
+  }
+
   async function handleSaveStandardInstallTime(entry: Omit<StandardInstallTime, "id">) {
     if (!authSession) {
       return;
@@ -7863,6 +7915,7 @@ function App() {
             onSendPasswordReset={(email) => handleRequestPasswordReset(email)}
             proposalTemplateSections={proposalTemplateSections}
             onUpdateProposalTemplateSection={handleUpdateProposalTemplateSection}
+            onReorderProposalTemplateSection={handleReorderProposalTemplateSection}
             deletionLog={deletionLog}
             notificationDeliveryFailures={notificationDeliveryFailures}
             onRefresh={() => {
@@ -17461,6 +17514,7 @@ function AdminPage({
   onSendPasswordReset,
   proposalTemplateSections,
   onUpdateProposalTemplateSection,
+  onReorderProposalTemplateSection,
   deletionLog,
   notificationDeliveryFailures,
 }: {
@@ -17533,6 +17587,7 @@ function AdminPage({
   onSendPasswordReset: (email: string) => Promise<boolean>;
   proposalTemplateSections: ProposalTemplateSection[];
   onUpdateProposalTemplateSection: (id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) => void;
+  onReorderProposalTemplateSection: (sectionId: string, direction: "up" | "down") => void;
   deletionLog?: DeletionLogEntry[];
   notificationDeliveryFailures?: NotificationDeliveryFailure[];
 }) {
@@ -18345,8 +18400,30 @@ function AdminPage({
             {proposalTemplateSections
               .slice()
               .sort((a, b) => a.sequenceOrder - b.sequenceOrder)
-              .map((section) => (
-                <ProposalTemplateSectionEditor key={section.id} section={section} onSave={onUpdateProposalTemplateSection} />
+              .map((section, index, sorted) => (
+                <div key={section.id} className="proposal-template-section-row">
+                  <div className="proposal-template-section-reorder">
+                    <button
+                      className="icon-button-sm"
+                      type="button"
+                      disabled={index === 0}
+                      onClick={() => onReorderProposalTemplateSection(section.id, "up")}
+                      aria-label={`Move ${section.title} up`}
+                    >
+                      &uarr;
+                    </button>
+                    <button
+                      className="icon-button-sm"
+                      type="button"
+                      disabled={index === sorted.length - 1}
+                      onClick={() => onReorderProposalTemplateSection(section.id, "down")}
+                      aria-label={`Move ${section.title} down`}
+                    >
+                      &darr;
+                    </button>
+                  </div>
+                  <ProposalTemplateSectionEditor section={section} onSave={onUpdateProposalTemplateSection} />
+                </div>
               ))}
             {proposalTemplateSections.length === 0 && <p className="empty-compact-state">No template sections yet -- run migration 053.</p>}
           </div>

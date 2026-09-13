@@ -7,6 +7,7 @@ import {
   updateSalesQuoteBomLineCatalogLink,
   updateSalesQuoteBomLine,
   reorderSalesQuoteBomLine,
+  updateProposalTemplateSection,
   deleteSalesQuoteBomLinesByLocationSource,
   ensureTeamMemberForSelf,
 } from "./persistence";
@@ -257,6 +258,35 @@ describe("reorderSalesQuoteBomLine", () => {
 
     await expect(reorderSalesQuoteBomLine("line-1", 1, "line-2", 2, "token")).resolves.toBe(false);
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("inconsistent"));
+  });
+});
+
+describe("updateProposalTemplateSection", () => {
+  // Queue A4 (2026-09-12): this function already accepted sequenceOrder
+  // and was already wired to the new Move up/down reorder handler in
+  // main.tsx, but had zero test coverage of its own until now.
+  it("returns true and sends sequence_order in the PATCH body when reordering", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, [{ id: "section-1" }]));
+    globalThis.fetch = fetchMock;
+
+    await expect(updateProposalTemplateSection("section-1", { sequenceOrder: 3 }, "token")).resolves.toBe(true);
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.sequence_order).toBe(3);
+  });
+
+  it("returns false when the PATCH fails", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(false, 500, { message: "db error" }));
+    await expect(updateProposalTemplateSection("section-1", { sequenceOrder: 3 }, "token")).resolves.toBe(false);
+  });
+
+  it("does not include sequence_order when only title/body are updated", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, [{ id: "section-1" }]));
+    globalThis.fetch = fetchMock;
+
+    await updateProposalTemplateSection("section-1", { title: "New Title" }, "token");
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body).not.toHaveProperty("sequence_order");
+    expect(body.title).toBe("New Title");
   });
 });
 
