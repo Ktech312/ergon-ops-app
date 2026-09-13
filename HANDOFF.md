@@ -1,5 +1,22 @@
 # Ergon Ops — Handoff Doc
 
+Last updated: 2026-09-12, Queue B4 -- System Health Phase B migration/API/UI/test sequence (**Docs
+only, commit pending -- see git log for the actual hash once committed.**
+
+Refined `PRODUCT_SYSTEM_HEALTH_PLAN.md` (already "implementation-ready" from an earlier pass) rather
+than rewriting it. Added the one genuinely missing piece, a new §10 "failure-in-the-monitor path"
+(the write helper never throws to its real caller, a failed health-event write logs once to Vercel
+and stops there since there's no safe place left to record a failure-to-record-a-failure, the read
+panel degrades to last-known-good on its own load failure, the dedup upsert is idempotent under
+retry, and the retention job's own failure is the one case this table is allowed to monitor about
+itself) -- none of this existed in the design before, despite §3's self-monitoring rule implying it
+was needed. Expanded the old §10 "Build sequencing" into §11 with concrete function names
+(`record_system_health_event`, `acknowledge_system_health_event`, `resolve_system_health_event`),
+file locations, initial call-site list reusing `PRODUCT_ERROR_VISIBILITY_AUDIT.md` §14's existing
+ranked findings (not re-derived), and a test matrix per step. §9/D8 (alert recipient/channel)
+untouched and still explicitly open, matching the task's own instruction not to decide it here.
+**No production code, no migration, no test file.**
+
 Last updated: 2026-09-12, Queue B3 -- Share-link implementation readiness reconciliation (**Docs
 only, commit pending -- see git log for the actual hash once committed.**
 
