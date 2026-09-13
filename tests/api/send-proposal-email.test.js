@@ -121,6 +121,41 @@ describe("send-proposal-email", () => {
     expect(call.html).not.toContain("11112222");
   });
 
+  it("signs off with the proposal's own frozen companyName instead of a hardcoded product name (Queue A7)", async () => {
+    global.fetch = vi.fn(routerFor({
+      roleKeys: ["sales"],
+      proposalRows: [{
+        quote_id: "11112222-3333-4444-5555-666677778888",
+        client_name: "Real Client",
+        client_email: "real-client@external.test",
+        content_snapshot: { siteName: "Real Site", companyName: "Acme Integrators" },
+      }],
+    }));
+    const res = createMockRes();
+    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    expect(res.statusCode).toBe(200);
+    const call = sendEmail.mock.calls[0][0];
+    expect(call.html).toContain("Thanks,<br/>Acme Integrators");
+    expect(call.html).not.toContain("Ergon Ops");
+  });
+
+  it("falls back to Ergon for a proposal sent before companyName existed in the snapshot", async () => {
+    global.fetch = vi.fn(routerFor({
+      roleKeys: ["sales"],
+      proposalRows: [{
+        quote_id: "11112222-3333-4444-5555-666677778888",
+        client_name: "Real Client",
+        client_email: "real-client@external.test",
+        content_snapshot: { siteName: "Real Site" },
+      }],
+    }));
+    const res = createMockRes();
+    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    expect(res.statusCode).toBe(200);
+    const call = sendEmail.mock.calls[0][0];
+    expect(call.html).toContain("Thanks,<br/>Ergon");
+  });
+
   it("manager role is also authorized", async () => {
     global.fetch = vi.fn(routerFor({
       roleKeys: ["manager"],

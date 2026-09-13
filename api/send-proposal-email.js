@@ -97,6 +97,15 @@ export default async function handler(req, res) {
   // actually sent with, matching what the customer sees on the public
   // proposal page, and never touches historical content_snapshot rows.
   const quoteRef = proposal.content_snapshot?.quoteRef || "";
+  // Queue A7 (2026-09-12): this sign-off used to hardcode "Ergon Ops"
+  // regardless of the workspace's own configured company identity --
+  // content_snapshot.companyName is already selected above (frozen at
+  // send time from company_branding, same convention the public
+  // proposal page itself uses), it just wasn't used here. Falls back
+  // to "Ergon" only for a proposal sent before that snapshot field
+  // existed, or a workspace that never configured branding -- matching
+  // ProposalPublicPage's own fallback exactly.
+  const companyName = (proposal.content_snapshot?.companyName || "").trim() || "Ergon";
 
   const result = await sendEmail({
     to: clientEmail,
@@ -105,7 +114,7 @@ export default async function handler(req, res) {
       <p>Hi ${clientName},</p>
       <p>Please review your proposal for <strong>${siteName}</strong>${quoteRef ? ` (${quoteRef})` : ""}.</p>
       <p><a href="${shareUrl}">Review and respond to the proposal</a></p>
-      <p>Thanks,<br/>Ergon Ops</p>
+      <p>Thanks,<br/>${companyName}</p>
     `,
   });
 
