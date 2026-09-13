@@ -1,0 +1,461 @@
+# Ergon Ops — Continuous Coder Handoff
+
+Status: **ACTIVE EXECUTION PLAN**  
+Prepared: 2026-09-12  
+Current verified repository baseline when this page was written: `main` / `origin/main` at
+`02fe578` with a clean working tree.  
+Production: `https://ergon-ops-app.vercel.app/`
+
+This is the page the next coder should open first. `PRODUCT_MASTER_COMPLETION_PLAN.md` remains the
+full product roadmap and evidence inventory. This page turns that roadmap into a continuous work
+queue so work does not stop merely because one item needs E's decision, a manual Supabase step, an
+authenticated session, or a new dependency.
+
+## 1. The operating rule
+
+Continue through **Queue A** in order. Do not stop after finishing one task and ask what to do next.
+
+If a task is blocked:
+
+1. Record the exact blocker and the smallest decision or manual action that clears it.
+2. Leave the blocked work in a reviewable state. Never leave frontend code depending on a database
+   migration that has not been applied.
+3. Move immediately to the next independent task in Queue A.
+4. After Queue A, complete the preparation work in Queue B.
+5. Stop only when every unblocked item in A and B is done, or a real technical failure prevents all
+   remaining work.
+
+Do not ask E to approve ordinary implementation choices already settled in the source documents.
+Do not present a list of options and wait when another independent task is available.
+
+## 2. Boundaries that remain in force
+
+- Do not begin Phase 3 RLS, create a second workspace, or change who can see/edit/delete business
+  records until E has the required process discussion.
+- Do not build commercial SaaS billing. Product billing remains explicitly deferred.
+- Do not invent or alter Sales, Billing, PM, Support, approval, or handoff authority rules. Record
+  the decision needed and continue elsewhere.
+- Do not mutate real production quotes, projects, roles, inventory, client records, or workspace
+  membership for testing. Use read-only checks, synthetic fixtures inside rolled-back transactions,
+  or local mocks.
+- Supabase migrations are manual review checkpoints. Draft one numbered migration and one canonical
+  transaction-safe verification script. Do not run either. Do not make E hunt through chat for SQL.
+- For a manual database action, give E one clickable file link and one action at a time. A successful
+  migration is followed by its single verification script only after E reports success.
+- No new package, package replacement, or major framework change without the corresponding decision.
+- Preserve existing processes unless the plan explicitly says the behavior has already been decided.
+
+## 3. Delivery rule for every code-only batch
+
+For each independently shippable code-only batch:
+
+1. Re-read the specific function/component and the relevant product document before editing.
+2. Add focused regression tests where they can prove behavior. Avoid tests that merely repeat the
+   implementation.
+3. Run:
+   - `npx tsc -b`
+   - `NODE_OPTIONS="--max-old-space-size=6144" npx vitest run --no-file-parallelism`
+   - `npx eslint .`
+   - `npm run build`
+   - `npm run test:smoke` for user-facing UI changes
+4. Commit the coherent batch, push `main`, wait for Vercel, and verify the production URL serves the
+   new bundle. Use an authenticated read-only walkthrough when a connected authenticated browser is
+   available. State plainly when it is not.
+5. Update `HANDOFF.md` with what changed, why, tests, commit, deployment evidence, and any remaining
+   limitation. Update `PRODUCT_MASTER_COMPLETION_PLAN.md` when a roadmap item changes state.
+6. Confirm a clean working tree, then continue to the next queue item.
+
+Local checks, Vercel deployment, authenticated verification, and E's real-world acceptance are
+separate evidence. Do not call one a substitute for another.
+
+## 4. Current production baseline
+
+The next coder should verify this baseline before editing rather than redoing completed work:
+
+- Migrations 115–133 that are recorded as applied in `HANDOFF.md` are historical/live work. Never
+  edit their files as though they were unapplied.
+- Migration 133 is applied. It lets a Manager assign a primary role during sign-in approval and
+  bootstrapped `ehren@ensight-technologies.com` as workspace/global admin. Its positive manager-path
+  production test passed; the negative test was honestly skipped because no real non-manager,
+  non-admin account exists.
+- Atomic quote-to-project conversion, equipment-recipe saves, and Project BOM replacement are live.
+- Proposal replay and submittal replay protections are live.
+- Sales quote BOM lines support checked in-place editing and a searchable catalog picker.
+- Proposal snapshots freeze the company name/logo and the public proposal table has mobile labels.
+- Purchase-order receiving no longer reports failed lines as received.
+- System Health Phase A shows existing notification-delivery failures to admins.
+- Modal focus management, clickable-row keyboard behavior, photo resizing, and the core reliability
+  write checks are deployed.
+
+Do not reimplement these. Verify only where the current task depends on them.
+
+## 5. Queue A — implement and ship without waiting for a business decision
+
+### A1. Close migration 133's browser-verification gap
+
+**Type:** read-only production verification.  
+**Start here:** `HANDOFF.md` top entry; Pending Approvals and Team Roster in `src/main.tsx`.
+
+When an authenticated session is available, reload after a fresh sign-in and confirm:
+
+- the account is recognized as admin;
+- the prior role-caused Sync issue is gone;
+- Pending Approvals still renders for Manager/Admin;
+- there are no new console errors or failed authorization requests on a normal read-only page load.
+
+Do not create an approval, change a role, or cause a write just to test this. If no authenticated
+session is available, record that and proceed to A2.
+
+**Done:** direct read-only evidence recorded in `HANDOFF.md`, or an honest “session unavailable” note
+with no further delay.
+
+### A2. Prepare `client_id` carry-through for quote-to-project conversion
+
+**Type:** migration package preparation; do not run; do not block later tasks.  
+**Source:** `PRODUCT_MASTER_COMPLETION_PLAN.md` §4 item 7 / §5 Batch 4.  
+**Primary files:** latest live definition of `public.create_project_from_quote(uuid)`,
+`backend/supabase/migrations/127_atomic_project_conversion.sql`, later corrections that redefine its
+dependencies, and the existing conversion test script.
+
+Required package:
+
+- Confirm the next free migration number at execution time. Never assume `134` without checking.
+- Create one additive migration that preserves the entire latest live function and adds the quote's
+  nullable `client_id` to the inserted Project row.
+- Preserve every authorization, active-workspace, idempotency, receipt, error-code, trigger-chain,
+  and result-shape guarantee already live.
+- Create one canonical transaction-safe test script proving:
+  - a quote with `client_id` produces a Project with the same `client_id`;
+  - a quote without it still converts successfully with null;
+  - retry returns the same Project and does not change ownership;
+  - wrong-workspace/role/status denials remain intact;
+  - fixtures roll back and zero sections are silently skipped.
+
+Do not add a human-readable quote reference in this batch. `projects` has no destination column for
+it; that is decision D3.
+
+**Done for overnight work:** migration and test files are fully reviewed, docs updated, no dependent
+frontend is shipped, and the package is parked for E. Continue to A3 without asking E to run it.
+
+### A3. Add accessible ordering controls to Sales quote BOM lines
+
+**Type:** code-only, ship when verified.  
+**Source:** `PRODUCT_MASTER_COMPLETION_PLAN.md` §5 Batch 10.  
+**Primary files:** Sales Quote Builder in `src/main.tsx`; Sales quote BOM persistence in
+`src/persistence.ts`; `sales_quote_bom_lines.line_sort`.
+
+Build explicit **Move up** and **Move down** controls using the existing `line_sort` field. Do not add
+a drag-and-drop package. Buttons must be keyboard accessible, disabled at the first/last boundary,
+and use checked pessimistic writes. A failed reorder must leave the visible order unchanged and show
+a plain error while logging technical detail.
+
+Keep reordering scoped to one quote. Normalize the affected rows to deterministic integer order and
+test first/middle/last moves, failure behavior, and rapid consecutive actions. Do not alter price,
+quantity, catalog link, or proposal history.
+
+**Done:** persisted order survives reload; failure cannot create a false saved order; deployed and
+recorded.
+
+### A4. Add ordering controls to Proposal Template sections
+
+**Type:** code-only, ship when verified.  
+**Primary files:** Proposal Template Admin panel in `src/main.tsx`;
+`updateProposalTemplateSection()` in `src/persistence.ts`; existing `sequence_order` field.
+
+Use the same accessible Move up/Move down interaction as A3. Existing sent proposals must remain
+unchanged because they use `content_snapshot`; verify this by source and regression test. Do not add
+template approvals, workspace-scoping, or new permissions.
+
+**Done:** current template order persists; sent proposal snapshots remain historical; deployed.
+
+### A5. Build proposal-version comparison from existing snapshots
+
+**Type:** code-only/read-only feature, ship when verified.  
+**Source:** `PRODUCT_MASTER_COMPLETION_PLAN.md` §5 Batch 12.  
+**Primary files:** `loadProposalsForQuote()` and `SalesQuoteProposal` in `src/persistence.ts`; proposal
+history UI in `src/main.tsx`.
+
+Add a read-only comparison view for two existing proposal versions. It must compare frozen snapshot
+content only and must not create, update, approve, reject, disable, or regenerate a link. Default to
+the newest two versions when available; provide explicit version selectors; show clear added,
+removed, and changed sections/BOM rows using stable keys where present and careful fallback matching
+where they are absent. Do not claim a legal document diff; label it as an operational comparison.
+
+Tests should cover identical versions, added/removed sections, changed values, missing optional
+snapshot fields from older proposals, and one-version/zero-version empty states.
+
+**Done:** a salesperson can understand what changed between two stored versions without modifying
+either; deployed.
+
+### A6. Proposal mobile and print verification/polish
+
+**Type:** code-only fixes arising from verification; no new feature decision.  
+**Primary files:** `ProposalPublicPage` in `src/main.tsx`; proposal CSS in `src/styles.css`.
+
+Verify at 360, 390, 768, and desktop widths plus print preview. Check branding, long client/site
+names, long item descriptions, quantity, datasheet links, response controls, and status/error states.
+Fix only demonstrated overflow, clipping, unreadable stacking, touch-target, contrast, or print
+problems. Preserve the existing frozen snapshot and response workflow.
+
+**Done:** screenshots or browser evidence for the tested sizes, zero console errors, and any fixes
+deployed. Do not describe desktop verification as mobile-device acceptance.
+
+### A7. Productization identity and configuration sweep
+
+**Type:** source audit plus safe code-only corrections.  
+**Source:** `PRODUCT_ONBOARDING_CONFIG.md` §1.  
+**Primary files:** `src/main.tsx`, `src/persistence.ts`, email/API templates, seeded defaults.
+
+Separate three categories:
+
+1. **Ergon product identity** — may remain Ergon on pre-login/product chrome.
+2. **Customer company identity** — must come from `company_branding` or a frozen document snapshot
+   where that data is already available.
+3. **Historical or legal customer-specific content** — document and decision-gate; never silently
+   rewrite.
+
+Fix only category-2 cases with an existing data source and no workflow ambiguity. Add regressions
+for customer-facing documents/emails that currently have the data available. Produce a short table
+of remaining category-3 items for Queue B. Do not create a second workspace or onboarding flow.
+
+**Done:** no confirmed customer-facing surface with available branding data still displays another
+company's identity; unresolved legal/default content is explicitly listed.
+
+### A8. Strengthen read-only acceptance coverage for completed critical flows
+
+**Type:** tests and verification only.  
+**Targets:** quote-to-project conversion result mapping; Project BOM replacement; Equipment Recipe
+save queue; purchase receiving failure state; proposal response/submittal response outcome mapping;
+backup restore structured outcome.
+
+Review existing tests for behavior gaps rather than increasing a number. Add tests only for material
+cases not already covered: stale response mapping, failure preserving local state, idempotent retry,
+or old snapshot compatibility. Do not add tests that duplicate SQL test coverage or implementation
+line-for-line.
+
+**Done:** a documented coverage matrix says what is proven by TypeScript tests, SQL tests, production
+read-only checks, and what still requires natural real-world use.
+
+### A9. Reconcile roadmap and handoff truth
+
+**Type:** documentation.  
+**Files:** `HANDOFF.md`, `PRODUCT_MASTER_COMPLETION_PLAN.md`, relevant product documents.
+
+Remove stale “not implemented,” “next action,” and “draft” statements only when later evidence proves
+them false. Keep historical entries accurate rather than rewriting history; add a current-status
+banner or superseded marker where needed. Verify commit hashes and migration filenames from Git.
+
+**Done:** a new coder reading only this page, the top of `HANDOFF.md`, and the master plan gets the
+same current state.
+
+## 6. Queue B — prepare while implementation items are blocked
+
+These tasks keep useful work moving. They may produce designs, test matrices, prototypes isolated
+from production code, or migration drafts explicitly marked **NOT RUN**. They may not silently choose
+the business rule.
+
+### B1. Client Ledger safe-revert implementation specification
+
+Trace the current caller, overlapping debounced saves, and the earlier reverted attempt. Produce an
+exact state machine for: idle, saving revision N, newer local edit exists, success, failure, retry.
+Compare per-field rollback with an in-flight queue and recommend one using concrete examples. Include
+tests that would prove no older failed request can overwrite a newer edit. No production code until
+D1 is answered.
+
+### B2. Frozen Sales pricing implementation package
+
+Turn the existing discovery into a reviewable schema/API/UI specification. Define catalog-default
+price, editable quote price, frozen proposal price, internal cost/margin visibility, tax/discount
+scope, version behavior, and conversion carry-through. Provide migration pseudocode and a test
+matrix, not a runnable migration, until D2 is answered.
+
+### B3. Share-link implementation readiness
+
+Reconcile the eight decided policies in
+`PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md` with the missing Stage 2 fields and current
+proposal/submittal RPCs. Produce the exact schema/function/frontend dependency order and identify
+which step first changes real client behavior. Do not implement authority/handoff schema or link
+behavior until its required review gate is met.
+
+### B4. System Health Phase B package
+
+Refine `PRODUCT_SYSTEM_HEALTH_PLAN.md` into a migration/API/UI/test sequence. Fully specify the
+90-day detailed retention plus long-term aggregate counts already decided, safe-detail redaction,
+deduplication, acknowledgment, retry eligibility, and failure-in-the-monitor path. Keep alert
+recipient/channel as one explicit unresolved field (D8). No runnable migration until that decision
+or an instruction to proceed without alert delivery.
+
+### B5. Backup restore resume/checkpoint specification
+
+Define `restore_runs`, per-section status, deterministic retry keys, resume behavior, cancellation,
+and the rule for references that no longer resolve. Use synthetic snapshots only. Do not implement
+until restore leniency D9 is answered.
+
+### B6. Inventory pagination design
+
+Trace every `loadInventoryItems` consumer. Specify server-side search, stable cursor/order, selected
+item hydration, empty/loading/error states, and how existing dropdowns avoid losing a selected item
+outside the current page. Recommend a default UX with a small interaction sketch. Do not cap the
+existing alphabetical query.
+
+### B7. Support/Service module product design
+
+Build the first real design document for post-close service: entry from a closed Project/Client
+Ledger record, installed asset/warranty context, ticket/request statuses, ownership, priority/SLA,
+client communication, scheduled maintenance, parts/labor, resolution, and reopen. Distinguish what
+already exists from proposed schema. Do not implement permissions or workflow before review.
+
+### B8. Engineering/Product Development module product design
+
+Define who uses it and the first useful feature set: product/solution requests, requirements,
+technical review, prototype/test results, version/release readiness, links to Catalog and Projects,
+and handoff to Support. Keep Engineering delivery work distinct from Project implementation. Produce
+screens, data objects, permissions questions, and a smallest useful first release.
+
+### B9. Marketing-to-Sales design
+
+Map lead source, campaign, company/contact, qualification, opportunity, activities, ownership, and
+conversion into today's Sales Quote without re-entry. Include HubSpot coexistence/import boundaries
+and deduplication. Do not promise or build a HubSpot integration without a separate decision.
+
+### B10. Security/dependency follow-up
+
+Refresh the read-only dependency audit. Revalidate the `xlsx` finding and the existing `exceljs`
+evaluation against current source; do not install or replace a package. Review public RPC execute
+grants and newly added security-definer functions since the last audit for `search_path=''`, fully
+qualified references, minimum grants, and safe errors. Findings only unless a fix is purely
+grant-hardening with zero behavior change; any database fix remains a manual migration package.
+
+## 7. Queue C — full product completion sequence
+
+This is the larger plan. A coder should resume at the first wave whose prerequisites are satisfied,
+and use Queue B whenever a decision blocks implementation.
+
+### Wave 0 — current production reliability
+
+Finish A1–A9. Close natural-use acceptance gaps as real activity occurs. Maintain System Health and
+write verification. Gate: no known silent partial-write path remains in a Critical workflow.
+
+### Wave 1 — Sales authoring foundation
+
+Complete accessible ordering, proposal version comparison, client carry-through, brand/mobile/print
+polish, and bundle-components behavior after D5. Gate: a salesperson can create, edit, order, version,
+and present a quote without leaving Ergon for document assembly.
+
+### Wave 2 — Sales pricing and customer proposal
+
+After D2/D4: add frozen per-line unit price and cost, controlled overrides, totals, discounts/tax as
+decided, customer-visible detail, internal margin, proposal version snapshots, dashboard/reporting
+based on frozen values, and approval-before-send where required. Gate: one real quote is priced and
+sent without PandaDoc/HubSpot presentation work.
+
+### Wave 3 — Proposal/submittal link lifecycle
+
+After the share-link readiness review: implement expiry, disable/re-enable, permanent revoke,
+regeneration/supersession, client-facing reason text, audit events, quote-delete behavior, and the
+Sales-vs-assigned-PM authority cutover already decided. Gate: every link has a visible lifecycle,
+first-response-wins remains atomic, and unauthorized/replayed/expired actions are denied and tested.
+
+### Wave 4 — Billing review and Project handoff
+
+Implement the capability system, assigned PM, PM reassignment record, conversion request/approval,
+quote-level down-payment clearance carried into Project, Manager/Admin override with reason and
+notification, and auditable handoff snapshot. Gate: an accepted quote cannot enter active Project
+execution until the decided Billing/down-payment and approval conditions are satisfied.
+
+This is operational Billing workflow only. It is not the later commercial SaaS subscription system.
+
+### Wave 5 — Tenant isolation
+
+After the required discussion: implement Phase 3 as staged table groups, beginning with the complete
+Clients/Sales Quote ownership graph in `PRODUCT_PHASE3_PLAN.md`. Include child-table denial,
+security-definer/public-token behavior, notification ownership, global-uniqueness changes, Storage
+path/policy isolation, platform-admin escape-hatch tests, and multi-membership behavior. Gate: an
+automated two-workspace suite proves Workspace B cannot read/write/delete Workspace A data.
+
+No real second customer workspace may be onboarded before this gate passes.
+
+### Wave 6 — Product onboarding and no-code setup
+
+Build platform-admin workspace creation; company identity; timezone/contact; user invites; roles and
+capabilities; terminology; starter templates; notification settings; integrations; preview/version/
+rollback; setup checklist; and first-login guidance. Gate: a new customer reaches a working empty
+workspace without code edits or manual database inserts.
+
+### Wave 7 — Marketing and CRM
+
+Build the reviewed B9 design: campaigns/sources, leads, contacts/companies, qualification,
+opportunities, activity history, ownership, quote conversion, dedupe/import, and Sales dashboard.
+Gate: a lead can move from Marketing to a quote with history and ownership intact.
+
+### Wave 8 — Project execution and closeout
+
+Finish Client Ledger safe-revert, backup resume/checkpointing, drawing/document categories,
+stakeholders, shipment/receiving integration, installed-asset completeness, closeout requirements,
+and handoff to Service. Gate: a Project closes with a complete, trustworthy customer record and a
+repeatable support handoff.
+
+### Wave 9 — Service/Support
+
+Implement the reviewed B7 scope: request intake, triage, assignment, SLA/priority, installed assets,
+warranty, site history, parts/labor, client updates, resolution/reopen, and reporting. Gate: a real
+post-close issue is handled end to end inside Ergon.
+
+### Wave 10 — Engineering/Product Development
+
+Implement the reviewed B8 smallest release and its Catalog/Project/Support links. Gate: one real
+product or solution request moves from intake through technical review to a released outcome.
+
+### Wave 11 — Commercial SaaS readiness
+
+Only after explicit authorization: product subscriptions, plans, trials, entitlements, metering,
+invoicing/payment provider, customer billing portal, suspension/reactivation, and platform support.
+Gate: a separate test customer can be onboarded, isolated, billed, and supported without code or
+manual database work.
+
+## 8. Decision register — ask once, in a consolidated review
+
+These decisions should be presented together at a natural checkpoint. They are not reasons to stop
+Queue A/B work.
+
+| ID | Decision | Recommended working direction | Blocks |
+|---|---|---|---|
+| D1 | Client Ledger failure recovery: per-field revert or serialized save queue? | Serialized, latest-snapshot save queue; never let an older failure overwrite a newer local edit | Client Ledger implementation |
+| D2 | Frozen quote pricing: when may price change before send, and what is frozen? | Catalog price is the starting default; Sales may deliberately override with audit; each sent proposal version freezes its own prices/costs | Pricing migration/UI |
+| D3 | Add a human-readable quote reference to Projects, and what column name? | Add nullable `source_quote_ref`; keep `source_sales_quote_id` as the durable link | Quote-ref carry-through |
+| D4 | Customer pricing detail and approval threshold | Show line price + subtotal + total; Manager approval only above a configured discount/margin threshold | Proposal price display/approval |
+| D5 | `bundle_components`: expand into real lines or relabel as notes? | Expand only after structured component data replaces the current free-text format; meanwhile relabel so it does not imply automation | Bundle behavior |
+| D6 | `xlsx` dependency | Replace with `exceljs` after a real-file proof of both import paths | Dependency remediation |
+| D7 | Share-link policies | Use the eight recorded decisions in the canonical share-link decision document; reconcile any stale master-plan wording before implementation | Link lifecycle |
+| D8 | System Health down alert recipients/channel | Email every workspace admin by default; later allow a configurable on-call list/channels | System Health alerting |
+| D9 | Backup restore unresolved references | Allow a clearly warned per-section skip/retry during restore; live entry remains strict | Restore checkpointing |
+| D10 | Inventory pagination UX | Server-side search + cursor pagination; preserve selected rows outside the current page | Inventory performance |
+| D11 | Phase 3 RLS rollout process | Review and approve one complete table group at a time; Clients/Sales Quote graph first | Tenant isolation/onboarding |
+| D12 | E-signature legal weight and server PDF | Keep typed acceptance until the business confirms stronger legal requirements; evaluate PDF separately | Advanced proposal features |
+| D13 | Support first release | Ticket/request lifecycle linked to Client Ledger, Project, site, and installed asset | Support module |
+| D14 | Engineering first release | Product/solution request + technical review + Catalog release link | Engineering module |
+| D15 | Commercial SaaS billing | Remains deferred until explicit authorization | SaaS commercialization |
+
+## 9. Consolidated reporting format
+
+The coder's report should contain:
+
+1. **Shipped and live** — commits, production URL, direct evidence.
+2. **Completed locally / prepared for review** — especially migration packages, clearly marked not
+   run.
+3. **Verification** — test counts and what they actually prove.
+4. **Blocked** — one-line blocker and decision ID; no long conversational history.
+5. **New findings** — confirmed source/runtime findings separated from recommendations.
+6. **Next automatic task** — the next Queue A/B item the coder will start without waiting.
+7. **User actions** — one consolidated list, and only actions that truly require E.
+8. **Git state** — HEAD, `origin/main`, and working tree.
+
+The report must never end with “what would you like me to do next?” while an unblocked Queue A or B
+item remains.
+
+## 10. Start instruction for the next coder
+
+Read this file, then the top current-status entries in `HANDOFF.md`, then
+`PRODUCT_MASTER_COMPLETION_PLAN.md`. Verify Git and begin at A1. If A1 lacks an authenticated
+session, record that fact in one line and begin A2 immediately. Continue until all available A and B
+work is complete.

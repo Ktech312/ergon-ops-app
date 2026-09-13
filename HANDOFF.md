@@ -1,5 +1,17 @@
 # Ergon Ops — Handoff Doc
 
+## New coder: start here
+
+The continuous execution queue is [`CONTINUOUS_CODER_HANDOFF.md`](CONTINUOUS_CODER_HANDOFF.md).
+It was written to prevent work from stopping when one item needs a decision, a manual Supabase step,
+or an authenticated session. The coder must work through Queue A, park blocked migration packages,
+continue through independent tasks, then complete Queue B preparation. The full roadmap remains in
+`PRODUCT_MASTER_COMPLETION_PLAN.md`.
+
+Baseline when that queue was created: `main` and `origin/main` at `02fe578`, clean working tree,
+production `https://ergon-ops-app.vercel.app/`. Verify this before starting because later commits may
+supersede the baseline.
+
 Last updated: 2026-09-12, migration 133 APPLIED AND VERIFIED IN PRODUCTION (**Code: commits `6f06c5e` (deployed, see the entry below), `677e487` (migration + corrected test script, committed after E ran them). Nothing further needed on this item.**
 
 E ran `backend/supabase/migrations/133_manager_primary_role_and_admin_bootstrap.sql` directly against production Supabase: "Success. No rows returned" -- confirms both the `bridge_set_primary_role` redefinition and the one-time `ehren@ensight-technologies.com` admin-bootstrap insert succeeded (the migration's own `do $$ ... $$` block would have raised an exception on any failure, including the target email not being found).
