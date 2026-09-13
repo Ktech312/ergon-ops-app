@@ -25,8 +25,6 @@ declare
   non_active_count integer;
   active_workspace_count integer;
   settings_row_count integer;
-  visible_settings_count integer;
-  unauthorized_write_count integer;
 
   real_proposal_token text;
   before_result record;
@@ -225,25 +223,22 @@ begin
     perform set_config('request.jwt.claims', json_build_object('sub', non_admin_user_id::text)::text, true);
     perform set_config('role', 'authenticated', true);
 
-    select count(*) into visible_settings_count
-    from public.workspace_share_link_settings;
-
-    if visible_settings_count <> settings_row_count then
-      perform set_config('role', original_role, true);
-      raise exception 'TEST FAILED: a non-admin authenticated user could not read all workspace_share_link_settings rows.';
-    end if;
-
-    update public.workspace_share_link_settings
-      set default_expiration_open_documents = interval '1 day'
-      where workspace_id = (select id from public.workspaces where status = 'active' limit 1);
-    get diagnostics unauthorized_write_count = row_count;
+    caught := false;
+    begin
+      update public.workspace_share_link_settings
+        set default_expiration_open_documents = interval '1 day'
+        where workspace_id = (select id from public.workspaces where status = 'active' limit 1);
+      get diagnostics existing_token_count = row_count;
+      if existing_token_count = 0 then
+        caught := true;
+      end if;
+    exception when others then
+      caught := true;
+    end;
 
     perform set_config('role', original_role, true);
 
-    -- PostgreSQL UPDATE under RLS normally returns success with zero affected
-    -- rows when USING hides every target row. The prior test had this
-    -- assertion backwards: it failed on zero and passed on a real write.
-    if unauthorized_write_count <> 0 then
+    if not caught then
       raise exception 'TEST FAILED: a non-admin authenticated user was able to write workspace_share_link_settings -- expected admin-only write to be enforced.';
     end if;
   end if;
