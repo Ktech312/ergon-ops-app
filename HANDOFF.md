@@ -19,10 +19,13 @@ Revoke & Generate New Link, activity history) is also shipped and deployed (`35b
 bundle `index-Bir39DZP.js`, zero console errors on a fresh load). Reconciling
 `PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` against that shipped work surfaced one real gap:
 `share_link_views` never had a write path, so Queue C2.6's own Activity panel would always show 0
-views. Migration 143 closes it (see "Current database gate" below) -- next single file for E.
-**After that, Queue C2.7 (close direct-write bypasses, switch the Create & Send flow to the
-server-owned RPCs) is the active work.** Do not
-re-run migrations 134/135/136/137/141/138/139/140/142 after they've
+views. Migration 143 closed it -- E ran it and it returned `Success. No rows returned`; its
+canonical test is sent, independently verified, result pending. **Queue C2.7 is now in progress:**
+part 1 (switching Create & Send to the server-owned atomic RPCs, replacing the old direct-INSERT
+flow) is done and deployed (`05fa486`). Part 2, migration 144 (closing the now-unused direct-write
+policies on `public_share_tokens`/`project_submittals`/`sales_quote_proposals`), is drafted,
+independently verified, and sent to E -- next single file, see "Current database gate" below. Do not
+re-run migrations 134/135/136/137/141/138/139/140/142/143 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
 **Current database gate (2026-09-13):** migrations 137 (+ corrective 141), 138, and 139 are applied
@@ -82,7 +85,31 @@ redefines `get_quote_proposal_by_token`/`get_submittal_by_token` (already applie
 row per call -- same external outcome shape and grants, additive only; a genuinely unknown token is
 deliberately never logged (no entity to attach it to under the NOT NULL schema). Independently
 verified end-to-end against a real local PostgreSQL 18 engine (PGlite), including under the real
-admin-also-PM condition. **Migration 143 is the next single-file gate.**
+admin-also-PM condition. E ran it in production and it returned `Success. No rows returned` --
+migration 143 is applied; its canonical test is sent, independently verified, result pending.
+
+**Queue C2.7 (2026-09-14):** part 1 switched `handleCreateSubmittal`/`handleCreateQuoteProposal`
+(`src/main.tsx`) to new persistence wrappers `createAndSendSubmittalVersion`/
+`createAndSendQuoteProposalVersion`, which call migration 140's atomic
+`create_and_send_submittal_version`/`create_and_send_quote_proposal_version` RPCs instead of the old
+two-step direct-INSERT flow -- closing the real client-computed-version race those old functions'
+own comments already documented, and getting auto-supersession of every prior version's still-live
+link for free. The four now-dead old functions and the client-side `generateShareToken()` helper
+were removed entirely, closing the weak `Math.random()` fallback path for good. 4 new tests,
+431/431 passing, tsc/eslint/build clean. Pushed and deployed (`05fa486`; bundle `index-C_sfjz0J.js`,
+zero console errors) -- safe to ship on its own since the RPCs it calls were already live.
+
+Part 2, `backend/supabase/migrations/144_close_share_link_direct_write_bypasses.sql`, drops
+`public_share_tokens`'/`project_submittals`'/`sales_quote_proposals`' old direct-write policies
+entirely now that part 1 is deployed and confirmed live -- the one real dependency on those paths.
+Confirmed via a full trace of every direct `fetch()` call against these three tables in
+`src/persistence.ts` that nothing else needed them. Independently verified end-to-end against a real
+local PostgreSQL 18 engine (PGlite), including a negative control (the same test genuinely fails
+without this migration applied, proving it tests something real) and the real admin-also-PM
+condition. The authorization-table policy closure and bridge-aware `accept_invite()` replacement
+C2.7's task description also names are explicitly **not** part of this migration -- a separate,
+pre-existing body of work, not share-link-specific, tracked separately rather than silently dropped.
+**Migration 144 is the next single-file gate.**
 
 **Urgent finding and same-day fix (2026-09-13):** while preparing to send the test above, checking
 migration 139's actual live effect on the currently-deployed frontend surfaced a real, active
