@@ -3808,12 +3808,29 @@ export type PublicSubmittalView = {
 
 // Migration 122: same discriminated-outcome shape as the proposal fix
 // (migrations 119/121) -- see PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md.
+// Migration 139 added three more terminal outcomes (a link that resolves
+// but is not currently usable): "expired" (past its own expiration),
+// "superseded" (a newer version was sent -- this exact link can never be
+// reused), and "unavailable" (temporarily disabled OR permanently revoked
+// -- deliberately collapsed into one neutral outcome so the client is
+// never told which, per PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_
+// DECISION.md Part 8 item 4).
 export type PublicSubmittalResult =
   | { outcome: "found"; data: PublicSubmittalView }
   | { outcome: "invalid_token" }
+  | { outcome: "expired" }
+  | { outcome: "superseded" }
+  | { outcome: "unavailable" }
   | { outcome: "error" };
 
-export type SubmittalResponseOutcome = "success" | "already_responded" | "invalid_token" | "error";
+export type SubmittalResponseOutcome =
+  | "success"
+  | "already_responded"
+  | "invalid_token"
+  | "expired"
+  | "superseded"
+  | "unavailable"
+  | "error";
 
 // Always carries the AUTHORITATIVE current state of the submittal, even
 // when outcome is "already_responded" -- the caller should render this
@@ -3994,33 +4011,43 @@ export async function fetchPublicSubmittal(token: string): Promise<PublicSubmitt
   }
 
   const rows = (await response.json()) as Array<{
-    submittal_id: string;
-    status: string;
-    version: number;
-    content_snapshot: SubmittalSnapshot;
+    outcome: string;
+    submittal_id: string | null;
+    status: string | null;
+    version: number | null;
+    content_snapshot: SubmittalSnapshot | null;
     client_name: string | null;
-    project_name: string;
+    project_name: string | null;
     responded_at: string | null;
     approval_name: string | null;
   }>;
 
+  // Migration 139 redefined get_submittal_by_token to always return
+  // exactly one row with a leading `outcome` column (found/invalid_token/
+  // expired/superseded/unavailable), never zero rows -- the pre-139
+  // "zero rows means invalid" convention no longer holds. The `!rows.length`
+  // check is kept only as a defensive fallback (never expected once 139 is
+  // live), not the primary signal.
   if (!rows.length) {
-    // A well-formed request that resolved zero rows means the token
-    // itself doesn't match a live, unexpired submittal -- distinct from
-    // a network/server failure (see migration 122, get_submittal_by_token).
     return { outcome: "invalid_token" };
   }
 
   const row = rows[0];
+  if (row.outcome === "expired" || row.outcome === "superseded" || row.outcome === "unavailable" || row.outcome === "invalid_token") {
+    return { outcome: row.outcome };
+  }
+  if (row.outcome !== "found" || !row.submittal_id) {
+    return { outcome: "error" };
+  }
   return {
     outcome: "found",
     data: {
       submittalId: row.submittal_id,
       status: row.status as ProjectSubmittal["status"],
-      version: row.version,
-      contentSnapshot: row.content_snapshot,
+      version: row.version as number,
+      contentSnapshot: row.content_snapshot as SubmittalSnapshot,
       clientName: row.client_name ?? "",
-      projectName: row.project_name,
+      projectName: row.project_name ?? "",
       respondedAt: row.responded_at,
       approvalName: row.approval_name,
     },
@@ -4069,7 +4096,7 @@ export async function respondToPublicSubmittal(
   }
   const row = rows[0];
   return {
-    outcome: (["success", "already_responded", "invalid_token"] as string[]).includes(row.outcome)
+    outcome: (["success", "already_responded", "invalid_token", "expired", "superseded", "unavailable"] as string[]).includes(row.outcome)
       ? (row.outcome as SubmittalResponseOutcome)
       : "error",
     status: (row.status as ProjectSubmittal["status"] | null) ?? null,
@@ -11978,12 +12005,28 @@ export type PublicQuoteProposalView = {
 // Migration 119: distinguishes "the RPC ran and here's what it found" from
 // "something actually broke," per the fix requirements -- see
 // PRODUCT_TOKEN_BACKUP_CONTENT_TEST_AUDIT.md's "A3 resolution" section.
+// Migration 139 added three more terminal outcomes alongside the
+// pre-existing found/invalid_token/error shape: "expired", "superseded"
+// (a newer version was sent -- this exact link can never be reused), and
+// "unavailable" (temporarily disabled OR permanently revoked -- collapsed
+// into one neutral outcome so the client is never told which, per
+// PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md Part 8 item 4).
 export type PublicQuoteProposalResult =
   | { outcome: "found"; data: PublicQuoteProposalView }
   | { outcome: "invalid_token" }
+  | { outcome: "expired" }
+  | { outcome: "superseded" }
+  | { outcome: "unavailable" }
   | { outcome: "error" };
 
-export type ProposalResponseOutcome = "success" | "already_responded" | "invalid_token" | "error";
+export type ProposalResponseOutcome =
+  | "success"
+  | "already_responded"
+  | "invalid_token"
+  | "expired"
+  | "superseded"
+  | "unavailable"
+  | "error";
 
 // Always carries the AUTHORITATIVE current state of the proposal, even
 // when outcome is "already_responded" (someone else's response, or a
@@ -12269,28 +12312,38 @@ export async function fetchPublicQuoteProposal(token: string): Promise<PublicQuo
     return { outcome: "error" };
   }
   const rows = (await response.json()) as Array<{
-    proposal_id: string;
-    status: string;
-    version: number;
-    content_snapshot: ProposalSnapshot;
+    outcome: string;
+    proposal_id: string | null;
+    status: string | null;
+    version: number | null;
+    content_snapshot: ProposalSnapshot | null;
     client_name: string | null;
     responded_at: string | null;
     approval_name: string | null;
   }>;
+  // Migration 139 redefined get_quote_proposal_by_token to always return
+  // exactly one row with a leading `outcome` column (found/invalid_token/
+  // expired/superseded/unavailable), never zero rows -- the pre-139
+  // "zero rows means invalid" convention no longer holds. The `!rows.length`
+  // check is kept only as a defensive fallback (never expected once 139 is
+  // live), not the primary signal.
   if (!rows.length) {
-    // A well-formed request that resolved zero rows means the token
-    // itself doesn't match a live, unexpired proposal -- distinct from a
-    // network/server failure (see migration 119, get_quote_proposal_by_token).
     return { outcome: "invalid_token" };
   }
   const row = rows[0];
+  if (row.outcome === "expired" || row.outcome === "superseded" || row.outcome === "unavailable" || row.outcome === "invalid_token") {
+    return { outcome: row.outcome };
+  }
+  if (row.outcome !== "found" || !row.proposal_id) {
+    return { outcome: "error" };
+  }
   return {
     outcome: "found",
     data: {
       proposalId: row.proposal_id,
       status: row.status as SalesQuoteProposal["status"],
-      version: row.version,
-      contentSnapshot: row.content_snapshot,
+      version: row.version as number,
+      contentSnapshot: row.content_snapshot as ProposalSnapshot,
       clientName: row.client_name ?? "",
       respondedAt: row.responded_at,
       approvalName: row.approval_name,
@@ -12339,7 +12392,7 @@ export async function respondToPublicQuoteProposal(
   }
   const row = rows[0];
   return {
-    outcome: (["success", "already_responded", "invalid_token"] as string[]).includes(row.outcome)
+    outcome: (["success", "already_responded", "invalid_token", "expired", "superseded", "unavailable"] as string[]).includes(row.outcome)
       ? (row.outcome as ProposalResponseOutcome)
       : "error",
     status: (row.status as SalesQuoteProposal["status"] | null) ?? null,

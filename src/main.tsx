@@ -25772,7 +25772,11 @@ function SubmittalPublicPage({ token }: { token: string }) {
   // "invalid" = the token itself doesn't resolve (bad/expired link) --
   // distinct from "error" (a genuine network/server failure), per
   // migration 122's fix requirements (same shape as ProposalPublicPage).
-  const [phase, setPhase] = useState<"loading" | "invalid" | "error" | "ready" | "responded">("loading");
+  // "expired"/"superseded"/"unavailable" are migration 139's three
+  // additional terminal outcomes -- each renders its own decided copy
+  // (PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md Part 8 item 4)
+  // rather than collapsing into the generic "invalid" message.
+  const [phase, setPhase] = useState<"loading" | "invalid" | "expired" | "superseded" | "unavailable" | "error" | "ready" | "responded">("loading");
   const [data, setData] = useState<PublicSubmittalView | null>(null);
   const [approverName, setApproverName] = useState("");
   const [notes, setNotes] = useState("");
@@ -25788,6 +25792,10 @@ function SubmittalPublicPage({ token }: { token: string }) {
       .then((result) => {
         if (result.outcome === "invalid_token") {
           setPhase("invalid");
+          return;
+        }
+        if (result.outcome === "expired" || result.outcome === "superseded" || result.outcome === "unavailable") {
+          setPhase(result.outcome);
           return;
         }
         if (result.outcome === "error") {
@@ -25843,8 +25851,8 @@ function SubmittalPublicPage({ token }: { token: string }) {
       return;
     }
 
-    if (result.outcome === "invalid_token") {
-      setPhase("invalid");
+    if (result.outcome === "invalid_token" || result.outcome === "expired" || result.outcome === "superseded" || result.outcome === "unavailable") {
+      setPhase(result.outcome === "invalid_token" ? "invalid" : result.outcome);
       return;
     }
 
@@ -25864,6 +25872,33 @@ function SubmittalPublicPage({ token }: { token: string }) {
       <div className="submittal-public-page">
         <h1>Link not found</h1>
         <p>This submittal link is invalid or has expired. Please contact your Ergon representative for a new link.</p>
+      </div>
+    );
+  }
+
+  if (phase === "expired") {
+    return (
+      <div className="submittal-public-page">
+        <h1>Link expired</h1>
+        <p>This link has expired. Please contact your Ergon representative for a new link.</p>
+      </div>
+    );
+  }
+
+  if (phase === "superseded") {
+    return (
+      <div className="submittal-public-page">
+        <h1>A newer version was sent</h1>
+        <p>A newer version has been sent. Please check your email for the latest link.</p>
+      </div>
+    );
+  }
+
+  if (phase === "unavailable") {
+    return (
+      <div className="submittal-public-page">
+        <h1>Link unavailable</h1>
+        <p>This document is currently unavailable. Please contact your Ergon representative.</p>
       </div>
     );
   }
@@ -25968,8 +26003,12 @@ function ProposalPublicPage({ token }: { token: string }) {
   // distinct from "error" (a genuine network/server failure), per
   // migration 119's fix requirements. "responded" covers both "you just
   // responded" and "someone else already had" -- respondedByMe
-  // distinguishes the copy shown, see below.
-  const [phase, setPhase] = useState<"loading" | "invalid" | "error" | "ready" | "responded">("loading");
+  // distinguishes the copy shown, see below. "expired"/"superseded"/
+  // "unavailable" are migration 139's three additional terminal outcomes --
+  // each renders its own decided copy (PRODUCT_SHARE_LINK_EXPIRATION_
+  // REVOCATION_DECISION.md Part 8 item 4) rather than collapsing into the
+  // generic "invalid" message.
+  const [phase, setPhase] = useState<"loading" | "invalid" | "expired" | "superseded" | "unavailable" | "error" | "ready" | "responded">("loading");
   const [data, setData] = useState<PublicQuoteProposalView | null>(null);
   const [approverName, setApproverName] = useState("");
   const [notes, setNotes] = useState("");
@@ -25985,6 +26024,10 @@ function ProposalPublicPage({ token }: { token: string }) {
       .then((result) => {
         if (result.outcome === "invalid_token") {
           setPhase("invalid");
+          return;
+        }
+        if (result.outcome === "expired" || result.outcome === "superseded" || result.outcome === "unavailable") {
+          setPhase(result.outcome);
           return;
         }
         if (result.outcome === "error") {
@@ -26040,8 +26083,8 @@ function ProposalPublicPage({ token }: { token: string }) {
       return;
     }
 
-    if (result.outcome === "invalid_token") {
-      setPhase("invalid");
+    if (result.outcome === "invalid_token" || result.outcome === "expired" || result.outcome === "superseded" || result.outcome === "unavailable") {
+      setPhase(result.outcome === "invalid_token" ? "invalid" : result.outcome);
       return;
     }
 
@@ -26061,6 +26104,33 @@ function ProposalPublicPage({ token }: { token: string }) {
       <div className="submittal-public-page">
         <h1>Link not found</h1>
         <p>This proposal link is invalid or has expired. Please contact your Ergon representative for a new link.</p>
+      </div>
+    );
+  }
+
+  if (phase === "expired") {
+    return (
+      <div className="submittal-public-page">
+        <h1>Link expired</h1>
+        <p>This link has expired. Please contact your Ergon representative for a new link.</p>
+      </div>
+    );
+  }
+
+  if (phase === "superseded") {
+    return (
+      <div className="submittal-public-page">
+        <h1>A newer version was sent</h1>
+        <p>A newer version has been sent. Please check your email for the latest link.</p>
+      </div>
+    );
+  }
+
+  if (phase === "unavailable") {
+    return (
+      <div className="submittal-public-page">
+        <h1>Link unavailable</h1>
+        <p>This document is currently unavailable. Please contact your Ergon representative.</p>
       </div>
     );
   }

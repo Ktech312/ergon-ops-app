@@ -31,6 +31,7 @@ describe("fetchPublicQuoteProposal", () => {
   it("maps a real proposal to outcome 'found' with all fields, including the new respondedAt/approvalName", async () => {
     globalThis.fetch = mockFetchOnce(200, [
       {
+        outcome: "found",
         proposal_id: "p1",
         status: "sent",
         version: 2,
@@ -52,6 +53,7 @@ describe("fetchPublicQuoteProposal", () => {
   it("maps an already-responded proposal's respondedAt/approvalName through correctly", async () => {
     globalThis.fetch = mockFetchOnce(200, [
       {
+        outcome: "found",
         proposal_id: "p1",
         status: "approved",
         version: 1,
@@ -74,6 +76,44 @@ describe("fetchPublicQuoteProposal", () => {
     globalThis.fetch = mockFetchOnce(200, []);
     const result = await fetchPublicQuoteProposal("bad-token");
     expect(result.outcome).toBe("invalid_token");
+  });
+
+  // Migration 139 redefined get_quote_proposal_by_token to always return
+  // exactly one row with a leading `outcome` column, never zero rows --
+  // these three cases (a real token that resolves but isn't usable)
+  // previously could not happen at all; each must map to its own
+  // discriminated outcome, not be swallowed into "found" with null data
+  // or a bare "error".
+  it("maps outcome='invalid_token' with a real (non-empty) row to outcome 'invalid_token'", async () => {
+    globalThis.fetch = mockFetchOnce(200, [
+      { outcome: "invalid_token", proposal_id: null, status: null, version: null, content_snapshot: null, client_name: null, responded_at: null, approval_name: null },
+    ]);
+    const result = await fetchPublicQuoteProposal("bad-token");
+    expect(result.outcome).toBe("invalid_token");
+  });
+
+  it("maps outcome='expired' to outcome 'expired'", async () => {
+    globalThis.fetch = mockFetchOnce(200, [
+      { outcome: "expired", proposal_id: null, status: null, version: null, content_snapshot: null, client_name: null, responded_at: null, approval_name: null },
+    ]);
+    const result = await fetchPublicQuoteProposal("expired-token");
+    expect(result.outcome).toBe("expired");
+  });
+
+  it("maps outcome='superseded' to outcome 'superseded'", async () => {
+    globalThis.fetch = mockFetchOnce(200, [
+      { outcome: "superseded", proposal_id: null, status: null, version: null, content_snapshot: null, client_name: null, responded_at: null, approval_name: null },
+    ]);
+    const result = await fetchPublicQuoteProposal("superseded-token");
+    expect(result.outcome).toBe("superseded");
+  });
+
+  it("maps outcome='unavailable' (disabled or revoked, deliberately indistinguishable) to outcome 'unavailable'", async () => {
+    globalThis.fetch = mockFetchOnce(200, [
+      { outcome: "unavailable", proposal_id: null, status: null, version: null, content_snapshot: null, client_name: null, responded_at: null, approval_name: null },
+    ]);
+    const result = await fetchPublicQuoteProposal("disabled-token");
+    expect(result.outcome).toBe("unavailable");
   });
 
   it("maps an HTTP failure to outcome 'error', distinct from 'invalid_token'", async () => {
@@ -123,6 +163,34 @@ describe("respondToPublicQuoteProposal", () => {
     const result = await respondToPublicQuoteProposal("bad-token", "approved", "Someone", "");
     expect(result.outcome).toBe("invalid_token");
     expect(result.status).toBeNull();
+  });
+
+  // Migration 139: a disabled/revoked/expired/superseded link must never
+  // accept a response -- respond_to_quote_proposal() now reports which
+  // before making any change, rather than the old behavior of just
+  // rejecting the token as if it were unknown.
+  it("maps a disabled/revoked link's response attempt to outcome 'unavailable'", async () => {
+    globalThis.fetch = mockFetchOnce(200, [
+      { outcome: "unavailable", status: null, responded_at: null, approval_name: null, version: null },
+    ]);
+    const result = await respondToPublicQuoteProposal("disabled-token", "approved", "Someone", "");
+    expect(result.outcome).toBe("unavailable");
+  });
+
+  it("maps an expired link's response attempt to outcome 'expired'", async () => {
+    globalThis.fetch = mockFetchOnce(200, [
+      { outcome: "expired", status: null, responded_at: null, approval_name: null, version: null },
+    ]);
+    const result = await respondToPublicQuoteProposal("expired-token", "approved", "Someone", "");
+    expect(result.outcome).toBe("expired");
+  });
+
+  it("maps a superseded link's response attempt to outcome 'superseded'", async () => {
+    globalThis.fetch = mockFetchOnce(200, [
+      { outcome: "superseded", status: null, responded_at: null, approval_name: null, version: null },
+    ]);
+    const result = await respondToPublicQuoteProposal("superseded-token", "approved", "Someone", "");
+    expect(result.outcome).toBe("superseded");
   });
 
   it("maps an HTTP failure to outcome 'error'", async () => {
