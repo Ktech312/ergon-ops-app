@@ -1104,13 +1104,26 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    migration 139's live effect surfaced an active production defect (every non-`found` outcome was
    being rendered as a real, found document with null content), not a scheduled follow-up. Do not
    run migration 139 or its test again.
-8. **Migration 140 — PENDING, NEXT UP.** `backend/supabase/migrations/
-   140_share_link_version_supersession_and_quote_cascade.sql` — auto-supersede-on-new-version RPCs
-   plus the quote soft-delete cascade trigger (see C2.5 above). Requires 137, 138, and 139 live
-   first (all three now applied and verified). Its test script,
-   `backend/supabase/migration_140_share_link_version_supersession_and_quote_cascade_tests.sql`,
-   follows only after E reports 140 itself succeeded. This is the last migration in the current
-   drafted batch (C2.2–C2.5) — after 140, Queue C2.6 (frontend UI controls) is next.
+8. **Migration 140 — PENDING, NEXT UP. Fixed a real bug in the migration itself before ever
+   sending it.** `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql`
+   — auto-supersede-on-new-version RPCs plus the quote soft-delete cascade trigger (see C2.5 above).
+   Requires 137, 138, and 139 live first (all three now applied and verified). Given migrations
+   137/138/139 each surfaced a real production issue only their own live run caught, this migration
+   and its test were checked proactively before being sent at all: `create_and_send_submittal_version`/
+   `create_and_send_quote_proposal_version` both declare `returns table (..., token text)`, and a
+   RETURNS TABLE column becomes an implicit plpgsql variable in scope for the whole function body —
+   the supersession UPDATE's unqualified `where token = r.old_token` was genuinely ambiguous between
+   that variable and `public_share_tokens.token` (Postgres 42702), the exact bug class migration 121
+   already hit and documented. Fixed by aliasing the target table (`as pst`) and qualifying the WHERE
+   clause. The test also had the same three issues 139's test needed fixing in production (missing
+   fixture-creation identity simulation; PM/Sales discovery not excluding admins — this workspace's
+   admin also holds `pm`; Section 5's two cross-authorization checks needing secondary-role
+   isolation). Independently verified against three scenarios: clean fixtures, the admin also holding
+   `pm` (the exact condition that broke migration 139 in production), and a non-admin PM also holding
+   `sales` — all three pass with the real "ALL MIGRATION 140 ... PASSED -- ZERO SECTIONS SKIPPED"
+   notice firing. Give E only the migration file first; its test script only after E reports 140
+   itself succeeded. This is the last migration in the current drafted batch (C2.2–C2.5) — after 140,
+   Queue C2.6 (frontend UI controls) is next.
 
 ## 9. Consolidated reporting format
 

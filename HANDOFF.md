@@ -12,7 +12,9 @@ pricing) is fully deployed. Migration 139's paired frontend update (parsing the 
 is also live -- shipped same-day, ahead of that test confirming, after checking migration 139's live
 effect surfaced an active production defect -- see "Current database gate" below. Queue C2's
 remaining share-link lifecycle foundation is drafted: migration 140 plus its canonical test script is
-committed and pushed on `main` and is next up for E to run. Do not re-run
+committed and pushed on `main` and is next up for E to run. Migration 140 itself had a real bug
+(ambiguous `token` reference, same class migration 121 already hit) found and fixed before ever being
+sent -- see "Current database gate." Do not re-run
 migrations 134/135/136/137/141/138/139 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
@@ -29,8 +31,24 @@ admins, so `is_app_admin()` correctly authorized the "PM-only" caller, making th
 assumption false, not a bug in migration 139. Fixed by excluding admins from discovery and isolating
 each caller's role around the two Section 8 checks; re-verified against that exact scenario plus a
 second one (non-admin PM also holding Sales). E reran the corrected file and it returned `Success.
-No rows returned` -- migration 139 is closed. **Do not run migration 139 or its test again. Migration
-140 is now the next single-file gate.**
+No rows returned` -- migration 139 is closed. **Do not run migration 139 or its test again.**
+
+**Migration 140, checked and fixed before being sent at all (2026-09-13):** since migrations
+137/138/139 each surfaced a real production issue only their own live run caught, migration 140 and
+its test were reviewed for the same failure classes before ever reaching E. Found a real bug in the
+MIGRATION itself: `create_and_send_submittal_version`/`create_and_send_quote_proposal_version` both
+declare `returns table (..., token text)` -- a RETURNS TABLE column becomes an implicit plpgsql
+variable in scope for the whole function body, so the supersession UPDATE's unqualified `where token
+= r.old_token` was genuinely ambiguous between that variable and `public_share_tokens.token`
+(Postgres 42702) -- the exact bug class migration 121 already hit and documented for
+`respond_to_quote_proposal`'s own RETURNS TABLE columns. Fixed by aliasing the target table
+(`as pst`) and qualifying the WHERE clause. The test had the same three issues 139's test needed
+fixing in production (missing fixture-creation identity simulation; PM/Sales discovery not excluding
+admins; Section 5's two cross-authorization checks needing secondary-role isolation) -- all fixed.
+Independently verified against three scenarios: clean fixtures, the admin also holding `pm` (the
+exact condition that broke migration 139 in production), and a non-admin PM also holding `sales` --
+all three pass with the real "ALL MIGRATION 140 ... PASSED -- ZERO SECTIONS SKIPPED" notice firing.
+**Migration 140 is now the next single-file gate.**
 
 **Urgent finding and same-day fix (2026-09-13):** while preparing to send the test above, checking
 migration 139's actual live effect on the currently-deployed frontend surfaced a real, active
