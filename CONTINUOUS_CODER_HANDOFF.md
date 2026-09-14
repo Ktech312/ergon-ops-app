@@ -1,8 +1,8 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) SHIPPED. QUEUE C2 IS THE ACTIVE HANDOFF —
-CORRECTIVE MIGRATION 142 IS NEXT, THEN A RERUN OF 140'S TEST CLOSES C2.2–C2.5.** Prepared:
-2026-09-12, updated 2026-09-13. E approved the recommended
+Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), AND QUEUE C2.2–C2.5 (SHARE-LINK LIFECYCLE
+FOUNDATION, MIGRATIONS 137–142) ALL SHIPPED AND VERIFIED. QUEUE C2.6 IS THE ACTIVE HANDOFF.**
+Prepared: 2026-09-12, updated 2026-09-13. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
 `sales_quotes`, `accepted_proposal_total` on `projects`, frozen totals in every new
@@ -11,23 +11,27 @@ doc reconciliation). Migration 136 and its canonical test passed; the prepared c
 to `main` and Vercel deployed them.
 Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2026-09-13).
 
-Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: migrations 137, 138,
-139, and 140 plus their four canonical test scripts, committed and pushed on `main` (`362e702`,
-`f09f574`, `d564b8b`, status reconciliation through `b6298af`; migration 139's paired frontend
-update shipped as `d0f58f0`). Migrations 137 (plus corrective 141), 138, 139, and 140 are **all
-applied in production**, and 137/138/139's canonical tests are confirmed passed. Migration 139's
-frontend follow-up (parsing the new `outcome` column on the two public share-link pages) is also
-live — shipped same-day, ahead of its own test confirming, once checking 139's live effect surfaced
-an active production defect (see HANDOFF.md). Migration 140's own canonical test found one more real
-gap (functions get the same real default-EXECUTE-grant treatment migration 141 found for tables) --
-corrective migration 142 is drafted and next up; once it succeeds, E reruns 140's canonical test
-(unchanged) to close this batch out.
+Queue C2's share-link lifecycle foundation (C2.2–C2.5) is **fully shipped and verified in
+production (2026-09-13)**: migrations 137 (+ corrective 141), 138, 139, 140 (+ corrective 142) are
+all applied, and every canonical test (137, 138, 139, 140) returned `Success. No rows returned` with
+zero sections skipped. Migration 139's paired frontend follow-up (parsing the new `outcome` column
+on the two public share-link pages) is also live — shipped same-day, ahead of its own test
+confirming, once checking 139's live effect surfaced an active production defect (see HANDOFF.md).
+Two corrective migrations were needed beyond the original four (141 for a real table-grant gap, 142
+for the same class of gap on a function) — both closed, neither required editing an already-applied
+migration file, matching this repo's own established rule. **Queue C2.6 (frontend UI controls) is
+now the active work.**
 
 ## Next-session launchpad
 
-**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, and 140 are applied in
-production. Corrective migration 142 is the next single manual file for E to run — see "Manual
-database actions." Continue Queue C2 below (C2.6 onward) while that result is pending.
+**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, 140 (+142) are all applied
+and verified in production, including every canonical test. Nothing is pending on the database side.
+Continue with Queue C2.6 below: frontend UI controls (Disable/Re-enable, Permanently Revoke &
+Generate New Link, activity history) and switching the frontend to call the new server-owned RPCs
+(`create_submittal_share_token`/`create_quote_proposal_share_token`/`create_and_send_submittal_version`/
+`create_and_send_quote_proposal_version`) instead of the old direct-INSERT path, plus consuming
+migration 139's `outcome` column in the version-comparison/history UI where a superseded prior
+version needs its own distinct state shown.
 Do not rerun 134/135/136/137/141/138/139/140 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -1021,11 +1025,9 @@ Queue A/B work.
 
 ### Manual database actions
 
-Migrations 134, 135, 136, 137, and corrective 141 are done and verified. **The corrected migration-137
-canonical test returned `Success. No rows returned` from the exact repository file, with every
-assertion and skip configured to hard-fail. Migration 138 is applied; its corrected test is
-independently verified clean (2026-09-13) and is the current gate for E to run for real. Migrations
-139 and 140 remain drafted, committed, pushed, and unapplied.**
+Migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, and 140 (+ corrective 142) are **all done
+and verified in production, including every canonical test.** There is no pending manual database
+action. Queue C2.2–C2.5 (share-link lifecycle foundation) is fully closed.
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
@@ -1107,7 +1109,7 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    migration 139's live effect surfaced an active production defect (every non-`found` outcome was
    being rendered as a real, found document with null content), not a scheduled follow-up. Do not
    run migration 139 or its test again.
-8. **Migration 140 — APPLIED (2026-09-13). Canonical test is next single file.**
+8. **Migration 140 — DONE AND VERIFIED (2026-09-13).**
    `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql` —
    auto-supersede-on-new-version RPCs plus the quote soft-delete cascade trigger (see C2.5 above). E
    ran it in production and it returned `Success. No rows returned`. This migration was checked
@@ -1124,24 +1126,24 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    identity simulation; PM/Sales discovery not excluding admins — this workspace's admin also holds
    `pm`; the two cross-authorization checks needing secondary-role isolation) — all fixed and
    independently verified against three scenarios (clean fixtures, the admin also holding `pm`, a
-   non-admin PM also holding `sales`) before ever being sent. Do not run migration 140 again.
-9. **Migration 142 — PENDING, RUN BEFORE RETRYING 140'S TEST.** `backend/supabase/migrations/
-   142_fix_quote_cascade_trigger_grants.sql` — E's first run of migration 140's canonical test still
-   found a real gap: `TEST FAILED: anon has execute privilege on the cascade_quote_soft_delete
-   trigger function -- expected none (trigger-only).` Migration 140 only revoked from `public`,
-   reasoning (matching migration 117's own precedent) that a trigger function needs no grant since
-   Postgres refuses to invoke a `returns trigger` function directly regardless of privilege — true,
-   but this Supabase project's project-level default privileges apply to newly created FUNCTIONS too,
-   not just tables (the same class of gap migration 141 already closed for `share_link_views`/
-   `share_link_actions`/`workspace_share_link_settings`), so `anon`/`authenticated` were automatically
-   granted EXECUTE anyway. Functionally inert (the grant can never actually be exercised) but closed
-   for the same explicit minimum-ACL discipline every function here follows. Migration 140 itself is
-   NOT edited — it is already applied; this is a separate follow-up, exactly mirroring 137→141.
-   Independently re-verified against all three scenarios after updating the local sandbox to also
-   replicate this now-confirmed real default-privilege-on-functions behavior. Give E only this
-   migration file; **once it succeeds, E reruns migration 140's canonical test** (the same file
-   already sent, unchanged) — that rerun is what finally closes out Queue C2.2–C2.5. After that,
-   Queue C2.6 (frontend UI controls) is next.
+   non-admin PM also holding `sales`) before ever being sent. E ran it in production and it returned
+   `Success. No rows returned`. Its canonical test found one more real gap on the first run (see
+   migration 142 below); the corrected rerun of the SAME test file also returned `Success. No rows
+   returned`, zero sections skipped. Do not run migration 140 or its test again.
+9. **Migration 142 — DONE AND VERIFIED (2026-09-13).** `backend/supabase/migrations/
+   142_fix_quote_cascade_trigger_grants.sql` — migration 140's canonical test's first run found:
+   `TEST FAILED: anon has execute privilege on the cascade_quote_soft_delete trigger function --
+   expected none (trigger-only).` Migration 140 only revoked from `public`, reasoning (matching
+   migration 117's own precedent) that a trigger function needs no grant since Postgres refuses to
+   invoke a `returns trigger` function directly regardless of privilege — true, but this Supabase
+   project's project-level default privileges apply to newly created FUNCTIONS too, not just tables
+   (the same class of gap migration 141 already closed for `share_link_views`/`share_link_actions`/
+   `workspace_share_link_settings`), so `anon`/`authenticated` were automatically granted EXECUTE
+   anyway. Functionally inert (the grant can never actually be exercised) but closed for the same
+   explicit minimum-ACL discipline every function here follows. Migration 140 itself was not edited
+   — it is already applied; this was a separate follow-up, exactly mirroring 137→141. E ran it and it
+   returned `Success. No rows returned`, then reran migration 140's canonical test, which also passed
+   cleanly. **Queue C2.2–C2.5 is now fully closed — no pending manual database action.**
 
 ## 9. Consolidated reporting format
 
@@ -1165,8 +1167,7 @@ item remains.
 Read this file, then the top current-status entries in `HANDOFF.md`, then
 `PRODUCT_MASTER_COMPLETION_PLAN.md`. For a long unattended run, use
 `OVERNIGHT_CODER_PLAN_2026-09-13.md`; otherwise verify Git and begin at Queue C2.6 above (C2.1–C2.5
-are drafted records now — migrations 137–140 committed and pushed, awaiting E's review in order
-starting with 137;
-do not redo them). Treat A1–A15, B1–B10, and C1 as completed records rather than a queue to repeat.
+are completed records now — migrations 137–142 all applied and verified in production, including
+every canonical test; do not redo them). Treat A1–A15, B1–B10, and C1 as completed records rather than a queue to repeat.
 Continue until every independent C2 item is implemented or left at its required single-file manual
 database gate.

@@ -6,17 +6,16 @@ For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`
 requires continued work across independent lanes when a migration or decision is blocked, and it
 defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
-Migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, and 140
-are all applied in production; 137/138/139's canonical tests are also confirmed. Queue C1 (frozen
-Sales pricing) is fully deployed. Migration 139's paired frontend update (parsing the new `outcome`
-column) is also live -- shipped same-day, ahead of that test confirming, after checking migration
-139's live effect surfaced an active production defect -- see "Current database gate" below.
-Migration 140 itself had a real bug (ambiguous `token` reference, same class migration 121 already
-hit) found and fixed before ever being sent. Migration 140's first canonical-test run found one more
-real gap (`cascade_quote_soft_delete()` got the same real default-EXECUTE-grant treatment migration
-141 found for tables, just for functions this time) -- corrective migration 142 is next for E to run,
-then E reruns 140's canonical test (unchanged) to close out Queue C2.2-C2.5. Do not re-run
-migrations 134/135/136/137/141/138/139/140 after they've
+Migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, and 140 (+ corrective 142)
+are all applied and verified in production, including every canonical test. Queue C1 (frozen Sales
+pricing) is fully deployed, and Queue C2.2-C2.5 (share-link lifecycle foundation) is now fully
+shipped and verified -- no pending manual database action. Migration 139's paired frontend update
+(parsing the new `outcome` column) is also live -- shipped same-day, ahead of that test confirming,
+after checking migration 139's live effect surfaced an active production defect -- see "Current
+database gate" below for the full history, including migration 140's own real bug (ambiguous `token`
+reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
+E's real runs. **Queue C2.6 (frontend UI controls) is the active work now.** Do not re-run
+migrations 134/135/136/137/141/138/139/140/142 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
 **Current database gate (2026-09-13):** migrations 137 (+ corrective 141), 138, and 139 are applied
@@ -62,8 +61,10 @@ closes it explicitly, matching the same minimum-ACL discipline every other funct
 Migration 140 itself is not edited -- it is already applied; 142 is a separate follow-up, exactly
 mirroring 137→141. Independently re-verified against all three scenarios after updating the local
 sandbox to also replicate this now-confirmed default-privilege-on-functions behavior; all three pass
-cleanly. **Migration 142 is the next single-file gate. Once it succeeds, E reruns migration 140's
-canonical test (the same file already sent, unchanged) -- that closes out Queue C2.2-C2.5.**
+cleanly. E ran it in production and it returned `Success. No rows returned`, then reran migration
+140's canonical test (the same file already sent, unchanged), which also returned `Success. No rows
+returned`. **Queue C2.2-C2.5 is now fully closed -- migrations 137 (+141), 138, 139, 140 (+142) are
+all applied and verified, including every canonical test. No pending manual database action.**
 
 **Urgent finding and same-day fix (2026-09-13):** while preparing to send the test above, checking
 migration 139's actual live effect on the currently-deployed frontend surfaced a real, active
