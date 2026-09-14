@@ -1,6 +1,6 @@
 # Share-Link Implementation Plan — Staged Build Order
 
-Status: **design-only, produced as part of an overnight autonomous work pass. Production unchanged.** This assembles every decision already recorded in `PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md` (Parts 1–11) into one clean, execution-focused staging plan. That document remains the source of truth for *why* each decision was made; this one is the source of truth for *build order*.
+Status: **Stages A–D and part of Stage F are DONE AND VERIFIED IN PRODUCTION (2026-09-13, Queue C2.2–C2.6).** Migrations 137 (+ corrective 141), 138, 139, 140 (+ corrective 142) implement Stages A–D exactly as staged below (schema, RPCs, quote-deletion cascade, customer-facing messaging), all applied and verified including every canonical test. The Stage F per-version-row controls and Activity expander are also shipped and deployed. Stage E (Sales-only proposal authority narrowing the current wide-open write policy, and the assigned-PM submittal cutover) remains blocked on `PRODUCT_STAGE2_SCHEMA_PLAN.md` exactly as this document originally specified — not attempted. The Settings → Document Links and Settings → Capabilities screens (the rest of Stage F) are also not yet built. See `CONTINUOUS_CODER_HANDOFF.md` C2.2–C2.6 for the full per-migration/per-commit detail. This assembles every decision already recorded in `PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md` (Parts 1–11) into one clean, execution-focused staging plan. That document remains the source of truth for *why* each decision was made; this one is the source of truth for *build order*.
 
 **Hard prerequisite, not bypassable**: every stage below that touches Sales/PM authority, billing clearance, or conversion approval depends on `PRODUCT_STAGE2_SCHEMA_PLAN.md` being built first — specifically `assigned_pm_workspace_member_id`, `billing_clearance_history`, and `quote_conversion_requests`. Stages that only touch link lifecycle (expiration, disable/revoke, audit log) do **not** depend on Stage 2 and can proceed independently once the authorization bridge (migration 124) is confirmed live.
 
@@ -96,11 +96,27 @@ Re-checked every claim above against the current schema and against
 
 ## Stage A — Link lifecycle schema (no Stage 2 dependency)
 
+**Status: DONE AND VERIFIED — migration 137 (+ corrective 141), 2026-09-13.**
+
 - `public_share_tokens` gains: `status` (`active`/`temporarily_disabled`/`permanently_revoked`/`superseded`), `disabled_at`/`disabled_by`/`disabled_reason`, `revoked_at`/`revoked_by`/`revoked_reason`, a self-reference to whatever superseded it.
 - Two-tier expiration: workspace settings table (keyed to the real workspace's immutable `id`, per Part 9.0's correction) with `default_expiration_open_documents` and `default_expiration_completed_documents` (initial value 2 years for the latter, per E's decision).
 - Two audit-log tables: `share_link_views` (document reference, timestamp, result, minimal technical detail) and `share_link_actions` (actor, action type, timestamp, `reason` NOT NULL for override-category actions).
 
 ## Stage B — Link lifecycle RPCs (no Stage 2 dependency)
+
+**Status: DONE AND VERIFIED — migrations 138 (creation) and 139 (lifecycle actions), 2026-09-13.**
+Implemented as `disable_share_link`/`re_enable_share_link`/`permanently_revoke_share_link` (named
+`permanently_revoke_share_link`, not `revoke_share_link`, to make the terminal nature explicit in
+the function name itself) plus `regenerate_share_link` for the auto-supersede case specifically
+(migration 140's `create_and_send_submittal_version`/`create_and_send_quote_proposal_version` do the
+actual "new version → supersede prior version's link" work, not a trigger on the document tables —
+achieves the same outcome the trigger idea described, just via an atomic RPC that also creates the
+new version row and its token in one call, since that ordering can't be split across a trigger
+safely). Every one of `get_quote_proposal_by_token`/`get_submittal_by_token`/
+`respond_to_quote_proposal`/`respond_to_submittal` gained the `outcome` column described in Stage D
+below (migration 139); the view-logging write path (`share_link_views`) is schema-ready (migration
+137) but not yet wired into these RPCs' read path — recording a view on every public page load
+remains unbuilt, tracked as a gap for a later pass, not silently dropped.
 
 `disable_share_link`, `re_enable_share_link`, `revoke_share_link`, `regenerate_share_link` (creates a new token, marks the old one `superseded`), an auto-supersede trigger fired when a new document version is sent (invalidates the prior version's *response controls*, per E's precise wording — the content stays viewable, matching Part 9.6 item 4/5), and the view-logging write path added to `get_submittal_by_token`/`get_quote_proposal_by_token`.
 
@@ -108,13 +124,34 @@ Every one of these RPCs follows the same hardening discipline as migration 124: 
 
 ## Stage C — Quote-deletion cascade (no Stage 2 dependency)
 
+**Status: DONE AND VERIFIED — migration 140, 2026-09-13.** Implemented as a trigger
+(`cascade_quote_soft_delete`) on `sales_quotes`, not a client-driven RPC, so the existing
+`deleteSalesQuote`/`restoreSalesQuote` direct-write calls keep working unchanged.
+
 Soft-deleting a quote immediately disables every active link on its proposals (auto-generates `disabled_by_quote_deletion` events, cross-referenced to a new `quote_soft_deleted` event). Restoring a quote does **not** auto-reactivate links — logs `quote_restored`, requires a deliberate Sales action (`link_reenabled_after_quote_restore`) to actually restore access.
 
 ## Stage D — Customer-facing messaging (no Stage 2 dependency)
 
+**Status: DONE AND VERIFIED — migration 139's `outcome` column plus the frontend fix shipped the
+same day (2026-09-13), after checking that migration's live effect surfaced an active production
+defect (see `HANDOFF.md`).** `SubmittalPublicPage`/`ProposalPublicPage` now render the three decided
+messages below.
+
 Three-tier dead-link copy, exactly as decided: **superseded** ("a newer version was sent, check your email"), **expired** ("this link has expired, contact your representative"), **temporarily disabled OR permanently revoked** (shared neutral message — the client is never told which). The real reason is visible only to authorized internal users via the audit log.
 
-## Stage E — Authority model *(BLOCKED on Stage 2 schema)*
+## Stage E — Authority model *(BLOCKED on Stage 2 schema; PARTIALLY implemented for link-lifecycle actions)*
+
+**Status update (2026-09-13):** migrations 138/139 already implement Sales-only (or PM-only for
+submittals) authority for *link creation and every lifecycle action* — `create_quote_proposal_share_token`,
+`disable_share_link`/`re_enable_share_link`/`permanently_revoke_share_link`/`regenerate_share_link`
+all gate proposal-link actions to Sales/manager/admin and submittal-link actions to PM/admin, ahead of
+the underlying tables' own write policies being narrowed. What's still genuinely blocked, unchanged
+from this document's original text: `sales_quote_proposals`' OWN row-level write policy remains the
+old wide-open "authenticated write" (migration 053) — creating/editing the PROPOSAL DOCUMENT itself,
+not just its share link, is still not Sales-only; closing that is Queue C2.7's job, tracked
+separately from Stage 2. The *specific assigned PM* concept for submittals (as opposed to "any
+PM-role holder," which is what's actually enforced today) remains blocked on Stage 2 exactly as
+below.
 
 - Proposals: Sales-only create/disable/revoke/regenerate. **Depends on**: the write-access narrowing already flagged in Part 9.6/9.7 (today, any authenticated employee can create a proposal) — this is the same access-tightening work Task 3/migration 125 covers for the authorization side generally.
 - Submittals: Sales pre-handoff, the *specific* assigned PM post-handoff, Sales read-only after. **Depends on**: `projects.assigned_pm_workspace_member_id` (Stage 2 §5) existing and being reliably populated — without it, "the specific assigned PM" cannot be enforced, only "any PM-role holder," which is not what was decided.
@@ -122,9 +159,26 @@ Three-tier dead-link copy, exactly as decided: **superseded** ("a newer version 
 
 ## Stage F — Internal screens
 
+**Status: per-version row controls and the Activity expander are DONE AND DEPLOYED (Queue C2.6,
+2026-09-13)** — `ShareLinkLifecycleControls` (`src/main.tsx`) implements Temporarily Disable /
+Re-enable as one pair and Permanently Revoke & Generate New Link as a visually separate,
+confirmation-gated action, plus the Activity expander (view summary; full per-action history, not
+yet a separate "drill-in" screen since the summary view already shows the complete action log). Not
+built: Settings → Document Links, Settings → Capabilities (both blocked on Stage 2's
+capability-to-role matrix), Reassign PM action (blocked on Stage 2 §5), and the quote-detail
+soft-delete timeline (the cascade itself is live per Stage C; a dedicated timeline UI showing it is
+not).
+
 Settings → Document Links (workspace-scoped durations), Settings → Capabilities (Stage 2's capability-to-role matrix, admin-editable), per-version row controls (Temporarily Disable / Re-enable as one pair, Permanently Revoke & Generate New Link as a visually separate confirmation-gated action), an Activity expander (view summary + drill-in to full history), Reassign PM action (Stage 2 §5's `project_pm_reassignments`), quote-detail soft-delete timeline.
 
 ## Stage G — Testing & migration review
+
+**Status: DONE for Stages A–D, exactly as specified below.** Every one of migrations 137–140 (+
+corrective 141/142) shipped with its own canonical transaction-safe test script, given to E one file
+at a time, run by E in the Supabase SQL editor, never by the assistant directly — matching this
+section's own convention precisely. Two real production-only failures (a role-contamination gap in
+the 139/140 test fixtures; a real ambiguous-column bug in migration 140 itself) were found via E's
+actual runs and fixed same-day; see `CONTINUOUS_CODER_HANDOFF.md` C2.2–C2.5 for the full history.
 
 Transaction-safe SQL test scripts per stage above, matching the established pattern (migrations 119–124): real fixtures not fabricated accounts, snapshot-based atomicity assertions, hard-fail on any skipped section, presented for review before anything runs in Supabase — never run by the assistant directly.
 

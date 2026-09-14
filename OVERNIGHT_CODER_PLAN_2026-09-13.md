@@ -9,6 +9,16 @@ lane — not a reason to stop.
 Prepared: 2026-09-13. Canonical companion files: `CONTINUOUS_CODER_HANDOFF.md`, the newest entries
 at the top of `HANDOFF.md`, and `PRODUCT_MASTER_COMPLETION_PLAN.md`.
 
+**Superseding status note (2026-09-13, later same day):** the "starting point" and baseline
+sections below are a snapshot from when this plan was prepared and are now stale — do not treat
+`814af14` or "migrations 139–140 unapplied" as current. As of the newest entries in
+`CONTINUOUS_CODER_HANDOFF.md`/`HANDOFF.md`: migrations 137 (+ corrective 141), 138, 139, 140 (+
+corrective 142) are all applied and verified in production including every canonical test, migration
+139's paired frontend fix is live, and Queue C2.6 (internal share-link lifecycle controls) is shipped
+and deployed. Queue C2.7 is the active work. Treat this file as a historical record of that night's
+starting conditions, not a current baseline — read `CONTINUOUS_CODER_HANDOFF.md`'s own
+"Next-session launchpad" for the real current state.
+
 ## 1. Mission and confirmed starting point
 
 Continue closing real reliability, security, share-link, recovery, accessibility, and product-
