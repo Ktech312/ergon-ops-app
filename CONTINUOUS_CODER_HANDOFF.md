@@ -1086,28 +1086,31 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    pass — that would be a real data-availability condition, not a construction bug, and the fix would
    be adding a second/third real workspace member (or accepting the honest skip), not editing the SQL.
    A clean `Success. No rows returned` (with the PASSED notice, zero skips) closes migration 138.
-7. **Migration 139 — APPLIED (2026-09-13). Canonical test is next single file.**
-   `backend/supabase/migrations/139_share_link_lifecycle_actions.sql` — atomic lifecycle actions plus
-   the `outcome`-bearing extension of all four public share-link RPCs (see C2.4 above). E ran it in
-   production and it returned `Success. No rows returned`. **This one is a breaking RPC signature
-   change** — the frontend TypeScript update to parse the new `outcome` column must ship in the same
-   reviewed batch as this migration (a separate commit, pushed only once E also confirms its test —
-   `backend/supabase/migration_139_share_link_lifecycle_actions_tests.sql` — succeeds). Do not run
-   migration 139 again; give E only its test script next.
-   **Its test was proactively fixed (2026-09-13) before ever being sent**, before it could repeat
-   138's own two-round-trip saga: the same missing-identity-simulation bug around fixture creation
-   (no admin impersonation before the `sales_quotes`/`projects` inserts, so the migration-117
-   workspace-ownership trigger would have rejected them) and the same `end $$;` terminator bug were
-   both present and are now fixed (both `request.jwt.claims` and `request.jwt.claim.sub` set at every
-   caller switch; `end;` / `$$;`). Independently verified the same way as 138's test — run
-   unmodified against a real local PostgreSQL 18 engine (PGlite) on a reconstructed schema that also
-   needed adding `notification_rules`/`notifications`/`get_users_by_role`/`get_admin_emails`
-   (migrations 024/123, called by `respond_to_quote_proposal`/`respond_to_submittal`) — and it
-   completed with zero errors and the real `NOTICE: ALL MIGRATION 139 SHARE-LINK LIFECYCLE TESTS
-   PASSED -- ZERO SECTIONS SKIPPED` fired. Same caveat as 138: this is a schema reconstruction, not a
-   literal production run, so E's own run remains the authoritative confirmation; the same sparse-
-   workspace skip risk applies (fewer than two non-admin real members → honest `SECTIONS SKIPPED`,
-   not a bug).
+7. **Migration 139 — APPLIED (2026-09-13). Canonical test corrected after a real production
+   failure; ready for E's rerun.** `backend/supabase/migrations/139_share_link_lifecycle_actions.sql`
+   — atomic lifecycle actions plus the `outcome`-bearing extension of all four public share-link
+   RPCs (see C2.4 above). E ran it in production and it returned `Success. No rows returned`. **This
+   one is a breaking RPC signature change** — the paired frontend TypeScript update was shipped
+   same-day, ahead of the test confirming (see HANDOFF.md's "urgent finding" entry): checking
+   migration 139's live effect surfaced that `fetchPublicQuoteProposal`/`fetchPublicSubmittal` were
+   treating every non-`found` outcome as `found` with null data (an active production defect, not a
+   scheduled follow-up), so it could not wait for the normal review order.
+   Before ever sending the test, it was proactively fixed for the same two bug classes migration
+   138's test needed two round-trips to find (missing identity simulation around fixture creation;
+   the `end $$;` terminator typo) and independently verified clean against a reconstructed schema.
+   **E's real production run then failed anyway**, on a case the reconstruction's clean synthetic
+   fixtures didn't reproduce: `TEST FAILED: a PM-only caller was able to manage a proposal share
+   link.` Root cause: the pm_user_id/sales_user_id discovery queries didn't exclude admins — a real
+   user who holds `pm` and is ALSO the workspace admin (the most likely case in this early-stage,
+   near-single-user system) correctly passes `assert_can_manage_share_link` via `is_app_admin()`,
+   making the "PM-only" assertion false by construction, not a bug in migration 139 itself. Fixed by
+   excluding admins from both discovery queries and stripping each caller's conflicting secondary
+   role (mirroring migration 138's own established fix for this exact class of issue) immediately
+   around the two Section 8 cross-authorization checks. Re-verified against two reconstructed
+   scenarios matching the real condition — the admin also holding `pm`, and a genuinely non-admin PM
+   also holding `sales` as a secondary role — both now pass cleanly; the original clean scenario
+   still passes too. Same caveat as before: this is a schema reconstruction, not a literal production
+   run, so E's own rerun remains the authoritative confirmation.
 8. **Migration 140 — PENDING, AFTER 139.** `backend/supabase/migrations/
    140_share_link_version_supersession_and_quote_cascade.sql` — auto-supersede-on-new-version RPCs
    plus the quote soft-delete cascade trigger (see C2.5 above). Requires 137, 138, and 139 live
