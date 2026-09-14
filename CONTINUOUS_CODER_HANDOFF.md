@@ -1,7 +1,7 @@
 # Ergon Ops — Continuous Coder Handoff
 
 Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) SHIPPED. QUEUE C2 IS THE ACTIVE HANDOFF —
-C2.2–C2.5 APPLIED AND VERIFIED; C2.5's MIGRATION 140 IS NEXT.** Prepared: 2026-09-12, updated
+C2.2–C2.5's MIGRATIONS ALL APPLIED; 140's CANONICAL TEST IS NEXT.** Prepared: 2026-09-12, updated
 2026-09-13. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
@@ -13,19 +13,20 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
 
 Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: migrations 137, 138,
 139, and 140 plus their four canonical test scripts, committed and pushed on `main` (`362e702`,
-`f09f574`, `d564b8b`, status reconciliation through `ecb506c`; migration 139's paired frontend
-update shipped as `d0f58f0`). Migrations 137 (plus corrective 141), 138, and 139 are **applied and
-fully verified in production**, including all three canonical tests. Migration 139's frontend
-follow-up (parsing the new `outcome` column on the two public share-link pages) is also live —
-shipped same-day, ahead of its own test confirming, once checking 139's live effect surfaced an
-active production defect (see HANDOFF.md). Migration 140 is next up for E's review.
+`f09f574`, `d564b8b`, status reconciliation through `b6298af`; migration 139's paired frontend
+update shipped as `d0f58f0`). Migrations 137 (plus corrective 141), 138, 139, and 140 are **all
+applied in production**, and 137/138/139's canonical tests are confirmed passed. Migration 139's
+frontend follow-up (parsing the new `outcome` column on the two public share-link pages) is also
+live — shipped same-day, ahead of its own test confirming, once checking 139's live effect surfaced
+an active production defect (see HANDOFF.md). Migration 140's own canonical test is the last piece
+of this batch for E to run.
 
 ## Next-session launchpad
 
-**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, and 139 are applied and
-verified in production. Migration 140 is the next single manual file for E to run — see "Manual
-database actions." Continue Queue C2 below (C2.6 onward) while that migration is pending. Do not
-rerun 134/135/136/137/141/138/139 and do not re-ask D7's settled link rules.
+**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, and 140 are applied in
+production. Migration 140's canonical test is the next single manual file for E to run — see
+"Manual database actions." Continue Queue C2 below (C2.6 onward) while that test result is pending.
+Do not rerun 134/135/136/137/141/138/139/140 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
 
@@ -1104,26 +1105,26 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    migration 139's live effect surfaced an active production defect (every non-`found` outcome was
    being rendered as a real, found document with null content), not a scheduled follow-up. Do not
    run migration 139 or its test again.
-8. **Migration 140 — PENDING, NEXT UP. Fixed a real bug in the migration itself before ever
-   sending it.** `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql`
-   — auto-supersede-on-new-version RPCs plus the quote soft-delete cascade trigger (see C2.5 above).
-   Requires 137, 138, and 139 live first (all three now applied and verified). Given migrations
-   137/138/139 each surfaced a real production issue only their own live run caught, this migration
-   and its test were checked proactively before being sent at all: `create_and_send_submittal_version`/
-   `create_and_send_quote_proposal_version` both declare `returns table (..., token text)`, and a
-   RETURNS TABLE column becomes an implicit plpgsql variable in scope for the whole function body —
-   the supersession UPDATE's unqualified `where token = r.old_token` was genuinely ambiguous between
-   that variable and `public_share_tokens.token` (Postgres 42702), the exact bug class migration 121
-   already hit and documented. Fixed by aliasing the target table (`as pst`) and qualifying the WHERE
-   clause. The test also had the same three issues 139's test needed fixing in production (missing
-   fixture-creation identity simulation; PM/Sales discovery not excluding admins — this workspace's
-   admin also holds `pm`; Section 5's two cross-authorization checks needing secondary-role
-   isolation). Independently verified against three scenarios: clean fixtures, the admin also holding
-   `pm` (the exact condition that broke migration 139 in production), and a non-admin PM also holding
-   `sales` — all three pass with the real "ALL MIGRATION 140 ... PASSED -- ZERO SECTIONS SKIPPED"
-   notice firing. Give E only the migration file first; its test script only after E reports 140
-   itself succeeded. This is the last migration in the current drafted batch (C2.2–C2.5) — after 140,
-   Queue C2.6 (frontend UI controls) is next.
+8. **Migration 140 — APPLIED (2026-09-13). Canonical test is next single file.**
+   `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql` —
+   auto-supersede-on-new-version RPCs plus the quote soft-delete cascade trigger (see C2.5 above). E
+   ran it in production and it returned `Success. No rows returned`. This migration was checked
+   proactively before being sent at all (given migrations 137/138/139 each surfaced a real production
+   issue only their own live run caught) and a real bug was found in the migration itself:
+   `create_and_send_submittal_version`/`create_and_send_quote_proposal_version` both declare `returns
+   table (..., token text)`, and a RETURNS TABLE column becomes an implicit plpgsql variable in scope
+   for the whole function body — the supersession UPDATE's unqualified `where token = r.old_token`
+   was genuinely ambiguous between that variable and `public_share_tokens.token` (Postgres 42702), the
+   exact bug class migration 121 already hit and documented. Fixed by aliasing the target table (`as
+   pst`) and qualifying the WHERE clause before ever sending it. Its canonical test,
+   `backend/supabase/migration_140_share_link_version_supersession_and_quote_cascade_tests.sql`, also
+   had the same three issues 139's test needed fixing in production (missing fixture-creation
+   identity simulation; PM/Sales discovery not excluding admins — this workspace's admin also holds
+   `pm`; the two cross-authorization checks needing secondary-role isolation) — all fixed and
+   independently verified against three scenarios (clean fixtures, the admin also holding `pm`, a
+   non-admin PM also holding `sales`) before ever being sent. Do not run migration 140 again; give E
+   only its test script next. This is the last migration in the drafted batch (C2.2–C2.5) — after its
+   test confirms, Queue C2.6 (frontend UI controls) is next.
 
 ## 9. Consolidated reporting format
 
