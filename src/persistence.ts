@@ -3886,13 +3886,6 @@ function mapSubmittalRow(row: ProjectSubmittalRow, tokenRow: ShareTokenRow | und
   };
 }
 
-function generateShareToken(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
-  }
-  return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
-}
-
 // Phase 10's app-code cutover hasn't happened yet, so ProjectSite objects in
 // the app have no relational `projects.id`. This resolves (or lazily
 // creates) the row by the natural `project_name` key so Submittals can link
@@ -3954,53 +3947,46 @@ export async function loadSubmittalsForProject(projectId: string, accessToken?: 
   return rows.map((row) => mapSubmittalRow(row, tokenRows.find((entry) => entry.entity_id === row.id)));
 }
 
-export async function createSubmittal(
-  input: { projectId: string; version: number; contentSnapshot: SubmittalSnapshot; clientName: string; clientEmail: string },
+// Queue C2.7: the sole creation path for a new submittal version, going
+// through migration 140's single atomic RPC -- server-computed version
+// number (closing a client-computed-version race the old direct-INSERT
+// flow left open) and auto-supersession of every prior version's
+// still-live token, all in one transaction. The RPC itself only returns
+// {submittal_id, token}; this wrapper re-fetches the full row + token
+// status right after, so callers get back a complete ProjectSubmittal.
+export async function createAndSendSubmittalVersion(
+  input: { projectId: string; contentSnapshot: SubmittalSnapshot; clientName: string; clientEmail: string },
   accessToken?: string,
 ): Promise<ProjectSubmittal> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     throw new Error("Supabase is not configured.");
   }
-
-  const response = await fetch(supabaseUrl("project_submittals"), {
+  const response = await fetch(supabaseUrl("rpc/create_and_send_submittal_version"), {
     method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    headers: supabaseHeaders(accessToken),
     body: JSON.stringify({
-      project_id: input.projectId,
-      version: input.version,
-      status: "sent",
-      content_snapshot: input.contentSnapshot,
-      client_name: input.clientName || null,
-      client_email: input.clientEmail || null,
-      sent_at: new Date().toISOString(),
+      p_project_id: input.projectId,
+      p_content_snapshot: input.contentSnapshot,
+      p_client_name: input.clientName || null,
+      p_client_email: input.clientEmail || null,
     }),
   });
-
   if (!response.ok) {
-    throw new Error(`Could not create submittal: ${response.status}`);
+    throw new Error(await readSupabaseError(response, "Could not create submittal"));
   }
+  const rpcRows = (await response.json()) as Array<{ submittal_id: string; token: string }>;
+  const { submittal_id: submittalId, token } = rpcRows[0];
 
-  const rows = (await response.json()) as ProjectSubmittalRow[];
-  return mapSubmittalRow(rows[0], undefined);
-}
-
-export async function createSubmittalShareToken(submittalId: string, accessToken?: string): Promise<string> {
-  if (!isRemotePersistenceConfigured() || !accessToken) {
-    throw new Error("Supabase is not configured.");
+  const [submittalRes, tokenRes] = await Promise.all([
+    fetch(supabaseUrl(`project_submittals?id=eq.${submittalId}&select=*`), { headers: supabaseHeaders(accessToken) }),
+    fetch(supabaseUrl(`public_share_tokens?token=eq.${token}&select=token,entity_id,status,created_at`), { headers: supabaseHeaders(accessToken) }),
+  ]);
+  if (!submittalRes.ok) {
+    throw new Error(`Submittal was created but could not be reloaded: ${submittalRes.status}`);
   }
-
-  const token = generateShareToken();
-  const response = await fetch(supabaseUrl("public_share_tokens"), {
-    method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-    body: JSON.stringify({ token, entity_type: "project_submittal", entity_id: submittalId }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Could not create share link: ${response.status}`);
-  }
-
-  return token;
+  const submittalRows = (await submittalRes.json()) as ProjectSubmittalRow[];
+  const tokenRows = tokenRes.ok ? ((await tokenRes.json()) as ShareTokenRow[]) : [];
+  return mapSubmittalRow(submittalRows[0], tokenRows[0]);
 }
 
 export async function fetchPublicSubmittal(token: string): Promise<PublicSubmittalResult> {
@@ -12268,47 +12254,45 @@ export function compareProposalSnapshots(before: ProposalSnapshot, after: Propos
   return { fieldChanges, bomLines, templateSections };
 }
 
-export async function createQuoteProposal(
-  input: { quoteId: string; version: number; contentSnapshot: ProposalSnapshot; clientName: string; clientEmail: string },
+// Queue C2.7: the sole creation path for a new proposal version, going
+// through migration 140's single atomic RPC -- see
+// createAndSendSubmittalVersion's own comment for the full rationale
+// (server-computed version number, auto-supersession of every prior
+// version's still-live token, one round-trip fewer than the RPC-only
+// approach would need since it only returns {proposal_id, token}).
+export async function createAndSendQuoteProposalVersion(
+  input: { quoteId: string; contentSnapshot: ProposalSnapshot; clientName: string; clientEmail: string },
   accessToken?: string,
 ): Promise<SalesQuoteProposal> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     throw new Error("Supabase is not configured.");
   }
-  const response = await fetch(supabaseUrl("sales_quote_proposals"), {
+  const response = await fetch(supabaseUrl("rpc/create_and_send_quote_proposal_version"), {
     method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    headers: supabaseHeaders(accessToken),
     body: JSON.stringify({
-      quote_id: input.quoteId,
-      version: input.version,
-      status: "sent",
-      content_snapshot: input.contentSnapshot,
-      client_name: input.clientName || null,
-      client_email: input.clientEmail || null,
-      sent_at: new Date().toISOString(),
+      p_quote_id: input.quoteId,
+      p_content_snapshot: input.contentSnapshot,
+      p_client_name: input.clientName || null,
+      p_client_email: input.clientEmail || null,
     }),
   });
   if (!response.ok) {
-    throw new Error(`Could not create proposal: ${response.status}`);
+    throw new Error(await readSupabaseError(response, "Could not create proposal"));
   }
-  const rows = (await response.json()) as SalesQuoteProposalRow[];
-  return mapQuoteProposalRow(rows[0], undefined);
-}
+  const rpcRows = (await response.json()) as Array<{ proposal_id: string; token: string }>;
+  const { proposal_id: proposalId, token } = rpcRows[0];
 
-export async function createQuoteProposalShareToken(proposalId: string, accessToken?: string): Promise<string> {
-  if (!isRemotePersistenceConfigured() || !accessToken) {
-    throw new Error("Supabase is not configured.");
+  const [proposalRes, tokenRes] = await Promise.all([
+    fetch(supabaseUrl(`sales_quote_proposals?id=eq.${proposalId}&select=*`), { headers: supabaseHeaders(accessToken) }),
+    fetch(supabaseUrl(`public_share_tokens?token=eq.${token}&select=token,entity_id,status,created_at`), { headers: supabaseHeaders(accessToken) }),
+  ]);
+  if (!proposalRes.ok) {
+    throw new Error(`Proposal was created but could not be reloaded: ${proposalRes.status}`);
   }
-  const token = generateShareToken();
-  const response = await fetch(supabaseUrl("public_share_tokens"), {
-    method: "POST",
-    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
-    body: JSON.stringify({ token, entity_type: "sales_quote_proposal", entity_id: proposalId }),
-  });
-  if (!response.ok) {
-    throw new Error(`Could not create share link: ${response.status}`);
-  }
-  return token;
+  const proposalRows = (await proposalRes.json()) as SalesQuoteProposalRow[];
+  const tokenRows = tokenRes.ok ? ((await tokenRes.json()) as ShareTokenRow[]) : [];
+  return mapQuoteProposalRow(proposalRows[0], tokenRows[0]);
 }
 
 // --- Queue C2.6: share-link lifecycle controls (migrations 138/139) -------

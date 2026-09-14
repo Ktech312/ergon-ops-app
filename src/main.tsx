@@ -140,8 +140,7 @@ import {
   type ProposalSnapshotComparison,
   updateSalesQuoteBomLineCatalogLink,
   createScheduleTemplate,
-  createSubmittal,
-  createSubmittalShareToken,
+  createAndSendSubmittalVersion,
   type ShareLinkTokenStatus,
   type ShareLinkActivity,
   disableShareLink,
@@ -153,8 +152,7 @@ import {
   loadProposalTemplateSections,
   updateProposalTemplateSection,
   loadProposalsForQuote,
-  createQuoteProposal,
-  createQuoteProposalShareToken,
+  createAndSendQuoteProposalVersion,
   fetchPublicQuoteProposal,
   respondToPublicQuoteProposal,
   loadSalesQuoteIntakeResponse,
@@ -4970,8 +4968,8 @@ function App() {
   // updates after BOTH writes are confirmed; a failed second write
   // attempts to revert the first so the two rows never end up sharing
   // one sequence_order for longer than necessary. Existing sent
-  // proposals are unaffected regardless -- createQuoteProposal freezes
-  // section content into content_snapshot at send time (see that
+  // proposals are unaffected regardless -- createAndSendQuoteProposalVersion
+  // freezes section content into content_snapshot at send time (see that
   // function and updateProposalTemplateSection's own comment), so
   // reordering the live template can never retroactively change a
   // proposal already sent to a client.
@@ -5162,7 +5160,6 @@ function App() {
         return;
       }
       const existing = await loadSubmittalsForProject(projectId, authSession.accessToken);
-      const nextVersion = existing.length ? Math.max(...existing.map((entry) => entry.version)) + 1 : 1;
       const snapshot: SubmittalSnapshot = {
         // Queue A11: mirrors buildProposalSnapshot's already-deployed
         // company-identity freeze below -- frozen once here at creation
@@ -5178,12 +5175,17 @@ function App() {
         sow: { ...project.sow },
         bom: project.bom.map((line) => ({ item: line.item, qty: line.qty, status: line.status })),
       };
-      const created = await createSubmittal(
-        { projectId, version: nextVersion, contentSnapshot: snapshot, clientName, clientEmail },
+      // Queue C2.7: one atomic RPC now handles version numbering (computed
+      // server-side, closing the race the old client-computed nextVersion
+      // above left open), token creation, and auto-superseding every prior
+      // version's still-live link -- replacing the old two-step
+      // createSubmittal+createSubmittalShareToken direct-write flow.
+      const created = await createAndSendSubmittalVersion(
+        { projectId, contentSnapshot: snapshot, clientName, clientEmail },
         authSession.accessToken,
       );
-      const shareToken = await createSubmittalShareToken(created.id, authSession.accessToken);
-      setSubmittals([{ ...created, shareToken }, ...existing]);
+      const shareToken = created.shareToken as string;
+      setSubmittals([created, ...existing]);
 
       if (!clientEmail.trim()) {
         setSubmittalStatus(`Submittal v${created.version} created. No client email was entered -- use Copy client link to share it.`);
@@ -5300,14 +5302,18 @@ function App() {
     setQuoteProposalStatus("Creating proposal...");
     try {
       const existing = await loadProposalsForQuote(quote.id, authSession.accessToken);
-      const nextVersion = existing.length ? Math.max(...existing.map((entry) => entry.version)) + 1 : 1;
       const snapshot = buildProposalSnapshot(quote);
-      const created = await createQuoteProposal(
-        { quoteId: quote.id, version: nextVersion, contentSnapshot: snapshot, clientName: quote.clientName, clientEmail: quote.clientEmail },
+      // Queue C2.7: one atomic RPC now handles version numbering (computed
+      // server-side, closing the race the old client-computed nextVersion
+      // above left open), token creation, and auto-superseding every prior
+      // version's still-live link -- replacing the old two-step
+      // createQuoteProposal+createQuoteProposalShareToken direct-write flow.
+      const created = await createAndSendQuoteProposalVersion(
+        { quoteId: quote.id, contentSnapshot: snapshot, clientName: quote.clientName, clientEmail: quote.clientEmail },
         authSession.accessToken,
       );
-      const shareToken = await createQuoteProposalShareToken(created.id, authSession.accessToken);
-      setQuoteProposals([{ ...created, shareToken }, ...existing]);
+      const shareToken = created.shareToken as string;
+      setQuoteProposals([created, ...existing]);
 
       setQuoteProposalStatus(`Proposal v${created.version} created. Sending email to ${quote.clientEmail}...`);
       const shareUrl = `${window.location.origin}${window.location.pathname}?proposal=${shareToken}`;
