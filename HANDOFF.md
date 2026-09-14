@@ -7,28 +7,30 @@ requires continued work across independent lanes when a migration or decision is
 defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
 Migrations 134, 135, 136, 137 (+ corrective 141), 138, and 139
-are complete and verified in production. Queue C1 (frozen Sales pricing) is fully deployed. Queue C2's
+are complete and verified in production, including all their canonical tests. Queue C1 (frozen Sales
+pricing) is fully deployed. Migration 139's paired frontend update (parsing the new `outcome` column)
+is also live -- shipped same-day, ahead of that test confirming, after checking migration 139's live
+effect surfaced an active production defect -- see "Current database gate" below. Queue C2's
 remaining share-link lifecycle foundation is drafted: migration 140 plus its canonical test script is
-committed and pushed on `main`. Migration 139's canonical test is next up for E to run. Its paired
-frontend update (parsing the new `outcome` column) was already shipped same-day, ahead of that test
-confirming, after checking migration 139's live effect surfaced an active production defect -- see
-"Current database gate" below. Do not re-run
+committed and pushed on `main` and is next up for E to run. Do not re-run
 migrations 134/135/136/137/141/138/139 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
-**Current database gate (2026-09-13):** migrations 137 (+ corrective 141) and 138 are applied and
-fully verified in production, including their canonical tests. Migration 139 (atomic lifecycle
-actions plus the breaking `outcome`-column extension of all four public share-link RPCs) is now
-also **applied** -- E ran it and it returned `Success. No rows returned`. Its canonical test,
-`backend/supabase/migration_139_share_link_lifecycle_actions_tests.sql`, was proactively checked
+**Current database gate (2026-09-13):** migrations 137 (+ corrective 141), 138, and 139 are applied
+and fully verified in production, including all their canonical tests. Migration 139's test
+(`backend/supabase/migration_139_share_link_lifecycle_actions_tests.sql`) was proactively checked
 before being sent at all: it had the same two bug classes migration 138's test needed two round-trips
 to find (fixture creation with no identity impersonation at all, which the migration-117
-workspace-ownership trigger would have rejected; the same `end $$;` terminator typo). Both were fixed,
-and the corrected file was independently run end-to-end against a real local PostgreSQL 18 engine
-(PGlite) on a reconstructed schema (which also needed `notification_rules`/`notifications`/
-`get_users_by_role`/`get_admin_emails` added, since `respond_to_quote_proposal`/`respond_to_submittal`
-call them) -- it passed cleanly with zero errors before ever reaching E. **Do not run migration 139
-again; run only its test next.**
+workspace-ownership trigger would have rejected; the same `end $$;` terminator typo). Both were fixed
+and independently verified before ever reaching E -- but E's real production run still failed once:
+`TEST FAILED: a PM-only caller was able to manage a proposal share link.` Root cause: this
+workspace's admin also holds the `pm` role, and the test's PM/Sales discovery queries didn't exclude
+admins, so `is_app_admin()` correctly authorized the "PM-only" caller, making the test's own
+assumption false, not a bug in migration 139. Fixed by excluding admins from discovery and isolating
+each caller's role around the two Section 8 checks; re-verified against that exact scenario plus a
+second one (non-admin PM also holding Sales). E reran the corrected file and it returned `Success.
+No rows returned` -- migration 139 is closed. **Do not run migration 139 or its test again. Migration
+140 is now the next single-file gate.**
 
 **Urgent finding and same-day fix (2026-09-13):** while preparing to send the test above, checking
 migration 139's actual live effect on the currently-deployed frontend surfaced a real, active

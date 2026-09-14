@@ -1,7 +1,8 @@
 # Ergon Ops — Continuous Coder Handoff
 
 Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) SHIPPED. QUEUE C2 IS THE ACTIVE HANDOFF —
-C2.2–C2.5 PREPARED, NOT RUN.** Prepared: 2026-09-12, updated 2026-09-13. E approved the recommended
+C2.2–C2.5 APPLIED AND VERIFIED; C2.5's MIGRATION 140 IS NEXT.** Prepared: 2026-09-12, updated
+2026-09-13. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
 `sales_quotes`, `accepted_proposal_total` on `projects`, frozen totals in every new
@@ -12,19 +13,18 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
 
 Queue C2's share-link lifecycle foundation (C2.2–C2.5) is now fully drafted: migrations 137, 138,
 139, and 140 plus their four canonical test scripts, committed and pushed on `main` (`362e702`,
-`f09f574`, `d564b8b`, status reconciliation through `b1a92a2`; no dependent frontend code exists
-yet). Migrations 137 (plus corrective 141), 138, and 139 are **applied in production** — all three
-migration files returned `Success. No rows returned`. 137's and 138's canonical tests are also
-confirmed passed; 139's canonical test is the next single file for E to run (a breaking RPC
-signature change — see item 7 under "Manual database actions"). Migration 140 remains queued behind
-it.
+`f09f574`, `d564b8b`, status reconciliation through `ecb506c`; migration 139's paired frontend
+update shipped as `d0f58f0`). Migrations 137 (plus corrective 141), 138, and 139 are **applied and
+fully verified in production**, including all three canonical tests. Migration 139's frontend
+follow-up (parsing the new `outcome` column on the two public share-link pages) is also live —
+shipped same-day, ahead of its own test confirming, once checking 139's live effect surfaced an
+active production defect (see HANDOFF.md). Migration 140 is next up for E's review.
 
 ## Next-session launchpad
 
-**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, and 139 are applied in
-production. Migration 139's canonical test is the next single manual file for E to run — see
-"Manual database actions." Migration 140 is drafted, committed and pushed, awaiting its turn after
-139's test passes. Continue Queue C2 below (C2.6 onward) while that test result is pending. Do not
+**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, and 139 are applied and
+verified in production. Migration 140 is the next single manual file for E to run — see "Manual
+database actions." Continue Queue C2 below (C2.6 onward) while that migration is pending. Do not
 rerun 134/135/136/137/141/138/139 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -1086,37 +1086,31 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    pass — that would be a real data-availability condition, not a construction bug, and the fix would
    be adding a second/third real workspace member (or accepting the honest skip), not editing the SQL.
    A clean `Success. No rows returned` (with the PASSED notice, zero skips) closes migration 138.
-7. **Migration 139 — APPLIED (2026-09-13). Canonical test corrected after a real production
-   failure; ready for E's rerun.** `backend/supabase/migrations/139_share_link_lifecycle_actions.sql`
-   — atomic lifecycle actions plus the `outcome`-bearing extension of all four public share-link
-   RPCs (see C2.4 above). E ran it in production and it returned `Success. No rows returned`. **This
-   one is a breaking RPC signature change** — the paired frontend TypeScript update was shipped
-   same-day, ahead of the test confirming (see HANDOFF.md's "urgent finding" entry): checking
-   migration 139's live effect surfaced that `fetchPublicQuoteProposal`/`fetchPublicSubmittal` were
-   treating every non-`found` outcome as `found` with null data (an active production defect, not a
-   scheduled follow-up), so it could not wait for the normal review order.
-   Before ever sending the test, it was proactively fixed for the same two bug classes migration
-   138's test needed two round-trips to find (missing identity simulation around fixture creation;
-   the `end $$;` terminator typo) and independently verified clean against a reconstructed schema.
-   **E's real production run then failed anyway**, on a case the reconstruction's clean synthetic
-   fixtures didn't reproduce: `TEST FAILED: a PM-only caller was able to manage a proposal share
-   link.` Root cause: the pm_user_id/sales_user_id discovery queries didn't exclude admins — a real
-   user who holds `pm` and is ALSO the workspace admin (the most likely case in this early-stage,
-   near-single-user system) correctly passes `assert_can_manage_share_link` via `is_app_admin()`,
-   making the "PM-only" assertion false by construction, not a bug in migration 139 itself. Fixed by
-   excluding admins from both discovery queries and stripping each caller's conflicting secondary
-   role (mirroring migration 138's own established fix for this exact class of issue) immediately
-   around the two Section 8 cross-authorization checks. Re-verified against two reconstructed
-   scenarios matching the real condition — the admin also holding `pm`, and a genuinely non-admin PM
-   also holding `sales` as a secondary role — both now pass cleanly; the original clean scenario
-   still passes too. Same caveat as before: this is a schema reconstruction, not a literal production
-   run, so E's own rerun remains the authoritative confirmation.
-8. **Migration 140 — PENDING, AFTER 139.** `backend/supabase/migrations/
+7. **Migration 139 — DONE AND VERIFIED (2026-09-13).** `backend/supabase/migrations/
+   139_share_link_lifecycle_actions.sql` — atomic lifecycle actions plus the `outcome`-bearing
+   extension of all four public share-link RPCs (see C2.4 above). E ran it in production and it
+   returned `Success. No rows returned`. Its canonical test,
+   `backend/supabase/migration_139_share_link_lifecycle_actions_tests.sql`, failed once in
+   production on a real condition its reconstructed-schema verification hadn't reproduced (`TEST
+   FAILED: a PM-only caller was able to manage a proposal share link` -- root cause: this
+   workspace's admin also holds the `pm` role, so the discovery query needed to exclude admins, not
+   just this migration's own logic). Fixed and re-verified against that exact scenario plus a second
+   one (a non-admin PM also holding `sales` as a secondary role); E reran the corrected file and it
+   returned `Success. No rows returned` -- zero sections skipped. **This was also a breaking RPC
+   signature change**, and its paired frontend TypeScript update (parsing the new `outcome` column
+   on `fetchPublicQuoteProposal`/`fetchPublicSubmittal`, plus the three decided customer-facing
+   messages on both public pages) was already shipped and deployed same-day, ahead of this test
+   confirming -- see HANDOFF.md's "urgent finding" entry for why it couldn't wait: checking
+   migration 139's live effect surfaced an active production defect (every non-`found` outcome was
+   being rendered as a real, found document with null content), not a scheduled follow-up. Do not
+   run migration 139 or its test again.
+8. **Migration 140 — PENDING, NEXT UP.** `backend/supabase/migrations/
    140_share_link_version_supersession_and_quote_cascade.sql` — auto-supersede-on-new-version RPCs
    plus the quote soft-delete cascade trigger (see C2.5 above). Requires 137, 138, and 139 live
-   first. Its test script,
+   first (all three now applied and verified). Its test script,
    `backend/supabase/migration_140_share_link_version_supersession_and_quote_cascade_tests.sql`,
-   follows only after E reports 140 itself succeeded.
+   follows only after E reports 140 itself succeeded. This is the last migration in the current
+   drafted batch (C2.2–C2.5) — after 140, Queue C2.6 (frontend UI controls) is next.
 
 ## 9. Consolidated reporting format
 
