@@ -3790,6 +3790,9 @@ export type ProjectSubmittal = {
   responseNotes: string;
   approvalName: string;
   shareToken: string | null;
+  // Migration 137's lifecycle state for `shareToken` -- null only when
+  // shareToken itself is null (no token exists yet for this version).
+  shareTokenStatus: ShareLinkTokenStatus | null;
   createdAt: string;
 };
 
@@ -3859,9 +3862,12 @@ type ProjectSubmittalRow = {
   created_at: string;
 };
 
-type ShareTokenRow = { token: string; entity_id: string };
+// Migration 137's four lifecycle states on public_share_tokens.status.
+export type ShareLinkTokenStatus = "active" | "temporarily_disabled" | "permanently_revoked" | "superseded";
 
-function mapSubmittalRow(row: ProjectSubmittalRow, shareToken: string | null): ProjectSubmittal {
+type ShareTokenRow = { token: string; entity_id: string; status: string; created_at: string };
+
+function mapSubmittalRow(row: ProjectSubmittalRow, tokenRow: ShareTokenRow | undefined): ProjectSubmittal {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -3874,7 +3880,8 @@ function mapSubmittalRow(row: ProjectSubmittalRow, shareToken: string | null): P
     respondedAt: row.responded_at,
     responseNotes: row.response_notes ?? "",
     approvalName: row.approval_name ?? "",
-    shareToken,
+    shareToken: tokenRow?.token ?? null,
+    shareTokenStatus: (tokenRow?.status as ShareLinkTokenStatus | undefined) ?? null,
     createdAt: row.created_at,
   };
 }
@@ -3929,7 +3936,11 @@ export async function loadSubmittalsForProject(projectId: string, accessToken?: 
     fetch(supabaseUrl(`project_submittals?project_id=eq.${projectId}&select=*&order=version.desc`), {
       headers: supabaseHeaders(accessToken),
     }),
-    fetch(supabaseUrl(`public_share_tokens?entity_type=eq.project_submittal&select=token,entity_id`), {
+    // Ordered newest-first so that when a version has been through a manual
+    // "revoke and generate new link" (more than one token row for the same
+    // entity_id), the first match below is the current one, not an
+    // arbitrary historical one.
+    fetch(supabaseUrl(`public_share_tokens?entity_type=eq.project_submittal&select=token,entity_id,status,created_at&order=created_at.desc`), {
       headers: supabaseHeaders(accessToken),
     }),
   ]);
@@ -3940,7 +3951,7 @@ export async function loadSubmittalsForProject(projectId: string, accessToken?: 
 
   const rows = (await submittalsRes.json()) as ProjectSubmittalRow[];
   const tokenRows = tokensRes.ok ? ((await tokensRes.json()) as ShareTokenRow[]) : [];
-  return rows.map((row) => mapSubmittalRow(row, tokenRows.find((entry) => entry.entity_id === row.id)?.token ?? null));
+  return rows.map((row) => mapSubmittalRow(row, tokenRows.find((entry) => entry.entity_id === row.id)));
 }
 
 export async function createSubmittal(
@@ -3970,7 +3981,7 @@ export async function createSubmittal(
   }
 
   const rows = (await response.json()) as ProjectSubmittalRow[];
-  return mapSubmittalRow(rows[0], null);
+  return mapSubmittalRow(rows[0], undefined);
 }
 
 export async function createSubmittalShareToken(submittalId: string, accessToken?: string): Promise<string> {
@@ -11987,6 +11998,7 @@ export type SalesQuoteProposal = {
   responseNotes: string;
   approvalName: string;
   shareToken: string | null;
+  shareTokenStatus: ShareLinkTokenStatus | null;
   createdAt: string;
 };
 
@@ -12055,7 +12067,7 @@ type SalesQuoteProposalRow = {
   created_at: string;
 };
 
-function mapQuoteProposalRow(row: SalesQuoteProposalRow, shareToken: string | null): SalesQuoteProposal {
+function mapQuoteProposalRow(row: SalesQuoteProposalRow, tokenRow: ShareTokenRow | undefined): SalesQuoteProposal {
   return {
     id: row.id,
     quoteId: row.quote_id,
@@ -12068,7 +12080,8 @@ function mapQuoteProposalRow(row: SalesQuoteProposalRow, shareToken: string | nu
     respondedAt: row.responded_at,
     responseNotes: row.response_notes ?? "",
     approvalName: row.approval_name ?? "",
-    shareToken,
+    shareToken: tokenRow?.token ?? null,
+    shareTokenStatus: (tokenRow?.status as ShareLinkTokenStatus | undefined) ?? null,
     createdAt: row.created_at,
   };
 }
@@ -12081,7 +12094,11 @@ export async function loadProposalsForQuote(quoteId: string, accessToken?: strin
     fetch(supabaseUrl(`sales_quote_proposals?quote_id=eq.${quoteId}&select=*&order=version.desc`), {
       headers: supabaseHeaders(accessToken),
     }),
-    fetch(supabaseUrl(`public_share_tokens?entity_type=eq.sales_quote_proposal&select=token,entity_id`), {
+    // Ordered newest-first so that when a version has been through a
+    // manual "revoke and generate new link" (more than one token row for
+    // the same entity_id), the first match below is the current one, not
+    // an arbitrary historical one.
+    fetch(supabaseUrl(`public_share_tokens?entity_type=eq.sales_quote_proposal&select=token,entity_id,status,created_at&order=created_at.desc`), {
       headers: supabaseHeaders(accessToken),
     }),
   ]);
@@ -12090,7 +12107,7 @@ export async function loadProposalsForQuote(quoteId: string, accessToken?: strin
   }
   const rows = (await proposalsRes.json()) as SalesQuoteProposalRow[];
   const tokenRows = tokensRes.ok ? ((await tokensRes.json()) as ShareTokenRow[]) : [];
-  return rows.map((row) => mapQuoteProposalRow(row, tokenRows.find((entry) => entry.entity_id === row.id)?.token ?? null));
+  return rows.map((row) => mapQuoteProposalRow(row, tokenRows.find((entry) => entry.entity_id === row.id)));
 }
 
 // Read-only proposal-version comparison (Queue A5). Compares two frozen
@@ -12275,7 +12292,7 @@ export async function createQuoteProposal(
     throw new Error(`Could not create proposal: ${response.status}`);
   }
   const rows = (await response.json()) as SalesQuoteProposalRow[];
-  return mapQuoteProposalRow(rows[0], null);
+  return mapQuoteProposalRow(rows[0], undefined);
 }
 
 export async function createQuoteProposalShareToken(proposalId: string, accessToken?: string): Promise<string> {
@@ -12292,6 +12309,170 @@ export async function createQuoteProposalShareToken(proposalId: string, accessTo
     throw new Error(`Could not create share link: ${response.status}`);
   }
   return token;
+}
+
+// --- Queue C2.6: share-link lifecycle controls (migrations 138/139) -------
+// disable/re-enable/permanently-revoke are entity-agnostic (they take just
+// a token); the "generate new link" step after a revoke is entity-specific
+// and goes through the server-owned RPCs migration 138 added, used HERE
+// specifically for that step -- not yet the main Create & Send flow, which
+// still uses createSubmittalShareToken/createQuoteProposalShareToken above
+// (switching that over is Queue C2.7's job, alongside closing the old
+// direct-write path).
+
+export type ShareLinkActionResult = { ok: boolean; result?: string; error?: string };
+
+export async function disableShareLink(token: string, reason: string, accessToken?: string): Promise<ShareLinkActionResult> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, error: "Not configured." };
+  }
+  const response = await fetch(supabaseUrl("rpc/disable_share_link"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_token: token, p_reason: reason || null }),
+  });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not disable the share link") };
+  }
+  return { ok: true, result: (await response.json()) as string };
+}
+
+export async function reEnableShareLink(token: string, accessToken?: string): Promise<ShareLinkActionResult> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, error: "Not configured." };
+  }
+  const response = await fetch(supabaseUrl("rpc/re_enable_share_link"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_token: token }),
+  });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not re-enable the share link") };
+  }
+  return { ok: true, result: (await response.json()) as string };
+}
+
+export async function permanentlyRevokeShareLink(token: string, reason: string, accessToken?: string): Promise<ShareLinkActionResult> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, error: "Not configured." };
+  }
+  const response = await fetch(supabaseUrl("rpc/permanently_revoke_share_link"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_token: token, p_reason: reason || null }),
+  });
+  if (!response.ok) {
+    return { ok: false, error: await readSupabaseError(response, "Could not permanently revoke the share link") };
+  }
+  return { ok: true, result: (await response.json()) as string };
+}
+
+// Server-owned token creation (migration 138) -- used here only for the
+// "Generate New Link" step of the manual revoke-and-regenerate control.
+export async function createNewSubmittalShareToken(submittalId: string, accessToken?: string): Promise<string> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/create_submittal_share_token"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_submittal_id: submittalId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not create a new share link"));
+  }
+  return (await response.json()) as string;
+}
+
+export async function createNewQuoteProposalShareToken(proposalId: string, accessToken?: string): Promise<string> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Supabase is not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/create_quote_proposal_share_token"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_proposal_id: proposalId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not create a new share link"));
+  }
+  return (await response.json()) as string;
+}
+
+export type ShareLinkActionType =
+  | "created"
+  | "sent"
+  | "temporarily_disabled"
+  | "re_enabled"
+  | "permanently_revoked"
+  | "regenerated"
+  | "superseded"
+  | "expiration_changed";
+
+export type ShareLinkAction = {
+  id: string;
+  token: string | null;
+  action: ShareLinkActionType;
+  actorEmail: string | null;
+  reason: string | null;
+  occurredAt: string;
+};
+
+// Summarized, not raw, per the decided design -- callers show first
+// viewed/last viewed/total views, not a repetitive per-view entry; full
+// per-view rows aren't fetched at all here.
+export type ShareLinkActivity = {
+  actions: ShareLinkAction[];
+  viewCount: number;
+  firstViewedAt: string | null;
+  lastViewedAt: string | null;
+};
+
+export async function loadShareLinkActivity(
+  entityType: "project_submittal" | "sales_quote_proposal",
+  entityId: string,
+  accessToken?: string,
+): Promise<ShareLinkActivity> {
+  const empty: ShareLinkActivity = { actions: [], viewCount: 0, firstViewedAt: null, lastViewedAt: null };
+  if (!isRemotePersistenceConfigured() || !accessToken || !entityId) {
+    return empty;
+  }
+  const [actionsRes, viewsRes] = await Promise.all([
+    fetch(
+      supabaseUrl(`share_link_actions?entity_type=eq.${entityType}&entity_id=eq.${entityId}&select=id,token,action,actor_email,reason,occurred_at&order=occurred_at.desc`),
+      { headers: supabaseHeaders(accessToken) },
+    ),
+    fetch(
+      supabaseUrl(`share_link_views?entity_type=eq.${entityType}&entity_id=eq.${entityId}&select=viewed_at&order=viewed_at.asc`),
+      { headers: supabaseHeaders(accessToken) },
+    ),
+  ]);
+  const actions = actionsRes.ok
+    ? (
+        (await actionsRes.json()) as Array<{
+          id: string;
+          token: string | null;
+          action: string;
+          actor_email: string | null;
+          reason: string | null;
+          occurred_at: string;
+        }>
+      ).map((row) => ({
+        id: row.id,
+        token: row.token,
+        action: row.action as ShareLinkActionType,
+        actorEmail: row.actor_email,
+        reason: row.reason,
+        occurredAt: row.occurred_at,
+      }))
+    : [];
+  const viewRows = viewsRes.ok ? ((await viewsRes.json()) as Array<{ viewed_at: string }>) : [];
+  return {
+    actions,
+    viewCount: viewRows.length,
+    firstViewedAt: viewRows[0]?.viewed_at ?? null,
+    lastViewedAt: viewRows[viewRows.length - 1]?.viewed_at ?? null,
+  };
 }
 
 export async function fetchPublicQuoteProposal(token: string): Promise<PublicQuoteProposalResult> {

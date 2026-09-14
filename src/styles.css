@@ -6241,6 +6241,42 @@ td.empty-compact-state {
 .status-pill.submittal-status-rejected { background: #fbe3df; color: #9a2f20; }
 .status-pill.submittal-status-revision_requested { background: #fff1d6; color: #906313; }
 
+/* Queue C2.6: share-link lifecycle state pills, distinct from the
+   submittal/proposal workflow-status pills above -- these describe the
+   LINK's own state, not the document's. */
+.status-pill.submittal-status-disabled { background: #fff1d6; color: #906313; }
+.status-pill.submittal-status-revoked { background: #fbe3df; color: #9a2f20; }
+.status-pill.submittal-status-superseded { background: #ebe5d8; color: #443c2d; }
+
+.share-link-lifecycle {
+  margin-top: 8px;
+}
+
+.share-link-lifecycle-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.share-link-activity {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #f7f5f1;
+  border-radius: 6px;
+  font-size: 0.85em;
+}
+
+.share-link-action-log {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #5c5648;
+}
+
 /* Public, no-login client view -- rendered standalone, outside .app-shell,
    so it needs its own page-level layout rather than relying on .main. */
 .submittal-public-page {

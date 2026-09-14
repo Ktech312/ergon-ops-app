@@ -142,6 +142,14 @@ import {
   createScheduleTemplate,
   createSubmittal,
   createSubmittalShareToken,
+  type ShareLinkTokenStatus,
+  type ShareLinkActivity,
+  disableShareLink,
+  reEnableShareLink,
+  permanentlyRevokeShareLink,
+  createNewSubmittalShareToken,
+  createNewQuoteProposalShareToken,
+  loadShareLinkActivity,
   loadProposalTemplateSections,
   updateProposalTemplateSection,
   loadProposalsForQuote,
@@ -5204,6 +5212,14 @@ function App() {
     }
   }
 
+  // Queue C2.6: keeps the submittals list's shareToken/shareTokenStatus in
+  // sync after a disable/re-enable/revoke/generate-new-link action --
+  // ShareLinkLifecycleControls never mutates state itself, only reports
+  // the new (token, status) pair back up through this.
+  function handleSubmittalShareLinkChange(submittalId: string, next: { token: string; status: ShareLinkTokenStatus }) {
+    setSubmittals((current) => current.map((entry) => (entry.id === submittalId ? { ...entry, shareToken: next.token, shareTokenStatus: next.status } : entry)));
+  }
+
   // Migration 053: Quote Proposals. Same shape as Submittals above, just
   // sourced from a Sales Quote instead of a Project -- freeze a snapshot at
   // send time (BOM lines resolved against the catalog items they're linked
@@ -5313,6 +5329,11 @@ function App() {
     } catch (error) {
       setQuoteProposalStatus(error instanceof Error ? error.message : "Could not create proposal.");
     }
+  }
+
+  // Queue C2.6: mirrors handleSubmittalShareLinkChange above, proposal side.
+  function handleProposalShareLinkChange(proposalId: string, next: { token: string; status: ShareLinkTokenStatus }) {
+    setQuoteProposals((current) => current.map((entry) => (entry.id === proposalId ? { ...entry, shareToken: next.token, shareTokenStatus: next.status } : entry)));
   }
 
   // Phase 18: fluid forms engine + After-Sales Handover. Loaded once per
@@ -7220,6 +7241,11 @@ function App() {
     : ((ownAllowedViews && ownAllowedViews.length > 0 ? ownAllowedViews : effectiveRoleDefaultTabs) as View[]);
   const isManagerRole = authChecksReady && (roleMode === "manager" || ownRoleKeys.includes("manager"));
   const canReviewApprovals = isAdmin || isManagerRole;
+  // Mirrors assert_can_manage_share_link()'s own two branches (migration
+  // 139) exactly -- kept in sync deliberately, not derived from it, since
+  // the RPC is still the authoritative check either way.
+  const canManageSubmittalLinks = authChecksReady && (isAdmin || roleMode === "pm" || ownRoleKeys.includes("pm"));
+  const canManageProposalLinks = authChecksReady && (isAdmin || isManagerRole || roleMode === "sales" || ownRoleKeys.includes("sales"));
   const criticalLoadErrorDomains = Object.keys(criticalLoadErrors);
   const hasCriticalLoadErrors = criticalLoadErrorDomains.length > 0;
   const criticalLoadErrorSummary = criticalLoadErrorDomains
@@ -7751,7 +7777,7 @@ function App() {
             )}
           </>
         )}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} channels={channels} knownUsers={knownUsers} myUserId={authSession?.userId ?? ""} activeDiscussionSection={activeDiscussionSection} onSetActiveDiscussionSection={setActiveDiscussionSection} onNotifyMentions={notifyMentions} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} canManageSubmittalLinks={canManageSubmittalLinks} onSubmittalShareLinkChange={handleSubmittalShareLinkChange} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} channels={channels} knownUsers={knownUsers} myUserId={authSession?.userId ?? ""} activeDiscussionSection={activeDiscussionSection} onSetActiveDiscussionSection={setActiveDiscussionSection} onNotifyMentions={notifyMentions} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <>
             <div className="segmented-tabs operations-subtabs">
@@ -7813,6 +7839,9 @@ function App() {
             quoteProposalStatus={quoteProposalStatus}
             onLoadQuoteProposals={reloadQuoteProposals}
             onCreateQuoteProposal={handleCreateQuoteProposal}
+            canManageProposalLinks={canManageProposalLinks}
+            onProposalShareLinkChange={handleProposalShareLinkChange}
+            accessToken={authSession?.accessToken}
             presalesRules={presalesRules}
             presalesStatus={presalesStatus}
             onGenerateBaselineBomForQuote={handleGenerateBaselineBomForQuote}
@@ -11858,6 +11887,193 @@ function ProjectPortfolioHealth({ projectSites, purchaseOrders }: { projectSites
   );
 }
 
+// Queue C2.6: per-version share-link lifecycle controls, shared by the
+// submittal (Projects) and proposal (SalesQuoteBuilder) version lists --
+// their row shapes are identical (see both call sites), so one component
+// covers both entity types via `entityType`/`entityId`. Disable/Re-enable
+// render as one toggle pair (never two separate always-visible buttons);
+// Permanently Revoke & Generate New Link is visually separate and
+// confirmation-gated, per PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_
+// DECISION.md Part 8 item 3's explicit "must read as clearly,
+// unmistakably different actions" requirement. `canManage` gates every
+// action button but never the "View activity" toggle -- history/view
+// counts are readable by any authenticated user (migration 137's
+// "authenticated read" policy on share_link_actions/share_link_views),
+// not just PM/Sales/admin.
+function ShareLinkLifecycleControls({
+  entityType,
+  entityId,
+  token,
+  tokenStatus,
+  canManage,
+  accessToken,
+  onChange,
+}: {
+  entityType: "project_submittal" | "sales_quote_proposal";
+  entityId: string;
+  token: string | null;
+  tokenStatus: ShareLinkTokenStatus | null;
+  canManage: boolean;
+  accessToken: string | undefined;
+  onChange: (next: { token: string; status: ShareLinkTokenStatus }) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [showActivity, setShowActivity] = useState(false);
+  const [activity, setActivity] = useState<ShareLinkActivity | null>(null);
+  const [loadingActivity, setLoadingActivity] = useState(false);
+
+  if (!token) {
+    return null;
+  }
+
+  async function generateNewToken(): Promise<string> {
+    return entityType === "project_submittal"
+      ? createNewSubmittalShareToken(entityId, accessToken)
+      : createNewQuoteProposalShareToken(entityId, accessToken);
+  }
+
+  async function toggleActivity() {
+    if (showActivity) {
+      setShowActivity(false);
+      return;
+    }
+    setShowActivity(true);
+    setLoadingActivity(true);
+    const result = await loadShareLinkActivity(entityType, entityId, accessToken);
+    setActivity(result);
+    setLoadingActivity(false);
+  }
+
+  async function handleDisable() {
+    setBusy(true);
+    setError("");
+    const result = await disableShareLink(token as string, "", accessToken);
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error || "Could not disable the link.");
+      return;
+    }
+    onChange({ token: token as string, status: "temporarily_disabled" });
+    setActivity(null);
+  }
+
+  async function handleReEnable() {
+    setBusy(true);
+    setError("");
+    const result = await reEnableShareLink(token as string, accessToken);
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error || "Could not re-enable the link.");
+      return;
+    }
+    onChange({ token: token as string, status: "active" });
+    setActivity(null);
+  }
+
+  async function handleRevokeAndGenerate() {
+    if (!window.confirm("Permanently revoke this link and generate a new one? The old link can never be re-enabled -- this can't be undone.")) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    const revokeResult = await permanentlyRevokeShareLink(token as string, "", accessToken);
+    if (!revokeResult.ok) {
+      setBusy(false);
+      setError(revokeResult.error || "Could not revoke the link.");
+      return;
+    }
+    // Reflect the revoke immediately, even before the new link exists --
+    // the old token really is dead server-side now, so the row must never
+    // keep showing it as "active" while the generate step is in flight or
+    // if it fails; a stale "active" pill here would be actively wrong, not
+    // just incomplete.
+    onChange({ token: token as string, status: "permanently_revoked" });
+    try {
+      const newToken = await generateNewToken();
+      onChange({ token: newToken, status: "active" });
+      setActivity(null);
+    } catch (genError) {
+      setError(genError instanceof Error ? genError.message : "Link revoked, but a new link could not be generated. Use \"Generate new link\" below to try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleGenerateNewOnly() {
+    setBusy(true);
+    setError("");
+    try {
+      const newToken = await generateNewToken();
+      onChange({ token: newToken, status: "active" });
+      setActivity(null);
+    } catch (genError) {
+      setError(genError instanceof Error ? genError.message : "Could not generate a new link.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="share-link-lifecycle">
+      <div className="share-link-lifecycle-controls">
+        {tokenStatus === "superseded" && <span className="status-pill submittal-status-superseded">Superseded by a newer version</span>}
+        {tokenStatus === "permanently_revoked" && <span className="status-pill submittal-status-revoked">Permanently revoked</span>}
+        {tokenStatus === "temporarily_disabled" && <span className="status-pill submittal-status-disabled">Temporarily disabled</span>}
+        {canManage && tokenStatus === "active" && (
+          <button className="secondary-action mini-action" type="button" disabled={busy} onClick={handleDisable}>
+            Disable link
+          </button>
+        )}
+        {canManage && tokenStatus === "temporarily_disabled" && (
+          <button className="secondary-action mini-action" type="button" disabled={busy} onClick={handleReEnable}>
+            Re-enable link
+          </button>
+        )}
+        {canManage && (tokenStatus === "active" || tokenStatus === "temporarily_disabled") && (
+          <button className="secondary-action mini-action danger-action" type="button" disabled={busy} onClick={handleRevokeAndGenerate}>
+            Permanently revoke &amp; generate new link
+          </button>
+        )}
+        {canManage && tokenStatus === "permanently_revoked" && (
+          <button className="secondary-action mini-action" type="button" disabled={busy} onClick={handleGenerateNewOnly}>
+            Generate new link
+          </button>
+        )}
+        <button className="secondary-action mini-action" type="button" onClick={toggleActivity}>
+          {showActivity ? "Hide activity" : "View activity"}
+        </button>
+      </div>
+      {error && <small className="error-text">{error}</small>}
+      {showActivity && (
+        <div className="share-link-activity">
+          {loadingActivity || !activity ? (
+            <p className="muted">Loading activity...</p>
+          ) : (
+            <>
+              <p className="muted">
+                {activity.viewCount === 0
+                  ? "No views recorded yet."
+                  : `Viewed ${activity.viewCount} time${activity.viewCount === 1 ? "" : "s"} -- first ${new Date(activity.firstViewedAt as string).toLocaleString()}, last ${new Date(activity.lastViewedAt as string).toLocaleString()}.`}
+              </p>
+              {activity.actions.length > 0 && (
+                <ul className="share-link-action-log">
+                  {activity.actions.map((entry) => (
+                    <li key={entry.id}>
+                      {entry.action.replace(/_/g, " ")} &ndash; {entry.actorEmail || "system"} &ndash; {new Date(entry.occurredAt).toLocaleString()}
+                      {entry.reason ? ` (${entry.reason})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Projects({
   projectSites,
   setProjectSites,
@@ -11883,6 +12099,8 @@ function Projects({
   submittalStatus,
   onLoadSubmittals,
   onCreateSubmittal,
+  canManageSubmittalLinks,
+  onSubmittalShareLinkChange,
   handoverSchema,
   handovers,
   handoverStatus,
@@ -11973,6 +12191,8 @@ function Projects({
   submittalStatus: string;
   onLoadSubmittals: (projectName: string) => void;
   onCreateSubmittal: (project: ProjectSite, clientName: string, clientEmail: string) => void;
+  canManageSubmittalLinks: boolean;
+  onSubmittalShareLinkChange: (submittalId: string, next: { token: string; status: ShareLinkTokenStatus }) => void;
   handoverSchema: FormSchema | null;
   handovers: ProjectHandover[];
   handoverStatus: string;
@@ -13224,6 +13444,15 @@ function Projects({
                         {copiedSubmittalId === submittal.id ? "Copied!" : "Copy client link"}
                       </button>
                     )}
+                    <ShareLinkLifecycleControls
+                      entityType="project_submittal"
+                      entityId={submittal.id}
+                      token={submittal.shareToken}
+                      tokenStatus={submittal.shareTokenStatus}
+                      canManage={canManageSubmittalLinks}
+                      accessToken={accessToken}
+                      onChange={(next) => onSubmittalShareLinkChange(submittal.id, next)}
+                    />
                   </div>
                 ))}
               </div>
@@ -18797,6 +19026,9 @@ function SalesHome({
   quoteProposalStatus,
   onLoadQuoteProposals,
   onCreateQuoteProposal,
+  canManageProposalLinks,
+  onProposalShareLinkChange,
+  accessToken,
   presalesRules,
   presalesStatus,
   onGenerateBaselineBomForQuote,
@@ -18884,6 +19116,9 @@ function SalesHome({
   quoteProposalStatus: string;
   onLoadQuoteProposals: (quoteId: string) => void;
   onCreateQuoteProposal: (quote: SalesQuote) => void;
+  canManageProposalLinks: boolean;
+  onProposalShareLinkChange: (proposalId: string, next: { token: string; status: ShareLinkTokenStatus }) => void;
+  accessToken: string | undefined;
   presalesRules: PresalesHardwareRule[];
   presalesStatus: string;
   onGenerateBaselineBomForQuote: (quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
@@ -19055,6 +19290,9 @@ function SalesHome({
         quoteProposalStatus={quoteProposalStatus}
         onLoadQuoteProposals={onLoadQuoteProposals}
         onCreateQuoteProposal={onCreateQuoteProposal}
+        canManageProposalLinks={canManageProposalLinks}
+        onProposalShareLinkChange={onProposalShareLinkChange}
+        accessToken={accessToken}
         presalesRules={presalesRules}
         presalesStatus={presalesStatus}
         onGenerateBaselineBom={onGenerateBaselineBomForQuote}
@@ -22919,6 +23157,9 @@ function SalesQuoteBuilder({
   quoteProposalStatus,
   onLoadQuoteProposals,
   onCreateQuoteProposal,
+  canManageProposalLinks,
+  onProposalShareLinkChange,
+  accessToken,
   presalesRules,
   presalesStatus,
   onGenerateBaselineBom,
@@ -23008,6 +23249,9 @@ function SalesQuoteBuilder({
   quoteProposalStatus: string;
   onLoadQuoteProposals: (quoteId: string) => void;
   onCreateQuoteProposal: (quote: SalesQuote) => void;
+  canManageProposalLinks: boolean;
+  onProposalShareLinkChange: (proposalId: string, next: { token: string; status: ShareLinkTokenStatus }) => void;
+  accessToken: string | undefined;
   presalesRules: PresalesHardwareRule[];
   presalesStatus: string;
   onGenerateBaselineBom: (quoteId: string, tier: string, nodeCount: number, cloudSync: boolean) => void;
@@ -23929,6 +24173,15 @@ function SalesQuoteBuilder({
                         {copiedProposalId === proposal.id ? "Copied!" : "Copy client link"}
                       </button>
                     )}
+                    <ShareLinkLifecycleControls
+                      entityType="sales_quote_proposal"
+                      entityId={proposal.id}
+                      token={proposal.shareToken}
+                      tokenStatus={proposal.shareTokenStatus}
+                      canManage={canManageProposalLinks}
+                      accessToken={accessToken}
+                      onChange={(next) => onProposalShareLinkChange(proposal.id, next)}
+                    />
                   </div>
                 ))}
             </div>
