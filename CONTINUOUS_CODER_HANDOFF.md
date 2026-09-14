@@ -1,10 +1,9 @@
 # Ergon Ops — Continuous Coder Handoff
 
 Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.5 (SHARE-LINK LIFECYCLE
-FOUNDATION, MIGRATIONS 137–142), AND QUEUE C2.6 (INTERNAL LIFECYCLE CONTROLS) ALL SHIPPED AND
-VERIFIED. MIGRATION 143 (VIEW-LOGGING FOLLOW-UP) IS NEXT UP; QUEUE C2.7 IS THE ACTIVE HANDOFF
-AFTER THAT.**
-Prepared: 2026-09-12, updated 2026-09-13. E approved the recommended
+FOUNDATION, MIGRATIONS 137–142), QUEUE C2.6 (INTERNAL LIFECYCLE CONTROLS), AND MIGRATION 143
+(VIEW-LOGGING FOLLOW-UP) ALL SHIPPED AND VERIFIED. QUEUE C2.7 IS THE ACTIVE HANDOFF.**
+Prepared: 2026-09-12, updated 2026-09-14. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
 `sales_quotes`, `accepted_proposal_total` on `projects`, frozen totals in every new
@@ -1178,18 +1177,19 @@ action. Queue C2.2–C2.5 (share-link lifecycle foundation) is fully closed.
    — it is already applied; this was a separate follow-up, exactly mirroring 137→141. E ran it and it
    returned `Success. No rows returned`, then reran migration 140's canonical test, which also passed
    cleanly. **Queue C2.2–C2.5 is now fully closed — no pending manual database action.**
-10. **Migration 143 — PENDING, NEXT UP.** `backend/supabase/migrations/143_share_link_view_logging.sql`
-    — closes a real gap found while reconciling `PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` against
-    the shipped Queue C2.6 work: `share_link_views` (migration 137) never had a write path —
-    Stage B always specified one, migration 139 didn't implement it, and Queue C2.6's Activity panel
-    reads this exact table, so its view count would silently show 0 forever without this. Redefines
+10. **Migration 143 — APPLIED (2026-09-14). Canonical test is next single file.**
+    `backend/supabase/migrations/143_share_link_view_logging.sql` — closes a real gap found while
+    reconciling `PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` against the shipped Queue C2.6 work:
+    `share_link_views` (migration 137) never had a write path — Stage B always specified one,
+    migration 139 didn't implement it, and Queue C2.6's Activity panel reads this exact table, so its
+    view count would silently show 0 forever without this. Redefines
     `get_quote_proposal_by_token`/`get_submittal_by_token` (already applied) to log one view row per
     call — same external outcome shape and grants, additive only. A genuinely unknown token is
-    deliberately never logged (no entity to attach it to under the current NOT NULL schema).
-    Independently verified end-to-end against a real local PostgreSQL 18 engine (PGlite), including
-    under the real admin-also-PM condition. Give E only the migration file first; its test script,
-    `backend/supabase/migration_143_share_link_view_logging_tests.sql`, only after E reports the
-    migration itself succeeded.
+    deliberately never logged (no entity to attach it to under the current NOT NULL schema). E ran it
+    in production and it returned `Success. No rows returned`. Independently verified end-to-end
+    against a real local PostgreSQL 18 engine (PGlite), including under the real admin-also-PM
+    condition, before ever being sent. Do not run migration 143 again; give E only its test script
+    next, `backend/supabase/migration_143_share_link_view_logging_tests.sql`.
 
 ## 9. Consolidated reporting format
 
