@@ -1,8 +1,8 @@
 # Ergon Ops — Continuous Coder Handoff
 
 Status: **A1–A15, B1–B10, AND QUEUE C1 (SALES PRICING) SHIPPED. QUEUE C2 IS THE ACTIVE HANDOFF —
-C2.2–C2.5's MIGRATIONS ALL APPLIED; 140's CANONICAL TEST IS NEXT.** Prepared: 2026-09-12, updated
-2026-09-13. E approved the recommended
+CORRECTIVE MIGRATION 142 IS NEXT, THEN A RERUN OF 140'S TEST CLOSES C2.2–C2.5.** Prepared:
+2026-09-12, updated 2026-09-13. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
 `sales_quotes`, `accepted_proposal_total` on `projects`, frozen totals in every new
@@ -18,14 +18,16 @@ update shipped as `d0f58f0`). Migrations 137 (plus corrective 141), 138, 139, an
 applied in production**, and 137/138/139's canonical tests are confirmed passed. Migration 139's
 frontend follow-up (parsing the new `outcome` column on the two public share-link pages) is also
 live — shipped same-day, ahead of its own test confirming, once checking 139's live effect surfaced
-an active production defect (see HANDOFF.md). Migration 140's own canonical test is the last piece
-of this batch for E to run.
+an active production defect (see HANDOFF.md). Migration 140's own canonical test found one more real
+gap (functions get the same real default-EXECUTE-grant treatment migration 141 found for tables) --
+corrective migration 142 is drafted and next up; once it succeeds, E reruns 140's canonical test
+(unchanged) to close this batch out.
 
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, and 140 are applied in
-production. Migration 140's canonical test is the next single manual file for E to run — see
-"Manual database actions." Continue Queue C2 below (C2.6 onward) while that test result is pending.
+production. Corrective migration 142 is the next single manual file for E to run — see "Manual
+database actions." Continue Queue C2 below (C2.6 onward) while that result is pending.
 Do not rerun 134/135/136/137/141/138/139/140 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -1122,9 +1124,24 @@ independently verified clean (2026-09-13) and is the current gate for E to run f
    identity simulation; PM/Sales discovery not excluding admins — this workspace's admin also holds
    `pm`; the two cross-authorization checks needing secondary-role isolation) — all fixed and
    independently verified against three scenarios (clean fixtures, the admin also holding `pm`, a
-   non-admin PM also holding `sales`) before ever being sent. Do not run migration 140 again; give E
-   only its test script next. This is the last migration in the drafted batch (C2.2–C2.5) — after its
-   test confirms, Queue C2.6 (frontend UI controls) is next.
+   non-admin PM also holding `sales`) before ever being sent. Do not run migration 140 again.
+9. **Migration 142 — PENDING, RUN BEFORE RETRYING 140'S TEST.** `backend/supabase/migrations/
+   142_fix_quote_cascade_trigger_grants.sql` — E's first run of migration 140's canonical test still
+   found a real gap: `TEST FAILED: anon has execute privilege on the cascade_quote_soft_delete
+   trigger function -- expected none (trigger-only).` Migration 140 only revoked from `public`,
+   reasoning (matching migration 117's own precedent) that a trigger function needs no grant since
+   Postgres refuses to invoke a `returns trigger` function directly regardless of privilege — true,
+   but this Supabase project's project-level default privileges apply to newly created FUNCTIONS too,
+   not just tables (the same class of gap migration 141 already closed for `share_link_views`/
+   `share_link_actions`/`workspace_share_link_settings`), so `anon`/`authenticated` were automatically
+   granted EXECUTE anyway. Functionally inert (the grant can never actually be exercised) but closed
+   for the same explicit minimum-ACL discipline every function here follows. Migration 140 itself is
+   NOT edited — it is already applied; this is a separate follow-up, exactly mirroring 137→141.
+   Independently re-verified against all three scenarios after updating the local sandbox to also
+   replicate this now-confirmed real default-privilege-on-functions behavior. Give E only this
+   migration file; **once it succeeds, E reruns migration 140's canonical test** (the same file
+   already sent, unchanged) — that rerun is what finally closes out Queue C2.2–C2.5. After that,
+   Queue C2.6 (frontend UI controls) is next.
 
 ## 9. Consolidated reporting format
 

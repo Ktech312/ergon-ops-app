@@ -12,8 +12,10 @@ Sales pricing) is fully deployed. Migration 139's paired frontend update (parsin
 column) is also live -- shipped same-day, ahead of that test confirming, after checking migration
 139's live effect surfaced an active production defect -- see "Current database gate" below.
 Migration 140 itself had a real bug (ambiguous `token` reference, same class migration 121 already
-hit) found and fixed before ever being sent. Migration 140's canonical test is the next single file
-for E to run, closing out Queue C2.2-C2.5. Do not re-run
+hit) found and fixed before ever being sent. Migration 140's first canonical-test run found one more
+real gap (`cascade_quote_soft_delete()` got the same real default-EXECUTE-grant treatment migration
+141 found for tables, just for functions this time) -- corrective migration 142 is next for E to run,
+then E reruns 140's canonical test (unchanged) to close out Queue C2.2-C2.5. Do not re-run
 migrations 134/135/136/137/141/138/139/140 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
@@ -48,7 +50,20 @@ Independently verified against three scenarios: clean fixtures, the admin also h
 exact condition that broke migration 139 in production), and a non-admin PM also holding `sales` --
 all three pass with the real "ALL MIGRATION 140 ... PASSED -- ZERO SECTIONS SKIPPED" notice firing.
 E ran migration 140 in production and it returned `Success. No rows returned` -- migration 140 is
-applied. **Its canonical test is now the next single-file gate; do not run migration 140 again.**
+applied; do not run migration 140 again. E then ran its canonical test and hit one more real gap:
+`TEST FAILED: anon has execute privilege on the cascade_quote_soft_delete trigger function -- expected
+none (trigger-only).` Root cause: this Supabase project's project-level default privileges apply to
+newly created FUNCTIONS too, not just tables (the same class of gap migration 141 already closed) --
+migration 140's trigger function only revoked from `public`, reasoning (matching migration 117's own
+precedent) that a trigger function needs no grant since Postgres refuses to invoke a `returns
+trigger` function directly regardless of privilege (true, and still true -- the gap is functionally
+inert, not exploitable). `backend/supabase/migrations/142_fix_quote_cascade_trigger_grants.sql`
+closes it explicitly, matching the same minimum-ACL discipline every other function here follows.
+Migration 140 itself is not edited -- it is already applied; 142 is a separate follow-up, exactly
+mirroring 137→141. Independently re-verified against all three scenarios after updating the local
+sandbox to also replicate this now-confirmed default-privilege-on-functions behavior; all three pass
+cleanly. **Migration 142 is the next single-file gate. Once it succeeds, E reruns migration 140's
+canonical test (the same file already sent, unchanged) -- that closes out Queue C2.2-C2.5.**
 
 **Urgent finding and same-day fix (2026-09-13):** while preparing to send the test above, checking
 migration 139's actual live effect on the currently-deployed frontend surfaced a real, active
