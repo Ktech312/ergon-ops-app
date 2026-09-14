@@ -16,8 +16,12 @@ database gate" below for the full history, including migration 140's own real bu
 reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
 E's real runs. Queue C2.6 (internal share-link lifecycle controls -- Disable/Re-enable, Permanently
 Revoke & Generate New Link, activity history) is also shipped and deployed (`35bc262`; production
-bundle `index-Bir39DZP.js`, zero console errors on a fresh load). **Queue C2.7 (close direct-write
-bypasses, switch the Create & Send flow to the server-owned RPCs) is the active work now.** Do not
+bundle `index-Bir39DZP.js`, zero console errors on a fresh load). Reconciling
+`PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` against that shipped work surfaced one real gap:
+`share_link_views` never had a write path, so Queue C2.6's own Activity panel would always show 0
+views. Migration 143 closes it (see "Current database gate" below) -- next single file for E.
+**After that, Queue C2.7 (close direct-write bypasses, switch the Create & Send flow to the
+server-owned RPCs) is the active work.** Do not
 re-run migrations 134/135/136/137/141/138/139/140/142 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
@@ -67,7 +71,18 @@ sandbox to also replicate this now-confirmed default-privilege-on-functions beha
 cleanly. E ran it in production and it returned `Success. No rows returned`, then reran migration
 140's canonical test (the same file already sent, unchanged), which also returned `Success. No rows
 returned`. **Queue C2.2-C2.5 is now fully closed -- migrations 137 (+141), 138, 139, 140 (+142) are
-all applied and verified, including every canonical test. No pending manual database action.**
+all applied and verified, including every canonical test.**
+
+**Migration 143, found while reconciling docs (2026-09-13):** after Queue C2.6 shipped, checked
+`PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` against it and found `share_link_views` (migration 137)
+has never had a write path -- Stage B always specified logging a view on every public lookup, but
+migration 139 didn't implement it, and Queue C2.6's own Activity panel reads this table, so its view
+count would silently show 0 forever. `backend/supabase/migrations/143_share_link_view_logging.sql`
+redefines `get_quote_proposal_by_token`/`get_submittal_by_token` (already applied) to log one view
+row per call -- same external outcome shape and grants, additive only; a genuinely unknown token is
+deliberately never logged (no entity to attach it to under the NOT NULL schema). Independently
+verified end-to-end against a real local PostgreSQL 18 engine (PGlite), including under the real
+admin-also-PM condition. **Migration 143 is the next single-file gate.**
 
 **Urgent finding and same-day fix (2026-09-13):** while preparing to send the test above, checking
 migration 139's actual live effect on the currently-deployed frontend surfaced a real, active
