@@ -14,8 +14,11 @@ shipped and verified -- no pending manual database action. Migration 139's paire
 after checking migration 139's live effect surfaced an active production defect -- see "Current
 database gate" below for the full history, including migration 140's own real bug (ambiguous `token`
 reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
-E's real runs. **Queue C2.6 (frontend UI controls) is the active work now.** Do not re-run
-migrations 134/135/136/137/141/138/139/140/142 after they've
+E's real runs. Queue C2.6 (internal share-link lifecycle controls -- Disable/Re-enable, Permanently
+Revoke & Generate New Link, activity history) is also shipped and deployed (`35bc262`; production
+bundle `index-Bir39DZP.js`, zero console errors on a fresh load). **Queue C2.7 (close direct-write
+bypasses, switch the Create & Send flow to the server-owned RPCs) is the active work now.** Do not
+re-run migrations 134/135/136/137/141/138/139/140/142 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
 **Current database gate (2026-09-13):** migrations 137 (+ corrective 141), 138, and 139 are applied

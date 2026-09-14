@@ -1,7 +1,8 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), AND QUEUE C2.2–C2.5 (SHARE-LINK LIFECYCLE
-FOUNDATION, MIGRATIONS 137–142) ALL SHIPPED AND VERIFIED. QUEUE C2.6 IS THE ACTIVE HANDOFF.**
+Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.5 (SHARE-LINK LIFECYCLE
+FOUNDATION, MIGRATIONS 137–142), AND QUEUE C2.6 (INTERNAL LIFECYCLE CONTROLS) ALL SHIPPED AND
+VERIFIED. QUEUE C2.7 IS THE ACTIVE HANDOFF.**
 Prepared: 2026-09-12, updated 2026-09-13. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
@@ -25,14 +26,18 @@ now the active work.**
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, 140 (+142) are all applied
-and verified in production, including every canonical test. Nothing is pending on the database side.
-Continue with Queue C2.6 below: frontend UI controls (Disable/Re-enable, Permanently Revoke &
-Generate New Link, activity history) and switching the frontend to call the new server-owned RPCs
-(`create_submittal_share_token`/`create_quote_proposal_share_token`/`create_and_send_submittal_version`/
-`create_and_send_quote_proposal_version`) instead of the old direct-INSERT path, plus consuming
+and verified in production, including every canonical test. Queue C2.6 (internal share-link
+lifecycle controls) is shipped and deployed (`35bc262`; production bundle `index-Bir39DZP.js`
+verified, zero console errors). Nothing is pending on the database side. Continue with Queue C2.7
+below: narrow direct writes to `public_share_tokens`/`sales_quote_proposals`/`project_submittals`,
+and switch the main Create & Send flow to the new server-owned RPCs
+(`create_and_send_submittal_version`/`create_and_send_quote_proposal_version`, migration 140 --
+these supersede migration 138's narrower `create_submittal_share_token`/
+`create_quote_proposal_share_token` for that specific flow, though C2.6 already put the narrower pair
+to real use for the "Generate New Link" step) instead of the old direct-INSERT path, plus consuming
 migration 139's `outcome` column in the version-comparison/history UI where a superseded prior
 version needs its own distinct state shown.
-Do not rerun 134/135/136/137/141/138/139/140 and do not re-ask D7's settled link rules.
+Do not rerun 134/135/136/137/141/138/139/140/142 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
 
@@ -318,11 +323,39 @@ Sales user must deliberately re-enable and create the matching audit event.
 
 ### C2.6 — Internal controls and history
 
-Add the decided per-version controls: Disable/Re-enable together; Permanently Revoke and Generate New
-Link separated and confirmation-gated; activity summary plus history. Proposal controls are Sales;
-do not grant PM proposal authority. For submittals, implement only the authority that can be proven
-from current schema; defer the assigned-PM cutover portion to Stage 2 rather than approximating it as
+**Status: DONE AND DEPLOYED (2026-09-13) — `35bc262`.** Add the decided per-version controls:
+Disable/Re-enable together; Permanently Revoke and Generate New Link separated and
+confirmation-gated; activity summary plus history. Proposal controls are Sales; do not grant PM
+proposal authority. For submittals, implement only the authority that can be proven from current
+schema; defer the assigned-PM cutover portion to Stage 2 rather than approximating it as
 “any PM.” Preserve keyboard, mobile, screen-reader, email, and frozen-snapshot behavior.
+
+Built entirely on the already-live RPCs from migrations 138/139 — no new migration needed. New
+shared `ShareLinkLifecycleControls` component (`src/main.tsx`) is used by both the submittal
+(`Projects`) and proposal (`SalesQuoteBuilder`) version-row lists, since their row shapes are
+identical: Disable/Re-enable render as one toggle pair; Permanently Revoke & Generate New Link is a
+visually separate, `window.confirm`-gated action (matching the decided "must read as unmistakably
+different actions" requirement — this repo's only confirmation convention, no custom modal exists);
+an expandable Activity panel shows view count + first/last viewed + a compact action log, summarized
+not raw, per the decided design. `canManageSubmittalLinks`/`canManageProposalLinks` (new derived
+booleans in `App`) mirror `assert_can_manage_share_link()`'s own two authorization branches exactly
+(PM/admin for submittals, Sales/manager/admin for proposals) — deliberately "any PM"/"any
+Sales-or-manager" because that IS the real, already-decided schema authority (migration 139's own
+RPC), not an invented approximation of the not-yet-built assigned-PM concept; the RPCs remain the
+authoritative check regardless of what the UI shows. `ProjectSubmittal`/`SalesQuoteProposal` gained
+`shareTokenStatus`; `loadSubmittalsForProject`/`loadProposalsForQuote` now select the token's status
+and order tokens newest-first so a regenerated link's row picks the current token, not an arbitrary
+historical one, once an entity has more than one token row (only possible after a manual
+regenerate). New persistence functions: `disableShareLink`/`reEnableShareLink`/
+`permanentlyRevokeShareLink` (wrap migration 139's RPCs), `createNewSubmittalShareToken`/
+`createNewQuoteProposalShareToken` (migration 138's server-owned creation RPCs, used here only for
+the "Generate New Link" step — NOT yet the main Create & Send flow, which is C2.7's job),
+`loadShareLinkActivity` (reads `share_link_actions`/`share_link_views`). 15 new tests; 427/427
+passing, tsc clean, eslint 0 errors (72 pre-existing warnings, unchanged), build clean. Pushed and
+deployed; Vercel served `index-Bir39DZP.js` and a fresh browser load had zero console errors. Not
+verified against a real submittal/proposal in the browser — no authenticated session with real
+share-link data is available this session, matching this repo's established practice when that's the
+case.
 
 ### C2.7 — Close direct-write bypasses
 
@@ -1166,8 +1199,9 @@ item remains.
 
 Read this file, then the top current-status entries in `HANDOFF.md`, then
 `PRODUCT_MASTER_COMPLETION_PLAN.md`. For a long unattended run, use
-`OVERNIGHT_CODER_PLAN_2026-09-13.md`; otherwise verify Git and begin at Queue C2.6 above (C2.1–C2.5
-are completed records now — migrations 137–142 all applied and verified in production, including
-every canonical test; do not redo them). Treat A1–A15, B1–B10, and C1 as completed records rather than a queue to repeat.
+`OVERNIGHT_CODER_PLAN_2026-09-13.md`; otherwise verify Git and begin at Queue C2.7 above (C2.1–C2.6
+are completed records now — migrations 137–142 all applied and verified in production including
+every canonical test, and the internal lifecycle controls UI is shipped and deployed; do not redo
+them). Treat A1–A15, B1–B10, and C1 as completed records rather than a queue to repeat.
 Continue until every independent C2 item is implemented or left at its required single-file manual
 database gate.
