@@ -1,6 +1,6 @@
 # Share-Link Implementation Plan — Staged Build Order
 
-Status: **Stages A–D and part of Stage F are DONE AND VERIFIED IN PRODUCTION (2026-09-13, Queue C2.2–C2.6).** Migrations 137 (+ corrective 141), 138, 139, 140 (+ corrective 142) implement Stages A–D exactly as staged below (schema, RPCs, quote-deletion cascade, customer-facing messaging), all applied and verified including every canonical test. The Stage F per-version-row controls and Activity expander are also shipped and deployed. Stage E (Sales-only proposal authority narrowing the current wide-open write policy, and the assigned-PM submittal cutover) remains blocked on `PRODUCT_STAGE2_SCHEMA_PLAN.md` exactly as this document originally specified — not attempted. The Settings → Document Links and Settings → Capabilities screens (the rest of Stage F) are also not yet built. See `CONTINUOUS_CODER_HANDOFF.md` C2.2–C2.6 for the full per-migration/per-commit detail. This assembles every decision already recorded in `PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md` (Parts 1–11) into one clean, execution-focused staging plan. That document remains the source of truth for *why* each decision was made; this one is the source of truth for *build order*.
+Status: **Stages A–D, the proposal/submittal write-policy narrowing half of Stage E, and part of Stage F are DONE AND VERIFIED IN PRODUCTION (2026-09-14, Queue C2.2–C2.7).** Migrations 137 (+ corrective 141), 138, 139, 140 (+ corrective 142), 143 implement Stages A–D exactly as staged below (schema, RPCs, quote-deletion cascade, customer-facing messaging, view-logging), all applied in production (137-140's canonical tests confirmed passed; 143's sent and independently verified, E's run result pending). Migration 144 (Queue C2.7 part 2) closed `sales_quote_proposals`'/`project_submittals`' own direct-write policies entirely, going beyond Stage E's original "narrow the write-access gap" framing to remove direct writes outright. The Stage F per-version-row controls and Activity expander, and Queue C2.7's Create & Send RPC switch, are also shipped and deployed. What remains blocked on `PRODUCT_STAGE2_SCHEMA_PLAN.md` exactly as this document originally specified: the *specific assigned PM* submittal cutover (as opposed to "any PM-role holder," already enforced). The Settings → Document Links and Settings → Capabilities screens (the rest of Stage F) are also not yet built. See `CONTINUOUS_CODER_HANDOFF.md` C2.2–C2.7 for the full per-migration/per-commit detail. This assembles every decision already recorded in `PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md` (Parts 1–11) into one clean, execution-focused staging plan. That document remains the source of truth for *why* each decision was made; this one is the source of truth for *build order*.
 
 **Hard prerequisite, not bypassable**: every stage below that touches Sales/PM authority, billing clearance, or conversion approval depends on `PRODUCT_STAGE2_SCHEMA_PLAN.md` being built first — specifically `assigned_pm_workspace_member_id`, `billing_clearance_history`, and `quote_conversion_requests`. Stages that only touch link lifecycle (expiration, disable/revoke, audit log) do **not** depend on Stage 2 and can proceed independently once the authorization bridge (migration 124) is confirmed live.
 
@@ -139,19 +139,22 @@ messages below.
 
 Three-tier dead-link copy, exactly as decided: **superseded** ("a newer version was sent, check your email"), **expired** ("this link has expired, contact your representative"), **temporarily disabled OR permanently revoked** (shared neutral message — the client is never told which). The real reason is visible only to authorized internal users via the audit log.
 
-## Stage E — Authority model *(BLOCKED on Stage 2 schema; PARTIALLY implemented for link-lifecycle actions)*
+## Stage E — Authority model *(BLOCKED on Stage 2 schema; link creation/lifecycle AND document writes now both closed)*
 
-**Status update (2026-09-13):** migrations 138/139 already implement Sales-only (or PM-only for
-submittals) authority for *link creation and every lifecycle action* — `create_quote_proposal_share_token`,
+**Status update (2026-09-14):** migrations 138/139 implement Sales-only (or PM-only for submittals)
+authority for *link creation and every lifecycle action* — `create_quote_proposal_share_token`,
 `disable_share_link`/`re_enable_share_link`/`permanently_revoke_share_link`/`regenerate_share_link`
-all gate proposal-link actions to Sales/manager/admin and submittal-link actions to PM/admin, ahead of
-the underlying tables' own write policies being narrowed. What's still genuinely blocked, unchanged
-from this document's original text: `sales_quote_proposals`' OWN row-level write policy remains the
-old wide-open "authenticated write" (migration 053) — creating/editing the PROPOSAL DOCUMENT itself,
-not just its share link, is still not Sales-only; closing that is Queue C2.7's job, tracked
-separately from Stage 2. The *specific assigned PM* concept for submittals (as opposed to "any
-PM-role holder," which is what's actually enforced today) remains blocked on Stage 2 exactly as
-below.
+all gate proposal-link actions to Sales/manager/admin and submittal-link actions to PM/admin.
+Migration 144 (Queue C2.7 part 2) then closed the remaining gap this section originally
+flagged: `sales_quote_proposals`' own row-level write policy (the old wide-open "authenticated
+write," migration 053) is now dropped entirely — creating/editing the PROPOSAL DOCUMENT itself, not
+just its share link, is no longer reachable by any authenticated user's direct write at all; only
+`create_and_send_quote_proposal_version`/`respond_to_quote_proposal` (both already Sales/manager/admin-
+or client-token-gated) can write it. `project_submittals`' equivalent policy is also closed the same
+way. What remains genuinely blocked, unchanged from this document's original text: the *specific
+assigned PM* concept for submittals (as opposed to "any PM-role holder," which is what's actually
+enforced today) remains blocked on Stage 2 exactly as below — narrowing the table's write access
+further than "any PM" requires the assigned-PM field this section describes, which doesn't exist yet.
 
 - Proposals: Sales-only create/disable/revoke/regenerate. **Depends on**: the write-access narrowing already flagged in Part 9.6/9.7 (today, any authenticated employee can create a proposal) — this is the same access-tightening work Task 3/migration 125 covers for the authorization side generally.
 - Submittals: Sales pre-handoff, the *specific* assigned PM post-handoff, Sales read-only after. **Depends on**: `projects.assigned_pm_workspace_member_id` (Stage 2 §5) existing and being reliably populated — without it, "the specific assigned PM" cannot be enforced, only "any PM-role holder," which is not what was decided.

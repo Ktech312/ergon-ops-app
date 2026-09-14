@@ -1,10 +1,9 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.5 (SHARE-LINK LIFECYCLE
-FOUNDATION, MIGRATIONS 137–142), QUEUE C2.6 (INTERNAL LIFECYCLE CONTROLS), AND MIGRATION 143
-(VIEW-LOGGING FOLLOW-UP) ALL SHIPPED AND VERIFIED. QUEUE C2.7 IS IN PROGRESS: PART 1 (FRONTEND
-SWITCH TO THE SERVER-OWNED RPCs) IS SHIPPED AND DEPLOYED; PART 2 (MIGRATION 144, CLOSING THE OLD
-DIRECT-WRITE BYPASSES) IS DRAFTED AND NEXT UP FOR E.**
+Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.6 (SHARE-LINK LIFECYCLE
+FOUNDATION + INTERNAL CONTROLS, MIGRATIONS 137–144), AND QUEUE C2.7 (SERVER-OWNED CREATE & SEND +
+DIRECT-WRITE CLOSURE) ALL APPLIED IN PRODUCTION.** Two items remain open, both listed under
+"Still required" below — this is not a fully closed queue yet.
 Prepared: 2026-09-12, updated 2026-09-14. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
@@ -14,39 +13,54 @@ doc reconciliation). Migration 136 and its canonical test passed; the prepared c
 to `main` and Vercel deployed them.
 Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2026-09-13).
 
-Queue C2's share-link lifecycle foundation (C2.2–C2.6) is **fully shipped and verified in
-production**: migrations 137 (+141), 138, 139, 140 (+142), and 143 are all applied, and every
-canonical test through 140 returned `Success. No rows returned` with zero sections skipped (143's
-own test is drafted, sent to E, and independently verified clean, result pending). Migration 139's
-paired frontend follow-up (parsing the new `outcome` column) and Queue C2.6 (Disable/Re-enable,
-Permanently Revoke & Generate New Link, Activity history) are both live in production. **Queue C2.7
-is now in progress**: part 1 (switching Create & Send to `create_and_send_submittal_version`/
-`create_and_send_quote_proposal_version`, migration 140's atomic RPCs, replacing the old direct-INSERT
-flow) shipped and deployed (`05fa486`); part 2 (migration 144, closing the now-unused direct-write
-policies on `public_share_tokens`/`project_submittals`/`sales_quote_proposals`) is drafted,
-independently verified, and sent to E. Three corrective migrations were needed across this whole
-queue beyond the originally planned ones (141/142 for real default-grant gaps, none of which
-required editing an already-applied migration file, matching this repo's own established rule) plus
-143 for a real missing view-logging write path found while reconciling docs.
+**✅ Completed and verified:**
+- Queue C2.2–C2.5 (share-link lifecycle foundation): migrations 137 (+141), 138, 139, 140 (+142) —
+  all applied, every canonical test returned `Success. No rows returned` with zero sections skipped.
+  Migration 139's paired frontend fix (parsing the new `outcome` column on the two public share-link
+  pages) is live, shipped same-day ahead of its own test after checking 139's live effect surfaced
+  an active production defect.
+- Queue C2.6 (internal lifecycle controls): Disable/Re-enable, Permanently Revoke & Generate New
+  Link, Activity history — shipped and deployed (`35bc262`).
+- Migration 143 (view-logging follow-up, found while reconciling docs against C2.6): applied in
+  production (`Success. No rows returned`).
+- Queue C2.7 part 1 (frontend switch to the server-owned atomic RPCs,
+  `create_and_send_submittal_version`/`create_and_send_quote_proposal_version`, replacing the old
+  direct-INSERT flow): shipped and deployed (`05fa486`).
+- Queue C2.7 part 2 (migration 144, closing the now-unused direct-write policies on
+  `public_share_tokens`/`project_submittals`/`sales_quote_proposals`): **applied in production
+  (2026-09-14) — `Success. No rows returned`.**
+
+**🔲 Still required:**
+1. **Migration 143's canonical test** (`backend/supabase/migration_143_share_link_view_logging_tests.sql`)
+   — already sent to E and independently verified clean, but E's own run result has not yet been
+   reported back. Do not resend; just needs E to run it and report the result.
+2. **Migration 144's canonical test** (`backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`)
+   — already drafted and independently verified clean (including a negative control proving it
+   catches a real regression), not yet sent to E — migration 144 itself just closed, this is the
+   immediate next single file to send, per the one-file-at-a-time convention.
+3. **Version-comparison/history UI**: migration 139's `outcome` column is not yet consumed there —
+   a superseded prior version doesn't yet show its own distinct state in that read-only comparison
+   view. Small, independent, not blocking.
+4. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
+   (`app_user_roles`/`app_admins`' own wide-open admin write policies) and the bridge-aware
+   `accept_invite()` replacement — grouped under the same "C2.7" label in an earlier planning pass
+   but not share-link-specific. A separate, pre-existing body of work; tracked here so it isn't
+   mistaken for done, not silently dropped.
+
+Three corrective migrations were needed across this whole queue beyond the originally planned ones
+(141/142 for real default-grant gaps, neither requiring editing an already-applied migration file,
+matching this repo's own established rule) plus 143 for a real missing view-logging write path found
+while reconciling docs.
 
 ## Next-session launchpad
 
-**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, 140 (+142), and 143 are
-all applied in production. Queue C2.6 (internal share-link lifecycle controls) is shipped and
-deployed (`35bc262`; production bundle `index-Bir39DZP.js` verified, zero console errors). Queue
-C2.7 part 1 (Create & Send switched to the server-owned RPCs) is shipped and deployed (`05fa486`;
-verified live, zero console errors). Migration 144 (Queue C2.7 part 2, closing the old direct-write
-bypasses) is the next single manual file for E to run — see "Manual database actions." Switching the
-main Create & Send flow to the new server-owned RPCs
-(`create_and_send_submittal_version`/`create_and_send_quote_proposal_version`, migration 140 --
-these supersede migration 138's narrower `create_submittal_share_token`/
-`create_quote_proposal_share_token` for that specific flow, though C2.6 already put the narrower pair
-to real use for the "Generate New Link" step) is **done** (`05fa486`). Remaining, independent of
-migration 144's result: consuming migration 139's `outcome` column in the version-comparison/history
-UI where a superseded prior version needs its own distinct state shown, and (deliberately out of
-scope for migration 144, tracked separately) the authorization-table policy closure and bridge-aware
-`accept_invite()` replacement C2.7's original task description also named, not share-link-specific.
-Do not rerun 134/135/136/137/141/138/139/140/142/143 and do not re-ask D7's settled link rules.
+**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, 140 (+142), 143, and 144
+are all applied in production. Queue C2.6 (internal share-link lifecycle controls) and Queue C2.7
+part 1 (Create & Send switched to the server-owned RPCs) are both shipped and deployed (`35bc262`,
+`05fa486`; production bundles verified, zero console errors). See "Still required" above for the
+four open items — none of them block anything else in Queue C2. The next concrete action is sending
+E migration 144's canonical test (item 2 above).
+Do not rerun 134/135/136/137/141/138/139/140/142/143/144 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
 
@@ -368,8 +382,11 @@ case.
 
 ### C2.7 — Close direct-write bypasses
 
-**Status: part 1 (frontend switch) DONE AND DEPLOYED; part 2 (migration 144) drafted, independently
-verified, sent to E (2026-09-14).** After the sanctioned RPCs are live, narrow direct writes to `public_share_tokens`,
+**Status: part 1 (frontend switch) DONE AND DEPLOYED; part 2 (migration 144) APPLIED IN PRODUCTION
+(2026-09-14, `Success. No rows returned`) — its canonical test is the next single file to send E.**
+The share-link-specific portion of this task (narrowing `public_share_tokens`/`project_submittals`/
+`sales_quote_proposals`) is done; the authorization-table/`accept_invite()` portion below remains a
+separate, deliberately out-of-scope item — see "Still required" above. After the sanctioned RPCs are live, narrow direct writes to `public_share_tokens`,
 `sales_quote_proposals`, and `project_submittals`. In the same reviewed sequence, finish the already-
 designed authorization-table policy closure and bridge-aware `accept_invite()` replacement so neither
 legacy nor workspace roles can drift through a raw client write. Keep SELECT changes and Phase 3 data
@@ -387,15 +404,18 @@ real (if narrow) weakness. 4 new tests; 431/431 passing, tsc/eslint/build clean.
 live (bundle `index-C_sfjz0J.js`, zero console errors). Safe to ship on its own since the RPCs it
 calls were already live — did not wait for part 2's migration.
 
-**Part 2 (`backend/supabase/migrations/144_close_share_link_direct_write_bypasses.sql`, `450606b`):**
-drops `public_share_tokens`' "authenticated manage" policy (replaced with SELECT-only),
-`project_submittals`' "pm and admin write" policy, and `sales_quote_proposals`' "authenticated write"
-policy — all three entirely, since every legitimate write now goes through a security-definer RPC.
-Confirmed via a full trace of every direct `fetch()` call against these three tables in
-`src/persistence.ts` that nothing else depended on them. Independently verified end-to-end against a
-real local PostgreSQL 18 engine (PGlite), including a negative control (the same test genuinely fails
-without this migration applied) and the real admin-also-PM condition. The authorization-table policy
-closure and bridge-aware `accept_invite()` replacement this task description also names are **not**
+**Part 2 (`backend/supabase/migrations/144_close_share_link_direct_write_bypasses.sql`, `450606b`) —
+APPLIED (2026-09-14):** drops `public_share_tokens`' "authenticated manage" policy (replaced with
+SELECT-only), `project_submittals`' "pm and admin write" policy, and `sales_quote_proposals`'
+"authenticated write" policy — all three entirely, since every legitimate write now goes through a
+security-definer RPC. Confirmed via a full trace of every direct `fetch()` call against these three
+tables in `src/persistence.ts` that nothing else depended on them. Independently verified end-to-end
+against a real local PostgreSQL 18 engine (PGlite), including a negative control (the same test
+genuinely fails without this migration applied) and the real admin-also-PM condition. E ran it in
+production and it returned `Success. No rows returned`. Do not run migration 144 again; give E only
+its canonical test next, `backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`.
+The authorization-table policy closure and bridge-aware `accept_invite()` replacement this task
+description also names are **not**
 part of migration 144 — they are a separate, pre-existing body of work grouped under the same
 "C2.7" label in an earlier planning pass but not share-link-specific; tracked separately, not
 silently dropped. Also not yet done: consuming migration 139's `outcome` column in the
@@ -1093,9 +1113,10 @@ Queue A/B work.
 
 ### Manual database actions
 
-Migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, and 140 (+ corrective 142) are **all done
-and verified in production, including every canonical test.** There is no pending manual database
-action. Queue C2.2–C2.5 (share-link lifecycle foundation) is fully closed.
+Migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140 (+ corrective 142), 143, and 144 are
+**all applied in production.** Two canonical tests are outstanding (143's and 144's — see items 10/11
+below); neither blocks anything else. Queue C2.2–C2.6 (share-link lifecycle foundation + internal
+controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
 
 1. **Migration 134 — DONE.** The migration and canonical verification script both ran successfully
    in production. No further action remains.
@@ -1225,16 +1246,16 @@ action. Queue C2.2–C2.5 (share-link lifecycle foundation) is fully closed.
     against a real local PostgreSQL 18 engine (PGlite), including under the real admin-also-PM
     condition, before ever being sent. Do not run migration 143 again; give E only its test script
     next, `backend/supabase/migration_143_share_link_view_logging_tests.sql`.
-11. **Migration 144 — PENDING, NEXT UP.** `backend/supabase/migrations/
-    144_close_share_link_direct_write_bypasses.sql` — Queue C2.7 part 2 (see C2.7 above for full
-    detail): drops `public_share_tokens`'/`project_submittals`'/`sales_quote_proposals`' old
-    direct-write policies entirely, now that Queue C2.7 part 1 (the frontend switch to the
-    server-owned RPCs) is deployed and confirmed live. Requires 137-140 (+141/142) and 143 live
-    first. Independently verified end-to-end against a real local PostgreSQL 18 engine (PGlite),
-    including a negative control proving the test genuinely fails without this migration and the
-    real admin-also-PM condition. Give E only the migration file first; its test script,
-    `backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`, only after E
-    reports the migration itself succeeded.
+11. **Migration 144 — APPLIED (2026-09-14). Canonical test is next single file.**
+    `backend/supabase/migrations/144_close_share_link_direct_write_bypasses.sql` — Queue C2.7 part 2
+    (see C2.7 above for full detail): drops `public_share_tokens`'/`project_submittals`'/
+    `sales_quote_proposals`' old direct-write policies entirely, now that Queue C2.7 part 1 (the
+    frontend switch to the server-owned RPCs) is deployed and confirmed live. E ran it in production
+    and it returned `Success. No rows returned`. Independently verified end-to-end against a real
+    local PostgreSQL 18 engine (PGlite), including a negative control proving the test genuinely
+    fails without this migration and the real admin-also-PM condition, before ever being sent. Do
+    not run migration 144 again; give E only its canonical test next,
+    `backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`.
 
 ## 9. Consolidated reporting format
 
@@ -1257,9 +1278,11 @@ item remains.
 
 Read this file, then the top current-status entries in `HANDOFF.md`, then
 `PRODUCT_MASTER_COMPLETION_PLAN.md`. For a long unattended run, use
-`OVERNIGHT_CODER_PLAN_2026-09-13.md`; otherwise verify Git and begin at Queue C2.7 above (C2.1–C2.6
-are completed records now — migrations 137–142 all applied and verified in production including
-every canonical test, and the internal lifecycle controls UI is shipped and deployed; do not redo
-them). Treat A1–A15, B1–B10, and C1 as completed records rather than a queue to repeat.
+`OVERNIGHT_CODER_PLAN_2026-09-13.md`; otherwise verify Git and check the "Still required" list near
+the top of this file (C2.1–C2.7 are otherwise completed records now — migrations 137–144 all applied
+in production, the internal lifecycle controls UI and the Create & Send RPC switch are shipped and
+deployed; do not redo any of it). Send E migration 144's canonical test next (item 2 in "Still
+required"), then pick up the version-comparison UI item independently of that result. Treat A1–A15,
+B1–B10, and C1 as completed records rather than a queue to repeat.
 Continue until every independent C2 item is implemented or left at its required single-file manual
 database gate.

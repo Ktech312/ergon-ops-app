@@ -6,26 +6,28 @@ For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`
 requires continued work across independent lanes when a migration or decision is blocked, and it
 defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
-Migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, and 140 (+ corrective 142)
-are all applied and verified in production, including every canonical test. Queue C1 (frozen Sales
-pricing) is fully deployed, and Queue C2.2-C2.5 (share-link lifecycle foundation) is now fully
-shipped and verified -- no pending manual database action. Migration 139's paired frontend update
-(parsing the new `outcome` column) is also live -- shipped same-day, ahead of that test confirming,
-after checking migration 139's live effect surfaced an active production defect -- see "Current
-database gate" below for the full history, including migration 140's own real bug (ambiguous `token`
-reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
-E's real runs. Queue C2.6 (internal share-link lifecycle controls -- Disable/Re-enable, Permanently
-Revoke & Generate New Link, activity history) is also shipped and deployed (`35bc262`; production
-bundle `index-Bir39DZP.js`, zero console errors on a fresh load). Reconciling
-`PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` against that shipped work surfaced one real gap:
-`share_link_views` never had a write path, so Queue C2.6's own Activity panel would always show 0
-views. Migration 143 closed it -- E ran it and it returned `Success. No rows returned`; its
-canonical test is sent, independently verified, result pending. **Queue C2.7 is now in progress:**
-part 1 (switching Create & Send to the server-owned atomic RPCs, replacing the old direct-INSERT
-flow) is done and deployed (`05fa486`). Part 2, migration 144 (closing the now-unused direct-write
-policies on `public_share_tokens`/`project_submittals`/`sales_quote_proposals`), is drafted,
-independently verified, and sent to E -- next single file, see "Current database gate" below. Do not
-re-run migrations 134/135/136/137/141/138/139/140/142/143 after they've
+**Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
+(+ corrective 142), 143, and 144 are all applied in production. Queue C1 (frozen Sales pricing),
+Queue C2.2-C2.5 (share-link lifecycle foundation), Queue C2.6 (internal lifecycle controls --
+Disable/Re-enable, Permanently Revoke & Generate New Link, Activity history, `35bc262`), and Queue
+C2.7 part 1 (Create & Send switched to the server-owned atomic RPCs, replacing the old direct-INSERT
+flow, `05fa486`) and part 2 (migration 144, closing the now-unused direct-write policies on
+`public_share_tokens`/`project_submittals`/`sales_quote_proposals`) are all shipped and deployed.
+Migration 139's paired frontend fix and migration 143 (the view-logging follow-up found while
+reconciling docs against C2.6) are both live too. See "Current database gate" below for the full
+history, including migration 140's own real bug (ambiguous `token` reference) and migration 142's
+real-default-grant follow-up, both found and fixed before/because of E's real runs.
+
+**Still required:**
+1. Migration 143's canonical test -- sent, independently verified, E's run result not yet reported.
+2. Migration 144's canonical test -- independently verified, not yet sent (next single file).
+3. Version-comparison/history UI: migration 139's `outcome` column isn't consumed there yet, so a
+   superseded prior version has no distinct state shown in that read-only view. Small, independent.
+4. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
+   share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
+   replacement, both named in C2.7's original task description but never part of migration 144.
+
+Do not re-run migrations 134/135/136/137/141/138/139/140/142/143/144 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
 **Current database gate (2026-09-13):** migrations 137 (+ corrective 141), 138, and 139 are applied
@@ -109,7 +111,10 @@ without this migration applied, proving it tests something real) and the real ad
 condition. The authorization-table policy closure and bridge-aware `accept_invite()` replacement
 C2.7's task description also names are explicitly **not** part of this migration -- a separate,
 pre-existing body of work, not share-link-specific, tracked separately rather than silently dropped.
-**Migration 144 is the next single-file gate.**
+E ran migration 144 in production (2026-09-14) and it returned `Success. No rows returned` --
+migration 144 is applied. **Do not run migration 144 again; its canonical test,
+`backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`, is the next
+single-file gate.**
 
 **Urgent finding and same-day fix (2026-09-13):** while preparing to send the test above, checking
 migration 139's actual live effect on the currently-deployed frontend surfaced a real, active
