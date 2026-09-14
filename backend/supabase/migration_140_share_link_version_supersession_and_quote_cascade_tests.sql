@@ -21,6 +21,12 @@ declare
   sales_user_id uuid;
   pm_role_preexisted boolean;
   sales_role_preexisted boolean;
+  pm_had_sales_role boolean;
+  pm_sales_was_primary boolean;
+  pm_had_manager_role boolean;
+  pm_manager_was_primary boolean;
+  sales_had_pm_role boolean;
+  sales_pm_was_primary boolean;
   skipped_count integer := 0;
   skipped_names text[] := array[]::text[];
 
@@ -51,7 +57,16 @@ begin
     skipped_count := skipped_count + 1;
     skipped_names := array_append(skipped_names, 'all-sections (no admin user found)');
   else
-    select ur.user_id into pm_user_id from public.app_user_roles ur where ur.role_key = 'pm' limit 1;
+    -- Excludes an admin from the real-role-holder search (not just the
+    -- fallback below) -- migration 139's own test failed in production on
+    -- exactly this gap: this workspace's admin also holds `pm`, and
+    -- is_app_admin() correctly authorizes them regardless of the "PM-only"
+    -- assertion this script needs later (Section 5).
+    select ur.user_id into pm_user_id
+    from public.app_user_roles ur
+    where ur.role_key = 'pm'
+      and not exists (select 1 from public.app_admins aa where aa.user_id = ur.user_id)
+    limit 1;
     pm_role_preexisted := pm_user_id is not null;
     if pm_user_id is null then
       select wm.user_id into pm_user_id from public.workspace_members wm
@@ -61,7 +76,11 @@ begin
       end if;
     end if;
 
-    select ur.user_id into sales_user_id from public.app_user_roles ur where ur.role_key = 'sales' limit 1;
+    select ur.user_id into sales_user_id
+    from public.app_user_roles ur
+    where ur.role_key = 'sales'
+      and not exists (select 1 from public.app_admins aa where aa.user_id = ur.user_id)
+    limit 1;
     sales_role_preexisted := sales_user_id is not null;
     if sales_user_id is null then
       select wm.user_id into sales_user_id from public.workspace_members wm
@@ -76,6 +95,19 @@ begin
       skipped_count := skipped_count + 1;
       skipped_names := array_append(skipped_names, 'all-sections (no real PM/Sales user found or grantable)');
     else
+      -- Run fixture creation through a real authenticated workspace admin
+      -- -- sales_quotes has the migration-117 ownership trigger, which
+      -- derives workspace_id from auth.uid() and correctly rejects the
+      -- SQL-editor's default postgres context (auth.uid() null, zero
+      -- workspace memberships) because it has no workspace membership;
+      -- projects has its own pm/admin write policy. Both
+      -- `request.jwt.claims` and `request.jwt.claim.sub` are set at every
+      -- caller switch below, matching migration 138/139's own corrected
+      -- tests -- this Supabase project's auth.uid() needs both forms set.
+      perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
+      perform set_config('role', 'authenticated', true);
+
       insert into public.projects (project_name, customer_name, site_type, app_status)
         values ('ZZ_TEST_PROJECT_' || substr(md5(random()::text), 1, 10), 'ZZ Test Client', 'Parking Garage', 'Draft')
         returning id into test_project_id;
@@ -84,9 +116,12 @@ begin
         values ('ZZ Test Client', 'ZZ_TEST_QUOTE_' || substr(md5(random()::text), 1, 10), 'open')
         returning id into test_quote_id;
 
+      perform set_config('role', original_role, true);
+
       -- Section 1: creating the FIRST submittal version with no prior
       -- versions -- version 1, a real token, nothing to supersede.
       perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select t.submittal_id, t.token into v1_submittal_id, v1_token
         from public.create_and_send_submittal_version(test_project_id, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') t;
@@ -107,6 +142,7 @@ begin
       -- flips to superseded pointing at the new token, and a 'superseded'
       -- share_link_actions row exists for the old token.
       perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select t.submittal_id, t.token into v2_submittal_id, v2_token
         from public.create_and_send_submittal_version(test_project_id, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') t;
@@ -134,6 +170,7 @@ begin
       -- superseded, matching the decided "no loophole around no-re-enable"
       -- rule for already-terminal states.
       perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select public.permanently_revoke_share_link(v2_token, 'ZZ test revoke before v3') into action_result;
       perform set_config('role', original_role, true);
@@ -142,6 +179,7 @@ begin
       end if;
 
       perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select t.submittal_id, t.token into v3_submittal_id, v3_token
         from public.create_and_send_submittal_version(test_project_id, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') t;
@@ -158,6 +196,7 @@ begin
       caught := false;
       begin
         perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+        perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
         perform set_config('role', 'authenticated', true);
         perform public.create_and_send_submittal_version(gen_random_uuid(), '{}'::jsonb, 'ZZ', 'zz@example.com');
       exception when others then
@@ -170,16 +209,38 @@ begin
 
       -- Section 5: authorization -- Sales-only (no PM/admin) cannot create a
       -- submittal version; PM-only (no Sales/manager/admin) cannot create a
-      -- proposal version.
+      -- proposal version. Make each caller genuinely single-role for their
+      -- own check first -- a real Sales user may also carry PM as a
+      -- secondary role (which would correctly authorize the submittal RPC
+      -- and invalidate this assertion). Strip only the conflicting role,
+      -- restored immediately after, mirroring migration 139's own fix for
+      -- this exact class of production-data mismatch.
+      sales_had_pm_role := exists (
+        select 1 from public.app_user_roles where user_id = sales_user_id and role_key = 'pm'
+      );
+      select coalesce((
+        select is_primary from public.app_user_roles where user_id = sales_user_id and role_key = 'pm'
+      ), false) into sales_pm_was_primary;
+
+      delete from public.app_user_roles where user_id = sales_user_id and role_key = 'pm';
+
       caught := false;
       begin
         perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+        perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
         perform set_config('role', 'authenticated', true);
         perform public.create_and_send_submittal_version(test_project_id, '{}'::jsonb, 'ZZ', 'zz@example.com');
       exception when others then
         caught := true;
       end;
       perform set_config('role', original_role, true);
+
+      if sales_had_pm_role then
+        insert into public.app_user_roles (user_id, role_key, is_primary)
+        values (sales_user_id, 'pm', sales_pm_was_primary)
+        on conflict (user_id, role_key) do update set is_primary = excluded.is_primary;
+      end if;
+
       if not caught then
         raise exception 'TEST FAILED: a Sales-only (non-PM, non-admin) caller was able to create a submittal version.';
       end if;
@@ -187,6 +248,7 @@ begin
       -- Section 6: the equivalent proposal flow -- first version, second
       -- version supersedes the first, server-computed version numbers.
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select t.proposal_id, t.token into p1_proposal_id, p1_token
         from public.create_and_send_quote_proposal_version(test_quote_id, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') t;
@@ -200,6 +262,7 @@ begin
       end if;
 
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
       perform set_config('role', 'authenticated', true);
       select t.proposal_id, t.token into p2_proposal_id, p2_token
         from public.create_and_send_quote_proposal_version(test_quote_id, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') t;
@@ -212,15 +275,47 @@ begin
         raise exception 'TEST FAILED: creating a second proposal version did not mark the first version''s token superseded pointing at the new token.';
       end if;
 
+      -- Same role-isolation as the Sales-only check above -- a real PM
+      -- may also carry Sales or Manager as a secondary role, either of
+      -- which would correctly authorize this RPC and invalidate the
+      -- assertion.
+      pm_had_sales_role := exists (
+        select 1 from public.app_user_roles where user_id = pm_user_id and role_key = 'sales'
+      );
+      select coalesce((
+        select is_primary from public.app_user_roles where user_id = pm_user_id and role_key = 'sales'
+      ), false) into pm_sales_was_primary;
+      pm_had_manager_role := exists (
+        select 1 from public.app_user_roles where user_id = pm_user_id and role_key = 'manager'
+      );
+      select coalesce((
+        select is_primary from public.app_user_roles where user_id = pm_user_id and role_key = 'manager'
+      ), false) into pm_manager_was_primary;
+
+      delete from public.app_user_roles where user_id = pm_user_id and role_key in ('sales', 'manager');
+
       caught := false;
       begin
         perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
+        perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
         perform set_config('role', 'authenticated', true);
         perform public.create_and_send_quote_proposal_version(test_quote_id, '{}'::jsonb, 'ZZ', 'zz@example.com');
       exception when others then
         caught := true;
       end;
       perform set_config('role', original_role, true);
+
+      if pm_had_sales_role then
+        insert into public.app_user_roles (user_id, role_key, is_primary)
+        values (pm_user_id, 'sales', pm_sales_was_primary)
+        on conflict (user_id, role_key) do update set is_primary = excluded.is_primary;
+      end if;
+      if pm_had_manager_role then
+        insert into public.app_user_roles (user_id, role_key, is_primary)
+        values (pm_user_id, 'manager', pm_manager_was_primary)
+        on conflict (user_id, role_key) do update set is_primary = excluded.is_primary;
+      end if;
+
       if not caught then
         raise exception 'TEST FAILED: a PM-only (non-sales, non-manager, non-admin) caller was able to create a proposal version -- PM has no proposal authority per the decided ownership model.';
       end if;
@@ -282,6 +377,7 @@ begin
   end if;
 
   raise notice 'ALL MIGRATION 140 SHARE-LINK SUPERSESSION AND QUOTE-CASCADE TESTS PASSED -- ZERO SECTIONS SKIPPED';
-end $$;
+end;
+$$;
 
 rollback;

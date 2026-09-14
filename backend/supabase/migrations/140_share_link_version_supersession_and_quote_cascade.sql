@@ -196,9 +196,17 @@ begin
       and s.id <> v_submittal_id
       and t.status in ('active', 'temporarily_disabled')
   loop
-    update public.public_share_tokens
+    -- `pst` alias + qualified WHERE is required, not cosmetic: both
+    -- functions here declare `returns table (..., token text)`, and in
+    -- plpgsql a RETURNS TABLE column becomes an implicit variable in
+    -- scope for the whole function body -- an unqualified `token` in this
+    -- WHERE clause is genuinely ambiguous between that variable and
+    -- public_share_tokens.token (Postgres error 42702), the exact bug
+    -- class migration 121 already hit and documented for
+    -- respond_to_quote_proposal's own RETURNS TABLE columns.
+    update public.public_share_tokens as pst
     set status = 'superseded', superseded_by_token = v_token
-    where token = r.old_token;
+    where pst.token = r.old_token;
 
     insert into public.share_link_actions (token, entity_type, entity_id, action, actor_id, actor_email)
     values (r.old_token, 'project_submittal', r.old_entity_id, 'superseded', auth.uid(), v_actor_email);
@@ -271,9 +279,17 @@ begin
       and p.id <> v_proposal_id
       and t.status in ('active', 'temporarily_disabled')
   loop
-    update public.public_share_tokens
+    -- `pst` alias + qualified WHERE is required, not cosmetic: both
+    -- functions here declare `returns table (..., token text)`, and in
+    -- plpgsql a RETURNS TABLE column becomes an implicit variable in
+    -- scope for the whole function body -- an unqualified `token` in this
+    -- WHERE clause is genuinely ambiguous between that variable and
+    -- public_share_tokens.token (Postgres error 42702), the exact bug
+    -- class migration 121 already hit and documented for
+    -- respond_to_quote_proposal's own RETURNS TABLE columns.
+    update public.public_share_tokens as pst
     set status = 'superseded', superseded_by_token = v_token
-    where token = r.old_token;
+    where pst.token = r.old_token;
 
     insert into public.share_link_actions (token, entity_type, entity_id, action, actor_id, actor_email)
     values (r.old_token, 'sales_quote_proposal', r.old_entity_id, 'superseded', auth.uid(), v_actor_email);
