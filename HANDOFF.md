@@ -9,8 +9,10 @@ defines the morning report and the one-file Supabase handoff. Then use
 Migrations 134, 135, 136, 137 (+ corrective 141), 138, and 139
 are complete and verified in production. Queue C1 (frozen Sales pricing) is fully deployed. Queue C2's
 remaining share-link lifecycle foundation is drafted: migration 140 plus its canonical test script is
-committed and pushed on `main`. Migration 139's canonical test is next up for E to run (do not send
-139's frontend-dependent follow-up until that test also confirms). Do not re-run
+committed and pushed on `main`. Migration 139's canonical test is next up for E to run. Its paired
+frontend update (parsing the new `outcome` column) was already shipped same-day, ahead of that test
+confirming, after checking migration 139's live effect surfaced an active production defect -- see
+"Current database gate" below. Do not re-run
 migrations 134/135/136/137/141/138/139 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
@@ -26,10 +28,34 @@ and the corrected file was independently run end-to-end against a real local Pos
 (PGlite) on a reconstructed schema (which also needed `notification_rules`/`notifications`/
 `get_users_by_role`/`get_admin_emails` added, since `respond_to_quote_proposal`/`respond_to_submittal`
 call them) -- it passed cleanly with zero errors before ever reaching E. **Do not run migration 139
-again; run only its test next.** Once that test confirms, the paired frontend TypeScript update
-(new `PublicQuoteProposalResult`/`PublicSubmittalResult`/`ProposalResponseOutcome` shapes) ships in
-the same reviewed batch before anything is pushed -- migration 139 alone is not deploy-safe for the
-existing frontend, which still expects the old (no-`outcome`-column) RPC response shape.
+again; run only its test next.**
+
+**Urgent finding and same-day fix (2026-09-13):** while preparing to send the test above, checking
+migration 139's actual live effect on the currently-deployed frontend surfaced a real, active
+production defect -- not a hypothetical for "whenever the frontend gets updated." `fetchPublicQuoteProposal`/
+`fetchPublicSubmittal` (`src/persistence.ts`) detected an invalid link purely via `!rows.length`
+(the pre-139 convention: zero rows means invalid). Migration 139 redefined both RPCs to ALWAYS return
+exactly one row, with the new leading `outcome` column carrying the real state and every other field
+null for a non-`found` case. Since migration 139 is applied, `rows.length` is now always 1, so
+*every* currently invalid, expired, superseded, or disabled/revoked proposal/submittal link was being
+treated as `outcome: "found"` with `content_snapshot: null`, which the public pages then tried to
+render as a real document -- live, since the moment migration 139 was applied, for any real customer
+hitting such a link. This was fixed and shipped the same day, ahead of the original "wait for E's test
+confirmation" plan, because the risk was active, not scheduled: both fetch functions now branch on
+`row.outcome` (found/invalid_token/expired/superseded/unavailable/error);
+`PublicSubmittalResult`/`PublicQuoteProposalResult` and the two `*ResponseOutcome` unions gained the
+three new terminal states; `SubmittalPublicPage`/`ProposalPublicPage` render the three decided
+customer-facing messages (superseded / expired / neutral "unavailable" covering disabled+revoked,
+`PRODUCT_SHARE_LINK_EXPIRATION_REVOCATION_DECISION.md` Part 8 item 4). `respondToPublicSubmittal`/
+`respondToPublicQuoteProposal` already had a safe (if incomplete) outcome allowlist that fell back to
+"error" for an unrecognized value -- a UX gap, not a crash risk -- now extended to recognize the three
+new outcomes too. 14 new tests plus 2 corrected pre-existing ones (mocking the real post-139 RPC
+shape); 412/412 passing, tsc clean, eslint 0 errors (72 pre-existing warnings, unchanged), build
+clean. Pushed as `d0f58f0`; Vercel served the new bundle (`index-BcqBFD7D.js`) and a fresh browser
+load had zero console errors. No authenticated session/real expired-or-disabled token was available
+to visually confirm the three new render branches directly -- covered instead by the 14 focused unit
+tests, matching this repo's established practice when live customer-facing token data isn't available
+to test against.
 
 Last updated: 2026-09-13, Queue C2.5 -- version supersession + quote soft-delete cascade drafted, NOT
 run. `backend/supabase/migrations/140_share_link_version_supersession_and_quote_cascade.sql` adds a
