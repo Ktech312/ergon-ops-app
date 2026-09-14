@@ -21,6 +21,12 @@ declare
   sales_user_id uuid;
   pm_role_preexisted boolean;
   sales_role_preexisted boolean;
+  pm_had_sales_role boolean;
+  pm_sales_was_primary boolean;
+  pm_had_manager_role boolean;
+  pm_manager_was_primary boolean;
+  sales_had_pm_role boolean;
+  sales_pm_was_primary boolean;
   skipped_count integer := 0;
   skipped_names text[] := array[]::text[];
 
@@ -46,7 +52,16 @@ begin
     skipped_count := skipped_count + 1;
     skipped_names := array_append(skipped_names, 'all-sections (no admin user found)');
   else
-    select ur.user_id into pm_user_id from public.app_user_roles ur where ur.role_key = 'pm' limit 1;
+    -- Excludes an admin from the real-role-holder search (not just the
+    -- fallback below) -- Section 8 needs a genuinely PM-only/Sales-only
+    -- caller to prove the cross-entity denial; a real PM who is ALSO the
+    -- admin would pass assert_can_manage_share_link via is_app_admin()
+    -- regardless of role, silently invalidating that assertion.
+    select ur.user_id into pm_user_id
+    from public.app_user_roles ur
+    where ur.role_key = 'pm'
+      and not exists (select 1 from public.app_admins aa where aa.user_id = ur.user_id)
+    limit 1;
     pm_role_preexisted := pm_user_id is not null;
     if pm_user_id is null then
       select wm.user_id into pm_user_id from public.workspace_members wm
@@ -56,7 +71,11 @@ begin
       end if;
     end if;
 
-    select ur.user_id into sales_user_id from public.app_user_roles ur where ur.role_key = 'sales' limit 1;
+    select ur.user_id into sales_user_id
+    from public.app_user_roles ur
+    where ur.role_key = 'sales'
+      and not exists (select 1 from public.app_admins aa where aa.user_id = ur.user_id)
+    limit 1;
     sales_role_preexisted := sales_user_id is not null;
     if sales_user_id is null then
       select wm.user_id into sales_user_id from public.workspace_members wm
@@ -254,7 +273,29 @@ begin
 
       -- Section 8: authorization boundaries -- a PM cannot manage a
       -- PROPOSAL link (no proposal authority per the decided model), and
-      -- a Sales-only user cannot manage a SUBMITTAL link.
+      -- a Sales-only user cannot manage a SUBMITTAL link. Make each caller
+      -- genuinely single-role for their own check first -- a real PM may
+      -- also carry Sales or Manager as a secondary role (either of which
+      -- would correctly authorize assert_can_manage_share_link's proposal
+      -- branch and invalidate this assertion), and a real Sales user may
+      -- likewise also carry PM. Strip only the conflicting role(s),
+      -- restored immediately after each check, mirroring migration 138's
+      -- own test fix for this exact class of production-data mismatch.
+      pm_had_sales_role := exists (
+        select 1 from public.app_user_roles where user_id = pm_user_id and role_key = 'sales'
+      );
+      select coalesce((
+        select is_primary from public.app_user_roles where user_id = pm_user_id and role_key = 'sales'
+      ), false) into pm_sales_was_primary;
+      pm_had_manager_role := exists (
+        select 1 from public.app_user_roles where user_id = pm_user_id and role_key = 'manager'
+      );
+      select coalesce((
+        select is_primary from public.app_user_roles where user_id = pm_user_id and role_key = 'manager'
+      ), false) into pm_manager_was_primary;
+
+      delete from public.app_user_roles where user_id = pm_user_id and role_key in ('sales', 'manager');
+
       caught := false;
       begin
         perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
@@ -265,9 +306,30 @@ begin
         caught := true;
       end;
       perform set_config('role', original_role, true);
+
+      if pm_had_sales_role then
+        insert into public.app_user_roles (user_id, role_key, is_primary)
+        values (pm_user_id, 'sales', pm_sales_was_primary)
+        on conflict (user_id, role_key) do update set is_primary = excluded.is_primary;
+      end if;
+      if pm_had_manager_role then
+        insert into public.app_user_roles (user_id, role_key, is_primary)
+        values (pm_user_id, 'manager', pm_manager_was_primary)
+        on conflict (user_id, role_key) do update set is_primary = excluded.is_primary;
+      end if;
+
       if not caught then
         raise exception 'TEST FAILED: a PM-only caller was able to manage a proposal share link.';
       end if;
+
+      sales_had_pm_role := exists (
+        select 1 from public.app_user_roles where user_id = sales_user_id and role_key = 'pm'
+      );
+      select coalesce((
+        select is_primary from public.app_user_roles where user_id = sales_user_id and role_key = 'pm'
+      ), false) into sales_pm_was_primary;
+
+      delete from public.app_user_roles where user_id = sales_user_id and role_key = 'pm';
 
       caught := false;
       begin
@@ -279,6 +341,13 @@ begin
         caught := true;
       end;
       perform set_config('role', original_role, true);
+
+      if sales_had_pm_role then
+        insert into public.app_user_roles (user_id, role_key, is_primary)
+        values (sales_user_id, 'pm', sales_pm_was_primary)
+        on conflict (user_id, role_key) do update set is_primary = excluded.is_primary;
+      end if;
+
       if not caught then
         raise exception 'TEST FAILED: a Sales-only caller was able to manage a submittal share link.';
       end if;
