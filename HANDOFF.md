@@ -87,7 +87,22 @@ requester, who of course can see their own row via the RLS policy's `requested_b
 -- exactly as designed. Migration 147's RLS policy and RPCs were never wrong; only the test's
 assumption that the discovered pm and sales fixtures were distinct people was. Fixed by adding
 `and ur.user_id <> pm_user_id` to the primary `sales_user_id` lookup, matching the exclusion its
-fallback path already had. Corrected test not yet sent -- next single file.
+fallback path already had.
+
+**Same test's SECOND live run found a second, related real bug (2026-09-15): FIXED, TEST SCRIPT ONLY,
+migration 147 still untouched.** With pm/sales now guaranteed distinct, E got
+`ERROR: P0001: TEST FAILED: the Sales user who created the request was able to approve their own
+request.` Root cause: the real Sales person this workspace's fixture discovery found already held
+'manager' as a genuine pre-existing secondary role in production (entirely plausible on a small team)
+-- the test's own header comment claimed "no manager role yet" without ever verifying or enforcing it,
+unlike the PM fixture, which the test DOES correctly isolate to a single role before its own negative
+check (Section 5). `respond_to_proposal_approval_request()` correctly allowed the self-approval through
+since `has_role('manager')` correctly returned true for that real person -- the assertion's premise was
+simply false for this specific user, not a gap in the RPC's own authorization logic. Fixed by applying
+the same single-role-isolation technique already used for PM to the Sales fixture too: capture and
+strip any pre-existing 'manager' role before the self-approval negative check, restore it (or
+deliberately re-grant it for the positive-approval check right after) at the same points the script
+already handles PM's isolation. Corrected test not yet sent -- next single file.
 Frontend built and locally verified (2026-09-15): `persistence.ts` replaces
 `createAndSendQuoteProposalVersion` with `requestOrSendQuoteProposalVersion` (returns a
 `ProposalSendOutcome` discriminated union -- `sent` | `pending_approval` | `ok:false`, never throws)

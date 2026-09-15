@@ -41,6 +41,22 @@
 -- authorization logic were never wrong. Fixed by excluding pm_user_id
 -- from the primary sales_user_id lookup too, guaranteeing two distinct
 -- real people the same way the fallback path already did.
+--
+-- CORRECTED AGAIN 2026-09-15, TEST SCRIPT ONLY, same class of bug --
+-- migration 147 still untouched. E's second live run failed Section 7
+-- ("the Sales user who created the request was able to approve their own
+-- request"). Root cause: with pm/sales now guaranteed distinct, the real
+-- Sales person this workspace's fixture discovery found already held
+-- 'manager' as a genuine pre-existing secondary role in production
+-- (entirely plausible on a small team) -- the header above even said
+-- "no manager role yet" without the test ever verifying or enforcing
+-- that. respond_to_proposal_approval_request() correctly allowed them
+-- through, since has_role('manager') correctly returned true; the
+-- assertion's premise was simply false for this real user. Fixed by
+-- applying the SAME single-role-isolation technique already used for PM
+-- in Section 5 to the Sales user too: capture and strip any pre-existing
+-- 'manager' role before Section 7's negative check, then deliberately
+-- re-grant it for Section 8's positive check.
 
 begin;
 
@@ -269,8 +285,19 @@ begin
         raise exception 'TEST FAILED: the request''s status changed despite the rejected PM approval attempt.';
       end if;
 
+      -- Isolate Sales to a single role BEFORE Section 7's negative check
+      -- -- a real Sales person may already separately hold 'manager' in
+      -- production (entirely plausible on a small team), which would
+      -- correctly allow self-approval and invalidate the assertion below
+      -- if left in place. Strip it first, same single-role-isolation
+      -- technique already used for PM above; restored at cleanup either
+      -- way, and re-granted deliberately just below for Section 8.
+      sales_had_manager_role := exists (select 1 from public.app_user_roles where user_id = sales_user_id and role_key = 'manager');
+      select coalesce((select is_primary from public.app_user_roles where user_id = sales_user_id and role_key = 'manager'), false) into sales_manager_was_primary;
+      delete from public.app_user_roles where user_id = sales_user_id and role_key = 'manager';
+
       -- Section 7: the Sales user who MADE the request cannot approve
-      -- their own request either -- they hold 'sales', not yet 'manager'.
+      -- their own request either -- isolated to 'sales' only, above.
       caught := false;
       begin
         perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
@@ -285,12 +312,11 @@ begin
         raise exception 'TEST FAILED: the Sales user who created the request was able to approve their own request -- Sales alone must never satisfy the approval check.';
       end if;
 
-      -- Section 8: a genuine Sales Manager approves -- temporarily grant
-      -- 'manager' to the same Sales user (in addition to their existing
-      -- 'sales' role -- a real person can hold both) and confirm the
-      -- approval actually sends the ORIGINALLY-submitted content.
-      sales_had_manager_role := exists (select 1 from public.app_user_roles where user_id = sales_user_id and role_key = 'manager');
-      select coalesce((select is_primary from public.app_user_roles where user_id = sales_user_id and role_key = 'manager'), false) into sales_manager_was_primary;
+      -- Section 8: a genuine Sales Manager approves -- re-grant 'manager'
+      -- to the same Sales user (stripped just above for Section 7's
+      -- isolation -- a real person can hold both 'sales' and 'manager')
+      -- and confirm the approval actually sends the ORIGINALLY-submitted
+      -- content.
       insert into public.app_user_roles (user_id, role_key, is_primary) values (sales_user_id, 'manager', false) on conflict do nothing;
 
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
