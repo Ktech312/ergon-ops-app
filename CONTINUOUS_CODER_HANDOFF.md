@@ -61,6 +61,15 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   nothing commits) was sent to E to surface the real (currently swallowed) Postgres error and report
   ownership/grant facts directly, before proposing any fix. **Do not treat Queue C2 as closed or
   migration 143's test as merely "pending a rerun" until this is root-caused.**
+  **Update (v5/v6): ownership/grant theory RULED OUT** — `share_link_views` and
+  `get_quote_proposal_by_token()` share the same owner (`postgres`), and a throwaway probe function
+  with the identical insert (security definer, empty search_path, no exception swallowing) succeeded
+  cleanly under this role. The real finding: **the LIVE deployed `get_submittal_by_token()`'s own
+  source does not contain the insert statement migration 143 was supposed to add at all** — it appears
+  to still be running an earlier version of the logic (or something reverted it). v6 dumps the live
+  source of both functions verbatim via `pg_get_functiondef()` for direct comparison against
+  `migrations/143_share_link_view_logging.sql` — sent to E, should be the final piece needed before
+  drafting a real fix (likely a new migration re-applying these two function definitions).
 - Queue C2.7 part 1 (frontend switch to the server-owned atomic RPCs,
   `create_and_send_submittal_version`/`create_and_send_quote_proposal_version`, replacing the old
   direct-INSERT flow): shipped and deployed (`05fa486`).

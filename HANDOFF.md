@@ -13,10 +13,12 @@ Disable/Re-enable, Permanently Revoke & Generate New Link, Activity history, `35
 C2.7 (part 1: Create & Send switched to the server-owned atomic RPCs, `05fa486`; part 2: migration
 144 closing the now-unused direct-write policies on `public_share_tokens`/`project_submittals`/
 `sales_quote_proposals`) are all shipped, deployed, **and canonically tested -- Queue C2.7 is fully
-closed.** Migration 139's paired frontend fix and migration 143 (the view-logging follow-up found
-while reconciling docs against C2.6) are both live too. See "Current database gate" below for the
-full history, including migration 140's own real bug (ambiguous `token` reference) and migration
-142's real-default-grant follow-up, both found and fixed before/because of E's real runs.
+closed.** Migration 139's paired frontend fix is live too. **Migration 143 itself is applied, but its
+actual effect (view logging) is CONFIRMED NOT WORKING in production -- under active investigation,
+see the dedicated entry below. Do not treat migration 143 as a closed item.** See "Current database
+gate" below for the full history, including migration 140's own real bug (ambiguous `token`
+reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
+E's real runs.
 
 **Migration 143's canonical test found a real bug on its own live run (2026-09-14): FIXED, TEST
 SCRIPT ONLY, migration 143 itself untouched.** E ran it and got `ERROR: 42501: new row violates
@@ -147,12 +149,27 @@ properties (`security definer`, `set search_path = ''`, same insert) but WITHOUT
 swallowing, calls it, and captures the real `SQLSTATE`/`SQLERRM` one level up -- reusing v4's own
 proven "always raise a diagnostic exception" delivery pattern. Sent to E.
 
+**v5 result -- ROOT CAUSE NARROWED, one step from confirmed (2026-09-14):** Finding A: the LIVE
+deployed `get_submittal_by_token()`'s own source does **NOT** contain the string "insert into
+public.share_link_views" at all (`f`) -- Finding B: a throwaway probe function with the identical
+insert statement succeeded cleanly (1 row). **This rules out RLS, grants, ownership, and search_path
+entirely** -- inserting into `share_link_views` genuinely works fine under this role. The real problem
+is that the deployed function's own logic appears to be missing migration 143's logging code
+altogether -- possibly still running the migration-139 version (from before 143 was supposed to add
+it), or something else reverted it. Not yet confirmed which, because a boolean substring check doesn't
+show what IS actually deployed. **v6 just dumps the live source of both functions verbatim** (via
+`pg_get_functiondef()`, wrapped in the same proven raised-exception delivery channel) so the real,
+currently-deployed logic can be read and compared directly against `migrations/143_share_link_view_
+logging.sql`. Sent to E -- this should be the final diagnostic needed before a real fix (a migration
+145 re-applying the function, if it's genuinely reverted/never-took-effect) can be drafted.
+
 **Still required:**
-1. **`diagnostic_143_share_link_views_insert_failure.sql` (v5) -- sent to E 2026-09-14, result
-   pending.** Investigates the potential silent-logging-failure defect described above. Migration
-   143's canonical test itself cannot be resent again until this is root-caused -- another blind guess
-   risks yet another failed round-trip. **This is the only open item in all of Queue C2, and it may
-   uncover a real production bug beyond the test script (see the entry above).**
+1. **`diagnostic_143_share_link_views_insert_failure.sql` (v6) -- sent to E 2026-09-14, result
+   pending.** Dumps the live deployed function source directly -- should be the final piece needed to
+   confirm root cause and draft a real fix. Migration 143's canonical test itself cannot be resent
+   again until this is root-caused. **This is the only open item in all of Queue C2, and it is now
+   confirmed to be a real production bug** (view logging has been silently non-functional since 143
+   was believed applied), **not just a test-script issue.**
 2. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.
