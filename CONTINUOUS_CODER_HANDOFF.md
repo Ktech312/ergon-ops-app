@@ -35,12 +35,15 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
    — already sent to E and independently verified clean, but E's own run result has not yet been
    reported back. Do not resend; just needs E to run it and report the result.
 2. **Migration 144's canonical test** (`backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`)
-   — already drafted and independently verified clean (including a negative control proving it
-   catches a real regression), not yet sent to E — migration 144 itself just closed, this is the
-   immediate next single file to send, per the one-file-at-a-time convention.
+   — **sent to E 2026-09-14** (re-verified against real code one more time first: every Queue C2.7
+   requirement re-checked line-by-line against `main.tsx`/`persistence.ts`/the migration file itself,
+   not just re-read from prior handoff prose; full local suite rerun clean -- `tsc -b`, 431/431
+   Vitest, `eslint` 0 errors/72 pre-existing warnings, `npm run build`). E's run result not yet
+   reported back. Do not resend; just needs E to run it and report the result.
 3. **Version-comparison/history UI**: migration 139's `outcome` column is not yet consumed there —
    a superseded prior version doesn't yet show its own distinct state in that read-only comparison
-   view. Small, independent, not blocking.
+   view. Small, independent, not blocking. **Picking this up next** as safe independent work while
+   awaiting E's results on items 1 and 2, per the standing operating rule.
 4. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
    (`app_user_roles`/`app_admins`' own wide-open admin write policies) and the bridge-aware
    `accept_invite()` replacement — grouped under the same "C2.7" label in an earlier planning pass
@@ -52,14 +55,32 @@ Three corrective migrations were needed across this whole queue beyond the origi
 matching this repo's own established rule) plus 143 for a real missing view-logging write path found
 while reconciling docs.
 
+**Queue C2.7 re-verification (2026-09-14, no code changes):** a fresh session was asked to "finish
+Queue C2.7 completely" against a four-point requirements list (RPC switch, all four obsolete
+direct-write paths removed, frozen snapshots/version numbers/email delivery/visible errors/role
+boundaries preserved, and a narrowly-scoped migration closing direct writes). Every point was
+independently re-verified against current source rather than assumed from this document's own prior
+claims: `main.tsx:5183`/`5311` confirmed calling the RPCs; grep confirmed zero remaining
+`createSubmittal`/`createSubmittalShareToken`/`createQuoteProposal`/`createQuoteProposalShareToken`/
+`generateShareToken` definitions anywhere and zero remaining mutating `fetch()` calls against the
+three tables (reads only); the submittal call site confirmed the frozen snapshot is still built
+client-side, email still sends via `/api/send-submittal-email` with a real result surfaced through
+`setSubmittalStatus`, and failures render real text, not a generic message; migration 144 confirmed
+already applied and matching the narrow scope requested (no Phase 3, authorization-table work
+explicitly excluded). All four requirements were already fully met — nothing needed to change. The
+one genuinely outstanding action was sending E migration 144's canonical test, done in this pass.
+
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, 140 (+142), 143, and 144
 are all applied in production. Queue C2.6 (internal share-link lifecycle controls) and Queue C2.7
 part 1 (Create & Send switched to the server-owned RPCs) are both shipped and deployed (`35bc262`,
-`05fa486`; production bundles verified, zero console errors). See "Still required" above for the
-four open items — none of them block anything else in Queue C2. The next concrete action is sending
-E migration 144's canonical test (item 2 above).
+`05fa486`; production bundles verified, zero console errors). Queue C2.7 was independently
+re-verified against current source 2026-09-14 (see the note directly above) — fully complete, no
+code changes needed. See "Still required" above for the three genuinely open items — none of them
+block anything else in Queue C2. Migration 144's canonical test has now been sent to E (item 2); the
+next concrete action is the version-comparison/history UI item (item 3) as independent work while
+awaiting E's results on items 1 and 2.
 Do not rerun 134/135/136/137/141/138/139/140/142/143/144 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:

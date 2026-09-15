@@ -18,11 +18,22 @@ reconciling docs against C2.6) are both live too. See "Current database gate" be
 history, including migration 140's own real bug (ambiguous `token` reference) and migration 142's
 real-default-grant follow-up, both found and fixed before/because of E's real runs.
 
+**Queue C2.7 re-verified against live source (2026-09-14):** asked to "finish Queue C2.7 completely"
+against a four-point requirements list. Every point was already fully met -- confirmed by re-reading
+the actual code, not the prior handoff prose: both Create & Send handlers call the server-owned RPCs
+(`main.tsx:5183`/`5311`); all four old direct-write functions plus `generateShareToken()` are gone
+(grep confirms zero remaining definitions and zero remaining mutating `fetch()` calls against the
+three tables); the frozen snapshot, server-side version numbering, email delivery, and visible error
+surfacing are all intact at the call site; migration 144 is already applied and matches the requested
+narrow scope exactly (no Phase 3, authorization-table work explicitly excluded). No code changes were
+needed. Full local suite rerun clean: `tsc -b`, 431/431 Vitest, `eslint` 0 errors, `npm run build`.
+
 **Still required:**
 1. Migration 143's canonical test -- sent, independently verified, E's run result not yet reported.
-2. Migration 144's canonical test -- independently verified, not yet sent (next single file).
+2. Migration 144's canonical test -- **sent to E 2026-09-14**, run result not yet reported.
 3. Version-comparison/history UI: migration 139's `outcome` column isn't consumed there yet, so a
-   superseded prior version has no distinct state shown in that read-only view. Small, independent.
+   superseded prior version has no distinct state shown in that read-only view. Small, independent --
+   picking this up next while awaiting E's results on items 1 and 2.
 4. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.
