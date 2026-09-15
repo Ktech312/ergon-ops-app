@@ -49,9 +49,10 @@ the Projects panel. `tsc -b` clean, 427/427 Vitest, `eslint` 0 errors, build cle
 Batch 5's still-uncommitted frontend by hunk-splitting the working tree before commit (both batches had
 been drafted in the same working files). **No open items remain in Batch 4b.**
 
-**Batch 5 (configurable discount-approval gate) -- migration 147 drafted, sent to E as the next single
-file** (146 and its test are both confirmed; 147 is the next migration in sequence).
-`backend/supabase/migrations/147_sales_discount_approval_gate.sql`:
+**Batch 5 (configurable discount-approval gate) -- migration 147 APPLIED (2026-09-15, `Success. No
+rows returned`); its canonical test found a real test-fixture bug on its own live run, FIXED, TEST
+SCRIPT ONLY, migration 147 itself untouched -- see below. Corrected test not yet sent (one file at a
+time).** `backend/supabase/migrations/147_sales_discount_approval_gate.sql`:
 two new tables (`workspace_sales_approval_settings` -- toggle + threshold, one row per workspace,
 admin-editable through Admin settings, modeled directly on `workspace_share_link_settings` including
 the grant-layer correction migration 141 taught this repo to apply from the start;
@@ -71,10 +72,22 @@ deliberately reuses `has_role()`/`app_user_roles` (hardened in migration 135), n
 `workspace_member_roles` pattern `create_project_from_quote()` uses -- matches the function this
 migration actually wraps (`create_and_send_quote_proposal_version()`, migration 140, already authorized
 that way), keeping one consistent story for this call chain rather than mixing two role systems in one
-feature. Canonical test drafted (`migration_147_sales_discount_approval_gate_tests.sql`, mirroring
-migration 140's own fixture-discovery/temp-role-grant conventions, economized to three real people by
-temporarily also granting 'manager' to the discovered Sales fixture for the positive-approval check)
-sent -- 147 is the next file out for review; its test follows only after E reports success.
+feature.
+
+**Migration 147's canonical test found a real bug on its own live run (2026-09-15): FIXED, TEST
+SCRIPT ONLY, migration 147 itself untouched.** E ran it and got `ERROR: P0001: TEST FAILED: an
+unrelated PM-only, non-requester, non-manager caller could read someone else's approval request row.`
+Root cause: the test's own fixture discovery (`migration_147_sales_discount_approval_gate_tests.sql`,
+mirroring migration 140's own fixture-discovery/temp-role-grant conventions) picked a "pm" role holder
+and a "sales" role holder who turned out to be the SAME real person in this workspace's actual data --
+that person holds both roles. The primary lookup for `sales_user_id` didn't exclude `pm_user_id` the
+way its own fallback path already did, so when Section 11 impersonated "pm_user_id" to prove an
+unrelated party can't read someone else's request, it was actually re-impersonating the original
+requester, who of course can see their own row via the RLS policy's `requested_by = auth.uid()` clause
+-- exactly as designed. Migration 147's RLS policy and RPCs were never wrong; only the test's
+assumption that the discovered pm and sales fixtures were distinct people was. Fixed by adding
+`and ur.user_id <> pm_user_id` to the primary `sales_user_id` lookup, matching the exclusion its
+fallback path already had. Corrected test not yet sent -- next single file.
 Frontend built and locally verified (2026-09-15): `persistence.ts` replaces
 `createAndSendQuoteProposalVersion` with `requestOrSendQuoteProposalVersion` (returns a
 `ProposalSendOutcome` discriminated union -- `sent` | `pending_approval` | `ok:false`, never throws)

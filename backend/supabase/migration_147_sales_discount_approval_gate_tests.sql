@@ -26,6 +26,21 @@
 -- ways: the final notice reading "ALL MIGRATION 147 SALES DISCOUNT
 -- APPROVAL GATE TESTS PASSED -- ZERO SECTIONS SKIPPED", or a hard SQL
 -- error naming what failed or was skipped.
+--
+-- CORRECTED 2026-09-15, TEST SCRIPT ONLY -- migration 147 itself was never
+-- touched. E's first live run failed Section 11's second assertion ("an
+-- unrelated PM-only caller cannot read someone else's approval request").
+-- Root cause: this workspace's real fixture discovery picked a "pm" role
+-- holder and a "sales" role holder who turned out to be the SAME real
+-- person (holding both roles), because the primary lookup for
+-- sales_user_id (below) didn't exclude pm_user_id the way its own
+-- fallback path already did. With pm_user_id == sales_user_id, the
+-- "unrelated PM" in Section 11 was actually the original requester
+-- themselves, so `requested_by = auth.uid()` correctly (and harmlessly)
+-- made the row visible to them -- the RLS policy and migration 147's own
+-- authorization logic were never wrong. Fixed by excluding pm_user_id
+-- from the primary sales_user_id lookup too, guaranteeing two distinct
+-- real people the same way the fallback path already did.
 
 begin;
 
@@ -94,6 +109,7 @@ begin
     from public.app_user_roles ur
     where ur.role_key = 'sales'
       and not exists (select 1 from public.app_admins aa where aa.user_id = ur.user_id)
+      and ur.user_id <> pm_user_id
     limit 1;
     sales_role_preexisted := sales_user_id is not null;
     if sales_user_id is null then
