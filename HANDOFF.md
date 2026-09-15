@@ -73,9 +73,21 @@ feature. Canonical test drafted (`migration_147_sales_discount_approval_gate_tes
 migration 140's own fixture-discovery/temp-role-grant conventions, economized to three real people by
 temporarily also granting 'manager' to the discovered Sales fixture for the positive-approval check)
 but not sent -- migration 146 is still the one file out for review; 147 follows only after 146 succeeds.
-Frontend (Create & Send flow branching on the new `outcome`, a pending-approval banner, an Approval
-Requests queue for managers/admins, and the settings toggle/threshold UI) is designed but not yet
-built -- next.
+Frontend built and locally verified (2026-09-15): `persistence.ts` replaces
+`createAndSendQuoteProposalVersion` with `requestOrSendQuoteProposalVersion` (returns a
+`ProposalSendOutcome` discriminated union -- `sent` | `pending_approval` | `ok:false`, never throws)
+plus `respondToProposalApprovalRequest`, `loadProposalApprovalRequests`, `loadSalesApprovalSettings`,
+and `saveSalesApprovalSettings`. `main.tsx`: `handleCreateQuoteProposal` branches on the new outcome;
+a new `AdminPage` "Sales Approval Settings" panel (admin-only, checkbox + draft/Save threshold input,
+following the established draft-state pattern) and "Proposal Approval Requests" panel (visible to
+admin + manager via the page's existing `canReviewApprovals` gate) let a Sales Manager/admin review
+pending requests; `SalesQuoteBuilder`'s Quote Proposal panel shows a persistent "awaiting Sales Manager
+approval" note for the current quote's own pending request, threaded down through `SalesHome`. Not yet
+committed -- migration 146 must be confirmed applied first (this repo's frontend-follows-migration
+rule), and migration 147 itself hasn't been sent yet (146 is still the one file out for review).
+`tsc -b` clean, 434/434 Vitest (rewrote the stale `createAndSendQuoteProposalVersion` unit tests to
+cover the new RPC/outcome shape), `eslint` 0 errors (new warnings match the repo's existing draft-state
+effect pattern, not new problems), production build clean.
 
 See
 "Current database

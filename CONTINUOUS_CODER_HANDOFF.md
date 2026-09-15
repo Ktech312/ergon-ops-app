@@ -159,6 +159,20 @@ against yet (not fixable without mutating real data for testing) — this does n
 closure. **No open items remain anywhere in Queue C2. There is no next concrete Queue C2 action.**
 Do not rerun 134/135/136/137/141/138/139/140/142/143/144/145 and do not re-ask D7's settled link rules.
 
+**D3/D4 approved 2026-09-15; Batch 4b and Batch 5 in progress — see HANDOFF.md for full detail, this
+is the short pointer.** D3: `projects.source_quote_ref`, migration 146 drafted and sent to E (response
+pending); its frontend (`sourceQuoteRef` in `persistence.ts`/`main.tsx`, displayed as "Source Quote")
+is drafted but held uncommitted until 146 is confirmed applied. D4: a configurable per-workspace
+discount-approval gate (disabled by default, 10% default threshold, Sales Manager/admin only, never
+PM); migration 147 drafted but not yet sent — 146 is still the one file out for review, per the
+one-file-at-a-time rule. Batch 5's frontend (`requestOrSendQuoteProposalVersion` replacing
+`createAndSendQuoteProposalVersion`, the Admin settings panel, the Approval Requests review queue, and
+a pending-approval indicator in the Quote Proposal panel) is now built and locally verified (`tsc -b`
+clean, 434/434 Vitest, `eslint` 0 errors, build clean) but also held uncommitted — nothing in either
+batch ships until migration 146 is confirmed, then its test, then migration 147, then its test, in that
+order. Do not re-litigate D3/D4 (table at "D3"/"D4" further below) or re-derive this design from
+scratch.
+
 The pricing statement E approved 2026-09-13:
 
 > Approve recommended pricing: catalog price starts each line; Sales may override with an audit
