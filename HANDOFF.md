@@ -13,11 +13,12 @@ Disable/Re-enable, Permanently Revoke & Generate New Link, Activity history, `35
 C2.7 (part 1: Create & Send switched to the server-owned atomic RPCs, `05fa486`; part 2: migration
 144 closing the now-unused direct-write policies on `public_share_tokens`/`project_submittals`/
 `sales_quote_proposals`) are all shipped, deployed, **and canonically tested -- Queue C2.7 is fully
-closed.** Migration 139's paired frontend fix is live too. **Migration 143 itself is applied, but a
-six-round diagnostic investigation confirmed its actual function bodies were NEVER live in production
--- root-caused, and migration 145 (drafted, not yet run) re-applies the correct logic. See the
-dedicated entry below; do not treat migration 143 as a closed item until 145 is applied and verified.**
-See "Current database
+closed.** Migration 139's paired frontend fix is live too. **Migration 143's own function-body changes
+were never actually live despite being recorded as applied -- root-caused via a six-round diagnostic
+investigation, and migration 145 (`Success. No rows returned`, 2026-09-15) re-applied the correct
+logic. Its extended canonical test (Section 0 added, catches this exact failure mode directly) is the
+next single file for E -- migration 143 is not yet a fully closed item until that test passes.** See
+"Current database
 gate" below for the full history, including migration 140's own real bug (ambiguous `token`
 reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
 E's real runs.
@@ -184,16 +185,24 @@ is actually present, checked unconditionally before any fixture or functional te
 check that would have turned this silent non-application into an immediate, obvious failure instead
 of a six-round diagnostic investigation.
 
+**Migration 145 APPLIED (2026-09-15) -- `Success. No rows returned`.** E ran it in production; the
+view-logging insert logic is now genuinely live in `get_quote_proposal_by_token()`/
+`get_submittal_by_token()` for the first time since migration 143 was originally (and ineffectively)
+recorded as applied. Do not run migration 145 again. Its extended canonical test
+(`migration_143_share_link_view_logging_tests.sql`, with the new Section 0 source-content check) is
+the next single file for E -- this is the last piece needed to fully close Queue C2.
+
 **Still required:**
-1. **`backend/supabase/migrations/145_reapply_share_link_view_logging.sql` -- the next single file for
-   E.** Migration only, per the one-file-at-a-time convention -- its extended canonical test follows
-   only after E reports this one succeeded. **This is the only open item in all of Queue C2.**
+1. **`migration_143_share_link_view_logging_tests.sql` (extended with Section 0) -- the next single
+   file for E.** Migration 145 has been applied and confirmed successful; this test verifies it end to
+   end, including the new structural check that catches this exact class of drift instantly if it ever
+   recurs. **This is the only open item in all of Queue C2.**
 2. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.
 
-Only item 1 remains open. Root cause is now known and migration 145 is drafted -- the next step is
-simply E running it and reporting the result.
+Only item 1 remains open. Migration 145 is applied and confirmed -- the next step is E running its
+extended canonical test and reporting the result.
 
 Do not re-run migrations 134/135/136/137/141/138/139/140/142/143/144 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.

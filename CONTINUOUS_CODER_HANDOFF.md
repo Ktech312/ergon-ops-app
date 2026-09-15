@@ -4,13 +4,12 @@ Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.6 (SHARE
 FOUNDATION + INTERNAL CONTROLS, MIGRATIONS 137–144), QUEUE C2.7 (SERVER-OWNED CREATE & SEND +
 DIRECT-WRITE CLOSURE, INCLUDING ITS CANONICAL TEST -- FULLY CLOSED), AND THE VERSION-COMPARISON
 STATUS-BADGE FIX ALL APPLIED/SHIPPED IN PRODUCTION.** Exactly one item remains open across all of
-Queue C2 — a real, CONFIRMED production defect: migration 143's own function-body changes
-(`get_quote_proposal_by_token()`/`get_submittal_by_token()`'s view-logging insert) were never actually
-live, despite being recorded as applied. Root-caused via a six-round diagnostic investigation (see
-"Completed and verified" below for the full trail). **Migration 145 (drafted, not yet run) re-applies
-the correct function bodies; migration 143 itself was NOT edited or rerun, per this repo's standing
-rule.** This is the next single file for E.
-Prepared: 2026-09-12, updated 2026-09-14. E approved the recommended
+Queue C2 — migration 145 (2026-09-15, `Success. No rows returned`) re-applied migration 143's
+view-logging function bodies, which were confirmed via a six-round diagnostic investigation to have
+never actually gone live despite being recorded as applied. **Migration 143 itself was not edited or
+rerun, per this repo's standing rule. Its extended canonical test (Section 0 added, checks the
+deployed function source directly) is the last single file needed to fully close Queue C2.**
+Prepared: 2026-09-12, updated 2026-09-15. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
 `sales_quotes`, `accepted_proposal_total` on `projects`, frozen totals in every new
@@ -76,13 +75,15 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   function-body changes were never actually live, despite being recorded as applied. Historical cause
   undetermined from the live database alone (recorded as an open question, not assumed). **Per this
   repo's standing rule, migration 143 itself is NOT edited or rerun.**
-  `backend/supabase/migrations/145_reapply_share_link_view_logging.sql` (drafted, NOT run) re-applies
-  the exact same intended function bodies via `create or replace function` — idempotent, safe
-  regardless of current state, no design change (same signatures/outcomes/grants/exception-swallowing
-  posture). `migration_143_share_link_view_logging_tests.sql` extended with a new **Section 0**: reads
-  each function's live source via `pg_get_functiondef()` and asserts the logging insert is actually
+  `backend/supabase/migrations/145_reapply_share_link_view_logging.sql` re-applies the exact same
+  intended function bodies via `create or replace function` — idempotent, safe regardless of current
+  state, no design change (same signatures/outcomes/grants/exception-swallowing posture).
+  `migration_143_share_link_view_logging_tests.sql` extended with a new **Section 0**: reads each
+  function's live source via `pg_get_functiondef()` and asserts the logging insert is actually
   present, checked unconditionally before anything else — the exact check that would have made this
-  instant instead of a six-round investigation.
+  instant instead of a six-round investigation. **Migration 145 APPLIED (2026-09-15) — `Success. No
+  rows returned`.** The view-logging insert is genuinely live now. Do not run 145 again. Its extended
+  canonical test is the last single file needed to close Queue C2.
 - Queue C2.7 part 1 (frontend switch to the server-owned atomic RPCs,
   `create_and_send_submittal_version`/`create_and_send_quote_proposal_version`, replacing the old
   direct-INSERT flow): shipped and deployed (`05fa486`).
@@ -113,14 +114,13 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   public pages (no real expired/disabled token available either) applies here for the same reason.
 
 **🔲 Still required:**
-1. **`backend/supabase/migrations/145_reapply_share_link_view_logging.sql` — the next single file for
-   E.** Root cause is fully confirmed (see "Completed and verified" above for the six-round diagnostic
-   trail): migration 143's function-body changes were never actually live. Migration 145 re-applies
-   the correct logic via idempotent `create or replace function` statements; migration 143 itself was
-   NOT edited or rerun. Migration only, per the one-file-at-a-time convention — its extended canonical
-   test (`migration_143_share_link_view_logging_tests.sql`, now with a new Section 0 that would have
-   caught this instantly) follows only after E reports 145 succeeded. **This is the only open item in
-   all of Queue C2.**
+1. **`migration_143_share_link_view_logging_tests.sql` (extended with Section 0) — the next single
+   file for E.** Migration 145 is **applied** (2026-09-15, `Success. No rows returned`) — the
+   view-logging insert is genuinely live now. This extended canonical test verifies it end to end,
+   including the new structural check (reads each function's live source via `pg_get_functiondef()`
+   and asserts the logging insert is present) that catches this exact class of drift instantly if it
+   ever recurs. **This is the only open item in all of Queue C2 — once it passes, the queue is fully
+   closed.**
 2. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
    (`app_user_roles`/`app_admins`' own wide-open admin write policies) and the bridge-aware
    `accept_invite()` replacement — grouped under the same "C2.7" label in an earlier planning pass
@@ -157,16 +157,15 @@ production bundles verified, zero console errors; migration 144's test passed `S
 returned`, zero sections skipped, 2026-09-14). Queue C2.7 is fully closed. The version-comparison
 badge fix is also done and deployed, with one stated limitation: no real quote currently has 2+
 proposal versions, so the badge has no live data to visually confirm against yet (not fixable without
-mutating real data for testing). **Exactly one item remains open in all of Queue C2, and root cause is
-now fully confirmed**: migration 143's function-body changes (the view-logging insert) were never
-actually live in production, despite being recorded as applied. Root-caused via a six-round diagnostic
-investigation (full trail in "Completed and verified" above). `backend/supabase/migrations/
-145_reapply_share_link_view_logging.sql` (drafted, NOT run) re-applies the correct logic; migration
-143 itself was NOT edited or rerun, per this repo's standing rule. **The next concrete action is
-sending E migration 145 (already prepared) and, once it succeeds, the extended canonical test
-(`migration_143_share_link_view_logging_tests.sql`, now with a Section 0 that checks the deployed
-function source directly, so this exact failure mode is caught instantly next time).**
-Do not rerun 134/135/136/137/141/138/139/140/142/143/144 and do not re-ask D7's settled link rules.
+mutating real data for testing). **Exactly one item remains open in all of Queue C2**: migration 143's
+function-body changes (the view-logging insert) were never actually live in production despite being
+recorded as applied — root-caused via a six-round diagnostic investigation (full trail in "Completed
+and verified" above) and fixed by migration 145 (**APPLIED 2026-09-15, `Success. No rows returned`**).
+Migration 143 itself was NOT edited or rerun, per this repo's standing rule. **The next concrete action
+is sending E the extended canonical test (`migration_143_share_link_view_logging_tests.sql`, now with
+a Section 0 that checks the deployed function source directly, so this exact failure mode is caught
+instantly next time) — the last single file needed to fully close Queue C2.**
+Do not rerun 134/135/136/137/141/138/139/140/142/143/144/145 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
 
@@ -1380,13 +1379,13 @@ controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
     assumed). Ownership, RLS, grants, and search_path were all definitively ruled out along the way — a
     throwaway probe function with the identical insert succeeded cleanly under the same role. **Per this
     repo's standing rule, migration 143 itself is NOT edited or rerun.**
-    `backend/supabase/migrations/145_reapply_share_link_view_logging.sql` (drafted, NOT run) re-applies
-    the exact same intended function bodies via idempotent `create or replace function` statements — no
-    design change. `migration_143_share_link_view_logging_tests.sql` extended with a new **Section 0**
-    that reads each function's live source via `pg_get_functiondef()` and asserts the logging insert is
+    `backend/supabase/migrations/145_reapply_share_link_view_logging.sql` re-applies the exact same
+    intended function bodies via idempotent `create or replace function` statements — no design
+    change. `migration_143_share_link_view_logging_tests.sql` extended with a new **Section 0** that
+    reads each function's live source via `pg_get_functiondef()` and asserts the logging insert is
     actually present, checked unconditionally before anything else — closing the exact detection gap
-    this whole investigation exposed. **Migration 145 is the next single file for E; its extended test
-    follows only after 145 succeeds.**
+    this whole investigation exposed. **Migration 145 APPLIED (2026-09-15) — `Success. No rows
+    returned`. Its extended canonical test is the next (and last) single file for Queue C2.**
 11. **Migration 144 — APPLIED (2026-09-14). Canonical test PASSED — `Success. No rows returned`, zero
     sections skipped. Queue C2.7 is fully closed.**
     `backend/supabase/migrations/144_close_share_link_direct_write_bypasses.sql` — Queue C2.7 part 2
@@ -1420,17 +1419,16 @@ item remains.
 Read this file, then the top current-status entries in `HANDOFF.md`, then
 `PRODUCT_MASTER_COMPLETION_PLAN.md`. For a long unattended run, use
 `OVERNIGHT_CODER_PLAN_2026-09-13.md`; otherwise verify Git and check the "Still required" list near
-the top of this file (C2.1–C2.7 are completed records now — migrations 137–144 all applied in
-production and canonically tested, the internal lifecycle controls UI, the Create & Send RPC switch,
-and the version-comparison status badge are all shipped and deployed; do not redo any of it). Exactly
-one item remains open in Queue C2, and root cause is now **fully confirmed, not still under
-investigation**: migration 143's function-body changes (the view-logging insert) were never actually
-live in production, despite being recorded as applied — root-caused via a six-round diagnostic
-investigation (v1-v6, full trail in "Completed and verified"). Migration 145
-(`backend/supabase/migrations/145_reapply_share_link_view_logging.sql`, drafted, not yet run)
-re-applies the correct function bodies; migration 143 itself was NOT edited or rerun. Send E migration
-145 next, then its extended canonical test (`migration_143_share_link_view_logging_tests.sql`, now
-with a Section 0 that reads the deployed function source directly) only after E reports 145 succeeded.
+the top of this file (C2.1–C2.7 are completed records now — migrations 137–145 all applied in
+production and canonically tested where applicable, the internal lifecycle controls UI, the Create &
+Send RPC switch, and the version-comparison status badge are all shipped and deployed; do not redo any
+of it). Migration 145 (`backend/supabase/migrations/145_reapply_share_link_view_logging.sql`) is
+**APPLIED** (2026-09-15, `Success. No rows returned`) — it re-applied migration 143's view-logging
+function bodies, which had been recorded as applied but were never actually live (root-caused via a
+six-round diagnostic investigation, v1-v6, full trail in "Completed and verified"). Migration 143
+itself was NOT edited or rerun. **Exactly one item remains open in Queue C2**: send E the extended
+canonical test (`migration_143_share_link_view_logging_tests.sql`, now with a Section 0 that reads the
+deployed function source directly) — the last single file needed to fully close the queue.
 Treat A1–A15, B1–B10, C1, and C2.1–C2.7 as completed records rather than a queue to repeat.
 Continue until every independent C2 item is implemented or left at its required single-file manual
 database gate.
