@@ -13,9 +13,11 @@ Disable/Re-enable, Permanently Revoke & Generate New Link, Activity history, `35
 C2.7 (part 1: Create & Send switched to the server-owned atomic RPCs, `05fa486`; part 2: migration
 144 closing the now-unused direct-write policies on `public_share_tokens`/`project_submittals`/
 `sales_quote_proposals`) are all shipped, deployed, **and canonically tested -- Queue C2.7 is fully
-closed.** Migration 139's paired frontend fix is live too. **Migration 143 itself is applied, but its
-actual effect (view logging) is CONFIRMED NOT WORKING in production -- under active investigation,
-see the dedicated entry below. Do not treat migration 143 as a closed item.** See "Current database
+closed.** Migration 139's paired frontend fix is live too. **Migration 143 itself is applied, but a
+six-round diagnostic investigation confirmed its actual function bodies were NEVER live in production
+-- root-caused, and migration 145 (drafted, not yet run) re-applies the correct logic. See the
+dedicated entry below; do not treat migration 143 as a closed item until 145 is applied and verified.**
+See "Current database
 gate" below for the full history, including migration 140's own real bug (ambiguous `token`
 reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
 E's real runs.
@@ -163,19 +165,35 @@ currently-deployed logic can be read and compared directly against `migrations/1
 logging.sql`. Sent to E -- this should be the final diagnostic needed before a real fix (a migration
 145 re-applying the function, if it's genuinely reverted/never-took-effect) can be drafted.
 
+**v6 CONFIRMED root cause -- migration 145 drafted (2026-09-14):** the live source of both
+`get_quote_proposal_by_token()` and `get_submittal_by_token()`, dumped verbatim via
+`pg_get_functiondef()`, is exactly migration 139's original logic -- no `v_view_result` variable, no
+`insert into public.share_link_views` anywhere, nothing migration 143 was supposed to add. **Migration
+143's function-body changes were never actually live in production**, despite being recorded as
+applied ("Success. No rows returned"). The historical cause of that (a partial paste, an out-of-order
+run, or something else) could not be determined from the live database alone and is recorded as an
+open question, not assumed. **Per this repo's standing rule, migration 143 itself is NOT edited or
+rerun.** `backend/supabase/migrations/145_reapply_share_link_view_logging.sql` (drafted, NOT run)
+re-applies the exact same intended function bodies via `create or replace function` -- safe and
+idempotent regardless of current state, so it corrects the database whether the original apply
+no-opped, partially applied, or never ran at all. No design change: same signatures, same outcome
+values, same anon-only grants, same best-effort exception-swallowing posture on the logging insert.
+`migration_143_share_link_view_logging_tests.sql` extended (not duplicated) with a new **Section 0**:
+reads each function's own live source via `pg_get_functiondef()` and asserts the view-logging insert
+is actually present, checked unconditionally before any fixture or functional test runs -- the exact
+check that would have turned this silent non-application into an immediate, obvious failure instead
+of a six-round diagnostic investigation.
+
 **Still required:**
-1. **`diagnostic_143_share_link_views_insert_failure.sql` (v6) -- sent to E 2026-09-14, result
-   pending.** Dumps the live deployed function source directly -- should be the final piece needed to
-   confirm root cause and draft a real fix. Migration 143's canonical test itself cannot be resent
-   again until this is root-caused. **This is the only open item in all of Queue C2, and it is now
-   confirmed to be a real production bug** (view logging has been silently non-functional since 143
-   was believed applied), **not just a test-script issue.**
+1. **`backend/supabase/migrations/145_reapply_share_link_view_logging.sql` -- the next single file for
+   E.** Migration only, per the one-file-at-a-time convention -- its extended canonical test follows
+   only after E reports this one succeeded. **This is the only open item in all of Queue C2.**
 2. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.
 
-Only item 1 remains open, and it's purely waiting on E's diagnostic result -- no further independent
-Queue C2 code work is currently available until root cause is known.
+Only item 1 remains open. Root cause is now known and migration 145 is drafted -- the next step is
+simply E running it and reporting the result.
 
 Do not re-run migrations 134/135/136/137/141/138/139/140/142/143/144 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.

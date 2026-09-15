@@ -4,11 +4,12 @@ Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.6 (SHARE
 FOUNDATION + INTERNAL CONTROLS, MIGRATIONS 137–144), QUEUE C2.7 (SERVER-OWNED CREATE & SEND +
 DIRECT-WRITE CLOSURE, INCLUDING ITS CANONICAL TEST -- FULLY CLOSED), AND THE VERSION-COMPARISON
 STATUS-BADGE FIX ALL APPLIED/SHIPPED IN PRODUCTION.** Exactly one item remains open across all of
-Queue C2 — migration 143's canonical test, currently BLOCKED on a live diagnostic (see "Still
-required" below), which may uncover a real, currently-silent production defect: `get_quote_proposal_
-by_token()`/`get_submittal_by_token()`'s own view-logging insert appears to be failing on every call,
-swallowed by their own deliberate `exception when others then null;` handler. **Do not treat Queue C2
-as closed or migration 143's test as merely "pending a rerun" until this is root-caused.**
+Queue C2 — a real, CONFIRMED production defect: migration 143's own function-body changes
+(`get_quote_proposal_by_token()`/`get_submittal_by_token()`'s view-logging insert) were never actually
+live, despite being recorded as applied. Root-caused via a six-round diagnostic investigation (see
+"Completed and verified" below for the full trail). **Migration 145 (drafted, not yet run) re-applies
+the correct function bodies; migration 143 itself was NOT edited or rerun, per this repo's standing
+rule.** This is the next single file for E.
 Prepared: 2026-09-12, updated 2026-09-14. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
@@ -70,6 +71,18 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   source of both functions verbatim via `pg_get_functiondef()` for direct comparison against
   `migrations/143_share_link_view_logging.sql` — sent to E, should be the final piece needed before
   drafting a real fix (likely a new migration re-applying these two function definitions).
+  **v6 CONFIRMED it: both live functions are exactly migration 139's original logic** — no
+  `v_view_result` variable, no `insert into public.share_link_views` anywhere. Migration 143's
+  function-body changes were never actually live, despite being recorded as applied. Historical cause
+  undetermined from the live database alone (recorded as an open question, not assumed). **Per this
+  repo's standing rule, migration 143 itself is NOT edited or rerun.**
+  `backend/supabase/migrations/145_reapply_share_link_view_logging.sql` (drafted, NOT run) re-applies
+  the exact same intended function bodies via `create or replace function` — idempotent, safe
+  regardless of current state, no design change (same signatures/outcomes/grants/exception-swallowing
+  posture). `migration_143_share_link_view_logging_tests.sql` extended with a new **Section 0**: reads
+  each function's live source via `pg_get_functiondef()` and asserts the logging insert is actually
+  present, checked unconditionally before anything else — the exact check that would have made this
+  instant instead of a six-round investigation.
 - Queue C2.7 part 1 (frontend switch to the server-owned atomic RPCs,
   `create_and_send_submittal_version`/`create_and_send_quote_proposal_version`, replacing the old
   direct-INSERT flow): shipped and deployed (`05fa486`).
@@ -100,21 +113,14 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   public pages (no real expired/disabled token available either) applies here for the same reason.
 
 **🔲 Still required:**
-1. **`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql` (v5) — sent to E
-   2026-09-14, result pending.** v1-v4 iteration history: v1 hit its own bug (unregistered FK
-   token); v2 fixed it but reported via `RAISE NOTICE`, invisible to E's Supabase UI; v3's temp-table
-   approach risked the same invisibility; v4 switched to always raising a diagnostic exception (the
-   proven-visible `ERROR:` channel) and got a full result: **BUG CONFIRMED.**
-   `share_link_views`/`get_quote_proposal_by_token()` share the same owner (`postgres`) — ruling out an
-   ownership mismatch — a direct insert under this session's own role succeeded, but
-   `get_submittal_by_token()`'s own internal insert (same token, same values, called moments later)
-   added zero rows despite returning the correct `outcome=found`. Its own
-   `exception when others then null;` is swallowing the real reason. **v5 isolates the actual cause**:
-   (A) reads the live function's own source via `pg_get_functiondef()` to rule out drift/an unexpected
-   overload; (B) creates a throwaway probe function with identical properties but no exception
-   swallowing, calls it, and captures the real `SQLSTATE`/`SQLERRM`. Migration 143's canonical test
-   cannot be resent again until root cause is known. **This is the only open item in all of Queue C2,
-   and it may uncover a real production bug beyond the test script itself.**
+1. **`backend/supabase/migrations/145_reapply_share_link_view_logging.sql` — the next single file for
+   E.** Root cause is fully confirmed (see "Completed and verified" above for the six-round diagnostic
+   trail): migration 143's function-body changes were never actually live. Migration 145 re-applies
+   the correct logic via idempotent `create or replace function` statements; migration 143 itself was
+   NOT edited or rerun. Migration only, per the one-file-at-a-time convention — its extended canonical
+   test (`migration_143_share_link_view_logging_tests.sql`, now with a new Section 0 that would have
+   caught this instantly) follows only after E reports 145 succeeded. **This is the only open item in
+   all of Queue C2.**
 2. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
    (`app_user_roles`/`app_admins`' own wide-open admin write policies) and the bridge-aware
    `accept_invite()` replacement — grouped under the same "C2.7" label in an earlier planning pass
@@ -151,13 +157,15 @@ production bundles verified, zero console errors; migration 144's test passed `S
 returned`, zero sections skipped, 2026-09-14). Queue C2.7 is fully closed. The version-comparison
 badge fix is also done and deployed, with one stated limitation: no real quote currently has 2+
 proposal versions, so the badge has no live data to visually confirm against yet (not fixable without
-mutating real data for testing). **Exactly one item remains open in all of Queue C2 — migration 143's
-canonical test, currently BLOCKED on a live diagnostic** (`diagnostic_143_share_link_views_insert_
-failure.sql`, sent to E, result pending) that may uncover a real, currently-silent production defect
-in `get_quote_proposal_by_token()`/`get_submittal_by_token()`'s own view-logging insert (swallowed by
-their own `exception when others then null;` handler). **There is no independent code work available
-in Queue C2 right now — do not resend migration 143's test again until the diagnostic result is in;
-root-cause it first.** The next concrete action is whatever E reports back from the diagnostic.
+mutating real data for testing). **Exactly one item remains open in all of Queue C2, and root cause is
+now fully confirmed**: migration 143's function-body changes (the view-logging insert) were never
+actually live in production, despite being recorded as applied. Root-caused via a six-round diagnostic
+investigation (full trail in "Completed and verified" above). `backend/supabase/migrations/
+145_reapply_share_link_view_logging.sql` (drafted, NOT run) re-applies the correct logic; migration
+143 itself was NOT edited or rerun, per this repo's standing rule. **The next concrete action is
+sending E migration 145 (already prepared) and, once it succeeds, the extended canonical test
+(`migration_143_share_link_view_logging_tests.sql`, now with a Section 0 that checks the deployed
+function source directly, so this exact failure mode is caught instantly next time).**
 Do not rerun 134/135/136/137/141/138/139/140/142/143/144 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -1337,8 +1345,9 @@ controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
    — it is already applied; this was a separate follow-up, exactly mirroring 137→141. E ran it and it
    returned `Success. No rows returned`, then reran migration 140's canonical test, which also passed
    cleanly. **Queue C2.2–C2.5 is now fully closed — no pending manual database action.**
-10. **Migration 143 — APPLIED (2026-09-14). Canonical test found TWO real bugs across two live runs
-    -- first fixed (test script only), second still under active diagnostic investigation.**
+10. **Migration 143 — APPLIED (2026-09-14), but its OWN effect was never actually live. Canonical
+    test found TWO real bugs across two live runs -- first fixed (test script only); second is a
+    real production defect, root-caused, fixed via migration 145 (drafted, next single file for E).**
     `backend/supabase/migrations/143_share_link_view_logging.sql` — closes a real gap found while
     reconciling `PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` against the shipped Queue C2.6 work:
     `share_link_views` (migration 137) never had a write path — Stage B always specified one,
@@ -1363,8 +1372,21 @@ controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
     own execution-role privilege in a way source review alone can't confirm. A diagnostic script
     (`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql`, `begin;`/`rollback;`,
     nothing commits) was sent to E to surface the real (currently swallowed) error and report
-    ownership/grant facts before any fix is proposed. **Result pending — do not resend the canonical
-    test again until root cause is known.**
+    ownership/grant facts before any fix is proposed. **Six rounds later (v1-v6, each iterating on the
+    previous result), root cause CONFIRMED**: both live functions are exactly migration 139's original
+    logic, verbatim — no `v_view_result` variable, no `insert into public.share_link_views` anywhere.
+    Migration 143's function-body changes were simply never live, for a historical reason this
+    investigation could not determine from the database alone (recorded as an open question, not
+    assumed). Ownership, RLS, grants, and search_path were all definitively ruled out along the way — a
+    throwaway probe function with the identical insert succeeded cleanly under the same role. **Per this
+    repo's standing rule, migration 143 itself is NOT edited or rerun.**
+    `backend/supabase/migrations/145_reapply_share_link_view_logging.sql` (drafted, NOT run) re-applies
+    the exact same intended function bodies via idempotent `create or replace function` statements — no
+    design change. `migration_143_share_link_view_logging_tests.sql` extended with a new **Section 0**
+    that reads each function's live source via `pg_get_functiondef()` and asserts the logging insert is
+    actually present, checked unconditionally before anything else — closing the exact detection gap
+    this whole investigation exposed. **Migration 145 is the next single file for E; its extended test
+    follows only after 145 succeeds.**
 11. **Migration 144 — APPLIED (2026-09-14). Canonical test PASSED — `Success. No rows returned`, zero
     sections skipped. Queue C2.7 is fully closed.**
     `backend/supabase/migrations/144_close_share_link_direct_write_bypasses.sql` — Queue C2.7 part 2
@@ -1401,12 +1423,14 @@ Read this file, then the top current-status entries in `HANDOFF.md`, then
 the top of this file (C2.1–C2.7 are completed records now — migrations 137–144 all applied in
 production and canonically tested, the internal lifecycle controls UI, the Create & Send RPC switch,
 and the version-comparison status badge are all shipped and deployed; do not redo any of it). Exactly
-one item remains open in Queue C2, and it's **blocked on a live diagnostic, not just a pending
-report**: migration 143's canonical test found a real, potentially-still-live production defect
-(`get_quote_proposal_by_token()`/`get_submittal_by_token()`'s own view-logging insert silently failing,
-swallowed by their own exception handler) — a diagnostic script was already sent to E
-(`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql`); do not resend the canonical
-test itself again until that diagnostic's result is in and root cause is known. Treat A1–A15, B1–B10,
-C1, and C2.1–C2.7 as completed records rather than a queue to repeat.
+one item remains open in Queue C2, and root cause is now **fully confirmed, not still under
+investigation**: migration 143's function-body changes (the view-logging insert) were never actually
+live in production, despite being recorded as applied — root-caused via a six-round diagnostic
+investigation (v1-v6, full trail in "Completed and verified"). Migration 145
+(`backend/supabase/migrations/145_reapply_share_link_view_logging.sql`, drafted, not yet run)
+re-applies the correct function bodies; migration 143 itself was NOT edited or rerun. Send E migration
+145 next, then its extended canonical test (`migration_143_share_link_view_logging_tests.sql`, now
+with a Section 0 that reads the deployed function source directly) only after E reports 145 succeeded.
+Treat A1–A15, B1–B10, C1, and C2.1–C2.7 as completed records rather than a queue to repeat.
 Continue until every independent C2 item is implemented or left at its required single-file manual
 database gate.

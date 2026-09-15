@@ -33,6 +33,20 @@
 -- in the test script's own fixture setup, overtaken by later, unrelated
 -- work (migration 144) landing after this script was first drafted.
 --
+-- EXTENDED 2026-09-14 (Section 0 added): this script's own real production
+-- run subsequently proved that migration 143's logic could be recorded as
+-- applied ("Success. No rows returned") while its actual function bodies
+-- were NOT live -- the deployed get_quote_proposal_by_token()/get_
+-- submittal_by_token() were still running migration 139's original logic,
+-- with no view-logging insert anywhere in them (root cause undetermined;
+-- fixed forward by migration 145's CREATE OR REPLACE, not by editing 143).
+-- Section 1 below (an actual failed insert) already caught this once, but
+-- only after a lengthy separate diagnostic investigation was needed to
+-- explain WHY. Section 0 makes that diagnosis instant and structural next
+-- time: it reads each function's own live source via pg_get_functiondef()
+-- and asserts the view-logging insert is actually present in it, before
+-- any fixture or functional check runs at all.
+--
 -- A production-acceptance run of this script ends in exactly one of two
 -- ways: the final notice reading "ALL MIGRATION 143 SHARE-LINK VIEW
 -- LOGGING TESTS PASSED -- ZERO SECTIONS SKIPPED", or a hard SQL error
@@ -45,6 +59,9 @@ declare
   admin_user_id uuid;
   skipped_count integer := 0;
   skipped_names text[] := array[]::text[];
+
+  submittal_fn_source text;
+  proposal_fn_source text;
 
   test_project_id uuid;
   test_submittal_id uuid;
@@ -66,6 +83,21 @@ declare
   after_count integer;
   anon_can_execute boolean;
 begin
+  -- Section 0: the deployed function bodies actually contain the
+  -- view-logging insert -- checked before anything else, unconditionally
+  -- (needs no admin/fixtures). This is the exact check that would have
+  -- turned the original silent non-application into an immediate, obvious
+  -- failure instead of a six-round diagnostic investigation.
+  select pg_get_functiondef('public.get_quote_proposal_by_token(text)'::regprocedure) into proposal_fn_source;
+  if position('insert into public.share_link_views' in proposal_fn_source) = 0 then
+    raise exception 'TEST FAILED: the LIVE get_quote_proposal_by_token() does not contain the view-logging insert -- its deployed body does not match what migrations 143/145 specify.';
+  end if;
+
+  select pg_get_functiondef('public.get_submittal_by_token(text)'::regprocedure) into submittal_fn_source;
+  if position('insert into public.share_link_views' in submittal_fn_source) = 0 then
+    raise exception 'TEST FAILED: the LIVE get_submittal_by_token() does not contain the view-logging insert -- its deployed body does not match what migrations 143/145 specify.';
+  end if;
+
   select user_id into admin_user_id from public.app_admins limit 1;
 
   if admin_user_id is null then
