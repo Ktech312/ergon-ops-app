@@ -1,5 +1,5 @@
--- Diagnostic only (2026-09-14) -- not a migration, nothing here is meant to
--- be kept or reused. migration 143's get_quote_proposal_by_token()/
+-- Diagnostic only (2026-09-14, v2) -- not a migration, nothing here is
+-- meant to be kept or reused. migration 143's get_quote_proposal_by_token()/
 -- get_submittal_by_token() wrap their own insert into share_link_views in
 -- `exception when others then null;` (deliberate -- a logging failure must
 -- never block a real customer from reaching their document) -- which means
@@ -8,12 +8,17 @@
 --   1. reports table/function ownership plus the live grant state, since
 --      migration 141 (already applied) revoked all direct table privilege
 --      on share_link_views from anon/authenticated/public;
---   2. attempts the exact same insert OUTSIDE any exception handler, so a
---      real Postgres error (if any) surfaces instead of being swallowed;
---   3. separately calls the REAL function (get_submittal_by_token) and
---      checks whether a row actually landed -- isolating whether a
---      SECURITY DEFINER function's own execution context behaves
---      differently from this script's own direct insert.
+--   2. attempts an insert into share_link_views OUTSIDE any exception
+--      handler, using a token already registered in public_share_tokens
+--      (v1 of this script used an unregistered token and hit
+--      share_link_views_token_fkey instead of testing anything real --
+--      fixed here);
+--   3. separately calls the REAL function (get_submittal_by_token) against
+--      that SAME registered token and checks whether a SECOND row landed
+--      -- isolating whether the function's own SECURITY DEFINER execution
+--      context behaves differently from this script's own direct insert,
+--      which by then will have already proven whether a direct insert can
+--      succeed at all under this role.
 --
 -- Wrapped in begin;/rollback; -- nothing here commits, including the
 -- diagnostic inserts themselves if they succeed. Safe to run as many times
@@ -26,8 +31,7 @@ declare
   admin_user_id uuid;
   test_project_id uuid;
   test_submittal_id uuid;
-  direct_token text := 'ZZ_DIAG_143_DIRECT_' || substr(md5(random()::text), 1, 10);
-  function_token text := 'ZZ_DIAG_143_FUNC_' || substr(md5(random()::text), 1, 10);
+  test_token text := 'ZZ_DIAG_143_' || substr(md5(random()::text), 1, 12);
   caller_role text;
   table_owner text;
   function_owner text;
@@ -74,33 +78,33 @@ begin
     values (test_project_id, 1, 'sent', '{}'::jsonb, 'ZZ Diag Client', 'zz-diag@example.com')
     returning id into test_submittal_id;
   insert into public.public_share_tokens (token, entity_type, entity_id, status)
-    values (function_token, 'project_submittal', test_submittal_id, 'active');
+    values (test_token, 'project_submittal', test_submittal_id, 'active');
 
-  -- Step 2: the exact insert get_submittal_by_token() performs internally,
-  -- with NO exception handler this time -- if it fails, the real error
-  -- (SQLSTATE + message) will abort this whole block right here, visible
-  -- in full below "DIAGNOSTIC 1/4" above.
+  -- Step 2: an insert into share_link_views using a token that DOES exist
+  -- in public_share_tokens (unlike v1's mistake), with NO exception
+  -- handler -- if this fails now, the real error is something other than
+  -- the foreign key, and will show right here.
   insert into public.share_link_views (token, entity_type, entity_id, result)
-    values (direct_token, 'project_submittal', test_submittal_id, 'success');
-  select count(*) into rows_after_direct_insert from public.share_link_views where token = direct_token;
-  raise notice 'DIAGNOSTIC 2/4: direct insert into share_link_views SUCCEEDED, % row(s) visible immediately after.', rows_after_direct_insert;
+    values (test_token, 'project_submittal', test_submittal_id, 'success');
+  select count(*) into rows_after_direct_insert from public.share_link_views where token = test_token;
+  raise notice 'DIAGNOSTIC 2/4: direct insert into share_link_views SUCCEEDED, % row(s) visible for this token immediately after.', rows_after_direct_insert;
 
-  -- Step 3: now call the REAL function and check whether ITS internal
-  -- insert (still wrapped in migration 143's own exception handler)
-  -- actually produced a row -- this isolates whether SECURITY DEFINER
-  -- execution context behaves differently from this script's own insert
-  -- above, which just succeeded.
-  select count(*) into rows_before_function_call from public.share_link_views where token = function_token;
-  select * into r from public.get_submittal_by_token(function_token);
-  select count(*) into rows_after_function_call from public.share_link_views where token = function_token;
+  -- Step 3: now call the REAL function against the SAME token and check
+  -- whether ITS internal insert (still wrapped in migration 143's own
+  -- exception handler) adds a SECOND row -- this isolates whether
+  -- SECURITY DEFINER execution context behaves differently from this
+  -- script's own insert above, which just succeeded.
+  select count(*) into rows_before_function_call from public.share_link_views where token = test_token;
+  select * into r from public.get_submittal_by_token(test_token);
+  select count(*) into rows_after_function_call from public.share_link_views where token = test_token;
 
   raise notice 'DIAGNOSTIC 3/4: get_submittal_by_token(...) returned outcome=%, submittal_id=%. share_link_views rows for this token: % before call, % after call.',
     r.outcome, r.submittal_id, rows_before_function_call, rows_after_function_call;
 
   if rows_after_function_call = rows_before_function_call then
-    raise notice 'DIAGNOSTIC 4/4: CONFIRMED -- the function''s own internal insert did NOT log a row, even though this script''s own direct insert (step 2) succeeded. The difference is specific to the function''s SECURITY DEFINER execution context, not a general RLS/grant problem for this role.';
+    raise notice 'DIAGNOSTIC 4/4: CONFIRMED -- the function''s own internal insert did NOT add a row, even though this script''s own direct insert (step 2) succeeded moments earlier under the same role. The difference is specific to the function''s SECURITY DEFINER execution context, not a general RLS/grant problem for this role.';
   else
-    raise notice 'DIAGNOSTIC 4/4: the function''s own internal insert DID log a row this time -- if the canonical test still reports 0 rows, the difference may be specific to that script''s exact sequencing or fixture state rather than this general mechanism.';
+    raise notice 'DIAGNOSTIC 4/4: the function''s own internal insert DID add a row this time (% -> %) -- the mechanism works under this diagnostic''s conditions. If the canonical test still reports 0 rows, the difference is specific to that script''s exact sequencing or fixture state, not this general mechanism.', rows_before_function_call, rows_after_function_call;
   end if;
 end;
 $$;

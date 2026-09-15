@@ -106,12 +106,23 @@ snapshots/version numbers/email delivery/visible errors/role boundaries preserve
 narrowly-scoped direct-write-closing migration) is now both applied AND proven correct by its own
 canonical test.** Do not run this test or migration 144 again.
 
+**Diagnostic script v1 had its own bug, corrected to v2 (2026-09-14):** E's run of
+`diagnostic_143_share_link_views_insert_failure.sql` hit `ERROR: 23503: ... violates foreign key
+constraint "share_link_views_token_fkey"` -- `share_link_views.token` references
+`public_share_tokens(token)`, and v1's own direct-insert step used a throwaway token that was never
+actually registered in `public_share_tokens` first. **This was a bug in the diagnostic script itself,
+not evidence about the real function** -- the real `get_quote_proposal_by_token()`/
+`get_submittal_by_token()` only ever reach their own insert after successfully joining on the token
+against `public_share_tokens`, so that FK can never actually be at risk there. v2 fixed this by
+registering one token in `public_share_tokens` first and reusing it for both the direct-insert check
+and the real-function-call check, so the diagnostic actually answers the intended question this time.
+
 **Still required:**
-1. **`diagnostic_143_share_link_views_insert_failure.sql` -- sent to E 2026-09-14, result pending.**
-   Investigates the potential silent-logging-failure defect described above. Migration 143's canonical
-   test itself cannot be resent again until this is root-caused -- another blind guess risks a third
-   failed round-trip. **This is the only open item in all of Queue C2, and it may uncover a real
-   production bug beyond the test script (see the entry above).**
+1. **`diagnostic_143_share_link_views_insert_failure.sql` (v2) -- resent to E 2026-09-14, result
+   pending.** Investigates the potential silent-logging-failure defect described above. Migration
+   143's canonical test itself cannot be resent again until this is root-caused -- another blind guess
+   risks yet another failed round-trip. **This is the only open item in all of Queue C2, and it may
+   uncover a real production bug beyond the test script (see the entry above).**
 2. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.
