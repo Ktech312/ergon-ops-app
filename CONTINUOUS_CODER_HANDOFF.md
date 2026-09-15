@@ -1,9 +1,10 @@
 # Ergon Ops — Continuous Coder Handoff
 
 Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.6 (SHARE-LINK LIFECYCLE
-FOUNDATION + INTERNAL CONTROLS, MIGRATIONS 137–144), AND QUEUE C2.7 (SERVER-OWNED CREATE & SEND +
-DIRECT-WRITE CLOSURE) ALL APPLIED IN PRODUCTION.** Two items remain open, both listed under
-"Still required" below — this is not a fully closed queue yet.
+FOUNDATION + INTERNAL CONTROLS, MIGRATIONS 137–144), QUEUE C2.7 (SERVER-OWNED CREATE & SEND +
+DIRECT-WRITE CLOSURE), AND THE VERSION-COMPARISON STATUS-BADGE FIX ALL APPLIED/SHIPPED IN
+PRODUCTION.** Two items remain open, both listed under "Still required" below — both are E's own
+canonical-test run results, not code or migration work — this is not a fully closed queue yet.
 Prepared: 2026-09-12, updated 2026-09-14. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
@@ -40,10 +41,19 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
    not just re-read from prior handoff prose; full local suite rerun clean -- `tsc -b`, 431/431
    Vitest, `eslint` 0 errors/72 pre-existing warnings, `npm run build`). E's run result not yet
    reported back. Do not resend; just needs E to run it and report the result.
-3. **Version-comparison/history UI**: migration 139's `outcome` column is not yet consumed there —
-   a superseded prior version doesn't yet show its own distinct state in that read-only comparison
-   view. Small, independent, not blocking. **Picking this up next** as safe independent work while
-   awaiting E's results on items 1 and 2, per the standing operating rule.
+3. **Version-comparison/history UI — DONE, shipped and deployed (`32065e9`, 2026-09-14).** A
+   superseded/disabled/revoked prior version now shows the same status pill in the version-comparison
+   dropdown options and panel that `ShareLinkLifecycleControls` already shows in the version list
+   above it (`shareLinkTokenStatusBadge`, shared between both). `tsc -b` clean, 431/431 Vitest (no
+   regressions -- pure display logic, no new test file per this repo's own main.tsx-local-helper
+   convention), `eslint` 0 errors, build clean. Deployed and confirmed live: the deployed bundle
+   contains the new label strings, and the production page loads with zero console errors. **Real
+   limitation, stated plainly rather than glossed over**: none of the 4 real quotes currently in
+   production have 2+ sent proposal versions (checked all four directly), so the comparison panel
+   itself -- and therefore this badge -- has no live data to render against yet. Not fixable without
+   creating a real proposal version against real quote data purely for visual testing, which the
+   standing boundaries forbid. The same limitation this repo already documented for the outcome-aware
+   public pages (no real expired/disabled token available either) applies here for the same reason.
 4. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
    (`app_user_roles`/`app_admins`' own wide-open admin write policies) and the bridge-aware
    `accept_invite()` replacement — grouped under the same "C2.7" label in an earlier planning pass
@@ -73,14 +83,16 @@ one genuinely outstanding action was sending E migration 144's canonical test, d
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, 140 (+142), 143, and 144
-are all applied in production. Queue C2.6 (internal share-link lifecycle controls) and Queue C2.7
-part 1 (Create & Send switched to the server-owned RPCs) are both shipped and deployed (`35bc262`,
-`05fa486`; production bundles verified, zero console errors). Queue C2.7 was independently
-re-verified against current source 2026-09-14 (see the note directly above) — fully complete, no
-code changes needed. See "Still required" above for the three genuinely open items — none of them
-block anything else in Queue C2. Migration 144's canonical test has now been sent to E (item 2); the
-next concrete action is the version-comparison/history UI item (item 3) as independent work while
-awaiting E's results on items 1 and 2.
+are all applied in production. Queue C2.6 (internal share-link lifecycle controls), Queue C2.7 part 1
+(Create & Send switched to the server-owned RPCs), and the version-comparison status-badge fix are
+all shipped and deployed (`35bc262`, `05fa486`, `32065e9`; production bundles verified, zero console
+errors). Queue C2.7 was independently re-verified against current source 2026-09-14 (see the note
+above) — fully complete, no code changes needed. Item 3 (version-comparison UI) is also now done and
+deployed, with one stated limitation: no real quote currently has 2+ proposal versions, so the badge
+has no live data to visually confirm against yet (not fixable without mutating real data). **Only
+items 1 and 2 remain open — both are just waiting on E to run an already-sent SQL test and report the
+result; there is no further independent code work available in Queue C2 right now.** The next
+concrete action is whatever E reports back on migration 143's and 144's canonical tests.
 Do not rerun 134/135/136/137/141/138/139/140/142/143/144 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:

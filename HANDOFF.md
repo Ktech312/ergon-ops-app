@@ -28,15 +28,26 @@ surfacing are all intact at the call site; migration 144 is already applied and 
 narrow scope exactly (no Phase 3, authorization-table work explicitly excluded). No code changes were
 needed. Full local suite rerun clean: `tsc -b`, 431/431 Vitest, `eslint` 0 errors, `npm run build`.
 
+**Version-comparison/history UI -- DONE, shipped and deployed (`32065e9`, 2026-09-14):** a
+superseded/disabled/revoked prior proposal version now shows the same status pill in the
+version-comparison dropdown and panel that `ShareLinkLifecycleControls` already shows in the version
+list above it (one shared helper, `shareLinkTokenStatusBadge`, used in both places). `tsc -b` clean,
+431/431 Vitest (no regressions), `eslint` 0 errors, build clean. Deployed bundle confirmed to contain
+the new label strings; production page loads with zero console errors. **Stated limitation**: none of
+the 4 real quotes currently in production have 2+ sent proposal versions (checked all four), so this
+can't be visually confirmed against live data yet -- not fixable without creating a real proposal
+version purely for testing, which the standing boundaries forbid. Same class of limitation this repo
+already documented for the outcome-aware public pages.
+
 **Still required:**
 1. Migration 143's canonical test -- sent, independently verified, E's run result not yet reported.
 2. Migration 144's canonical test -- **sent to E 2026-09-14**, run result not yet reported.
-3. Version-comparison/history UI: migration 139's `outcome` column isn't consumed there yet, so a
-   superseded prior version has no distinct state shown in that read-only view. Small, independent --
-   picking this up next while awaiting E's results on items 1 and 2.
-4. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
+3. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.
+
+Only items 1 and 2 remain open, and both are purely waiting on E's run results -- no further
+independent Queue C2 code work is currently available.
 
 Do not re-run migrations 134/135/136/137/141/138/139/140/142/143/144 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
