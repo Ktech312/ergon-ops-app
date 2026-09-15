@@ -15,7 +15,18 @@ own function-body changes were recorded as applied but were never actually live 
 root-caused via a six-round diagnostic investigation; migration 145 re-applied the correct logic
 (`Success. No rows returned`, 2026-09-15); its extended canonical test (with the new Section 0
 structural check) then also passed (`Success. No rows returned`, 2026-09-15). **No open items remain
-anywhere in Queue C2.** See
+anywhere in Queue C2.**
+
+**Also shipped (2026-09-15, `8b4a6b6`):** the Product Catalog's Bundle components field now carries a
+"Reference only -- listing components here doesn't add them to a quote's BOM automatically" disclaimer
+-- copy-only, no behavior change, per D5's already-decided interim direction (`PRODUCT_MASTER_
+COMPLETION_PLAN.md` §5 Batch 6). `bundle_components` is stored but never read anywhere else in the
+app (confirmed by grep), so the field previously implied automation it doesn't have; a catalog admin
+now sees exactly what happens. `tsc -b` clean, 431/431 Vitest, `eslint` 0 errors, build clean. Deployed
+and verified live via Claude-in-Chrome (opened Add Product, switched Item type to Bundle, confirmed the
+disclaimer renders correctly, cancelled without saving -- no real catalog data touched).
+
+See
 "Current database
 gate" below for the full history, including migration 140's own real bug (ambiguous `token`
 reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
