@@ -48,9 +48,34 @@ mirroring migration 134's own test structure) but not yet sent, per the one-file
 mapping/UI display as "Source Quote") is drafted separately and will not be committed/deployed until
 146 is confirmed applied, per this repo's standing "never ship frontend ahead of its migration" rule.
 
-**Batch 5 (configurable discount-approval gate) -- design and implementation in progress**, as safe
-queued work while migration 146 awaits E's review, per explicit instruction. See the next entry once
-drafted.
+**Batch 5 (configurable discount-approval gate) -- migration 147 drafted, held per one-file-at-a-time**
+(migration 146 must be confirmed first). `backend/supabase/migrations/147_sales_discount_approval_gate.sql`:
+two new tables (`workspace_sales_approval_settings` -- toggle + threshold, one row per workspace,
+admin-editable through Admin settings, modeled directly on `workspace_share_link_settings` including
+the grant-layer correction migration 141 taught this repo to apply from the start;
+`sales_quote_proposal_approval_requests` -- RLS read-only, zero write policies, every write goes
+through an RPC, applying Queue C2.7's "close direct-write bypasses" lesson from day one instead of as
+a follow-up) plus two RPCs: `request_or_send_quote_proposal_version()` (the new sole Create & Send
+entry point -- wraps `create_and_send_quote_proposal_version()` completely unchanged, calling it
+directly when the gate doesn't apply or creating a pending request when it does) and
+`respond_to_proposal_approval_request()` (Sales Manager/admin approve-or-reject, row-locked against a
+concurrent double-review race). `create_and_send_quote_proposal_version()`'s own direct EXECUTE grant
+to `authenticated` is revoked, closing the obvious bypass (send directly, skip the gate) -- its nested
+call from the wrapper is unaffected, since both share the same owner. Deliberately does NOT touch
+`notification_rules.event_type` -- this repo has already hit a real production failure from
+reconstructing that constraint's allow-list from migration files instead of live data (documented at
+length above); left as a small, independent follow-up once E can confirm the live list. Authorization
+deliberately reuses `has_role()`/`app_user_roles` (hardened in migration 135), not the newer
+`workspace_member_roles` pattern `create_project_from_quote()` uses -- matches the function this
+migration actually wraps (`create_and_send_quote_proposal_version()`, migration 140, already authorized
+that way), keeping one consistent story for this call chain rather than mixing two role systems in one
+feature. Canonical test drafted (`migration_147_sales_discount_approval_gate_tests.sql`, mirroring
+migration 140's own fixture-discovery/temp-role-grant conventions, economized to three real people by
+temporarily also granting 'manager' to the discovered Sales fixture for the positive-approval check)
+but not sent -- migration 146 is still the one file out for review; 147 follows only after 146 succeeds.
+Frontend (Create & Send flow branching on the new `outcome`, a pending-approval banner, an Approval
+Requests queue for managers/admins, and the settings toggle/threshold UI) is designed but not yet
+built -- next.
 
 See
 "Current database
