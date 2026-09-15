@@ -39,9 +39,23 @@ can't be visually confirmed against live data yet -- not fixable without creatin
 version purely for testing, which the standing boundaries forbid. Same class of limitation this repo
 already documented for the outcome-aware public pages.
 
+**Benign mix-up, 2026-09-14 (no action needed, nothing broken):** E located and ran a file expecting
+it to be migration 144's test, but it was actually migration 144 itself (`144_close_share_link_
+direct_write_bypasses.sql`, in `backend/supabase/migrations/`) run a second time -- easy to confuse
+with the actually-needed test file (`migration_144_close_share_link_direct_write_bypasses_tests.sql`,
+directly in `backend/supabase/`, not the `migrations/` subfolder). Failed immediately with `ERROR:
+42710: policy "authenticated read public_share_tokens" for table "public_share_tokens" already
+exists` -- expected and harmless: that policy already existing is proof migration 144 succeeded the
+first time (2026-09-14, "Success. No rows returned"), and since the whole migration is one
+`begin;`/`commit;` transaction, Postgres aborted the entire re-run the instant this statement failed.
+Nothing committed, nothing changed, migration 144's own applied state is unaffected. The correct test
+file was re-sent to E immediately after. **Do not run `144_close_share_link_direct_write_bypasses.sql`
+again -- it is already applied.**
+
 **Still required:**
 1. Migration 143's canonical test -- sent, independently verified, E's run result not yet reported.
-2. Migration 144's canonical test -- **sent to E 2026-09-14**, run result not yet reported.
+2. Migration 144's canonical test -- **sent to E 2026-09-14, then resent same day after the mix-up
+   above** -- run result not yet reported.
 3. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.
