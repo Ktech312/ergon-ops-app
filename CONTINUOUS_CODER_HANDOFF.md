@@ -25,6 +25,21 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   Link, Activity history — shipped and deployed (`35bc262`).
 - Migration 143 (view-logging follow-up, found while reconciling docs against C2.6): applied in
   production (`Success. No rows returned`).
+- **Migration 143's canonical test found a real bug on its own live run (2026-09-14) — FIXED, TEST
+  SCRIPT ONLY, migration 143 itself untouched.** E's run failed with `ERROR: 42501: new row violates
+  row-level security policy for table "project_submittals"`. Root cause: the test's fixture setup
+  switched `role` to `'authenticated'` to insert its fixtures — worked when first drafted (migration
+  025's/053's write policies on `project_submittals`/`sales_quote_proposals` still existed then), but
+  migration 144 (applied later the same day) deliberately dropped both policies, so the same
+  direct-write rejection 144's own test proves is exactly what 143's fixture setup was still relying
+  on. This is genuinely why E "swore it ran fine before" — it did, before 144 shipped. **Fixed**:
+  fixture creation no longer switches `role` at all — only the jwt-claim GUCs are set, so fixtures run
+  as the script's own original (superuser) role and bypass RLS regardless of policy state, matching
+  144's own test's already-proven pattern. Verified at the trigger level, not by analogy:
+  `guard_workspace_id_mutation()` (migration 117) stamps `sales_quotes.workspace_id` via
+  `resolve_caller_workspace_id()`, which reads only `auth.uid()` — itself reading only the jwt-claim
+  GUCs, never `role` — so the admin's real workspace membership still resolves correctly. Corrected
+  test resent to E; **this is now the only open item in all of Queue C2.**
 - Queue C2.7 part 1 (frontend switch to the server-owned atomic RPCs,
   `create_and_send_submittal_version`/`create_and_send_quote_proposal_version`, replacing the old
   direct-INSERT flow): shipped and deployed (`05fa486`).
@@ -1278,7 +1293,8 @@ controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
    — it is already applied; this was a separate follow-up, exactly mirroring 137→141. E ran it and it
    returned `Success. No rows returned`, then reran migration 140's canonical test, which also passed
    cleanly. **Queue C2.2–C2.5 is now fully closed — no pending manual database action.**
-10. **Migration 143 — APPLIED (2026-09-14). Canonical test is next single file.**
+10. **Migration 143 — APPLIED (2026-09-14). Canonical test found a real bug on its live run, fixed,
+    test script only, resent — result pending.**
     `backend/supabase/migrations/143_share_link_view_logging.sql` — closes a real gap found while
     reconciling `PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` against the shipped Queue C2.6 work:
     `share_link_views` (migration 137) never had a write path — Stage B always specified one,
@@ -1289,8 +1305,11 @@ controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
     deliberately never logged (no entity to attach it to under the current NOT NULL schema). E ran it
     in production and it returned `Success. No rows returned`. Independently verified end-to-end
     against a real local PostgreSQL 18 engine (PGlite), including under the real admin-also-PM
-    condition, before ever being sent. Do not run migration 143 again; give E only its test script
-    next, `backend/supabase/migration_143_share_link_view_logging_tests.sql`.
+    condition, before ever being sent. Do not run migration 143 again. **Its canonical test's first
+    real run failed** (`ERROR: 42501` on `project_submittals` — see "Completed and verified" above for
+    the full root cause: the test's own fixture setup relied on a direct-write RLS policy migration
+    144, applied later the same day, deliberately removed). Fixed in the test script only, resent to
+    E, result pending — `backend/supabase/migration_143_share_link_view_logging_tests.sql`.
 11. **Migration 144 — APPLIED (2026-09-14). Canonical test is next single file.**
     `backend/supabase/migrations/144_close_share_link_direct_write_bypasses.sql` — Queue C2.7 part 2
     (see C2.7 above for full detail): drops `public_share_tokens`'/`project_submittals`'/

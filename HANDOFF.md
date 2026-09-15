@@ -16,9 +16,28 @@ C2.7 (part 1: Create & Send switched to the server-owned atomic RPCs, `05fa486`;
 closed.** Migration 139's paired frontend fix and migration 143 (the view-logging follow-up found
 while reconciling docs against C2.6) are both live too. See "Current database gate" below for the
 full history, including migration 140's own real bug (ambiguous `token` reference) and migration
-142's real-default-grant follow-up, both found and fixed before/because of E's real runs. **The only
-item left open anywhere in Queue C2 is migration 143's canonical test result (E has not yet run/
-reported it) -- everything else is done.**
+142's real-default-grant follow-up, both found and fixed before/because of E's real runs.
+
+**Migration 143's canonical test found a real bug on its own live run (2026-09-14): FIXED, TEST
+SCRIPT ONLY, migration 143 itself untouched.** E ran it and got `ERROR: 42501: new row violates
+row-level security policy for table "project_submittals"`. Root cause: the test's own fixture setup
+switched `role` to `'authenticated'` (impersonating the real admin) to insert its
+project/submittal/quote/proposal fixtures -- which worked when this test was first drafted, because
+migration 025's "pm and admin write project_submittals" and migration 053's "authenticated write
+sales_quote_proposals" policies still existed then. **Migration 144, applied later the same day,
+deliberately dropped both of those policies** -- so the exact thing 144's own test proves (a direct
+authenticated write is now rejected) is exactly what 143's test fixture setup was still relying on.
+This is genuinely why E "swore it ran fine before" -- it did, before 144 shipped; the sequencing
+changed underneath it. **Fixed**: fixture creation no longer switches `role` at all -- only the jwt
+claim GUCs (the admin's own id) are set, so fixtures run as the script's own original (superuser)
+role and bypass RLS regardless of which write policies exist now or later, exactly matching migration
+144's own test's already-proven pattern. Verified correct at the trigger level, not just by analogy:
+`guard_workspace_id_mutation()` (migration 117), which stamps `sales_quotes.workspace_id` on insert
+via `resolve_caller_workspace_id()`, reads only `auth.uid()` -- which itself reads only the jwt-claim
+GUCs, never `role` -- so the admin's real workspace membership still resolves correctly with `role`
+left alone. Migration 143 itself was not edited or rerun; it only redefines two GET functions and
+never touched these tables' RLS policies at all. Corrected test resent to E; **this is now the only
+item left open anywhere in Queue C2.**
 
 **Queue C2.7 re-verified against live source (2026-09-14):** asked to "finish Queue C2.7 completely"
 against a four-point requirements list. Every point was already fully met -- confirmed by re-reading
@@ -66,8 +85,8 @@ narrowly-scoped direct-write-closing migration) is now both applied AND proven c
 canonical test.** Do not run this test or migration 144 again.
 
 **Still required:**
-1. Migration 143's canonical test -- sent, independently verified, E's run result not yet reported.
-   **This is now the only open item in all of Queue C2.**
+1. Migration 143's canonical test -- **corrected and resent to E 2026-09-14** (see the real-bug entry
+   above), run result not yet reported. **This is the only open item in all of Queue C2.**
 2. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.

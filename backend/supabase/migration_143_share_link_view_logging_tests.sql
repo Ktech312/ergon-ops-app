@@ -9,6 +9,30 @@
 -- script tests view-logging on lookup, not creation-time authorization,
 -- which migration 138's own test already covers.
 --
+-- CORRECTED 2026-09-14, after a real production run failed with `ERROR:
+-- 42501: new row violates row-level security policy for table
+-- "project_submittals"`. Root cause: this script originally impersonated
+-- 'authenticated' (as the real admin) for its own fixture INSERTs into
+-- project_submittals/sales_quote_proposals, which worked when it was first
+-- drafted (migration 025's "pm and admin write project_submittals" and
+-- migration 053's "authenticated write sales_quote_proposals" policies
+-- still existed then) -- but migration 144, applied and its own canonical
+-- test proven correct the same day, deliberately dropped both of those
+-- policies entirely. The exact thing 144's test proves (a direct
+-- authenticated write is now rejected) is exactly what this script's own
+-- fixture setup was still relying on. Fixed by never switching `role` to
+-- 'authenticated' for fixture creation at all -- only the jwt claim GUCs
+-- are set (the admin's id), so the script's own original (superuser) role
+-- bypasses RLS regardless of which policies exist now or change later,
+-- exactly matching migration 144's own test and every other test script's
+-- established convention in this repo. auth.uid() (needed by sales_quotes'
+-- migration-117 workspace-ownership trigger) reads only those jwt claim
+-- GUCs, never `role`, so it still resolves correctly. Migration 143 itself
+-- was NOT edited or rerun -- it only redefines two GET functions and never
+-- touched these tables' RLS policies; this was purely a stale assumption
+-- in the test script's own fixture setup, overtaken by later, unrelated
+-- work (migration 144) landing after this script was first drafted.
+--
 -- A production-acceptance run of this script ends in exactly one of two
 -- ways: the final notice reading "ALL MIGRATION 143 SHARE-LINK VIEW
 -- LOGGING TESTS PASSED -- ZERO SECTIONS SKIPPED", or a hard SQL error
@@ -18,7 +42,6 @@ begin;
 
 do $$
 declare
-  original_role text;
   admin_user_id uuid;
   skipped_count integer := 0;
   skipped_names text[] := array[]::text[];
@@ -43,21 +66,25 @@ declare
   after_count integer;
   anon_can_execute boolean;
 begin
-  select current_setting('role') into original_role;
   select user_id into admin_user_id from public.app_admins limit 1;
 
   if admin_user_id is null then
     skipped_count := skipped_count + 1;
     skipped_names := array_append(skipped_names, 'all-sections (no admin user found)');
   else
-    -- Fixture creation impersonates the admin throughout: sales_quotes has
-    -- the migration-117 workspace-ownership trigger (requires a real
-    -- workspace member), and projects has its own pm/admin write policy --
-    -- an admin satisfies both, avoiding the need to separately discover a
-    -- real PM/Sales user for what is purely a read/logging test.
+    -- Fixture creation identifies as the real admin via jwt claims only --
+    -- `role` is deliberately never switched to 'authenticated' here, so
+    -- these INSERTs run as the script's own original (superuser) role and
+    -- bypass RLS entirely, regardless of which write policies exist on
+    -- project_submittals/sales_quote_proposals now or in the future. This
+    -- is required, not just defensive: migration 144 removed both tables'
+    -- only direct-write policies, so an 'authenticated' INSERT here would
+    -- now correctly be rejected by the very thing 144's own test proves.
+    -- auth.uid() (needed by sales_quotes' migration-117 workspace-ownership
+    -- trigger) reads only the jwt claim GUCs set below, never `role`, so it
+    -- still resolves a real workspace membership for the admin either way.
     perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
     perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
-    perform set_config('role', 'authenticated', true);
 
     insert into public.projects (project_name, customer_name, site_type, app_status)
       values ('ZZ_TEST_PROJECT_' || substr(md5(random()::text), 1, 10), 'ZZ Test Client', 'Parking Garage', 'Draft')
@@ -72,8 +99,6 @@ begin
     insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
       values (test_quote_id, 1, 'sent', '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com')
       returning id into test_proposal_id;
-
-    perform set_config('role', original_role, true);
 
     -- Direct-insert token fixtures in every lifecycle state this test
     -- needs -- bypassing the create_*_share_token RPCs deliberately (their
