@@ -13213,6 +13213,14 @@ function Projects({
             </div>
             <div><User size={17} /><span>Owner</span><strong>{selectedProject.owner}</strong></div>
             <div><CalendarDays size={17} /><span>Target</span><strong>{selectedProject.due}</strong></div>
+            {/* Sales Batch 4b (migration 146): historical reference to the
+                Sales Quote this project was converted from -- frozen at
+                conversion, never editable here. Absent (not shown) for a
+                project that predates this feature or wasn't converted from
+                a quote at all. */}
+            {selectedProject.sourceQuoteRef && (
+              <div><FileText size={17} /><span>Source Quote</span><strong>{selectedProject.sourceQuoteRef}</strong></div>
+            )}
           </div>
         </section>
 

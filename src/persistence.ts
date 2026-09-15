@@ -7015,6 +7015,14 @@ export type ProjectSite = {
   // Projects side ever edits this). Null when no proposal was ever
   // approved for the source quote, or it predates this feature.
   acceptedProposalTotal?: number | null;
+  // Sales Batch 4b (migration 146): the source Sales Quote's own
+  // human-readable quote_ref (e.g. "SQ-2026-0004"), copied onto the
+  // Project at conversion time -- historical, frozen, never live-synced.
+  // source_sales_quote_id (not exposed to the frontend) remains the
+  // durable relational link; this is a second, display-only field. Null
+  // for a project that predates this feature or wasn't converted from a
+  // quote at all.
+  sourceQuoteRef?: string | null;
 };
 
 // Migration 072: PM shipping requests, fulfilled by Warehouse/
@@ -7388,14 +7396,15 @@ type ProjectSiteRow = {
   billing_work_phone: string | null;
   billing_office_phone: string | null;
   accepted_proposal_total: number | string | null;
+  source_quote_ref: string | null;
 };
 
 const PROJECT_SITE_SELECT =
-  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,accepted_proposal_total,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,accepted_proposal_total,source_quote_ref,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 // Migration 087 safety: same query with the pre-087 (no `origin`) location
 // select, used as a 400 fallback in loadProjectSites.
 const PROJECT_SITE_SELECT_PRE_087 =
-  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,accepted_proposal_total,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT_PRE_087}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
+  `id,project_name,project_number,customer_name,client_id,site_type,site_address,owner_name,app_status,target_date_display,solution_package,camera_count,allocated_amount,sales_quote_file,notes,saas_type,saas_contract_amount,saas_billing_frequency,saas_start_date,saas_renewal_date,sale_amount,estimated_labor_cost,subcontractor_cost,travel_expenses,billing_address,client_home_phone,client_cell_phone,client_work_phone,client_office_phone,billing_name,billing_home_phone,billing_cell_phone,billing_work_phone,billing_office_phone,accepted_proposal_total,source_quote_ref,project_scope_of_work(summary,preparation,infrastructure,installation,commissioning,fine_tuning,assumptions,exclusions),project_bom_lines(id,item_name,qty,status,request_speed,po,notes,line_sort,procurement_track,purchasing_sent_at,ship_to,inventory_item:inventory_items(sku)),project_locations(${PROJECT_LOCATION_SELECT_PRE_087}),project_shipping_addresses(${PROJECT_SHIPPING_ADDRESS_SELECT}),project_shipments(${PROJECT_SHIPMENT_SELECT})`;
 
 function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
   const scopeRaw = Array.isArray(row.project_scope_of_work) ? row.project_scope_of_work[0] : row.project_scope_of_work;
@@ -7470,6 +7479,7 @@ function mapProjectSiteRow(row: ProjectSiteRow): ProjectSite {
     billingOfficePhone: row.billing_office_phone ?? "",
     acceptedProposalTotal:
       row.accepted_proposal_total === null || row.accepted_proposal_total === undefined ? null : Number(row.accepted_proposal_total),
+    sourceQuoteRef: row.source_quote_ref ?? null,
   };
 }
 
