@@ -26,6 +26,32 @@ now sees exactly what happens. `tsc -b` clean, 431/431 Vitest, `eslint` 0 errors
 and verified live via Claude-in-Chrome (opened Add Product, switched Item type to Bundle, confirmed the
 disclaimer renders correctly, cancelled without saving -- no real catalog data touched).
 
+**D3 and D4 approved (2026-09-15).** D3: add `projects.source_quote_ref`, populated from the Sales
+Quote's `quote_ref` at conversion time, `source_sales_quote_id` stays the durable relational link,
+displayed as "Source Quote," treated as historical (frozen at conversion, never live-synced). D4: a
+configurable per-workspace discount-approval gate, disabled by default, requiring Sales Manager or
+workspace admin approval (never PM) above a configurable threshold (default 10%) before a proposal can
+be sent; margin-based approval explicitly deferred until cost/margin calculations are formally defined.
+Both Batch 4b and Batch 5 approved to proceed; configuration must be workspace-aware and editable
+through settings, no code deploy required for a future customer to change it.
+
+**Batch 4b (`source_quote_ref` carry-through) -- migration 146 drafted, sent to E as the next single
+file.** `backend/supabase/migrations/146_project_source_quote_ref_carry_through.sql`: adds
+`projects.source_quote_ref text`, backfills every already-converted project exactly (via the existing
+`source_sales_quote_id` relational link -- no guessing required, unlike `accepted_proposal_total`'s own
+deliberately-NULL backfill in migration 136), and redefines `create_project_from_quote()` to also carry
+`quote_ref` going forward -- preserves migration 136's entire function body byte-for-byte except this
+one addition, same discipline as every prior redefinition in this chain (127 -> 134 -> 136 -> 146).
+Canonical test drafted (`migration_146_project_source_quote_ref_carry_through_tests.sql`, closely
+mirroring migration 134's own test structure) but not yet sent, per the one-file-at-a-time convention
+-- migration only goes first; its test follows only after E reports success. Frontend (type/select/
+mapping/UI display as "Source Quote") is drafted separately and will not be committed/deployed until
+146 is confirmed applied, per this repo's standing "never ship frontend ahead of its migration" rule.
+
+**Batch 5 (configurable discount-approval gate) -- design and implementation in progress**, as safe
+queued work while migration 146 awaits E's review, per explicit instruction. See the next entry once
+drafted.
+
 See
 "Current database
 gate" below for the full history, including migration 140's own real bug (ambiguous `token`
