@@ -7,17 +7,15 @@ requires continued work across independent lanes when a migration or decision is
 defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
 **Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
-(+ corrective 142), 143, and 144 are all applied in production. Queue C1 (frozen Sales pricing),
-Queue C2.2-C2.5 (share-link lifecycle foundation), Queue C2.6 (internal lifecycle controls --
-Disable/Re-enable, Permanently Revoke & Generate New Link, Activity history, `35bc262`), and Queue
-C2.7 (part 1: Create & Send switched to the server-owned atomic RPCs, `05fa486`; part 2: migration
-144 closing the now-unused direct-write policies on `public_share_tokens`/`project_submittals`/
-`sales_quote_proposals`) are all shipped, deployed, **and canonically tested -- Queue C2.7 is fully
-closed.** Migration 139's paired frontend fix is live too. **Migration 143's own function-body changes
-were never actually live despite being recorded as applied -- root-caused via a six-round diagnostic
-investigation, and migration 145 (`Success. No rows returned`, 2026-09-15) re-applied the correct
-logic. Its extended canonical test (Section 0 added, catches this exact failure mode directly) is the
-next single file for E -- migration 143 is not yet a fully closed item until that test passes.** See
+(+ corrective 142), 143, 144, and 145 are all applied in production, **every one of them with a
+passing canonical test.** Queue C1 (frozen Sales pricing), Queue C2.2-C2.6 (share-link lifecycle
+foundation + internal controls), and Queue C2.7 (server-owned Create & Send + direct-write closure)
+are all shipped, deployed, and canonically tested. **Queue C2 is now FULLY CLOSED** -- migration 143's
+own function-body changes were recorded as applied but were never actually live in production;
+root-caused via a six-round diagnostic investigation; migration 145 re-applied the correct logic
+(`Success. No rows returned`, 2026-09-15); its extended canonical test (with the new Section 0
+structural check) then also passed (`Success. No rows returned`, 2026-09-15). **No open items remain
+anywhere in Queue C2.** See
 "Current database
 gate" below for the full history, including migration 140's own real bug (ambiguous `token`
 reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
@@ -188,23 +186,21 @@ of a six-round diagnostic investigation.
 **Migration 145 APPLIED (2026-09-15) -- `Success. No rows returned`.** E ran it in production; the
 view-logging insert logic is now genuinely live in `get_quote_proposal_by_token()`/
 `get_submittal_by_token()` for the first time since migration 143 was originally (and ineffectively)
-recorded as applied. Do not run migration 145 again. Its extended canonical test
-(`migration_143_share_link_view_logging_tests.sql`, with the new Section 0 source-content check) is
-the next single file for E -- this is the last piece needed to fully close Queue C2.
+recorded as applied. Do not run migration 145 again.
 
-**Still required:**
-1. **`migration_143_share_link_view_logging_tests.sql` (extended with Section 0) -- the next single
-   file for E.** Migration 145 has been applied and confirmed successful; this test verifies it end to
-   end, including the new structural check that catches this exact class of drift instantly if it ever
-   recurs. **This is the only open item in all of Queue C2.**
-2. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
-   share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
-   replacement, both named in C2.7's original task description but never part of migration 144.
+**Migration 143's extended canonical test PASSED (2026-09-15) -- `Success. No rows returned`.** Every
+section ran clean, including the new Section 0 structural check (confirming the deployed function
+source actually contains the logging insert) and every functional check proving real rows now land in
+`share_link_views` for every outcome (found/expired/superseded/disabled/revoked), with the
+already-unaffected grants and the invalid-token/entity-type-correctness checks all still passing too.
+**QUEUE C2 IS NOW FULLY CLOSED -- no open items remain.** Do not run this test or migration 143/145
+again.
 
-Only item 1 remains open. Migration 145 is applied and confirmed -- the next step is E running its
-extended canonical test and reporting the result.
+**Still required:** none. Queue C2 (share-link lifecycle: schema, server-owned creation, lifecycle
+actions, internal controls, direct-write closure, and view logging) is fully shipped, deployed, and
+canonically verified end to end in production.
 
-Do not re-run migrations 134/135/136/137/141/138/139/140/142/143/144 after they've
+Do not re-run migrations 134/135/136/137/141/138/139/140/142/143/144/145 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
 
 **Current database gate (2026-09-13):** migrations 137 (+ corrective 141), 138, and 139 are applied

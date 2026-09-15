@@ -1,14 +1,12 @@
 # Ergon Ops — Continuous Coder Handoff
 
-Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.6 (SHARE-LINK LIFECYCLE
-FOUNDATION + INTERNAL CONTROLS, MIGRATIONS 137–144), QUEUE C2.7 (SERVER-OWNED CREATE & SEND +
-DIRECT-WRITE CLOSURE, INCLUDING ITS CANONICAL TEST -- FULLY CLOSED), AND THE VERSION-COMPARISON
-STATUS-BADGE FIX ALL APPLIED/SHIPPED IN PRODUCTION.** Exactly one item remains open across all of
-Queue C2 — migration 145 (2026-09-15, `Success. No rows returned`) re-applied migration 143's
-view-logging function bodies, which were confirmed via a six-round diagnostic investigation to have
-never actually gone live despite being recorded as applied. **Migration 143 itself was not edited or
-rerun, per this repo's standing rule. Its extended canonical test (Section 0 added, checks the
-deployed function source directly) is the last single file needed to fully close Queue C2.**
+Status: **QUEUE C2 IS FULLY CLOSED.** A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.6
+(SHARE-LINK LIFECYCLE FOUNDATION + INTERNAL CONTROLS, MIGRATIONS 137–144), QUEUE C2.7 (SERVER-OWNED
+CREATE & SEND + DIRECT-WRITE CLOSURE), MIGRATION 145 (re-applying migration 143's view-logging
+function bodies, which had been recorded as applied but were never actually live — root-caused via a
+six-round diagnostic investigation), and the version-comparison status-badge fix are ALL
+applied/shipped in production, every migration with a passing canonical test. **No open items remain
+anywhere in Queue C2.**
 Prepared: 2026-09-12, updated 2026-09-15. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
@@ -82,8 +80,9 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   function's live source via `pg_get_functiondef()` and asserts the logging insert is actually
   present, checked unconditionally before anything else — the exact check that would have made this
   instant instead of a six-round investigation. **Migration 145 APPLIED (2026-09-15) — `Success. No
-  rows returned`.** The view-logging insert is genuinely live now. Do not run 145 again. Its extended
-  canonical test is the last single file needed to close Queue C2.
+  rows returned`.** The view-logging insert is genuinely live now. Do not run 145 again. **Its
+  extended canonical test PASSED (2026-09-15) — `Success. No rows returned`, zero sections skipped,
+  including the new Section 0 structural check. QUEUE C2 IS NOW FULLY CLOSED.**
 - Queue C2.7 part 1 (frontend switch to the server-owned atomic RPCs,
   `create_and_send_submittal_version`/`create_and_send_quote_proposal_version`, replacing the old
   direct-INSERT flow): shipped and deployed (`05fa486`).
@@ -113,19 +112,15 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   standing boundaries forbid. The same limitation this repo already documented for the outcome-aware
   public pages (no real expired/disabled token available either) applies here for the same reason.
 
-**🔲 Still required:**
-1. **`migration_143_share_link_view_logging_tests.sql` (extended with Section 0) — the next single
-   file for E.** Migration 145 is **applied** (2026-09-15, `Success. No rows returned`) — the
-   view-logging insert is genuinely live now. This extended canonical test verifies it end to end,
-   including the new structural check (reads each function's live source via `pg_get_functiondef()`
-   and asserts the logging insert is present) that catches this exact class of drift instantly if it
-   ever recurs. **This is the only open item in all of Queue C2 — once it passes, the queue is fully
-   closed.**
-2. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
-   (`app_user_roles`/`app_admins`' own wide-open admin write policies) and the bridge-aware
-   `accept_invite()` replacement — grouped under the same "C2.7" label in an earlier planning pass
-   but not share-link-specific. A separate, pre-existing body of work; tracked here so it isn't
-   mistaken for done, not silently dropped.
+**✅ Still required: NONE. Queue C2 is fully closed** — every migration (137–145) applied and
+canonically tested, every frontend piece shipped and deployed, zero open items.
+
+**Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not tracked as part of
+this queue's closure)**: the authorization-table policy closure (`app_user_roles`/`app_admins`' own
+wide-open admin write policies) and the bridge-aware `accept_invite()` replacement — grouped under the
+same "C2.7" label in an earlier planning pass but not share-link-specific. Tracked here so it isn't
+mistaken for done, not silently dropped, but it is a new/separate body of work, not a Queue C2
+follow-up.
 
 Three corrective migrations were needed across this whole queue beyond the originally planned ones
 (141/142 for real default-grant gaps, neither requiring editing an already-applied migration file,
@@ -149,22 +144,19 @@ one genuinely outstanding action was sending E migration 144's canonical test, d
 
 ## Next-session launchpad
 
-**Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, 140 (+142), 143, and 144
-are all applied in production. Queue C2.6 (internal share-link lifecycle controls), Queue C2.7 (both
-parts, including its canonical test), and the version-comparison status-badge fix are all shipped,
-deployed, and where applicable canonically tested (`35bc262`, `05fa486`, `450606b`, `32065e9`;
-production bundles verified, zero console errors; migration 144's test passed `Success. No rows
-returned`, zero sections skipped, 2026-09-14). Queue C2.7 is fully closed. The version-comparison
-badge fix is also done and deployed, with one stated limitation: no real quote currently has 2+
-proposal versions, so the badge has no live data to visually confirm against yet (not fixable without
-mutating real data for testing). **Exactly one item remains open in all of Queue C2**: migration 143's
-function-body changes (the view-logging insert) were never actually live in production despite being
-recorded as applied — root-caused via a six-round diagnostic investigation (full trail in "Completed
-and verified" above) and fixed by migration 145 (**APPLIED 2026-09-15, `Success. No rows returned`**).
-Migration 143 itself was NOT edited or rerun, per this repo's standing rule. **The next concrete action
-is sending E the extended canonical test (`migration_143_share_link_view_logging_tests.sql`, now with
-a Section 0 that checks the deployed function source directly, so this exact failure mode is caught
-instantly next time) — the last single file needed to fully close Queue C2.**
+**Repository checkpoint: QUEUE C2 IS FULLY CLOSED.** Migrations 134, 135, 136, 137 (+141), 138, 139,
+140 (+142), 143, 144, and 145 are all applied in production, **every one canonically tested and
+passing.** Queue C2.6 (internal share-link lifecycle controls), Queue C2.7 (both parts, including its
+canonical test), migration 145 (re-applying migration 143's view-logging function bodies, which had
+been recorded as applied but were never actually live — root-caused via a six-round diagnostic
+investigation, full trail in "Completed and verified" above), and the version-comparison status-badge
+fix are all shipped, deployed, and canonically tested where applicable (`35bc262`, `05fa486`,
+`450606b`, `32065e9`; production bundles verified, zero console errors; migration 144's test and
+migration 143's extended test — with its new Section 0 structural check — both passed `Success. No
+rows returned`, zero sections skipped). The version-comparison badge fix has one stated limitation: no
+real quote currently has 2+ proposal versions, so the badge has no live data to visually confirm
+against yet (not fixable without mutating real data for testing) — this does not block Queue C2's
+closure. **No open items remain anywhere in Queue C2. There is no next concrete Queue C2 action.**
 Do not rerun 134/135/136/137/141/138/139/140/142/143/144/145 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -1385,7 +1377,9 @@ controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
     reads each function's live source via `pg_get_functiondef()` and asserts the logging insert is
     actually present, checked unconditionally before anything else — closing the exact detection gap
     this whole investigation exposed. **Migration 145 APPLIED (2026-09-15) — `Success. No rows
-    returned`. Its extended canonical test is the next (and last) single file for Queue C2.**
+    returned`. Its extended canonical test PASSED (2026-09-15) — `Success. No rows returned`, zero
+    sections skipped, including the new Section 0 check. QUEUE C2 IS NOW FULLY CLOSED. Do not run
+    migration 143, 145, or either of their tests again.**
 11. **Migration 144 — APPLIED (2026-09-14). Canonical test PASSED — `Success. No rows returned`, zero
     sections skipped. Queue C2.7 is fully closed.**
     `backend/supabase/migrations/144_close_share_link_direct_write_bypasses.sql` — Queue C2.7 part 2
@@ -1417,18 +1411,12 @@ item remains.
 ## 10. Start instruction for the next coder
 
 Read this file, then the top current-status entries in `HANDOFF.md`, then
-`PRODUCT_MASTER_COMPLETION_PLAN.md`. For a long unattended run, use
-`OVERNIGHT_CODER_PLAN_2026-09-13.md`; otherwise verify Git and check the "Still required" list near
-the top of this file (C2.1–C2.7 are completed records now — migrations 137–145 all applied in
-production and canonically tested where applicable, the internal lifecycle controls UI, the Create &
-Send RPC switch, and the version-comparison status badge are all shipped and deployed; do not redo any
-of it). Migration 145 (`backend/supabase/migrations/145_reapply_share_link_view_logging.sql`) is
-**APPLIED** (2026-09-15, `Success. No rows returned`) — it re-applied migration 143's view-logging
-function bodies, which had been recorded as applied but were never actually live (root-caused via a
-six-round diagnostic investigation, v1-v6, full trail in "Completed and verified"). Migration 143
-itself was NOT edited or rerun. **Exactly one item remains open in Queue C2**: send E the extended
-canonical test (`migration_143_share_link_view_logging_tests.sql`, now with a Section 0 that reads the
-deployed function source directly) — the last single file needed to fully close the queue.
-Treat A1–A15, B1–B10, C1, and C2.1–C2.7 as completed records rather than a queue to repeat.
-Continue until every independent C2 item is implemented or left at its required single-file manual
-database gate.
+`PRODUCT_MASTER_COMPLETION_PLAN.md`. **Queue C2 is fully closed** — migrations 137–145 are all applied
+in production and every one has a passing canonical test (including migration 145, which re-applied
+migration 143's view-logging function bodies after a six-round diagnostic investigation confirmed they
+had been recorded as applied but were never actually live — full trail in "Completed and verified").
+Migration 143 itself was NOT edited or rerun. The internal lifecycle controls UI, the Create & Send RPC
+switch, and the version-comparison status badge are all shipped and deployed. **Do not redo, rerun, or
+resend any of this.** Treat A1–A15, B1–B10, C1, and C2.1–C2.7 as completed records, not a queue with
+open items. Move to Queue B/C's other prepared-but-not-implemented items, or a new task from E, for
+the next unit of work.
