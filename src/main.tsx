@@ -11893,6 +11893,25 @@ function ProjectPortfolioHealth({ projectSites, purchaseOrders }: { projectSites
   );
 }
 
+// Queue C2 (still-required item 3): one non-"active" token-status label,
+// shared by ShareLinkLifecycleControls' own status pill below and the
+// proposal version-comparison picker/panel -- so a superseded, disabled, or
+// revoked prior version reads as the same distinct state everywhere it
+// appears, not just in the main version list. Returns null for "active"
+// (and null itself) since neither needs a badge at all.
+function shareLinkTokenStatusBadge(status: ShareLinkTokenStatus | null): { className: string; label: string } | null {
+  switch (status) {
+    case "superseded":
+      return { className: "submittal-status-superseded", label: "Superseded by a newer version" };
+    case "permanently_revoked":
+      return { className: "submittal-status-revoked", label: "Permanently revoked" };
+    case "temporarily_disabled":
+      return { className: "submittal-status-disabled", label: "Temporarily disabled" };
+    default:
+      return null;
+  }
+}
+
 // Queue C2.6: per-version share-link lifecycle controls, shared by the
 // submittal (Projects) and proposal (SalesQuoteBuilder) version lists --
 // their row shapes are identical (see both call sites), so one component
@@ -12020,12 +12039,12 @@ function ShareLinkLifecycleControls({
     }
   }
 
+  const tokenStatusBadge = shareLinkTokenStatusBadge(tokenStatus);
+
   return (
     <div className="share-link-lifecycle">
       <div className="share-link-lifecycle-controls">
-        {tokenStatus === "superseded" && <span className="status-pill submittal-status-superseded">Superseded by a newer version</span>}
-        {tokenStatus === "permanently_revoked" && <span className="status-pill submittal-status-revoked">Permanently revoked</span>}
-        {tokenStatus === "temporarily_disabled" && <span className="status-pill submittal-status-disabled">Temporarily disabled</span>}
+        {tokenStatusBadge && <span className={`status-pill ${tokenStatusBadge.className}`}>{tokenStatusBadge.label}</span>}
         {canManage && tokenStatus === "active" && (
           <button className="secondary-action mini-action" type="button" disabled={busy} onClick={handleDisable}>
             Disable link
@@ -24204,6 +24223,13 @@ function SalesQuoteBuilder({
               const comparison: ProposalSnapshotComparison | null = sameVersion
                 ? null
                 : compareProposalSnapshots(versionA.contentSnapshot, versionB.contentSnapshot);
+              // Queue C2 (still-required item 3): a superseded/disabled/revoked
+              // prior version previously looked identical to an active one in
+              // this picker -- both the "Version N" option label and a status
+              // pill below each select now surface the same distinct state
+              // ShareLinkLifecycleControls already shows in the list above.
+              const versionABadge = shareLinkTokenStatusBadge(versionA.shareTokenStatus);
+              const versionBBadge = shareLinkTokenStatusBadge(versionB.shareTokenStatus);
               const hasDifferences =
                 comparison !== null &&
                 (Object.keys(comparison.fieldChanges).length > 0 ||
@@ -24221,18 +24247,30 @@ function SalesQuoteBuilder({
                         <label>
                           Earlier version
                           <select value={versionA.id} onChange={(event) => setCompareVersionIdA(event.target.value)}>
-                            {proposalsForQuote.map((proposal) => (
-                              <option key={proposal.id} value={proposal.id}>Version {proposal.version}</option>
-                            ))}
+                            {proposalsForQuote.map((proposal) => {
+                              const badge = shareLinkTokenStatusBadge(proposal.shareTokenStatus);
+                              return (
+                                <option key={proposal.id} value={proposal.id}>
+                                  Version {proposal.version}{badge ? ` (${badge.label})` : ""}
+                                </option>
+                              );
+                            })}
                           </select>
+                          {versionABadge && <span className={`status-pill ${versionABadge.className}`}>{versionABadge.label}</span>}
                         </label>
                         <label>
                           Later version
                           <select value={versionB.id} onChange={(event) => setCompareVersionIdB(event.target.value)}>
-                            {proposalsForQuote.map((proposal) => (
-                              <option key={proposal.id} value={proposal.id}>Version {proposal.version}</option>
-                            ))}
+                            {proposalsForQuote.map((proposal) => {
+                              const badge = shareLinkTokenStatusBadge(proposal.shareTokenStatus);
+                              return (
+                                <option key={proposal.id} value={proposal.id}>
+                                  Version {proposal.version}{badge ? ` (${badge.label})` : ""}
+                                </option>
+                              );
+                            })}
                           </select>
+                          {versionBBadge && <span className={`status-pill ${versionBBadge.className}`}>{versionBBadge.label}</span>}
                         </label>
                       </div>
                       {sameVersion ? (
