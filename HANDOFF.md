@@ -35,21 +35,23 @@ be sent; margin-based approval explicitly deferred until cost/margin calculation
 Both Batch 4b and Batch 5 approved to proceed; configuration must be workspace-aware and editable
 through settings, no code deploy required for a future customer to change it.
 
-**Batch 4b (`source_quote_ref` carry-through) -- migration 146 drafted, sent to E as the next single
-file.** `backend/supabase/migrations/146_project_source_quote_ref_carry_through.sql`: adds
-`projects.source_quote_ref text`, backfills every already-converted project exactly (via the existing
+**Batch 4b (`source_quote_ref` carry-through) -- FULLY SHIPPED (2026-09-15).** Migration 146 applied
+(`Success. No rows returned`) and its canonical test passed (`ALL MIGRATION 146 SOURCE_QUOTE_REF
+CARRY-THROUGH TESTS PASSED -- ZERO SECTIONS SKIPPED`, including Section 0's real-data backfill check).
+`backend/supabase/migrations/146_project_source_quote_ref_carry_through.sql`: added
+`projects.source_quote_ref text`, backfilled every already-converted project exactly (via the existing
 `source_sales_quote_id` relational link -- no guessing required, unlike `accepted_proposal_total`'s own
-deliberately-NULL backfill in migration 136), and redefines `create_project_from_quote()` to also carry
-`quote_ref` going forward -- preserves migration 136's entire function body byte-for-byte except this
+deliberately-NULL backfill in migration 136), and redefined `create_project_from_quote()` to also carry
+`quote_ref` going forward -- preserved migration 136's entire function body byte-for-byte except this
 one addition, same discipline as every prior redefinition in this chain (127 -> 134 -> 136 -> 146).
-Canonical test drafted (`migration_146_project_source_quote_ref_carry_through_tests.sql`, closely
-mirroring migration 134's own test structure) but not yet sent, per the one-file-at-a-time convention
--- migration only goes first; its test follows only after E reports success. Frontend (type/select/
-mapping/UI display as "Source Quote") is drafted separately and will not be committed/deployed until
-146 is confirmed applied, per this repo's standing "never ship frontend ahead of its migration" rule.
+Frontend shipped (`3d8452d`): `sourceQuoteRef` read into `ProjectSite`, displayed as "Source Quote" in
+the Projects panel. `tsc -b` clean, 427/427 Vitest, `eslint` 0 errors, build clean, isolated from
+Batch 5's still-uncommitted frontend by hunk-splitting the working tree before commit (both batches had
+been drafted in the same working files). **No open items remain in Batch 4b.**
 
-**Batch 5 (configurable discount-approval gate) -- migration 147 drafted, held per one-file-at-a-time**
-(migration 146 must be confirmed first). `backend/supabase/migrations/147_sales_discount_approval_gate.sql`:
+**Batch 5 (configurable discount-approval gate) -- migration 147 drafted, sent to E as the next single
+file** (146 and its test are both confirmed; 147 is the next migration in sequence).
+`backend/supabase/migrations/147_sales_discount_approval_gate.sql`:
 two new tables (`workspace_sales_approval_settings` -- toggle + threshold, one row per workspace,
 admin-editable through Admin settings, modeled directly on `workspace_share_link_settings` including
 the grant-layer correction migration 141 taught this repo to apply from the start;
@@ -72,7 +74,7 @@ that way), keeping one consistent story for this call chain rather than mixing t
 feature. Canonical test drafted (`migration_147_sales_discount_approval_gate_tests.sql`, mirroring
 migration 140's own fixture-discovery/temp-role-grant conventions, economized to three real people by
 temporarily also granting 'manager' to the discovered Sales fixture for the positive-approval check)
-but not sent -- migration 146 is still the one file out for review; 147 follows only after 146 succeeds.
+sent -- 147 is the next file out for review; its test follows only after E reports success.
 Frontend built and locally verified (2026-09-15): `persistence.ts` replaces
 `createAndSendQuoteProposalVersion` with `requestOrSendQuoteProposalVersion` (returns a
 `ProposalSendOutcome` discriminated union -- `sent` | `pending_approval` | `ok:false`, never throws)
@@ -82,12 +84,12 @@ a new `AdminPage` "Sales Approval Settings" panel (admin-only, checkbox + draft/
 following the established draft-state pattern) and "Proposal Approval Requests" panel (visible to
 admin + manager via the page's existing `canReviewApprovals` gate) let a Sales Manager/admin review
 pending requests; `SalesQuoteBuilder`'s Quote Proposal panel shows a persistent "awaiting Sales Manager
-approval" note for the current quote's own pending request, threaded down through `SalesHome`. Not yet
-committed -- migration 146 must be confirmed applied first (this repo's frontend-follows-migration
-rule), and migration 147 itself hasn't been sent yet (146 is still the one file out for review).
-`tsc -b` clean, 434/434 Vitest (rewrote the stale `createAndSendQuoteProposalVersion` unit tests to
-cover the new RPC/outcome shape), `eslint` 0 errors (new warnings match the repo's existing draft-state
-effect pattern, not new problems), production build clean.
+approval" note for the current quote's own pending request, threaded down through `SalesHome`. Still
+held uncommitted -- migration 147 must be confirmed applied (then its test) before this ships, per this
+repo's frontend-follows-migration rule. `tsc -b` clean, 434/434 Vitest (rewrote the stale
+`createAndSendQuoteProposalVersion` unit tests to cover the new RPC/outcome shape), `eslint` 0 errors
+(new warnings match the repo's existing draft-state effect pattern, not new problems), production build
+clean.
 
 See
 "Current database
