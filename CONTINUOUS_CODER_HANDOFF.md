@@ -91,12 +91,21 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   public pages (no real expired/disabled token available either) applies here for the same reason.
 
 **🔲 Still required:**
-1. **`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql` (v2) — resent to E
+1. **`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql` (v4) — resent to E
    2026-09-14, result pending.** v1 hit its own bug (`ERROR: 23503`, `share_link_views_token_fkey` —
    the direct-insert step used a token never registered in `public_share_tokens` first; a diagnostic-
    script defect, not evidence about the real function, which only ever inserts after a successful
-   join against that same table). v2 fixed this by reusing one registered token for both checks.
-   Investigates the potential silent-logging-failure defect described above.
+   join against that same table). v2 fixed this by reusing one registered token for both checks, and
+   ran clean ("Success. No rows returned") — but that told us nothing, because v2 reported findings via
+   `RAISE NOTICE`, which Supabase's SQL Editor shows in a separate Logs panel E had no easy access to;
+   a clean run looks identical regardless of what the notices actually said. v3's temp-table-plus-
+   trailing-SELECT approach also risked the same invisibility (a multi-statement script's displayed
+   result is uncertain when the final statement is `rollback;`). **v4 always ends by deliberately
+   raising an exception whose message contains all four diagnostic findings concatenated together** —
+   reusing the exact delivery channel already proven reliable everywhere else in this session (every
+   `raise exception 'TEST FAILED: ...'` has shown up in full as copy-pasteable `ERROR:` text). The
+   error message itself is the answer this time, win or lose. Investigates the potential
+   silent-logging-failure defect described above.
    Migration 143's canonical test cannot be resent again until root cause is known — a third blind
    guess risks a third failed round-trip. **This is the only open item in all of Queue C2, and it may
    uncover a real production bug beyond the test script itself.**

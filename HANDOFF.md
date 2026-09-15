@@ -117,8 +117,23 @@ against `public_share_tokens`, so that FK can never actually be at risk there. v
 registering one token in `public_share_tokens` first and reusing it for both the direct-insert check
 and the real-function-call check, so the diagnostic actually answers the intended question this time.
 
+**v2 ran clean ("Success. No rows returned") but the finding itself was still invisible -- delivery
+mechanism fixed for v4 (2026-09-14):** v2's findings were reported via `RAISE NOTICE`, which Supabase's
+SQL Editor shows in a separate Logs/Notices panel, not the main results grid -- E correctly reported
+back exactly what was visible ("Success. No rows returned"), which meant nothing, since that's what a
+clean run of ANY notice-only script shows regardless of what the notices actually said. v3 tried a
+temporary table plus a trailing `select`, but a multi-statement script's displayed result in Supabase's
+editor is uncertain (the final `rollback;` risked being what's shown -- same invisibility problem
+again). **v4 fixes this for good**: it always ends by deliberately raising an exception whose message
+contains every finding from all four diagnostic steps concatenated into one block of text -- reusing
+the exact delivery channel already proven reliable every other time in this session (every `raise
+exception 'TEST FAILED: ...'` in every canonical test script has shown up in full as "Failed to run
+sql query: ERROR: ..." with the complete message intact and copy-pasteable). The error message itself
+IS the answer this time, regardless of whether the underlying finding is "bug confirmed" or "mechanism
+actually works." Sent to E.
+
 **Still required:**
-1. **`diagnostic_143_share_link_views_insert_failure.sql` (v2) -- resent to E 2026-09-14, result
+1. **`diagnostic_143_share_link_views_insert_failure.sql` (v4) -- resent to E 2026-09-14, result
    pending.** Investigates the potential silent-logging-failure defect described above. Migration
    143's canonical test itself cannot be resent again until this is root-caused -- another blind guess
    risks yet another failed round-trip. **This is the only open item in all of Queue C2, and it may
