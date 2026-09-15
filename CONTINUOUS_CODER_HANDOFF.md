@@ -4,8 +4,11 @@ Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.6 (SHARE
 FOUNDATION + INTERNAL CONTROLS, MIGRATIONS 137–144), QUEUE C2.7 (SERVER-OWNED CREATE & SEND +
 DIRECT-WRITE CLOSURE, INCLUDING ITS CANONICAL TEST -- FULLY CLOSED), AND THE VERSION-COMPARISON
 STATUS-BADGE FIX ALL APPLIED/SHIPPED IN PRODUCTION.** Exactly one item remains open across all of
-Queue C2 — migration 143's canonical test result, listed under "Still required" below. E's own run,
-not code or migration work.
+Queue C2 — migration 143's canonical test, currently BLOCKED on a live diagnostic (see "Still
+required" below), which may uncover a real, currently-silent production defect: `get_quote_proposal_
+by_token()`/`get_submittal_by_token()`'s own view-logging insert appears to be failing on every call,
+swallowed by their own deliberate `exception when others then null;` handler. **Do not treat Queue C2
+as closed or migration 143's test as merely "pending a rerun" until this is root-caused.**
 Prepared: 2026-09-12, updated 2026-09-14. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
@@ -39,7 +42,25 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   `guard_workspace_id_mutation()` (migration 117) stamps `sales_quotes.workspace_id` via
   `resolve_caller_workspace_id()`, which reads only `auth.uid()` — itself reading only the jwt-claim
   GUCs, never `role` — so the admin's real workspace membership still resolves correctly. Corrected
-  test resent to E; **this is now the only open item in all of Queue C2.**
+  test resent to E.
+- **Corrected migration 143 test's re-run surfaced a SECOND, more serious real bug (2026-09-14) —
+  POTENTIAL PRODUCTION DEFECT, under active investigation, NOT yet fixed.** E's re-run got past
+  fixture creation and failed at Section 1: `TEST FAILED: expected exactly one 'success' share_link_
+  views row for the active proposal token after one lookup, found 0.` The RPC's own `outcome=found`
+  check passed — the problem is specifically that `get_quote_proposal_by_token()`'s internal `insert
+  into public.share_link_views (...)` produced no row. **This matters beyond the test**: that insert
+  is wrapped in `exception when others then null;` inside the actual, applied, production function
+  (deliberate — a logging failure must never block a real customer) — so if this insert is genuinely
+  failing, it has been failing silently for every real page view since migration 143 was applied, and
+  Queue C2.6's Activity panel (reads this exact table) has been showing 0 views the whole time with no
+  error anywhere. Leading theory: migration 141 (already applied) revoked all direct table privilege
+  on `share_link_views` from `anon`/`authenticated`/`public` — whether that blocks a `SECURITY
+  DEFINER` function's own internal insert depends on live facts (table/function ownership, actual
+  execution-role privileges) not determinable from source alone. A small diagnostic script
+  (`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql`, `begin;`/`rollback;`,
+  nothing commits) was sent to E to surface the real (currently swallowed) Postgres error and report
+  ownership/grant facts directly, before proposing any fix. **Do not treat Queue C2 as closed or
+  migration 143's test as merely "pending a rerun" until this is root-caused.**
 - Queue C2.7 part 1 (frontend switch to the server-owned atomic RPCs,
   `create_and_send_submittal_version`/`create_and_send_quote_proposal_version`, replacing the old
   direct-INSERT flow): shipped and deployed (`05fa486`).
@@ -70,10 +91,11 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   public pages (no real expired/disabled token available either) applies here for the same reason.
 
 **🔲 Still required:**
-1. **Migration 143's canonical test** (`backend/supabase/migration_143_share_link_view_logging_tests.sql`)
-   — already sent to E and independently verified clean, but E's own run result has not yet been
-   reported back. Do not resend; just needs E to run it and report the result. **This is now the
-   only open item in all of Queue C2.**
+1. **`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql` — sent to E 2026-09-14,
+   result pending.** Investigates the potential silent-logging-failure defect described above.
+   Migration 143's canonical test cannot be resent again until root cause is known — a third blind
+   guess risks a third failed round-trip. **This is the only open item in all of Queue C2, and it may
+   uncover a real production bug beyond the test script itself.**
 2. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
    (`app_user_roles`/`app_admins`' own wide-open admin write policies) and the bridge-aware
    `accept_invite()` replacement — grouped under the same "C2.7" label in an earlier planning pass
@@ -111,9 +133,12 @@ returned`, zero sections skipped, 2026-09-14). Queue C2.7 is fully closed. The v
 badge fix is also done and deployed, with one stated limitation: no real quote currently has 2+
 proposal versions, so the badge has no live data to visually confirm against yet (not fixable without
 mutating real data for testing). **Exactly one item remains open in all of Queue C2 — migration 143's
-canonical test result, purely waiting on E to run an already-sent file and report back. There is no
-independent code work available in Queue C2 right now.** The next concrete action is whatever E
-reports back on migration 143's canonical test.
+canonical test, currently BLOCKED on a live diagnostic** (`diagnostic_143_share_link_views_insert_
+failure.sql`, sent to E, result pending) that may uncover a real, currently-silent production defect
+in `get_quote_proposal_by_token()`/`get_submittal_by_token()`'s own view-logging insert (swallowed by
+their own `exception when others then null;` handler). **There is no independent code work available
+in Queue C2 right now — do not resend migration 143's test again until the diagnostic result is in;
+root-cause it first.** The next concrete action is whatever E reports back from the diagnostic.
 Do not rerun 134/135/136/137/141/138/139/140/142/143/144 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -1293,8 +1318,8 @@ controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
    — it is already applied; this was a separate follow-up, exactly mirroring 137→141. E ran it and it
    returned `Success. No rows returned`, then reran migration 140's canonical test, which also passed
    cleanly. **Queue C2.2–C2.5 is now fully closed — no pending manual database action.**
-10. **Migration 143 — APPLIED (2026-09-14). Canonical test found a real bug on its live run, fixed,
-    test script only, resent — result pending.**
+10. **Migration 143 — APPLIED (2026-09-14). Canonical test found TWO real bugs across two live runs
+    -- first fixed (test script only), second still under active diagnostic investigation.**
     `backend/supabase/migrations/143_share_link_view_logging.sql` — closes a real gap found while
     reconciling `PRODUCT_SHARE_LINK_IMPLEMENTATION_PLAN.md` against the shipped Queue C2.6 work:
     `share_link_views` (migration 137) never had a write path — Stage B always specified one,
@@ -1309,8 +1334,20 @@ controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
     real run failed** (`ERROR: 42501` on `project_submittals` — see "Completed and verified" above for
     the full root cause: the test's own fixture setup relied on a direct-write RLS policy migration
     144, applied later the same day, deliberately removed). Fixed in the test script only, resent to
-    E, result pending — `backend/supabase/migration_143_share_link_view_logging_tests.sql`.
-11. **Migration 144 — APPLIED (2026-09-14). Canonical test is next single file.**
+    E, resent, and E's re-run hit a SECOND real bug — `TEST FAILED: expected exactly one 'success'
+    share_link_views row ... found 0`, i.e. `get_quote_proposal_by_token()`'s own internal insert into
+    `share_link_views` produced no row. Since that insert is wrapped in the function's own `exception
+    when others then null;` (deliberate, so logging never blocks a real customer), **this may mean
+    view logging has been silently failing in production for every real page view since migration 143
+    was applied** — not just a test-script defect this time. Leading theory: migration 141's `revoke
+    all on table share_link_views ... from public, anon, authenticated` may be reaching the function's
+    own execution-role privilege in a way source review alone can't confirm. A diagnostic script
+    (`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql`, `begin;`/`rollback;`,
+    nothing commits) was sent to E to surface the real (currently swallowed) error and report
+    ownership/grant facts before any fix is proposed. **Result pending — do not resend the canonical
+    test again until root cause is known.**
+11. **Migration 144 — APPLIED (2026-09-14). Canonical test PASSED — `Success. No rows returned`, zero
+    sections skipped. Queue C2.7 is fully closed.**
     `backend/supabase/migrations/144_close_share_link_direct_write_bypasses.sql` — Queue C2.7 part 2
     (see C2.7 above for full detail): drops `public_share_tokens`'/`project_submittals`'/
     `sales_quote_proposals`' old direct-write policies entirely, now that Queue C2.7 part 1 (the
@@ -1318,8 +1355,7 @@ controls) and Queue C2.7's frontend/migration work are otherwise fully closed.
     and it returned `Success. No rows returned`. Independently verified end-to-end against a real
     local PostgreSQL 18 engine (PGlite), including a negative control proving the test genuinely
     fails without this migration and the real admin-also-PM condition, before ever being sent. Do
-    not run migration 144 again; give E only its canonical test next,
-    `backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`.
+    not run migration 144 or its canonical test again — both are done.
 
 ## 9. Consolidated reporting format
 
@@ -1346,8 +1382,12 @@ Read this file, then the top current-status entries in `HANDOFF.md`, then
 the top of this file (C2.1–C2.7 are completed records now — migrations 137–144 all applied in
 production and canonically tested, the internal lifecycle controls UI, the Create & Send RPC switch,
 and the version-comparison status badge are all shipped and deployed; do not redo any of it). Exactly
-one item remains open in Queue C2: migration 143's canonical test result — it was already sent to E;
-there is nothing to draft or send, only wait for and record E's report. Treat A1–A15, B1–B10, C1, and
-C2.1–C2.7 as completed records rather than a queue to repeat.
+one item remains open in Queue C2, and it's **blocked on a live diagnostic, not just a pending
+report**: migration 143's canonical test found a real, potentially-still-live production defect
+(`get_quote_proposal_by_token()`/`get_submittal_by_token()`'s own view-logging insert silently failing,
+swallowed by their own exception handler) — a diagnostic script was already sent to E
+(`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql`); do not resend the canonical
+test itself again until that diagnostic's result is in and root cause is known. Treat A1–A15, B1–B10,
+C1, and C2.1–C2.7 as completed records rather than a queue to repeat.
 Continue until every independent C2 item is implemented or left at its required single-file manual
 database gate.

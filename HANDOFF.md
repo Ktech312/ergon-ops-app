@@ -39,6 +39,28 @@ left alone. Migration 143 itself was not edited or rerun; it only redefines two 
 never touched these tables' RLS policies at all. Corrected test resent to E; **this is now the only
 item left open anywhere in Queue C2.**
 
+**Corrected migration 143 test's re-run surfaced a SECOND, more serious real bug (2026-09-14) --
+POTENTIAL PRODUCTION DEFECT, under active investigation, not yet fixed.** E's re-run got past the
+fixture-creation stage this time and failed at Section 1: `TEST FAILED: expected exactly one
+'success' share_link_views row for the active proposal token after one lookup, found 0.` The RPC call
+itself returned the correct `outcome=found` (that check passed) -- the problem is specifically that
+`get_quote_proposal_by_token()`'s own internal `insert into public.share_link_views (...)` did not
+produce a row. **This matters beyond the test**: that insert is wrapped in `exception when others
+then null;` inside the actual, applied, production function (a deliberate design choice so a logging
+failure can never block a real customer from reaching their document) -- which means if this insert
+is genuinely failing, it has been failing silently for every real page view since migration 143 was
+applied, and Queue C2.6's Activity panel (which reads this exact table) has been showing 0 views the
+entire time, with no error surfaced anywhere. Leading theory: migration 141 (already applied) revoked
+all direct table privilege on `share_link_views` from `anon`/`authenticated`/`public` -- whether that
+actually blocks a `SECURITY DEFINER` function's own internal insert depends on facts only the live
+database can answer (table/function ownership, the function's actual execution-role privileges), not
+determinable from source alone. **A small, purpose-built diagnostic script
+(`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql`, `begin;`/`rollback;`, nothing
+commits) was sent to E** to surface the real Postgres error (the swallowed one) and report ownership/
+grant facts directly, before proposing any fix -- exactly this repo's established practice of
+confirming root cause empirically against production rather than guessing. **Do not treat migration
+143's canonical test as passing or Queue C2 as closed until this is root-caused and fixed.**
+
 **Queue C2.7 re-verified against live source (2026-09-14):** asked to "finish Queue C2.7 completely"
 against a four-point requirements list. Every point was already fully met -- confirmed by re-reading
 the actual code, not the prior handoff prose: both Create & Send handlers call the server-owned RPCs
@@ -85,14 +107,17 @@ narrowly-scoped direct-write-closing migration) is now both applied AND proven c
 canonical test.** Do not run this test or migration 144 again.
 
 **Still required:**
-1. Migration 143's canonical test -- **corrected and resent to E 2026-09-14** (see the real-bug entry
-   above), run result not yet reported. **This is the only open item in all of Queue C2.**
+1. **`diagnostic_143_share_link_views_insert_failure.sql` -- sent to E 2026-09-14, result pending.**
+   Investigates the potential silent-logging-failure defect described above. Migration 143's canonical
+   test itself cannot be resent again until this is root-caused -- another blind guess risks a third
+   failed round-trip. **This is the only open item in all of Queue C2, and it may uncover a real
+   production bug beyond the test script (see the entry above).**
 2. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.
 
-Only item 1 remains open, and it's purely waiting on E's run result -- no further
-independent Queue C2 code work is currently available.
+Only item 1 remains open, and it's purely waiting on E's diagnostic result -- no further independent
+Queue C2 code work is currently available until root cause is known.
 
 Do not re-run migrations 134/135/136/137/141/138/139/140/142/143/144 after they've
 each been confirmed, and do not send the already-decided D1/D2/D6/D7/D10/D11/D15 items back to E.
