@@ -20080,7 +20080,10 @@ function SalesCatalog({
                 <option value="bundle">Bundle</option>
               </select></label>
               {draft.itemType === "bundle" && (
-                <label className="span-2">Bundle components<input value={draft.bundleComponents} onChange={(event) => setDraft((current) => ({ ...current, bundleComponents: event.target.value }))} placeholder="SKU:qty, SKU:qty" /></label>
+                <>
+                  <label className="span-2">Bundle components<input value={draft.bundleComponents} onChange={(event) => setDraft((current) => ({ ...current, bundleComponents: event.target.value }))} placeholder="SKU:qty, SKU:qty" /></label>
+                  <p className="span-2 muted">Reference only -- listing components here doesn't add them to a quote's BOM automatically. Add each component as its own BOM line when building a quote.</p>
+                </>
               )}
             </div>
             <div className="compact-edit-section">
