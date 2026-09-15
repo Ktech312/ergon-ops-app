@@ -91,24 +91,21 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
   public pages (no real expired/disabled token available either) applies here for the same reason.
 
 **🔲 Still required:**
-1. **`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql` (v4) — resent to E
-   2026-09-14, result pending.** v1 hit its own bug (`ERROR: 23503`, `share_link_views_token_fkey` —
-   the direct-insert step used a token never registered in `public_share_tokens` first; a diagnostic-
-   script defect, not evidence about the real function, which only ever inserts after a successful
-   join against that same table). v2 fixed this by reusing one registered token for both checks, and
-   ran clean ("Success. No rows returned") — but that told us nothing, because v2 reported findings via
-   `RAISE NOTICE`, which Supabase's SQL Editor shows in a separate Logs panel E had no easy access to;
-   a clean run looks identical regardless of what the notices actually said. v3's temp-table-plus-
-   trailing-SELECT approach also risked the same invisibility (a multi-statement script's displayed
-   result is uncertain when the final statement is `rollback;`). **v4 always ends by deliberately
-   raising an exception whose message contains all four diagnostic findings concatenated together** —
-   reusing the exact delivery channel already proven reliable everywhere else in this session (every
-   `raise exception 'TEST FAILED: ...'` has shown up in full as copy-pasteable `ERROR:` text). The
-   error message itself is the answer this time, win or lose. Investigates the potential
-   silent-logging-failure defect described above.
-   Migration 143's canonical test cannot be resent again until root cause is known — a third blind
-   guess risks a third failed round-trip. **This is the only open item in all of Queue C2, and it may
-   uncover a real production bug beyond the test script itself.**
+1. **`backend/supabase/diagnostic_143_share_link_views_insert_failure.sql` (v5) — sent to E
+   2026-09-14, result pending.** v1-v4 iteration history: v1 hit its own bug (unregistered FK
+   token); v2 fixed it but reported via `RAISE NOTICE`, invisible to E's Supabase UI; v3's temp-table
+   approach risked the same invisibility; v4 switched to always raising a diagnostic exception (the
+   proven-visible `ERROR:` channel) and got a full result: **BUG CONFIRMED.**
+   `share_link_views`/`get_quote_proposal_by_token()` share the same owner (`postgres`) — ruling out an
+   ownership mismatch — a direct insert under this session's own role succeeded, but
+   `get_submittal_by_token()`'s own internal insert (same token, same values, called moments later)
+   added zero rows despite returning the correct `outcome=found`. Its own
+   `exception when others then null;` is swallowing the real reason. **v5 isolates the actual cause**:
+   (A) reads the live function's own source via `pg_get_functiondef()` to rule out drift/an unexpected
+   overload; (B) creates a throwaway probe function with identical properties but no exception
+   swallowing, calls it, and captures the real `SQLSTATE`/`SQLERRM`. Migration 143's canonical test
+   cannot be resent again until root cause is known. **This is the only open item in all of Queue C2,
+   and it may uncover a real production bug beyond the test script itself.**
 2. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
    (`app_user_roles`/`app_admins`' own wide-open admin write policies) and the bridge-aware
    `accept_invite()` replacement — grouped under the same "C2.7" label in an earlier planning pass

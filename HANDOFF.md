@@ -132,8 +132,23 @@ sql query: ERROR: ..." with the complete message intact and copy-pasteable). The
 IS the answer this time, regardless of whether the underlying finding is "bug confirmed" or "mechanism
 actually works." Sent to E.
 
+**v4 delivered a full result -- BUG CONFIRMED, root cause still unknown, deeper diagnostic sent
+(2026-09-14):** `share_link_views` and `get_quote_proposal_by_token()` are owned by the SAME role
+(`postgres`) -- ruling out an ownership mismatch. A direct insert under this session's own role
+succeeded (1 row). Calling `get_submittal_by_token()` moments later, same token, same effective
+values, returned the correct `outcome=found` but added **zero** rows to `share_link_views` -- its own
+`exception when others then null;` is swallowing whatever the real error is. Since ownership is
+identical, plain RLS-via-owner-bypass doesn't explain the difference between "direct insert" and
+"insert from inside the function" on its own. **v5 isolates the actual cause two ways**: (A) reads
+the LIVE deployed function's own source via `pg_get_functiondef()` and confirms it really contains the
+expected insert statement and search_path pin (ruling out drift -- a stale cached definition or an
+unexpected overload being invoked instead); (B) creates a throwaway probe function with IDENTICAL
+properties (`security definer`, `set search_path = ''`, same insert) but WITHOUT any exception
+swallowing, calls it, and captures the real `SQLSTATE`/`SQLERRM` one level up -- reusing v4's own
+proven "always raise a diagnostic exception" delivery pattern. Sent to E.
+
 **Still required:**
-1. **`diagnostic_143_share_link_views_insert_failure.sql` (v4) -- resent to E 2026-09-14, result
+1. **`diagnostic_143_share_link_views_insert_failure.sql` (v5) -- sent to E 2026-09-14, result
    pending.** Investigates the potential silent-logging-failure defect described above. Migration
    143's canonical test itself cannot be resent again until this is root-caused -- another blind guess
    risks yet another failed round-trip. **This is the only open item in all of Queue C2, and it may
