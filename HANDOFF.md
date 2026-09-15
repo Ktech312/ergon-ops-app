@@ -10,13 +10,15 @@ defines the morning report and the one-file Supabase handoff. Then use
 (+ corrective 142), 143, and 144 are all applied in production. Queue C1 (frozen Sales pricing),
 Queue C2.2-C2.5 (share-link lifecycle foundation), Queue C2.6 (internal lifecycle controls --
 Disable/Re-enable, Permanently Revoke & Generate New Link, Activity history, `35bc262`), and Queue
-C2.7 part 1 (Create & Send switched to the server-owned atomic RPCs, replacing the old direct-INSERT
-flow, `05fa486`) and part 2 (migration 144, closing the now-unused direct-write policies on
-`public_share_tokens`/`project_submittals`/`sales_quote_proposals`) are all shipped and deployed.
-Migration 139's paired frontend fix and migration 143 (the view-logging follow-up found while
-reconciling docs against C2.6) are both live too. See "Current database gate" below for the full
-history, including migration 140's own real bug (ambiguous `token` reference) and migration 142's
-real-default-grant follow-up, both found and fixed before/because of E's real runs.
+C2.7 (part 1: Create & Send switched to the server-owned atomic RPCs, `05fa486`; part 2: migration
+144 closing the now-unused direct-write policies on `public_share_tokens`/`project_submittals`/
+`sales_quote_proposals`) are all shipped, deployed, **and canonically tested -- Queue C2.7 is fully
+closed.** Migration 139's paired frontend fix and migration 143 (the view-logging follow-up found
+while reconciling docs against C2.6) are both live too. See "Current database gate" below for the
+full history, including migration 140's own real bug (ambiguous `token` reference) and migration
+142's real-default-grant follow-up, both found and fixed before/because of E's real runs. **The only
+item left open anywhere in Queue C2 is migration 143's canonical test result (E has not yet run/
+reported it) -- everything else is done.**
 
 **Queue C2.7 re-verified against live source (2026-09-14):** asked to "finish Queue C2.7 completely"
 against a four-point requirements list. Every point was already fully met -- confirmed by re-reading
@@ -52,15 +54,25 @@ Nothing committed, nothing changed, migration 144's own applied state is unaffec
 file was re-sent to E immediately after. **Do not run `144_close_share_link_direct_write_bypasses.sql`
 again -- it is already applied.**
 
+**Migration 144's canonical test: PASSED in production (2026-09-14).** E ran the correct file
+(`migration_144_close_share_link_direct_write_bypasses_tests.sql`) and got `Success. No rows
+returned` -- the exact expected outcome (the script's own closing `raise notice 'ALL MIGRATION 144
+DIRECT-WRITE CLOSURE TESTS PASSED -- ZERO SECTIONS SKIPPED'` followed by `rollback;`, so nothing it
+did was left behind: not the fixture project/quote/submittal/proposal/token, not the temporary PM/
+Sales role grants if any were made, nothing). **This closes Queue C2.7 completely -- every one of its
+four original requirements (RPC switch, all four obsolete direct-write paths removed, frozen
+snapshots/version numbers/email delivery/visible errors/role boundaries preserved, and the
+narrowly-scoped direct-write-closing migration) is now both applied AND proven correct by its own
+canonical test.** Do not run this test or migration 144 again.
+
 **Still required:**
 1. Migration 143's canonical test -- sent, independently verified, E's run result not yet reported.
-2. Migration 144's canonical test -- **sent to E 2026-09-14, then resent same day after the mix-up
-   above** -- run result not yet reported.
-3. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
+   **This is now the only open item in all of Queue C2.**
+2. Explicitly out of scope for Queue C2 (a separate, pre-existing body of work, not
    share-link-specific): the authorization-table policy closure and bridge-aware `accept_invite()`
    replacement, both named in C2.7's original task description but never part of migration 144.
 
-Only items 1 and 2 remain open, and both are purely waiting on E's run results -- no further
+Only item 1 remains open, and it's purely waiting on E's run result -- no further
 independent Queue C2 code work is currently available.
 
 Do not re-run migrations 134/135/136/137/141/138/139/140/142/143/144 after they've

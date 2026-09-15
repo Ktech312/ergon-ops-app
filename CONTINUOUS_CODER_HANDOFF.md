@@ -2,9 +2,10 @@
 
 Status: **A1–A15, B1–B10, QUEUE C1 (SALES PRICING), QUEUE C2.2–C2.6 (SHARE-LINK LIFECYCLE
 FOUNDATION + INTERNAL CONTROLS, MIGRATIONS 137–144), QUEUE C2.7 (SERVER-OWNED CREATE & SEND +
-DIRECT-WRITE CLOSURE), AND THE VERSION-COMPARISON STATUS-BADGE FIX ALL APPLIED/SHIPPED IN
-PRODUCTION.** Two items remain open, both listed under "Still required" below — both are E's own
-canonical-test run results, not code or migration work — this is not a fully closed queue yet.
+DIRECT-WRITE CLOSURE, INCLUDING ITS CANONICAL TEST -- FULLY CLOSED), AND THE VERSION-COMPARISON
+STATUS-BADGE FIX ALL APPLIED/SHIPPED IN PRODUCTION.** Exactly one item remains open across all of
+Queue C2 — migration 143's canonical test result, listed under "Still required" below. E's own run,
+not code or migration work.
 Prepared: 2026-09-12, updated 2026-09-14. E approved the recommended
 pricing statement below and C1.1–C1.9 executed continuously against it (frozen Sales pricing:
 `unit_price`/`price_source` on `sales_quote_bom_lines`, `discount_percent`/`tax_rate` on
@@ -30,31 +31,35 @@ Production: `https://ergon-ops-app.vercel.app/` (Queue C1 bundle verified live 2
 - Queue C2.7 part 2 (migration 144, closing the now-unused direct-write policies on
   `public_share_tokens`/`project_submittals`/`sales_quote_proposals`): **applied in production
   (2026-09-14) — `Success. No rows returned`.**
+- **Migration 144's canonical test — PASSED in production (2026-09-14) — `Success. No rows
+  returned`.** Zero sections skipped. **Queue C2.7 is now fully closed: all four of its original
+  requirements (RPC switch, all four obsolete direct-write paths removed, frozen snapshots/version
+  numbers/email delivery/visible errors/role boundaries preserved, narrowly-scoped direct-write-
+  closing migration) are applied AND proven correct by their own canonical test.** One benign mix-up
+  along the way, recorded for completeness: E first ran the migration file itself a second time by
+  mistake (similar name to its test file, different directory) — failed harmlessly on a duplicate
+  `CREATE POLICY` inside a single transaction, so nothing committed or changed; the correct test file
+  was resent and passed cleanly on the real attempt.
+- **Version-comparison/history UI — DONE, shipped and deployed (`32065e9`, 2026-09-14).** A
+  superseded/disabled/revoked prior version now shows the same status pill in the version-comparison
+  dropdown options and panel that `ShareLinkLifecycleControls` already shows in the version list
+  above it (`shareLinkTokenStatusBadge`, shared between both). `tsc -b` clean, 431/431 Vitest (no
+  regressions -- pure display logic, no new test file per this repo's own main.tsx-local-helper
+  convention), `eslint` 0 errors, build clean. Deployed and confirmed live: the deployed bundle
+  contains the new label strings, and the production page loads with zero console errors. **Real
+  limitation, stated plainly rather than glossed over**: none of the 4 real quotes currently in
+  production have 2+ sent proposal versions (checked all four directly), so the comparison panel
+  itself -- and therefore this badge -- has no live data to render against yet. Not fixable without
+  creating a real proposal version against real quote data purely for visual testing, which the
+  standing boundaries forbid. The same limitation this repo already documented for the outcome-aware
+  public pages (no real expired/disabled token available either) applies here for the same reason.
 
 **🔲 Still required:**
 1. **Migration 143's canonical test** (`backend/supabase/migration_143_share_link_view_logging_tests.sql`)
    — already sent to E and independently verified clean, but E's own run result has not yet been
-   reported back. Do not resend; just needs E to run it and report the result.
-2. **Migration 144's canonical test** (`backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`)
-   — **sent to E 2026-09-14** (re-verified against real code one more time first: every Queue C2.7
-   requirement re-checked line-by-line against `main.tsx`/`persistence.ts`/the migration file itself,
-   not just re-read from prior handoff prose; full local suite rerun clean -- `tsc -b`, 431/431
-   Vitest, `eslint` 0 errors/72 pre-existing warnings, `npm run build`). E's run result not yet
-   reported back. Do not resend; just needs E to run it and report the result.
-3. **Version-comparison/history UI — DONE, shipped and deployed (`32065e9`, 2026-09-14).** A
-   superseded/disabled/revoked prior version now shows the same status pill in the version-comparison
-   dropdown options and panel that `ShareLinkLifecycleControls` already shows in the version list
-   above it (`shareLinkTokenStatusBadge`, shared between both). `tsc -b` clean, 431/431 Vitest (no
-   regressions -- pure display logic, no new test file per this repo's own main.tsx-local-helper
-   convention), `eslint` 0 errors, build clean. Deployed and confirmed live: the deployed bundle
-   contains the new label strings, and the production page loads with zero console errors. **Real
-   limitation, stated plainly rather than glossed over**: none of the 4 real quotes currently in
-   production have 2+ sent proposal versions (checked all four directly), so the comparison panel
-   itself -- and therefore this badge -- has no live data to render against yet. Not fixable without
-   creating a real proposal version against real quote data purely for visual testing, which the
-   standing boundaries forbid. The same limitation this repo already documented for the outcome-aware
-   public pages (no real expired/disabled token available either) applies here for the same reason.
-4. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
+   reported back. Do not resend; just needs E to run it and report the result. **This is now the
+   only open item in all of Queue C2.**
+2. **Explicitly deferred, not part of Queue C2 at all**: the authorization-table policy closure
    (`app_user_roles`/`app_admins`' own wide-open admin write policies) and the bridge-aware
    `accept_invite()` replacement — grouped under the same "C2.7" label in an earlier planning pass
    but not share-link-specific. A separate, pre-existing body of work; tracked here so it isn't
@@ -83,16 +88,17 @@ one genuinely outstanding action was sending E migration 144's canonical test, d
 ## Next-session launchpad
 
 **Repository checkpoint:** migrations 134, 135, 136, 137 (+141), 138, 139, 140 (+142), 143, and 144
-are all applied in production. Queue C2.6 (internal share-link lifecycle controls), Queue C2.7 part 1
-(Create & Send switched to the server-owned RPCs), and the version-comparison status-badge fix are
-all shipped and deployed (`35bc262`, `05fa486`, `32065e9`; production bundles verified, zero console
-errors). Queue C2.7 was independently re-verified against current source 2026-09-14 (see the note
-above) — fully complete, no code changes needed. Item 3 (version-comparison UI) is also now done and
-deployed, with one stated limitation: no real quote currently has 2+ proposal versions, so the badge
-has no live data to visually confirm against yet (not fixable without mutating real data). **Only
-items 1 and 2 remain open — both are just waiting on E to run an already-sent SQL test and report the
-result; there is no further independent code work available in Queue C2 right now.** The next
-concrete action is whatever E reports back on migration 143's and 144's canonical tests.
+are all applied in production. Queue C2.6 (internal share-link lifecycle controls), Queue C2.7 (both
+parts, including its canonical test), and the version-comparison status-badge fix are all shipped,
+deployed, and where applicable canonically tested (`35bc262`, `05fa486`, `450606b`, `32065e9`;
+production bundles verified, zero console errors; migration 144's test passed `Success. No rows
+returned`, zero sections skipped, 2026-09-14). Queue C2.7 is fully closed. The version-comparison
+badge fix is also done and deployed, with one stated limitation: no real quote currently has 2+
+proposal versions, so the badge has no live data to visually confirm against yet (not fixable without
+mutating real data for testing). **Exactly one item remains open in all of Queue C2 — migration 143's
+canonical test result, purely waiting on E to run an already-sent file and report back. There is no
+independent code work available in Queue C2 right now.** The next concrete action is whatever E
+reports back on migration 143's canonical test.
 Do not rerun 134/135/136/137/141/138/139/140/142/143/144 and do not re-ask D7's settled link rules.
 
 The pricing statement E approved 2026-09-13:
@@ -415,11 +421,12 @@ case.
 
 ### C2.7 — Close direct-write bypasses
 
-**Status: part 1 (frontend switch) DONE AND DEPLOYED; part 2 (migration 144) APPLIED IN PRODUCTION
-(2026-09-14, `Success. No rows returned`) — its canonical test is the next single file to send E.**
-The share-link-specific portion of this task (narrowing `public_share_tokens`/`project_submittals`/
-`sales_quote_proposals`) is done; the authorization-table/`accept_invite()` portion below remains a
-separate, deliberately out-of-scope item — see "Still required" above. After the sanctioned RPCs are live, narrow direct writes to `public_share_tokens`,
+**Status: FULLY CLOSED (2026-09-14).** Part 1 (frontend switch) DONE AND DEPLOYED; part 2
+(migration 144) APPLIED IN PRODUCTION (`Success. No rows returned`) AND its canonical test PASSED
+(`Success. No rows returned`, zero sections skipped). The share-link-specific portion of this task
+(narrowing `public_share_tokens`/`project_submittals`/`sales_quote_proposals`) is fully done and
+proven; the authorization-table/`accept_invite()` portion below remains a separate, deliberately
+out-of-scope item — see "Still required" above. After the sanctioned RPCs are live, narrow direct writes to `public_share_tokens`,
 `sales_quote_proposals`, and `project_submittals`. In the same reviewed sequence, finish the already-
 designed authorization-table policy closure and bridge-aware `accept_invite()` replacement so neither
 legacy nor workspace roles can drift through a raw client write. Keep SELECT changes and Phase 3 data
@@ -445,14 +452,19 @@ security-definer RPC. Confirmed via a full trace of every direct `fetch()` call 
 tables in `src/persistence.ts` that nothing else depended on them. Independently verified end-to-end
 against a real local PostgreSQL 18 engine (PGlite), including a negative control (the same test
 genuinely fails without this migration applied) and the real admin-also-PM condition. E ran it in
-production and it returned `Success. No rows returned`. Do not run migration 144 again; give E only
-its canonical test next, `backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`.
+production and it returned `Success. No rows returned`. **Its canonical test
+(`backend/supabase/migration_144_close_share_link_direct_write_bypasses_tests.sql`) was then run by E
+and also returned `Success. No rows returned`, zero sections skipped (2026-09-14) — Queue C2.7 is
+fully closed. Do not run migration 144 or its test again.** One benign mix-up along the way: E first
+re-ran the migration file itself by mistake (name/location easily confused with its test file) and
+hit a harmless duplicate-`CREATE POLICY` error inside a single transaction — nothing committed or
+changed; the real test file was resent and passed on the next attempt.
 The authorization-table policy closure and bridge-aware `accept_invite()` replacement this task
 description also names are **not**
 part of migration 144 — they are a separate, pre-existing body of work grouped under the same
 "C2.7" label in an earlier planning pass but not share-link-specific; tracked separately, not
-silently dropped. Also not yet done: consuming migration 139's `outcome` column in the
-version-comparison/history UI for a superseded prior version's own distinct state.
+silently dropped. The version-comparison/history UI item (consuming migration 139's lifecycle state
+for a superseded prior version) is also now done — see the entry above in "Completed and verified."
 
 ### C2.8 — Delivery and continuation
 
@@ -1312,10 +1324,11 @@ item remains.
 Read this file, then the top current-status entries in `HANDOFF.md`, then
 `PRODUCT_MASTER_COMPLETION_PLAN.md`. For a long unattended run, use
 `OVERNIGHT_CODER_PLAN_2026-09-13.md`; otherwise verify Git and check the "Still required" list near
-the top of this file (C2.1–C2.7 are otherwise completed records now — migrations 137–144 all applied
-in production, the internal lifecycle controls UI and the Create & Send RPC switch are shipped and
-deployed; do not redo any of it). Send E migration 144's canonical test next (item 2 in "Still
-required"), then pick up the version-comparison UI item independently of that result. Treat A1–A15,
-B1–B10, and C1 as completed records rather than a queue to repeat.
+the top of this file (C2.1–C2.7 are completed records now — migrations 137–144 all applied in
+production and canonically tested, the internal lifecycle controls UI, the Create & Send RPC switch,
+and the version-comparison status badge are all shipped and deployed; do not redo any of it). Exactly
+one item remains open in Queue C2: migration 143's canonical test result — it was already sent to E;
+there is nothing to draft or send, only wait for and record E's report. Treat A1–A15, B1–B10, C1, and
+C2.1–C2.7 as completed records rather than a queue to repeat.
 Continue until every independent C2 item is implemented or left at its required single-file manual
 database gate.
