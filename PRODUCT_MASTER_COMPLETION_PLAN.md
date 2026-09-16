@@ -186,17 +186,27 @@ see §4 Queue R2). — *Deployed, Production verified (`npm audit` output).*
 **Also shipped 2026-09-15** (`8b4a6b6`): Product Catalog's Bundle components field now carries a
 "reference only, doesn't auto-populate a BOM" disclaimer — copy-only, per D5's interim direction.
 
-**Accessibility remediation — Queue R1 item 3, four of five items** (`f930f39`, `6b42ca1`): A5 (the
-three hardcoded "muted" text colors that failed WCAG AA against both page backgrounds — most-used one
-was ~2.8:1 — replaced with darker same-hue-family shades, each verified by computing sRGB relative
-luminance against both backgrounds, ≥4.5:1 margin); A6 (the four icon-only delete buttons relying on
-`title` alone now also carry `aria-label`); A7 (`.icon-button`/`.compact-remove`/checkboxes reach
-44px/22-24px under a 760px mobile media query, desktop untouched); A4 (nine filter/search `<input>`s
-across Inventory, Purchasing, Purchasing Reports, and Product Catalog now carry a real `aria-label`
-instead of relying on `placeholder` alone). **A3 (aria-live announcements on form-submission errors)
-is the one item from this batch NOT yet done** — see §7 Queue R1 item 3 for what's left. — *Implemented
-locally, Tests passed (`tsc -b`/445 vitest/eslint 0 errors/build all clean), Deployed. No migration
-involved; production verification is a visual/screen-reader check, not yet performed.*
+**Accessibility remediation — Queue R1 item 3, ALL FIVE ITEMS DONE (2026-09-16)** (`f930f39`,
+`6b42ca1`, plus A3's own commit): A5 (the three hardcoded "muted" text colors that failed WCAG AA
+against both page backgrounds — most-used one was ~2.8:1 — replaced with darker same-hue-family
+shades, each verified by computing sRGB relative luminance against both backgrounds, ≥4.5:1 margin);
+A6 (the four icon-only delete buttons relying on `title` alone now also carry `aria-label`); A7
+(`.icon-button`/`.compact-remove`/checkboxes reach 44px/22-24px under a 760px mobile media query,
+desktop untouched); A4 (nine filter/search `<input>`s across Inventory, Purchasing, Purchasing
+Reports, and Product Catalog now carry a real `aria-label` instead of relying on `placeholder` alone);
+**A3** — every genuine inline form-submission error in the app (all 9 sites using the `.error-text`/
+`.modal-error-text` classes, including both public unauthenticated pages — Proposal and Submittal
+response forms — the Task Editor, and this session's own D16 Q&A question-submit error) now carries
+`role="alert"`, so a screen reader announces it without the user needing to find and re-read the
+field. **Deliberately scoped**: this covers every error display using those two named CSS classes
+(the audit's own concrete, class-identified finding) — it does not attempt every generic
+status-message `<div>` sitewide that sometimes shows an error and sometimes a success string (e.g.
+`discountApprovalReviewStatus`, `systemHealthEventsStatus`), since retrofitting `role="alert"` onto a
+dual-purpose status string needs case-by-case judgment about what should and shouldn't interrupt a
+screen reader, not a mechanical class-based sweep — flagged as a separate, later, non-mechanical
+follow-up if wanted, not silently done. — *Implemented locally, Tests passed (`tsc -b`/445
+vitest/eslint 0 errors/build all clean), Deployed. Production verification is a screen-reader check,
+not yet performed.*
 
 **System Health Phase B, steps 1-4 — FULLY CONFIRMED (2026-09-16)** (`9a90903`,
 `PRODUCT_SYSTEM_HEALTH_PLAN.md`): migration 151 (`system_health_events` + monthly summary table, the
@@ -258,8 +268,8 @@ against §3 before starting, since this plan is only as trustworthy as its last 
    step 5's alert wiring (documented fallback in the design doc's §9: "email to every workspace
    admin" if D8 isn't otherwise answered — implement using that default, flagged as a default, not a
    confirmed decision).
-2. **Inventory pagination** (`PRODUCT_INVENTORY_PAGINATION_DESIGN.md` — D10's direction is already
-   recorded as non-blocking,
+2. **Inventory pagination — NOT YET STARTED, this is the exact next task.**
+   (`PRODUCT_INVENTORY_PAGINATION_DESIGN.md` — D10's direction is already recorded as non-blocking,
    unlike D9). A new, separate, server-side-searched, cursor-paginated `loadInventoryItemsPage` query
    used *only* by the Inventory page's own table and (optionally) the Reports page's filter — does
    **not** touch `loadInventoryItems`/`inventoryItems`, which stays exactly as-is for its other 100+
@@ -267,12 +277,9 @@ against §3 before starting, since this plan is only as trustworthy as its last 
    outside the current page gets fetched by `ref` and pinned) per the design's §3. No migration
    needed — pure frontend, existing table.
 3. **Accessibility remediation, mechanical and decision-free** (`PRODUCT_ACCESSIBILITY_MOBILE_PERF_AUDIT.md`
-   Part A) — **four of five DONE (2026-09-15, `f930f39`, `6b42ca1`), see §3**:
-   - A3 — **NOT YET DONE, this is the exact next task.** Add `role="alert"`/`aria-live="polite"` to
-     every inline form-submission error, starting with the two public, unauthenticated pages
-     (Proposal/Submittal response forms) where there's no colleague to ask "did that work?", then the
-     rest sitewide. Whole-file search for `role="alert"`/`aria-live` still returns zero matches as of
-     this reconciliation.
+   Part A) — **ALL FIVE ITEMS DONE (2026-09-16), see §3.** A3's remaining scope (generic dual-purpose
+   status-message `<div>`s that sometimes show an error, not the class-identified `.error-text`/
+   `.modal-error-text` sites) is a separate, later, non-mechanical follow-up — not part of this item.
    - A4 — DONE. A5 — DONE. A6 — DONE. A7 — DONE. (See §3 for exact commits/detail.)
 4. **Regression coverage** — as each of the above ships, add its own test coverage in the same pass
    (matching this repo's standing convention — no item above should land without a test; System

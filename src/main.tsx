@@ -11889,7 +11889,7 @@ function Inventory({
               ) : (
                 <>
                   <label>Project<select value={transferDraft.projectName} onChange={(event) => { setTransferDraft((current) => ({ ...current, projectName: event.target.value })); setTransferError(""); }}>{projectSites.map((project) => <option key={project.name} value={project.name}>{project.ref} - {project.name}</option>)}</select></label>
-                  {transferError && <div className="modal-error-text">{transferError}</div>}
+                  {transferError && <div className="modal-error-text" role="alert">{transferError}</div>}
                   <label>Quantity<input type="number" min="1" max={availableOf(adjustItem)} value={transferDraft.qty} onChange={(event) => setTransferDraft((current) => ({ ...current, qty: Number(event.target.value) }))} /></label>
                   <label className="span-2">Notes<textarea value={transferDraft.notes} onChange={(event) => setTransferDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Install phase, location, reason, or approval note." /></label>
                 </>
@@ -12314,7 +12314,7 @@ function ShareLinkLifecycleControls({
           {showActivity ? "Hide activity" : "View activity"}
         </button>
       </div>
-      {error && <small className="error-text">{error}</small>}
+      {error && <small className="error-text" role="alert">{error}</small>}
       {showActivity && (
         <div className="share-link-activity">
           {loadingActivity || !activity ? (
@@ -21588,7 +21588,7 @@ function CameraCaptureModal({
                 <button className="secondary-action mini-action" type="button" onClick={() => discardPhoto(photo.id)}>Discard</button>
               </div>
             ))}
-            {saveError && <small className="error-text">{saveError}</small>}
+            {saveError && <small className="error-text" role="alert">{saveError}</small>}
             <div className="modal-actions">
               <button className="secondary-action" type="button" onClick={() => setPhase("camera")}>Take more</button>
               <button className="primary-action" type="button" disabled={photos.length === 0 || isSaving} onClick={saveAll}>
@@ -21944,7 +21944,7 @@ function LocationFilesModal({
           <FileText size={15} />
           <span>Files stay separate from Photos. Every upload is stamped with date, time, and uploader.</span>
         </div>
-        {uploadError && <small className="error-text">{uploadError}</small>}
+        {uploadError && <small className="error-text" role="alert">{uploadError}</small>}
         <ul className="line-list location-file-list">
           {files.map((file) => (
             <li
@@ -25842,7 +25842,7 @@ function TaskEditorModal({
               </div>
             </div>
           )}
-          {submitError && <div className="modal-error-text">{submitError}</div>}
+          {submitError && <div className="modal-error-text" role="alert">{submitError}</div>}
           <div className="modal-actions">
             {editingId && (
               <div className="task-modal-footer-left">
@@ -26867,7 +26867,7 @@ function SubmittalPublicPage({ token }: { token: string }) {
           <h2>Your Response</h2>
           <label>Your name<input value={approverName} onChange={(event) => setApproverName(event.target.value)} /></label>
           <label>Notes (optional)<textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
-          {submitError && <small className="error-text">{submitError}</small>}
+          {submitError && <small className="error-text" role="alert">{submitError}</small>}
           <div className="submittal-response-actions">
             <button type="button" className="primary-action" disabled={submitting} onClick={() => respond("approved")}>Approve</button>
             <button type="button" className="secondary-action" disabled={submitting} onClick={() => respond("revision_requested")}>Request Revision</button>
@@ -27249,7 +27249,7 @@ function ProposalPublicPage({ token }: { token: string }) {
           ) : (
             <>
               <label>Your question<textarea value={questionText} onChange={(event) => setQuestionText(event.target.value)} rows={2} /></label>
-              {questionSubmitError && <small className="error-text">{questionSubmitError}</small>}
+              {questionSubmitError && <small className="error-text" role="alert">{questionSubmitError}</small>}
               <button type="button" className="secondary-action" disabled={askingQuestion} onClick={askQuestion}>
                 {askingQuestion ? "Sending..." : "Send question"}
               </button>
@@ -27263,7 +27263,7 @@ function ProposalPublicPage({ token }: { token: string }) {
           <h2>Your Response</h2>
           <label>Your name<input value={approverName} onChange={(event) => setApproverName(event.target.value)} /></label>
           <label>Notes (optional)<textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
-          {submitError && <small className="error-text">{submitError}</small>}
+          {submitError && <small className="error-text" role="alert">{submitError}</small>}
           <div className="submittal-response-actions">
             <button type="button" className="primary-action" disabled={submitting} onClick={() => respond("approved")}>Approve</button>
             <button type="button" className="secondary-action" disabled={submitting} onClick={() => respond("revision_requested")}>Request Revision</button>
@@ -27393,7 +27393,7 @@ function InviteLandingPage({ token }: { token: string }) {
         <label>Email<input value={invite.email} disabled /></label>
         <label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
         <label>Confirm password<input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
-        {formError && <small className="error-text">{formError}</small>}
+        {formError && <small className="error-text" role="alert">{formError}</small>}
         <div className="submittal-response-actions">
           <button type="button" className="primary-action" disabled={phase === "submitting" || !password || !confirmPassword} onClick={handleAcceptWithPassword}>
             {phase === "submitting" ? "Creating account..." : "Create account & accept invite"}
