@@ -186,20 +186,44 @@ see §4 Queue R2). — *Deployed, Production verified (`npm audit` output).*
 **Also shipped 2026-09-15** (`8b4a6b6`): Product Catalog's Bundle components field now carries a
 "reference only, doesn't auto-populate a BOM" disclaimer — copy-only, per D5's interim direction.
 
+**Accessibility remediation — Queue R1 item 3, four of five items** (`f930f39`, `6b42ca1`): A5 (the
+three hardcoded "muted" text colors that failed WCAG AA against both page backgrounds — most-used one
+was ~2.8:1 — replaced with darker same-hue-family shades, each verified by computing sRGB relative
+luminance against both backgrounds, ≥4.5:1 margin); A6 (the four icon-only delete buttons relying on
+`title` alone now also carry `aria-label`); A7 (`.icon-button`/`.compact-remove`/checkboxes reach
+44px/22-24px under a 760px mobile media query, desktop untouched); A4 (nine filter/search `<input>`s
+across Inventory, Purchasing, Purchasing Reports, and Product Catalog now carry a real `aria-label`
+instead of relying on `placeholder` alone). **A3 (aria-live announcements on form-submission errors)
+is the one item from this batch NOT yet done** — see §7 Queue R1 item 3 for what's left. — *Implemented
+locally, Tests passed (`tsc -b`/445 vitest/eslint 0 errors/build all clean), Deployed. No migration
+involved; production verification is a visual/screen-reader check, not yet performed.*
+
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-**Nothing is currently in this state.** The last two batches that passed through this stage (D16,
-D17) are both fully closed as of §3. If a coder picks up Queue R1 below and drafts a migration, it
-lands here until E applies it (§5) — update this section then, don't leave a drafted-but-unrun
-migration undocumented.
+**Migration 151 — System Health Phase B, steps 1-4** (`9a90903`, `PRODUCT_SYSTEM_HEALTH_PLAN.md`):
+`system_health_events` + monthly summary table, the dedup-upsert `record_system_health_event` RPC
+(never throws to its caller), admin-only acknowledge/resolve RPCs, and a service-role-only retention
+rollup function. One call site wired (`restoreFullBackupSnapshot`'s per-section failure path — the
+design doc's own first-ranked one); the admin panel, retention cron
+(`api/cron/system-health-retention.js`, weekly), and `vercel.json` entry are all live in the deployed
+frontend already, degrading safely ("couldn't refresh," never a false "no active issues") since the
+table doesn't exist in production yet. — *Implemented locally, Tests passed (migration_151's own
+canonical test drafted but NOT YET RUN against production — it requires the migration to be live
+first), Deployed (frontend code only). **Migration NOT YET APPLIED** — this is the one item in §5
+below.* The other three named `recordSystemHealthEvent` call sites (notification-delivery write
+failures, cron failures, rate-limit hits) and alert wiring (step 5, D8) are queued next, not built —
+see §7 Queue R1 item 1's remainder.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-Nothing is currently queued. **The first item that will land here** is System Health Phase B's
-migration (Queue R1 below) once it is drafted and locally verified — a coder resuming this plan
-should draft it, run it through the checklist in `CONTINUOUS_CODER_HANDOFF.md` §3 ("For every
-database checkpoint, present E exactly one clickable file and one plain instruction"), and add it
-here as item 1 before doing anything else that depends on it being live.
+**Item 1 (current, only item queued): apply migration 151.**
+- File: `backend/supabase/migrations/151_system_health_phase_b.sql`
+- Then run its canonical test: `backend/supabase/migration_151_system_health_phase_b_tests.sql` — it
+  is transaction-safe (`begin;`/`rollback;`, nothing commits) and ends in exactly one of two ways: a
+  notice reading "ALL MIGRATION 151 SYSTEM HEALTH PHASE B TESTS PASSED -- ZERO SECTIONS SKIPPED", or a
+  hard SQL error naming what failed or was skipped.
+- Once confirmed passing, update §3/§4 above and this section (clear it back to "nothing queued")
+  before starting the next Queue R1 item.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
@@ -226,39 +250,35 @@ Ordered by dependency and risk, smallest-safe-step first. Skip any row already s
 against §3 before starting, since this plan is only as trustworthy as its last reconciliation (see
 §9's own lesson from this pass).
 
-1. **System Health Phase B — steps 1-4** (`PRODUCT_SYSTEM_HEALTH_PLAN.md`, fully implementation-
-   ready). `system_health_events` table + dedup upsert RPC + admin acknowledge/resolve RPCs (draft
-   as a migration, confirm the next free number, do not apply — that's the manual-action queue's
-   first item); `recordSystemHealthEvent` call sites at the already-ranked list (restore per-section
-   failures, notification-delivery write failures, cron failures, rate-limit hits); an Admin →
-   System Health panel with the existing "last known good on load failure" degradation pattern;
-   the 90-day-retention cron. **Step 5 (alert wiring) has a documented fallback** (§9 of the design
-   doc: "email to every workspace admin" if D8 isn't otherwise answered) — implement it using that
-   default, flagged clearly as a default, not a confirmed decision, easy for E to override later.
-2. **Inventory pagination** (`PRODUCT_INVENTORY_PAGINATION_DESIGN.md` — D10's direction is already
-   recorded as non-blocking, unlike D9). A new, separate, server-side-searched, cursor-paginated
-   `loadInventoryItemsPage` query used *only* by the Inventory page's own table and (optionally) the
-   Reports page's filter — does **not** touch `loadInventoryItems`/`inventoryItems`, which stays
-   exactly as-is for its other 100+ consumers (lookups, dropdowns, global search, aggregates). Selected-
-   item hydration (a row selected outside the current page gets fetched by `ref` and pinned) per the
-   design's §3.
+1. **System Health Phase B — steps 1-4 — PARTIALLY DONE (2026-09-15, `9a90903`).** Migration 151
+   drafted (table, dedup RPC, admin lifecycle RPCs, retention rollup — see §4/§5, awaiting E's
+   apply). Frontend deployed: the Admin panel, one `recordSystemHealthEvent` call site
+   (`restoreFullBackupSnapshot`'s per-section failures — the design doc's own first-ranked one), and
+   the weekly retention cron. **Still to do, once migration 151 is applied and confirmed**: the other
+   three named call sites (notification-delivery write failures, cron failures, rate-limit hits) and
+   step 5's alert wiring (documented fallback in the design doc's §9: "email to every workspace
+   admin" if D8 isn't otherwise answered — implement using that default, flagged as a default, not a
+   confirmed decision).
+2. **Inventory pagination — NOT YET STARTED, this is the exact next task.**
+   (`PRODUCT_INVENTORY_PAGINATION_DESIGN.md` — D10's direction is already recorded as non-blocking,
+   unlike D9). A new, separate, server-side-searched, cursor-paginated `loadInventoryItemsPage` query
+   used *only* by the Inventory page's own table and (optionally) the Reports page's filter — does
+   **not** touch `loadInventoryItems`/`inventoryItems`, which stays exactly as-is for its other 100+
+   consumers (lookups, dropdowns, global search, aggregates). Selected-item hydration (a row selected
+   outside the current page gets fetched by `ref` and pinned) per the design's §3. No migration
+   needed — pure frontend, existing table.
 3. **Accessibility remediation, mechanical and decision-free** (`PRODUCT_ACCESSIBILITY_MOBILE_PERF_AUDIT.md`
-   Part A, items not yet closed):
-   - A3: add `role="alert"`/`aria-live="polite"` to every inline form-submission error, starting
-     with the two public, unauthenticated pages (Proposal/Submittal response forms) where there's no
-     colleague to ask "did that work?", then the rest sitewide.
-   - A4: give every filter/search `<input>` a real accessible name (`aria-label`, matching Client
-     Ledger's already-correct pattern) instead of relying on `placeholder` alone.
-   - A5: recompute and replace the family of hardcoded "muted" text hex colors that fail WCAG AA
-     against the actual page background, keeping the same hue family, not a redesign.
-   - A6: normalize the handful of icon-only buttons relying on `title` alone to `aria-label`, for
-     consistency with the other 24+ correctly-labeled instances.
-   - A7: raise `.icon-button`/`.compact-remove`/checkbox tap targets toward the 44px guidance on
-     mobile widths via a media query, without changing desktop sizing.
+   Part A) — **four of five DONE (2026-09-15, `f930f39`, `6b42ca1`), see §3**:
+   - A3 — **NOT YET DONE.** Add `role="alert"`/`aria-live="polite"` to every inline form-submission
+     error, starting with the two public, unauthenticated pages (Proposal/Submittal response forms)
+     where there's no colleague to ask "did that work?", then the rest sitewide. Whole-file search for
+     `role="alert"`/`aria-live` still returns zero matches as of this reconciliation.
+   - A4 — DONE. A5 — DONE. A6 — DONE. A7 — DONE. (See §3 for exact commits/detail.)
 4. **Regression coverage** — as each of the above ships, add its own test coverage in the same pass
-   (matching this repo's standing convention — no item above should land without a test), plus a
-   quick audit for any of Queue A8's six flows (`PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md`) that
-   have drifted since it was last written.
+   (matching this repo's standing convention — no item above should land without a test; System
+   Health Phase B's own canonical SQL test is drafted but not yet run — see §4/§5), plus a quick audit
+   for any of Queue A8's six flows (`PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md`) that have drifted
+   since it was last written.
 
 ## 8. Queue R2 — designed, decision-gated; implement once E answers, not before
 

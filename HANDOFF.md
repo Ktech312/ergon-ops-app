@@ -59,6 +59,39 @@ generation/download (D18) and e-signature scope/legal-record/signer-identity/com
 revised). Nothing implemented -- recommended defaults only, awaiting approval. Reconciles/replaces D12's
 old one-line placeholder in `CONTINUOUS_CODER_HANDOFF.md` §8; D18 is a new row there.
 
+**Master plan reconciled + Queue R1 items 1 and 3 (System Health Phase B, accessibility) delivered,
+same session, later same day (2026-09-15).** `PRODUCT_MASTER_COMPLETION_PLAN.md` is now the
+authoritative, current roadmap (full rewrite from §3 onward against confirmed production state — the
+prior version stopped at migration 145 and had no D3/D4/D16/D17 rows at all; also fixed D3/D4's own
+stale decision-register rows in `CONTINUOUS_CODER_HANDOFF.md` §8, which had never been updated past
+their original open-question framing). Then, per instruction, moved directly into the plan's own
+Queue R1 (safe autonomous work) without stopping to ask again:
+- **System Health Phase B, steps 1-4 — PARTIALLY DONE (`9a90903`).** Migration 151 drafted
+  (`system_health_events` + monthly summary + `record_system_health_event` dedup-upsert RPC, never
+  throws to its caller + admin acknowledge/resolve RPCs + a service-role-only retention rollup).
+  **NOT YET APPLIED — the one queued manual action, see `PRODUCT_MASTER_COMPLETION_PLAN.md` §5.**
+  Frontend (Admin -> System Health -- Events panel, weekly retention cron
+  `api/cron/system-health-retention.js`, one `recordSystemHealthEvent` call site wired to
+  `restoreFullBackupSnapshot`'s per-section failures) is deployed and degrades safely without the
+  migration live -- never claims "no active issues" on a load failure, per the design doc's own §10
+  rule; existing `task5-restore-write-verification.test.ts` assertions updated for the new second
+  fetch call this introduces. Deliberately NOT done: the other three named call sites and step 5's
+  alert wiring (D8) -- queued next, see the master plan.
+- **Accessibility -- four of five items DONE (`f930f39`, `6b42ca1`).** A5 (WCAG AA contrast: three
+  "muted" text colors, one used at 19+ sites, computed and replaced against BOTH page backgrounds, not
+  just one); A6 (four icon-only delete buttons normalized from `title`-only to also carry
+  `aria-label`); A7 (`.icon-button`/`.compact-remove`/checkboxes reach 44px/22-24px under a 760px
+  mobile media query, desktop untouched); A4 (nine filter/search inputs across Inventory/Purchasing/
+  Catalog given a real `aria-label` instead of relying on `placeholder` alone). **A3 (aria-live
+  announcements on form-submission errors) is NOT done -- this is the exact next task once migration
+  151 is applied**, per `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 Queue R1 item 3.
+- Every change this pass: `tsc -b` clean, 445/445 Vitest (11 new tests), `eslint` 0 errors (74
+  pre-existing warnings unchanged), production build clean, each pushed separately and deployed.
+  **Not live-verified in the browser** -- this session's own dev-server preview pointed at a different
+  project (VLTD, the default working directory), and the Ergon Ops app's admin/authenticated surfaces
+  weren't reachable to click through; deterministic checks (contrast math, grant tests, tsc/vitest)
+  stand in for that this pass.
+
 Billing (D15) and Phase 3 RLS (D11) remain untouched and unstarted, as instructed. See "Current database
 gate" below for Queue C2's own full history, including migration 140's real bug (ambiguous `token`
 reference) and migration 142's real-default-grant follow-up.

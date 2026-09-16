@@ -192,6 +192,27 @@ check), migration 148 itself never touched. Frontend (BOM line editor checkbox,
 `2fc3a6e`. Do not re-litigate D16/D17 (table at "D16"/"D17" further below), do not re-derive this
 design from scratch, and do not rerun migrations 148/149/150 or their tests.
 
+**2026-09-15, later same day: master-plan reconciliation + PDF/e-signature decision doc + System
+Health Phase B + accessibility (Queue R1 items 1 and 3). See HANDOFF.md for the full session summary
+— this is the short pointer, and `PRODUCT_MASTER_COMPLETION_PLAN.md` is now the authoritative,
+current roadmap (read it first, not this file's own historical batch list below, for current
+status).** Delivered, in order: (1) `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` — traced and designed
+both frozen-PDF (D18, new) and e-signature hardening (D12, revised); **neither implemented**, both
+awaiting E's approval. (2) A full rewrite of `PRODUCT_MASTER_COMPLETION_PLAN.md` reconciled against
+confirmed production state (also fixed D3/D4's own stale register rows here in this file — they'd
+never been updated past their original open-question framing despite shipping the same day). (3)
+**System Health Phase B, steps 1-4, PARTIALLY DONE** (`9a90903`) — migration 151 drafted
+(`system_health_events` + monthly summary + dedup RPC + admin lifecycle RPCs + retention rollup),
+**NOT YET APPLIED — this is the one queued manual action, see `PRODUCT_MASTER_COMPLETION_PLAN.md`
+§5**; frontend (Admin panel, one `recordSystemHealthEvent` call site wired to
+`restoreFullBackupSnapshot`'s per-section failures, weekly retention cron) is deployed and degrades
+safely without the migration live. (4) Accessibility — four of five items DONE (`f930f39`, `6b42ca1`):
+A4 (filter/search input labels), A5 (WCAG AA contrast fix, computed against both page backgrounds),
+A6 (icon-button `aria-label` normalization), A7 (mobile tap-target sizing). **A3 (aria-live on
+form-submission errors) is NOT done — exact next task after migration 151 is applied**, per
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §7 Queue R1. Do not rerun/re-derive any of the above; do not
+re-litigate D12/D18 (open, awaiting E) or D3/D4 (already fixed, see this file's own D-register below).
+
 The pricing statement E approved 2026-09-13:
 
 > Approve recommended pricing: catalog price starts each line; Sales may override with an audit
@@ -640,6 +661,14 @@ Local checks, Vercel deployment, authenticated verification, and E's real-world 
 separate evidence. Do not call one a substitute for another.
 
 ## 4. Current production baseline
+
+**As of end of session 2026-09-15: `PRODUCT_MASTER_COMPLETION_PLAN.md` §3 is now the authoritative,
+current "completed and live" list (migration range 115-150, D3/D4/D16/D17, Queue C2, Sales pricing,
+accessibility batch) — prefer it over re-deriving status from the bullets below, which stop at
+migration 145/the 2026-09-12/13 session and were not individually rewritten in this pass. One
+correction to note here specifically: migration 151 (System Health Phase B) is drafted and its
+frontend deployed, but **NOT YET APPLIED** — see `PRODUCT_MASTER_COMPLETION_PLAN.md` §4/§5 for the
+queued manual action.**
 
 The next coder should verify this baseline before editing rather than redoing completed work:
 
