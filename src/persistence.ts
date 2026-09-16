@@ -13297,18 +13297,22 @@ export async function respondToPublicQuoteProposal(
   if (!isRemotePersistenceConfigured() || !token) {
     return failed;
   }
+  // D12 revised (migration 153): routed through a server API route,
+  // not the anon RPC directly -- the route captures the real client IP
+  // server-side (Vercel's own x-forwarded-for header), which a browser
+  // calling the RPC directly has no reliable way to do. The RPC's own
+  // anon grant is revoked; this is now the only working path.
   let response: Response;
   try {
-    response = await fetch(supabaseUrl("rpc/respond_to_quote_proposal"), {
+    response = await fetch("/api/respond-to-proposal", {
       method: "POST",
-      headers: supabaseHeaders(),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        share_token: token,
-        new_status: newStatus,
-        approver_name: approverName || "Unknown",
-        approver_ip: "",
+        shareToken: token,
+        newStatus,
+        approverName: approverName || "Unknown",
         notes: notes || "",
-        p_selected_optional_line_ids: selectedOptionalLineIds,
+        selectedOptionalLineIds,
       }),
     });
   } catch {

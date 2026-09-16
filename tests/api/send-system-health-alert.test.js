@@ -104,7 +104,6 @@ describe("send-system-health-alert", () => {
     );
     for (let i = 0; i < 10; i += 1) {
       const res = createMockRes();
-      // eslint-disable-next-line no-await-in-loop
       await handler(createMockReq({ body: { kind: "alert", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
       expect(res.statusCode).toBe(200);
     }

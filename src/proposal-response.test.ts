@@ -212,4 +212,24 @@ describe("respondToPublicQuoteProposal", () => {
     const result = await respondToPublicQuoteProposal("token", "approved", "Someone", "");
     expect(result.outcome).toBe("error");
   });
+
+  // D12 revised (migration 153, 2026-09-16): routed through the new
+  // server route, not the anon RPC directly -- the route (not the
+  // browser) is responsible for capturing the real client IP, so the
+  // browser must never send its own approver_ip value (it never had a
+  // real one to send anyway).
+  it("posts to /api/respond-to-proposal, not the RPC directly, and never sends an approver_ip field", async () => {
+    const fetchMock = mockFetchOnce(200, [
+      { outcome: "success", status: "approved", responded_at: "2026-09-16T12:00:00Z", approval_name: "Jane Customer", version: 1 },
+    ]);
+    globalThis.fetch = fetchMock;
+    await respondToPublicQuoteProposal("token", "approved", "Jane Customer", "");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("/api/respond-to-proposal");
+    const body = JSON.parse((options as { body: string }).body);
+    expect(body).not.toHaveProperty("approver_ip");
+    expect(body.shareToken).toBe("token");
+    expect(body.newStatus).toBe("approved");
+  });
 });
