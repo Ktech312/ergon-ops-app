@@ -6562,9 +6562,28 @@ td.empty-compact-state {
 }
 
 /* Print/Save as PDF affordance -- the agreed v1 stand-in for real PDF
-   generation (no PDF-writing library exists in this app). Hides chrome
-   that only makes sense on-screen and lets the proposal content flow as a
-   normal printed document. */
+   generation (no PDF-writing library exists in this app; D18, approved
+   2026-09-16, keeps it that way for v1). Hides chrome that only makes
+   sense on-screen and lets the proposal content flow as a normal
+   printed document.
+   Traced against real gaps (2026-09-16), not guessed:
+   - .stack-table-mobile's own mobile rule is `@media (max-width: 760px)`
+     with no `screen` qualifier, so it applies to EVERY media type,
+     including print -- a browser's print layout can render at or under
+     that width (print preview panes, some page sizes), which would
+     silently switch the BOM table to the header-hidden, stacked-card
+     mobile layout on a printed page instead of a normal table. Forced
+     back to a real table here regardless of width.
+   - Status-colored surfaces (approval/rejection banners, status pills)
+     lose their background color under print in most browsers by
+     default, unless the browser is explicitly told to keep it --
+     -webkit-print-color-adjust/print-color-adjust: exact fixes this.
+   - The optional-BOM-line "Include" column is a live, interactive
+     checkbox -- meaningless on a printed/PDF'd page, since there's no
+     interactivity left once it's on paper. Replaced with the plain
+     included/excluded text that already exists for a required line, so
+     the printed copy still shows the client's actual selection without
+     showing something that looks clickable but isn't. */
 @media print {
   .proposal-no-print,
   .proposal-print-actions {
@@ -6581,6 +6600,65 @@ td.empty-compact-state {
     box-shadow: none;
     page-break-inside: avoid;
   }
+
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* .stack-table-mobile's own mobile rule (styles.css ~line 7270) is
+     `@media (max-width: 760px)` with no `screen` qualifier -- applies to
+     print too, so any table using it (both the Proposal and Submittal
+     public pages' own BOM tables share this exact class) is at risk of
+     silently rendering as the header-hidden, stacked-card mobile layout
+     on a printed page instead of a normal table. Forced back to a real
+     table here, for every table using the class, regardless of width. */
+  .stack-table-mobile thead {
+    display: table-header-group !important;
+  }
+
+  .stack-table-mobile,
+  .stack-table-mobile tbody {
+    display: table !important;
+    width: 100% !important;
+  }
+
+  .stack-table-mobile tr {
+    background: none !important;
+    border: none !important;
+    display: table-row !important;
+    margin-bottom: 0 !important;
+    padding: 0 !important;
+    page-break-inside: avoid;
+  }
+
+  .stack-table-mobile td {
+    border-bottom: 1px solid #e8e1d5 !important;
+    display: table-cell !important;
+    padding: 6px 8px !important;
+    width: auto !important;
+  }
+
+  .stack-table-mobile td::before {
+    display: none;
+  }
+
+  .proposal-bom-table input[type="checkbox"] {
+    display: none;
+  }
+
+  .proposal-bom-print-include {
+    display: inline !important;
+  }
+}
+
+/* Screen-only text alternative to the "Include" column's interactive
+   checkbox -- rendered alongside it, print CSS above flips which one is
+   visible. Kept out of the normal document flow on screen (no visual
+   change there), but present in the DOM so print has real text content
+   to show instead of a checkbox graphic that isn't clickable on paper. */
+.proposal-bom-print-include {
+  display: none;
 }
 
 /* Phase 6 addendum: Gantt ------------------------------------------------- */

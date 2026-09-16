@@ -27303,19 +27303,26 @@ function ProposalPublicPage({ token }: { token: string }) {
                   {phase === "ready" && (
                     <td data-label="Include">
                       {isSelectable ? (
-                        <input
-                          type="checkbox"
-                          aria-label={`Include ${line.item}`}
-                          checked={isIncluded}
-                          onChange={(event) => {
-                            const lineId = line.id as string;
-                            setSelectedOptionalLineIds((current) => {
-                              const next = new Set(current);
-                              if (event.target.checked) next.add(lineId); else next.delete(lineId);
-                              return next;
-                            });
-                          }}
-                        />
+                        <>
+                          <input
+                            type="checkbox"
+                            aria-label={`Include ${line.item}`}
+                            checked={isIncluded}
+                            onChange={(event) => {
+                              const lineId = line.id as string;
+                              setSelectedOptionalLineIds((current) => {
+                                const next = new Set(current);
+                                if (event.target.checked) next.add(lineId); else next.delete(lineId);
+                                return next;
+                              });
+                            }}
+                          />
+                          {/* Print-only text alternative -- a checkbox
+                              graphic isn't actionable on a printed page;
+                              see the .proposal-bom-print-include print
+                              rule in styles.css. */}
+                          <span className="proposal-bom-print-include">{isIncluded ? "Included" : "Not included"}</span>
+                        </>
                       ) : (
                         !line.isOptional && <span className="muted">Required</span>
                       )}
