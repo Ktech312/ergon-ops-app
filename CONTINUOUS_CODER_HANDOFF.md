@@ -212,9 +212,17 @@ again** — see `PRODUCT_MASTER_COMPLETION_PLAN.md` §5. (4) **Accessibility —
 computed against both page backgrounds), A6 (icon-button `aria-label` normalization), A7 (mobile
 tap-target sizing), A3 (`role="alert"` on all 9 `.error-text`/`.modal-error-text` sites, including
 both public pages — deliberately does not cover generic dual-purpose status strings, flagged as a
-separate later follow-up, not silently skipped). **Queue R1 item 3 is fully closed. Exact next task:
-Queue R1 item 2, Inventory pagination** — no migration needed, pure frontend, design already
-non-blocking (D10). Do not rerun/re-derive any of the above; do not re-litigate D12/D18 (open,
+separate later follow-up, not silently skipped). **Queue R1 item 3 is fully closed.** (5) **Inventory
+pagination — Queue R1 item 2, DONE (`1e6eb7a`).** `loadInventoryItemsPage` (persistence.ts) is a
+second, independent, server-side-searched, cursor-paginated query wired ONLY into the Inventory
+page's own desktop table + mobile card list (50-item pages, "Load more," 300ms debounce);
+`loadInventoryItems`/`inventoryItems`/`filteredInventoryItems` (CSV export, counts, the 100+ other
+consumers) are completely untouched. The derived "status" filter is applied client-side per fetched
+page (documented scope cut, not server-filterable without a joined-aggregate computed view). **Exact
+next task: finish Queue R1 item 1** — System Health Phase B's other three named
+`recordSystemHealthEvent` call sites (notification-delivery write failures, cron failures, rate-limit
+hits) and step 5's alert wiring, per `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 item 1. Do not
+rerun/re-derive any of the above; do not re-litigate D12/D18 (open,
 awaiting E) or D3/D4 (already fixed, see this file's own D-register below).
 
 The pricing statement E approved 2026-09-13:

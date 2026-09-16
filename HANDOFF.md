@@ -93,10 +93,21 @@ Queue R1 (safe autonomous work) without stopping to ask again:
   project (VLTD, the default working directory), and the Ergon Ops app's admin/authenticated surfaces
   weren't reachable to click through; deterministic checks (contrast math, grant tests, tsc/vitest)
   stand in for that this pass.
-- **Exact next task: Queue R1 item 2, Inventory pagination** (`PRODUCT_INVENTORY_PAGINATION_DESIGN.md`)
-  -- a new, separate, server-side-searched cursor-paginated query for the Inventory page's own table
-  only, leaving `loadInventoryItems`/`inventoryItems` untouched for its 100+ other consumers. No
-  migration needed; D10's direction is already recorded as non-blocking.
+- **Inventory pagination -- Queue R1 item 2, DONE (`1e6eb7a`).** `loadInventoryItemsPage`
+  (persistence.ts) is a second, independent, server-side-searched, cursor-paginated query wired ONLY
+  into the Inventory page's own desktop table and mobile card list (50-item pages, "Load more," 300ms
+  debounce). `loadInventoryItems`/`inventoryItems`/`filteredInventoryItems` (CSV export, counts, 100+
+  other consumers) are completely untouched -- CSV export still exports every matching item, not just
+  the loaded page. The existing `searchFocus` deep-link mechanism (cross-page "open this exact SKU")
+  keeps working unchanged, since it narrows to an exact ref the new query naturally returns on page
+  one. The derived "status" filter is applied client-side per fetched page (documented scope cut --
+  depends on a joined/aggregated `allocated` quantity, not a plain column). 8 new tests. `tsc -b`
+  clean, 453/453 Vitest, `eslint` 0 errors (75 warnings, one new -- same accepted
+  set-state-in-effect pattern already present 74 times elsewhere), production build clean.
+- **Exact next task: finish Queue R1 item 1** -- System Health Phase B's other three named
+  `recordSystemHealthEvent` call sites (notification-delivery write failures, cron failures,
+  rate-limit hits) and step 5's alert wiring (documented fallback: email every admin, per D8), per
+  `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 item 1.
 
 Billing (D15) and Phase 3 RLS (D11) remain untouched and unstarted, as instructed. See "Current database
 gate" below for Queue C2's own full history, including migration 140's real bug (ambiguous `token`

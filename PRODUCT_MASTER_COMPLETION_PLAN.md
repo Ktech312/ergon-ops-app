@@ -208,6 +208,18 @@ follow-up if wanted, not silently done. — *Implemented locally, Tests passed (
 vitest/eslint 0 errors/build all clean), Deployed. Production verification is a screen-reader check,
 not yet performed.*
 
+**Inventory pagination — Queue R1 item 2, DONE (2026-09-16)** (`1e6eb7a`,
+`PRODUCT_INVENTORY_PAGINATION_DESIGN.md`): `loadInventoryItemsPage` — a second, independent,
+server-side-searched, cursor-paginated query, wired into only the Inventory page's own desktop table
+and mobile card list (50-item pages, "Load more," debounced 300ms). `loadInventoryItems`/
+`inventoryItems` and `filteredInventoryItems` (CSV export, the export button's enabled state) are
+completely untouched, so nothing that relied on the full set lost functionality. The one deliberate
+scope cut: the derived "status" filter (Retired/Not Tracked/Reorder/Healthy, dependent on a joined
+`allocated` aggregate) is applied client-side per fetched page rather than server-side — documented in
+code, not silently approximated. — *Implemented locally, Tests passed (`tsc -b`/453 vitest, 8 new
+tests/eslint 0 errors/build all clean), Deployed. Production verification (a real large filtered
+result set) still pending real use.*
+
 **System Health Phase B, steps 1-4 — FULLY CONFIRMED (2026-09-16)** (`9a90903`,
 `PRODUCT_SYSTEM_HEALTH_PLAN.md`): migration 151 (`system_health_events` + monthly summary table, the
 dedup-upsert `record_system_health_event` RPC that never throws to its caller, admin-only
@@ -260,22 +272,19 @@ against §3 before starting, since this plan is only as trustworthy as its last 
 §9's own lesson from this pass).
 
 1. **System Health Phase B — steps 1-4 — PARTIALLY DONE, migration confirmed live (2026-09-16,
-   `9a90903`; migration 151 applied + canonical test passed the same day).** Table, dedup RPC, admin
-   lifecycle RPCs, and retention rollup are all live in production. Frontend deployed: the Admin
-   panel, one `recordSystemHealthEvent` call site (`restoreFullBackupSnapshot`'s per-section failures
-   — the design doc's own first-ranked one), and the weekly retention cron. **Still to do**: the other
-   three named call sites (notification-delivery write failures, cron failures, rate-limit hits) and
-   step 5's alert wiring (documented fallback in the design doc's §9: "email to every workspace
-   admin" if D8 isn't otherwise answered — implement using that default, flagged as a default, not a
-   confirmed decision).
-2. **Inventory pagination — NOT YET STARTED, this is the exact next task.**
-   (`PRODUCT_INVENTORY_PAGINATION_DESIGN.md` — D10's direction is already recorded as non-blocking,
-   unlike D9). A new, separate, server-side-searched, cursor-paginated `loadInventoryItemsPage` query
-   used *only* by the Inventory page's own table and (optionally) the Reports page's filter — does
-   **not** touch `loadInventoryItems`/`inventoryItems`, which stays exactly as-is for its other 100+
-   consumers (lookups, dropdowns, global search, aggregates). Selected-item hydration (a row selected
-   outside the current page gets fetched by `ref` and pinned) per the design's §3. No migration
-   needed — pure frontend, existing table.
+   `9a90903`; migration 151 applied + canonical test passed the same day). This is the exact next
+   task.** Table, dedup RPC, admin lifecycle RPCs, and retention rollup are all live in production.
+   Frontend deployed: the Admin panel, one `recordSystemHealthEvent` call site
+   (`restoreFullBackupSnapshot`'s per-section failures — the design doc's own first-ranked one), and
+   the weekly retention cron. **Still to do**: the other three named call sites (notification-delivery
+   write failures, cron failures, rate-limit hits) and step 5's alert wiring (documented fallback in
+   the design doc's §9: "email to every workspace admin" if D8 isn't otherwise answered — implement
+   using that default, flagged as a default, not a confirmed decision).
+2. **Inventory pagination — DONE (2026-09-16), see §3.** `loadInventoryItemsPage` wired into the
+   Inventory page's own desktop table and mobile card list only, `loadInventoryItems`/
+   `inventoryItems`/`filteredInventoryItems` untouched. The Reports page's own filter (optional per
+   the design) was NOT done — a separate, smaller, later follow-up if wanted, not part of this item's
+   completion.
 3. **Accessibility remediation, mechanical and decision-free** (`PRODUCT_ACCESSIBILITY_MOBILE_PERF_AUDIT.md`
    Part A) — **ALL FIVE ITEMS DONE (2026-09-16), see §3.** A3's remaining scope (generic dual-purpose
    status-message `<div>`s that sometimes show an error, not the class-identified `.error-text`/
@@ -283,7 +292,7 @@ against §3 before starting, since this plan is only as trustworthy as its last 
    - A4 — DONE. A5 — DONE. A6 — DONE. A7 — DONE. (See §3 for exact commits/detail.)
 4. **Regression coverage** — as each of the above ships, add its own test coverage in the same pass
    (matching this repo's standing convention — no item above should land without a test; System
-   Health Phase B's own canonical SQL test is drafted but not yet run — see §4/§5), plus a quick audit
+   Health Phase B's own canonical SQL test IS run and passed — see §3), plus a quick audit
    for any of Queue A8's six flows (`PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md`) that have drifted
    since it was last written.
 
