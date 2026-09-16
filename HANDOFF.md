@@ -7,15 +7,18 @@ requires continued work across independent lanes when a migration or decision is
 defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
 **Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
-(+ corrective 142), 143, 144, and 145 are all applied in production, **every one of them with a
-passing canonical test.** Queue C1 (frozen Sales pricing), Queue C2.2-C2.6 (share-link lifecycle
-foundation + internal controls), and Queue C2.7 (server-owned Create & Send + direct-write closure)
-are all shipped, deployed, and canonically tested. **Queue C2 is now FULLY CLOSED** -- migration 143's
-own function-body changes were recorded as applied but were never actually live in production;
-root-caused via a six-round diagnostic investigation; migration 145 re-applied the correct logic
-(`Success. No rows returned`, 2026-09-15); its extended canonical test (with the new Section 0
-structural check) then also passed (`Success. No rows returned`, 2026-09-15). **No open items remain
-anywhere in Queue C2.**
+(+ corrective 142), 143, 144, 145, 146, and 147 are all applied in production, **every one of them
+with a passing canonical test.** Queue C1 (frozen Sales pricing), Queue C2.2-C2.6 (share-link
+lifecycle foundation + internal controls), Queue C2.7 (server-owned Create & Send + direct-write
+closure), Batch 4b (D3, `source_quote_ref` carry-through), and Batch 5 (D4, configurable
+discount-approval gate) are all shipped, deployed, and canonically tested. **Queue C2 is FULLY
+CLOSED** -- migration 143's own function-body changes were recorded as applied but were never actually
+live in production; root-caused via a six-round diagnostic investigation; migration 145 re-applied the
+correct logic (`Success. No rows returned`, 2026-09-15); its extended canonical test (with the new
+Section 0 structural check) then also passed (`Success. No rows returned`, 2026-09-15). **D3 and D4
+are also FULLY CLOSED** (2026-09-15) -- see below for full detail, including two real test-script bugs
+migration 147's own canonical test caught and had fixed on live data. **No open items remain anywhere
+in Queue C2, Batch 4b, or Batch 5.**
 
 **Also shipped (2026-09-15, `8b4a6b6`):** the Product Catalog's Bundle components field now carries a
 "Reference only -- listing components here doesn't add them to a quote's BOM automatically" disclaimer
@@ -49,10 +52,10 @@ the Projects panel. `tsc -b` clean, 427/427 Vitest, `eslint` 0 errors, build cle
 Batch 5's still-uncommitted frontend by hunk-splitting the working tree before commit (both batches had
 been drafted in the same working files). **No open items remain in Batch 4b.**
 
-**Batch 5 (configurable discount-approval gate) -- migration 147 APPLIED (2026-09-15, `Success. No
-rows returned`); its canonical test found a real test-fixture bug on its own live run, FIXED, TEST
-SCRIPT ONLY, migration 147 itself untouched -- see below. Corrected test not yet sent (one file at a
-time).** `backend/supabase/migrations/147_sales_discount_approval_gate.sql`:
+**Batch 5 (configurable discount-approval gate) -- FULLY SHIPPED (2026-09-15).** Migration 147 applied
+(`Success. No rows returned`) and its canonical test passed after two test-script-only corrections
+(`ALL MIGRATION 147 SALES DISCOUNT APPROVAL GATE TESTS PASSED -- ZERO SECTIONS SKIPPED` -- see both
+corrections below). `backend/supabase/migrations/147_sales_discount_approval_gate.sql`:
 two new tables (`workspace_sales_approval_settings` -- toggle + threshold, one row per workspace,
 admin-editable through Admin settings, modeled directly on `workspace_share_link_settings` including
 the grant-layer correction migration 141 taught this repo to apply from the start;
@@ -102,22 +105,23 @@ simply false for this specific user, not a gap in the RPC's own authorization lo
 the same single-role-isolation technique already used for PM to the Sales fixture too: capture and
 strip any pre-existing 'manager' role before the self-approval negative check, restore it (or
 deliberately re-grant it for the positive-approval check right after) at the same points the script
-already handles PM's isolation. Corrected test not yet sent -- next single file.
-Frontend built and locally verified (2026-09-15): `persistence.ts` replaces
-`createAndSendQuoteProposalVersion` with `requestOrSendQuoteProposalVersion` (returns a
-`ProposalSendOutcome` discriminated union -- `sent` | `pending_approval` | `ok:false`, never throws)
-plus `respondToProposalApprovalRequest`, `loadProposalApprovalRequests`, `loadSalesApprovalSettings`,
-and `saveSalesApprovalSettings`. `main.tsx`: `handleCreateQuoteProposal` branches on the new outcome;
-a new `AdminPage` "Sales Approval Settings" panel (admin-only, checkbox + draft/Save threshold input,
-following the established draft-state pattern) and "Proposal Approval Requests" panel (visible to
-admin + manager via the page's existing `canReviewApprovals` gate) let a Sales Manager/admin review
-pending requests; `SalesQuoteBuilder`'s Quote Proposal panel shows a persistent "awaiting Sales Manager
-approval" note for the current quote's own pending request, threaded down through `SalesHome`. Still
-held uncommitted -- migration 147 must be confirmed applied (then its test) before this ships, per this
-repo's frontend-follows-migration rule. `tsc -b` clean, 434/434 Vitest (rewrote the stale
-`createAndSendQuoteProposalVersion` unit tests to cover the new RPC/outcome shape), `eslint` 0 errors
-(new warnings match the repo's existing draft-state effect pattern, not new problems), production build
-clean.
+already handles PM's isolation. Both corrections are test-script-only; migration 147 itself was never
+touched by either.
+
+Frontend shipped (`f0bc686`): `persistence.ts` replaces `createAndSendQuoteProposalVersion` with
+`requestOrSendQuoteProposalVersion` (returns a `ProposalSendOutcome` discriminated union -- `sent` |
+`pending_approval` | `ok:false`, never throws) plus `respondToProposalApprovalRequest`,
+`loadProposalApprovalRequests`, `loadSalesApprovalSettings`, and `saveSalesApprovalSettings`.
+`main.tsx`: `handleCreateQuoteProposal` branches on the new outcome; a new `AdminPage` "Sales Approval
+Settings" panel (admin-only, checkbox + draft/Save threshold input, following the established
+draft-state pattern) and "Proposal Approval Requests" panel (visible to admin + manager via the page's
+existing `canReviewApprovals` gate) let a Sales Manager/admin review pending requests;
+`SalesQuoteBuilder`'s Quote Proposal panel shows a persistent "awaiting Sales Manager approval" note
+for the current quote's own pending request, threaded down through `SalesHome`. `tsc -b` clean,
+434/434 Vitest (rewrote the stale `createAndSendQuoteProposalVersion` unit tests to cover the new
+RPC/outcome shape), `eslint` 0 errors (warnings match the repo's existing draft-state effect pattern,
+not new problems), production build clean. **No open items remain in Batch 5. D3 and D4 are both fully
+shipped -- no open items remain anywhere in this queue.**
 
 See
 "Current database
