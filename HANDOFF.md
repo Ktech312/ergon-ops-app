@@ -33,14 +33,27 @@ one-file-at-a-time convention. Frontend (BOM line editor checkbox, `id`/`isOptio
 `ProposalBomLineSnapshot`, the public page's live-recompute toggle UI) not yet started -- waits for
 this migration to be confirmed, same standing rule as every other batch this session.
 
-**D16 (Client Proposal Q&A) implementation not yet started.** The notification requirement (notify the
-quote's owner) needs the LIVE current `notification_rules.event_type` CHECK constraint list before a
-migration can safely widen it -- this repo has a documented real production failure from reconstructing
-that list from migration files instead of live data (migration 054's own header records an earlier,
-caught-before-shipping instance of the exact same mistake). A read-only diagnostic query confirming the
-live list is the next single action once D17's migration is confirmed, per "one manual SQL action at a
-time." E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain untouched and unstarted, as
-instructed.
+**D16 (Client Proposal Q&A) -- migration 149 drafted (2026-09-15), held pending migration 148's
+confirmation (one manual SQL action at a time).** The live `notification_rules.event_type` CHECK
+constraint was confirmed directly from production before finalizing this migration -- via
+`pg_get_constraintdef(oid)`, independently cross-checked against a live row dump of
+`notification_rules`, both agreeing on the exact same 13 values -- not reconstructed from old migration
+files (this repo has a documented real production failure from exactly that mistake, migration 054's
+own header). `backend/supabase/migrations/149_client_proposal_qa.sql`: widens that constraint to add
+`proposal_question_received`; creates `sales_quote_proposal_questions` (RLS read-only, zero write
+policies, matching Queue C2.7's discipline applied from the start); two RPCs --
+`submit_proposal_question()` (anon-granted, the client's "Ask a question" action) and
+`respond_to_proposal_question()` (authenticated-granted, Sales/manager/admin only, PM excluded, matching
+`request_or_send_quote_proposal_version()`'s own existing check). Notifies the quote's owner
+(`sales_quotes.created_by_email`), reusing `quote_proposal_responded`'s exact established pattern.
+Read-only after the six decided triggers (approval, rejection, supersession, expiration, disablement,
+revocation) -- deliberately NOT after `revision_requested`, per E's own instruction. Canonical test
+drafted (`migration_149_client_proposal_qa_tests.sql`) -- caught and fixed a real bug in its own fixture
+setup along the way (it first tried a direct INSERT into the RLS-locked questions table, which has zero
+write grants by design; fixed by using `submit_proposal_question()` itself to seed the fixture, exactly
+as a real client would). Not sent yet -- migration 148 is still the one file out for review; 149 follows
+only once E confirms 148 succeeded. E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain
+untouched and unstarted, as instructed.
 **Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
 (+ corrective 142), 143, 144, 145, 146, and 147 are all applied in production, **every one of them
 with a passing canonical test.** Queue C1 (frozen Sales pricing), Queue C2.2-C2.6 (share-link
