@@ -381,14 +381,25 @@ here. Only D11/D13/D14/D15 remain genuinely gated on a future E decision.
 Ordered by dependency and risk, same discipline as Queue R1. D5 and D12 are already fully closed (§3/§4/§9)
 and not relisted here.
 
-1. **D18 — proposal PDF: improve print output and regression coverage — NOT YET STARTED, this is the
-   exact next task.** `window.print()` stays the v1 mechanism (approved, no server-generated PDF unless
-   a concrete attachment/storage/integration need appears later). Needs: (a) trace exactly what "improve
-   print output" should mean in practice — re-check the existing `@media print` CSS
-   (`styles.css:6532-6548` as of the last trace) against a real rendered proposal for genuine gaps (page
-   breaks, orphaned headers, image sizing, etc.), not a guess; (b) add regression test coverage for the
-   print path where none exists today. No migration.
-2. **D9 — backup restore: resumable per-section checkpointing.** Per E's approved spec: unresolved
+1. **D18 — proposal PDF: improve print output — DONE (2026-09-16, `d92a114`).** Three real,
+   traced gaps fixed: `.stack-table-mobile`'s own `@media (max-width: 760px)` rule (no `screen`
+   qualifier) could silently switch the BOM table to its mobile stacked-card layout during print, for
+   both the Proposal and Submittal pages sharing that class — forced back to a real table under print
+   regardless of width; status-colored banners/pills lost their background color under print in most
+   browsers by default — fixed with `print-color-adjust: exact`; the optional-BOM-line "Include"
+   checkbox is meaningless on paper — replaced with a print-only "Included"/"Not included" text
+   alternative. No dedicated regression test added (this repo has no visual/snapshot testing
+   infrastructure) — verification was `tsc -b`/eslint/build clean plus code review of the actual CSS
+   cascade, noted explicitly rather than silently claimed as "tested." **Exact next task: D6.**
+2. **D6 — `xlsx` → `exceljs` — this is the exact next task, reordered ahead of D9 (smaller, fully
+   independent, no migration, per this queue's own "smallest safe step first" discipline).**
+   `PRODUCT_XLSX_REPLACEMENT_EVALUATION.md` has the exhaustive trace (2 call sites, both read-only
+   client-side: `handleBomFileSelect`, `handleCatalogFileSelect`) and a migration outline. Per E's
+   approved spec: build and test parity against the real supported import/export formats; replace
+   `xlsx` when parity passes; if a specific format blocks replacement, document it and move to the
+   next task rather than blocking indefinitely. No migration — pure dependency swap + two call-site
+   rewrites.
+3. **D9 — backup restore: resumable per-section checkpointing.** Per E's approved spec: unresolved
    *optional* references produce visible, retryable warnings; a *required*-data failure stops that
    section (does not silently continue); never report full success while any section failed or was
    skipped. `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md` has the full `restore_runs`/
@@ -396,12 +407,6 @@ and not relisted here.
    against the OLD "warned skip/retry for everything" framing (D9's original recorded direction) — needs
    a pass reconciling it against the new required-vs-optional distinction before implementing verbatim,
    not a blind copy. Needs a migration.
-3. **D6 — `xlsx` → `exceljs`.** `PRODUCT_XLSX_REPLACEMENT_EVALUATION.md` has the exhaustive trace (2
-   call sites, both read-only client-side: `handleBomFileSelect`, `handleCatalogFileSelect`) and a
-   migration outline. Per E's approved spec: build and test parity against the real supported
-   import/export formats; replace `xlsx` when parity passes; if a specific format blocks replacement,
-   document it and move to the next task rather than blocking indefinitely. No migration — pure
-   dependency swap + two call-site rewrites.
 
 ## 9. Sales workstream — batch reference (historical detail, current status only)
 
