@@ -248,13 +248,24 @@ extended for the 3 server-side call sites, `persistence.ts`'s `recordSystemHealt
 `recordSystemHealthRecovery`. All 4 original failure call sites now also call recovery on their
 success path. — *Implemented locally, Tests passed (migration_152's own canonical test drafted but NOT
 YET RUN against production — requires the migration to be live first; 18 new/updated TS-side tests all
-passing), Deployed (frontend/API code only). **Migration NOT YET APPLIED** — this is the one item in §5
+passing), Deployed (frontend/API code only). **Migration NOT YET APPLIED** — this is item 1 in §5
+below.*
+
+**Migration 153 — Proposal acceptance hardening (D12 approved 2026-09-16)** (`eecb8b1`,
+`PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §2): new `approval_email` column set from the proposal's own
+`client_email` (verified by construction, not a client parameter); `respond_to_quote_proposal`'s `anon`
+direct-call grant revoked. New `api/respond-to-proposal.js` captures the real client IP server-side
+(Vercel's `x-forwarded-for`) and calls the RPC via service role — already deployed and is the frontend's
+only path now (`respondToPublicQuoteProposal` no longer calls the RPC directly). — *Implemented locally,
+Tests passed (migration_153's own canonical test drafted but NOT YET RUN — requires the migration live
+first; 11 new/updated TS-side tests all passing), Deployed (frontend/API code only — safe ahead of the
+migration since the new route already handles both old-anon-still-open and new-anon-closed states
+identically from the frontend's perspective). **Migration NOT YET APPLIED** — this is item 2 in §5
 below.*
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Item 1 (current, only item queued): apply migration 152 (System Health alert wiring, D8 approved
-2026-09-16).**
+**Item 1 (current): apply migration 152 (System Health alert wiring, D8 approved 2026-09-16).**
 - File: `backend/supabase/migrations/152_system_health_alerting.sql`
 - Then run its canonical test: `backend/supabase/migration_152_system_health_alerting_tests.sql` —
   transaction-safe (`begin;`/`rollback;`), ends in exactly one of two ways: a notice reading "ALL
@@ -263,8 +274,23 @@ below.*
 - Migration 151's own canonical test (`migration_151_system_health_phase_b_tests.sql`) was updated to
   match 152's new return shape — safe to re-run afterward too if E wants extra confirmation, not
   required.
-- Once confirmed passing, update this section back to "nothing queued" and move `alerted_at`/alert
+- Once confirmed passing, update this section (move to item 2 below) and move `alerted_at`/alert
   wiring from "awaiting migration" to "confirmed live" in §3/§4.
+
+**Item 2 (queued next, do not run until item 1 is confirmed): apply migration 153 (proposal acceptance
+hardening — real `approval_ip`, verified `approval_email`; D12 approved 2026-09-16).**
+- File: `backend/supabase/migrations/153_proposal_acceptance_ip_and_email.sql`
+- Then run its canonical test: `backend/supabase/migration_153_proposal_acceptance_ip_and_email_tests.sql`
+  — same transaction-safe pattern, ends with "ALL MIGRATION 153 PROPOSAL ACCEPTANCE TESTS PASSED --
+  ZERO SECTIONS SKIPPED" or a hard error.
+- **This migration revokes `anon`'s direct-call grant on `respond_to_quote_proposal`** — the frontend
+  (already deployed, `eecb8b1`) already calls the new `api/respond-to-proposal.js` route instead of the
+  RPC directly, so this is safe to apply as soon as E is ready; there is no window where the live
+  proposal-approval flow would break, since the frontend switch already shipped ahead of the grant
+  closure. No functional dependency on migration 152 — the two are independent, this repo's convention
+  is simply to apply in numeric order.
+- Once confirmed passing, update this section back to "nothing queued" and move this item from
+  "awaiting migration" to "confirmed live" in §3/§4.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
