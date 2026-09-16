@@ -66,25 +66,24 @@ prior version stopped at migration 145 and had no D3/D4/D16/D17 rows at all; als
 stale decision-register rows in `CONTINUOUS_CODER_HANDOFF.md` §8, which had never been updated past
 their original open-question framing). Then, per instruction, moved directly into the plan's own
 Queue R1 (safe autonomous work) without stopping to ask again:
-- **System Health Phase B, steps 1-4 — PARTIALLY DONE (`9a90903`).** Migration 151 drafted
-  (`system_health_events` + monthly summary + `record_system_health_event` dedup-upsert RPC, never
-  throws to its caller + admin acknowledge/resolve RPCs + a service-role-only retention rollup).
-  **NOT YET APPLIED — the one queued manual action, see `PRODUCT_MASTER_COMPLETION_PLAN.md` §5.**
-  Frontend (Admin -> System Health -- Events panel, weekly retention cron
-  `api/cron/system-health-retention.js`, one `recordSystemHealthEvent` call site wired to
-  `restoreFullBackupSnapshot`'s per-section failures) is deployed and degrades safely without the
-  migration live -- never claims "no active issues" on a load failure, per the design doc's own §10
-  rule; existing `task5-restore-write-verification.test.ts` assertions updated for the new second
-  fetch call this introduces. Deliberately NOT done: the other three named call sites and step 5's
-  alert wiring (D8) -- queued next, see the master plan.
+- **System Health Phase B, steps 1-4 — migration CONFIRMED LIVE 2026-09-16 (`9a90903`).** Migration
+  151 (`system_health_events` + monthly summary + `record_system_health_event` dedup-upsert RPC, never
+  throws to its caller + admin acknowledge/resolve RPCs + a service-role-only retention rollup)
+  applied by E and its canonical test run clean ("Success. No rows returned" -- correct for a
+  `do $$ ... $$; rollback;` block with no exception). Frontend (Admin -> System Health -- Events
+  panel, weekly retention cron `api/cron/system-health-retention.js`, one `recordSystemHealthEvent`
+  call site wired to `restoreFullBackupSnapshot`'s per-section failures) was already deployed and now
+  has a live table; existing `task5-restore-write-verification.test.ts` assertions were updated for
+  the new second fetch call this introduces. Deliberately NOT done: the other three named call sites
+  and step 5's alert wiring (D8) -- queued next, see the master plan.
 - **Accessibility -- four of five items DONE (`f930f39`, `6b42ca1`).** A5 (WCAG AA contrast: three
   "muted" text colors, one used at 19+ sites, computed and replaced against BOTH page backgrounds, not
   just one); A6 (four icon-only delete buttons normalized from `title`-only to also carry
   `aria-label`); A7 (`.icon-button`/`.compact-remove`/checkboxes reach 44px/22-24px under a 760px
   mobile media query, desktop untouched); A4 (nine filter/search inputs across Inventory/Purchasing/
   Catalog given a real `aria-label` instead of relying on `placeholder` alone). **A3 (aria-live
-  announcements on form-submission errors) is NOT done -- this is the exact next task once migration
-  151 is applied**, per `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 Queue R1 item 3.
+  announcements on form-submission errors) is the exact next task, picked up directly after this**,
+  per `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 Queue R1 item 3.
 - Every change this pass: `tsc -b` clean, 445/445 Vitest (11 new tests), `eslint` 0 errors (74
   pre-existing warnings unchanged), production build clean, each pushed separately and deployed.
   **Not live-verified in the browser** -- this session's own dev-server preview pointed at a different

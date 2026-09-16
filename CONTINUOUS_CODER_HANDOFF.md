@@ -201,17 +201,19 @@ both frozen-PDF (D18, new) and e-signature hardening (D12, revised); **neither i
 awaiting E's approval. (2) A full rewrite of `PRODUCT_MASTER_COMPLETION_PLAN.md` reconciled against
 confirmed production state (also fixed D3/D4's own stale register rows here in this file — they'd
 never been updated past their original open-question framing despite shipping the same day). (3)
-**System Health Phase B, steps 1-4, PARTIALLY DONE** (`9a90903`) — migration 151 drafted
-(`system_health_events` + monthly summary + dedup RPC + admin lifecycle RPCs + retention rollup),
-**NOT YET APPLIED — this is the one queued manual action, see `PRODUCT_MASTER_COMPLETION_PLAN.md`
-§5**; frontend (Admin panel, one `recordSystemHealthEvent` call site wired to
-`restoreFullBackupSnapshot`'s per-section failures, weekly retention cron) is deployed and degrades
-safely without the migration live. (4) Accessibility — four of five items DONE (`f930f39`, `6b42ca1`):
-A4 (filter/search input labels), A5 (WCAG AA contrast fix, computed against both page backgrounds),
-A6 (icon-button `aria-label` normalization), A7 (mobile tap-target sizing). **A3 (aria-live on
-form-submission errors) is NOT done — exact next task after migration 151 is applied**, per
-`PRODUCT_MASTER_COMPLETION_PLAN.md` §7 Queue R1. Do not rerun/re-derive any of the above; do not
-re-litigate D12/D18 (open, awaiting E) or D3/D4 (already fixed, see this file's own D-register below).
+**System Health Phase B, steps 1-4 — migration CONFIRMED LIVE 2026-09-16** (`9a90903`) — migration
+151 (`system_health_events` + monthly summary + dedup RPC + admin lifecycle RPCs + retention rollup)
+applied by E and its canonical test run clean ("Success. No rows returned" — the correct result for
+its `do $$ ... $$; rollback;` shape completing with no exception). Frontend (Admin panel, one
+`recordSystemHealthEvent` call site wired to `restoreFullBackupSnapshot`'s per-section failures,
+weekly retention cron) was already deployed and now has a live table. **Manual-action queue is empty
+again** — see `PRODUCT_MASTER_COMPLETION_PLAN.md` §5. (4) Accessibility — four of five items DONE
+(`f930f39`, `6b42ca1`): A4 (filter/search input labels), A5 (WCAG AA contrast fix, computed against
+both page backgrounds), A6 (icon-button `aria-label` normalization), A7 (mobile tap-target sizing).
+**A3 (aria-live on form-submission errors) is the exact next task, picked up directly after this
+pointer**, per `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 Queue R1. Do not rerun/re-derive any of the
+above; do not re-litigate D12/D18 (open, awaiting E) or D3/D4 (already fixed, see this file's own
+D-register below).
 
 The pricing statement E approved 2026-09-13:
 
@@ -662,13 +664,12 @@ separate evidence. Do not call one a substitute for another.
 
 ## 4. Current production baseline
 
-**As of end of session 2026-09-15: `PRODUCT_MASTER_COMPLETION_PLAN.md` §3 is now the authoritative,
-current "completed and live" list (migration range 115-150, D3/D4/D16/D17, Queue C2, Sales pricing,
+**As of 2026-09-16: `PRODUCT_MASTER_COMPLETION_PLAN.md` §3 is now the authoritative, current
+"completed and live" list (migration range 115-151, D3/D4/D16/D17, Queue C2, Sales pricing,
 accessibility batch) — prefer it over re-deriving status from the bullets below, which stop at
-migration 145/the 2026-09-12/13 session and were not individually rewritten in this pass. One
-correction to note here specifically: migration 151 (System Health Phase B) is drafted and its
-frontend deployed, but **NOT YET APPLIED** — see `PRODUCT_MASTER_COMPLETION_PLAN.md` §4/§5 for the
-queued manual action.**
+migration 145/the 2026-09-12/13 session and were not individually rewritten in this pass. Migration
+151 (System Health Phase B) is now applied and its canonical test confirmed passing — the
+manual-action queue (§5) is empty again.**
 
 The next coder should verify this baseline before editing rather than redoing completed work:
 

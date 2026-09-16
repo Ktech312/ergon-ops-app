@@ -198,32 +198,31 @@ is the one item from this batch NOT yet done** — see §7 Queue R1 item 3 for w
 locally, Tests passed (`tsc -b`/445 vitest/eslint 0 errors/build all clean), Deployed. No migration
 involved; production verification is a visual/screen-reader check, not yet performed.*
 
+**System Health Phase B, steps 1-4 — FULLY CONFIRMED (2026-09-16)** (`9a90903`,
+`PRODUCT_SYSTEM_HEALTH_PLAN.md`): migration 151 (`system_health_events` + monthly summary table, the
+dedup-upsert `record_system_health_event` RPC that never throws to its caller, admin-only
+acknowledge/resolve RPCs, a service-role-only retention rollup function) **applied by E and its
+canonical test run clean** ("Success. No rows returned" — the correct, expected result for a
+`do $$ ... $$; rollback;` block that completes with no exception; the alternative would have been a
+surfaced `TEST FAILED: ...` error, not a silent success). One call site wired
+(`restoreFullBackupSnapshot`'s per-section failure path — the design doc's own first-ranked one); the
+admin panel and retention cron (`api/cron/system-health-retention.js`, weekly) are deployed and now
+have a live table to read/write. — *Migration applied, Tests passed, Deployed. Production
+verification (a real failure showing up in the Admin panel) still pending real use — nothing has
+failed yet to display.* The other three named `recordSystemHealthEvent` call sites
+(notification-delivery write failures, cron failures, rate-limit hits) and alert wiring (step 5, D8)
+are queued next, not built — see §7 Queue R1 item 1's remainder.
+
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-**Migration 151 — System Health Phase B, steps 1-4** (`9a90903`, `PRODUCT_SYSTEM_HEALTH_PLAN.md`):
-`system_health_events` + monthly summary table, the dedup-upsert `record_system_health_event` RPC
-(never throws to its caller), admin-only acknowledge/resolve RPCs, and a service-role-only retention
-rollup function. One call site wired (`restoreFullBackupSnapshot`'s per-section failure path — the
-design doc's own first-ranked one); the admin panel, retention cron
-(`api/cron/system-health-retention.js`, weekly), and `vercel.json` entry are all live in the deployed
-frontend already, degrading safely ("couldn't refresh," never a false "no active issues") since the
-table doesn't exist in production yet. — *Implemented locally, Tests passed (migration_151's own
-canonical test drafted but NOT YET RUN against production — it requires the migration to be live
-first), Deployed (frontend code only). **Migration NOT YET APPLIED** — this is the one item in §5
-below.* The other three named `recordSystemHealthEvent` call sites (notification-delivery write
-failures, cron failures, rate-limit hits) and alert wiring (step 5, D8) are queued next, not built —
-see §7 Queue R1 item 1's remainder.
+**Nothing is currently in this state.** Migration 151 (the last item to pass through this stage) is
+now fully confirmed as of §3 above.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Item 1 (current, only item queued): apply migration 151.**
-- File: `backend/supabase/migrations/151_system_health_phase_b.sql`
-- Then run its canonical test: `backend/supabase/migration_151_system_health_phase_b_tests.sql` — it
-  is transaction-safe (`begin;`/`rollback;`, nothing commits) and ends in exactly one of two ways: a
-  notice reading "ALL MIGRATION 151 SYSTEM HEALTH PHASE B TESTS PASSED -- ZERO SECTIONS SKIPPED", or a
-  hard SQL error naming what failed or was skipped.
-- Once confirmed passing, update §3/§4 above and this section (clear it back to "nothing queued")
-  before starting the next Queue R1 item.
+**Nothing is currently queued.** Migration 151 was the only queued item and is now fully confirmed
+(applied + canonical test passed, 2026-09-16). The next Queue R1 item (A3, aria-live announcements) is
+pure frontend — no migration, no manual action needed.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
@@ -250,17 +249,17 @@ Ordered by dependency and risk, smallest-safe-step first. Skip any row already s
 against §3 before starting, since this plan is only as trustworthy as its last reconciliation (see
 §9's own lesson from this pass).
 
-1. **System Health Phase B — steps 1-4 — PARTIALLY DONE (2026-09-15, `9a90903`).** Migration 151
-   drafted (table, dedup RPC, admin lifecycle RPCs, retention rollup — see §4/§5, awaiting E's
-   apply). Frontend deployed: the Admin panel, one `recordSystemHealthEvent` call site
-   (`restoreFullBackupSnapshot`'s per-section failures — the design doc's own first-ranked one), and
-   the weekly retention cron. **Still to do, once migration 151 is applied and confirmed**: the other
+1. **System Health Phase B — steps 1-4 — PARTIALLY DONE, migration confirmed live (2026-09-16,
+   `9a90903`; migration 151 applied + canonical test passed the same day).** Table, dedup RPC, admin
+   lifecycle RPCs, and retention rollup are all live in production. Frontend deployed: the Admin
+   panel, one `recordSystemHealthEvent` call site (`restoreFullBackupSnapshot`'s per-section failures
+   — the design doc's own first-ranked one), and the weekly retention cron. **Still to do**: the other
    three named call sites (notification-delivery write failures, cron failures, rate-limit hits) and
    step 5's alert wiring (documented fallback in the design doc's §9: "email to every workspace
    admin" if D8 isn't otherwise answered — implement using that default, flagged as a default, not a
    confirmed decision).
-2. **Inventory pagination — NOT YET STARTED, this is the exact next task.**
-   (`PRODUCT_INVENTORY_PAGINATION_DESIGN.md` — D10's direction is already recorded as non-blocking,
+2. **Inventory pagination** (`PRODUCT_INVENTORY_PAGINATION_DESIGN.md` — D10's direction is already
+   recorded as non-blocking,
    unlike D9). A new, separate, server-side-searched, cursor-paginated `loadInventoryItemsPage` query
    used *only* by the Inventory page's own table and (optionally) the Reports page's filter — does
    **not** touch `loadInventoryItems`/`inventoryItems`, which stays exactly as-is for its other 100+
@@ -269,10 +268,11 @@ against §3 before starting, since this plan is only as trustworthy as its last 
    needed — pure frontend, existing table.
 3. **Accessibility remediation, mechanical and decision-free** (`PRODUCT_ACCESSIBILITY_MOBILE_PERF_AUDIT.md`
    Part A) — **four of five DONE (2026-09-15, `f930f39`, `6b42ca1`), see §3**:
-   - A3 — **NOT YET DONE.** Add `role="alert"`/`aria-live="polite"` to every inline form-submission
-     error, starting with the two public, unauthenticated pages (Proposal/Submittal response forms)
-     where there's no colleague to ask "did that work?", then the rest sitewide. Whole-file search for
-     `role="alert"`/`aria-live` still returns zero matches as of this reconciliation.
+   - A3 — **NOT YET DONE, this is the exact next task.** Add `role="alert"`/`aria-live="polite"` to
+     every inline form-submission error, starting with the two public, unauthenticated pages
+     (Proposal/Submittal response forms) where there's no colleague to ask "did that work?", then the
+     rest sitewide. Whole-file search for `role="alert"`/`aria-live` still returns zero matches as of
+     this reconciliation.
    - A4 — DONE. A5 — DONE. A6 — DONE. A7 — DONE. (See §3 for exact commits/detail.)
 4. **Regression coverage** — as each of the above ships, add its own test coverage in the same pass
    (matching this repo's standing convention — no item above should land without a test; System
