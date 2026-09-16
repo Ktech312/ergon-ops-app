@@ -47,6 +47,7 @@ declare
   question_id_3 uuid;
 
   r record;
+  send_result jsonb;
   caught boolean;
   anon_can_execute boolean;
   authenticated_can_execute boolean;
@@ -108,14 +109,26 @@ begin
       perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
       perform set_config('role', 'authenticated', true);
 
+      -- Migration 144 dropped sales_quote_proposals' direct-write policy
+      -- entirely, and migration 147 additionally revoked authenticated's
+      -- direct EXECUTE on create_and_send_quote_proposal_version itself --
+      -- request_or_send_quote_proposal_version() (migration 147) is the
+      -- only authenticated-callable entry point now, exactly what a real
+      -- Create & Send does. These fixture quotes carry no discount_percent
+      -- (defaults to 0), so the discount-approval gate can never apply
+      -- regardless of its current enabled/threshold settings, guaranteeing
+      -- outcome=sent every time. It returns jsonb, not a table.
+
       -- Fixture 1: an open, live, sent proposal -- the happy-path thread.
       insert into public.sales_quotes (client_name, site_name, status)
         values ('ZZ Test Client', 'ZZ_TEST_QA_' || substr(md5(random()::text), 1, 10), 'open')
         returning id into quote_id_1;
-      insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
-        values (quote_id_1, 1, 'sent', '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com')
-        returning id into proposal_id_1;
-      select public.create_quote_proposal_share_token(proposal_id_1) into token_1;
+      select public.request_or_send_quote_proposal_version(quote_id_1, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') into send_result;
+      if send_result ->> 'outcome' <> 'sent' then
+        raise exception 'TEST FAILED: fixture setup expected outcome=sent creating proposal 1, got %.', send_result ->> 'outcome';
+      end if;
+      proposal_id_1 := (send_result ->> 'proposal_id')::uuid;
+      token_1 := send_result ->> 'token';
 
       -- Fixture 2: created 'sent' -- a question is asked on it (below,
       -- via the RPC, while it's still open) BEFORE it gets approved,
@@ -125,43 +138,53 @@ begin
       insert into public.sales_quotes (client_name, site_name, status)
         values ('ZZ Test Client', 'ZZ_TEST_QA_APPROVED_' || substr(md5(random()::text), 1, 10), 'open')
         returning id into quote_id_2;
-      insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
-        values (quote_id_2, 1, 'sent', '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com')
-        returning id into proposal_id_2;
-      select public.create_quote_proposal_share_token(proposal_id_2) into token_2;
+      select public.request_or_send_quote_proposal_version(quote_id_2, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') into send_result;
+      if send_result ->> 'outcome' <> 'sent' then
+        raise exception 'TEST FAILED: fixture setup expected outcome=sent creating proposal 2, got %.', send_result ->> 'outcome';
+      end if;
+      proposal_id_2 := (send_result ->> 'proposal_id')::uuid;
+      token_2 := send_result ->> 'token';
 
-      -- Fixture 3: a revision-requested proposal -- deliberately NOT
-      -- one of the six triggers; Q&A must stay open here.
+      -- Fixture 3: also created 'sent' -- transitioned to
+      -- 'revision_requested' below (after the role reset, via the
+      -- anon-callable respond_to_quote_proposal, exactly like a real
+      -- client) since there is no way to create a proposal directly in
+      -- that status.
       insert into public.sales_quotes (client_name, site_name, status)
         values ('ZZ Test Client', 'ZZ_TEST_QA_REVISION_' || substr(md5(random()::text), 1, 10), 'open')
         returning id into quote_id_3;
-      insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email, responded_at)
-        values (quote_id_3, 1, 'revision_requested', '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com', now())
-        returning id into proposal_id_3;
-      select public.create_quote_proposal_share_token(proposal_id_3) into token_3;
+      select public.request_or_send_quote_proposal_version(quote_id_3, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') into send_result;
+      if send_result ->> 'outcome' <> 'sent' then
+        raise exception 'TEST FAILED: fixture setup expected outcome=sent creating proposal 3, got %.', send_result ->> 'outcome';
+      end if;
+      proposal_id_3 := (send_result ->> 'proposal_id')::uuid;
+      token_3 := send_result ->> 'token';
 
       perform set_config('role', original_role, true);
 
+      select * into r from public.respond_to_quote_proposal(token_3, 'revision_requested', 'ZZ Client', '127.0.0.1', 'Please adjust the delivery date.');
+      if r.outcome <> 'success' then
+        raise exception 'TEST FAILED: fixture setup expected outcome=success transitioning proposal 3 to revision_requested, got %.', r.outcome;
+      end if;
+
       -- Fixture 2 continued: ask a question while proposal_id_2 is
-      -- still 'sent' (must succeed), THEN transition it to 'approved'
-      -- (a direct authenticated UPDATE -- sales_quote_proposals itself
-      -- is broadly authenticated-writable, unlike the questions table).
-      -- Sections 5 and 7 below both exercise this same now-approved
-      -- fixture: submitting a NEW question against it, and answering
-      -- the question asked here before it locked.
+      -- still 'sent' (must succeed), THEN transition it to 'approved' --
+      -- via respond_to_quote_proposal, the only sanctioned write path
+      -- (sales_quote_proposals has zero direct-write grants too, same as
+      -- the questions table, since migration 144). Sections 5 and 7
+      -- below both exercise this same now-approved fixture: submitting a
+      -- NEW question against it, and answering the question asked here
+      -- before it locked.
       select * into r from public.submit_proposal_question(token_2, 'ZZ_TEST question predating approval', 'ZZ Client');
       if r.outcome <> 'submitted' then
         raise exception 'TEST FAILED: fixture setup expected outcome=submitted asking a question before approval, got %.', r.outcome;
       end if;
       question_id_3 := r.question_id;
 
-      perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
-      perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
-      perform set_config('role', 'authenticated', true);
-      update public.sales_quote_proposals
-        set status = 'approved', responded_at = now(), approval_name = 'ZZ Approver'
-        where id = proposal_id_2;
-      perform set_config('role', original_role, true);
+      select * into r from public.respond_to_quote_proposal(token_2, 'approved', 'ZZ Approver', '127.0.0.1', '');
+      if r.outcome <> 'success' then
+        raise exception 'TEST FAILED: fixture setup expected outcome=success approving proposal 2, got %.', r.outcome;
+      end if;
 
       -- Section 1: the client asks a question on the live proposal.
       select * into r from public.submit_proposal_question(token_1, '  How long is this price good for?  ', 'ZZ Client');

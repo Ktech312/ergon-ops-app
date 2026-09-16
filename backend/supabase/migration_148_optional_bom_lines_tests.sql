@@ -57,6 +57,7 @@ declare
   bom_line_is_optional boolean;
 
   r record;
+  send_result jsonb;
   caught boolean;
   old_signature_still_exists boolean;
   anon_can_execute boolean;
@@ -107,10 +108,21 @@ begin
       'taxRate', 5, 'taxAmount', 9, 'grandTotal', 189
     );
 
-    insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
-      values (quote_id_1, 1, 'sent', snapshot_with_pricing, 'ZZ Test Client', 'zz-test@example.com')
-      returning id into proposal_id_1;
-    select public.create_quote_proposal_share_token(proposal_id_1) into token_1;
+    -- Migration 144 dropped sales_quote_proposals' direct-write policy
+    -- entirely, and migration 147 additionally revoked authenticated's
+    -- direct EXECUTE on create_and_send_quote_proposal_version itself --
+    -- request_or_send_quote_proposal_version() (migration 147) is now
+    -- the only authenticated-callable entry point, exactly what a real
+    -- Create & Send does. These fixture quotes carry no discount_percent
+    -- (defaults to 0), so the discount-approval gate can never apply
+    -- regardless of its current enabled/threshold settings, guaranteeing
+    -- outcome=sent every time. It returns jsonb, not a table.
+    select public.request_or_send_quote_proposal_version(quote_id_1, snapshot_with_pricing, 'ZZ Test Client', 'zz-test@example.com') into send_result;
+    if send_result ->> 'outcome' <> 'sent' then
+      raise exception 'TEST FAILED: fixture setup expected outcome=sent creating proposal 1, got %.', send_result ->> 'outcome';
+    end if;
+    proposal_id_1 := (send_result ->> 'proposal_id')::uuid;
+    token_1 := send_result ->> 'token';
 
     -- Fixture 2: a snapshot with no pricing fields at all -- simulates a
     -- proposal sent before migration 136 existed.
@@ -124,10 +136,12 @@ begin
     insert into public.sales_quotes (client_name, site_name, status)
       values ('ZZ Test Client', 'ZZ_TEST_OPTLINES_OLD_' || substr(md5(random()::text), 1, 10), 'open')
       returning id into quote_id_2;
-    insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
-      values (quote_id_2, 1, 'sent', snapshot_without_pricing, 'ZZ Test Client', 'zz-test@example.com')
-      returning id into proposal_id_2;
-    select public.create_quote_proposal_share_token(proposal_id_2) into token_2;
+    select public.request_or_send_quote_proposal_version(quote_id_2, snapshot_without_pricing, 'ZZ Test Client', 'zz-test@example.com') into send_result;
+    if send_result ->> 'outcome' <> 'sent' then
+      raise exception 'TEST FAILED: fixture setup expected outcome=sent creating proposal 2, got %.', send_result ->> 'outcome';
+    end if;
+    proposal_id_2 := (send_result ->> 'proposal_id')::uuid;
+    token_2 := send_result ->> 'token';
 
     perform set_config('role', original_role, true);
 

@@ -27,11 +27,30 @@ ambiguity about Postgres's parameter-addition rules for a function this conseque
 snapshot itself (never trusts a client-submitted total, same discipline migration 136 established for
 pricing generally), gated behind `snapshot ? 'grandTotal'` so a pre-136 snapshot's totals stay NULL
 rather than guessed. The function's own pre-existing `where sqp.status = 'sent'` guard (migration 139)
-is what makes the selection immutable after response with zero new logic needed for that. Canonical
-test drafted (`migration_148_optional_bom_lines_tests.sql`) but not yet sent, per the
-one-file-at-a-time convention. Frontend (BOM line editor checkbox, `id`/`isOptional` added to
-`ProposalBomLineSnapshot`, the public page's live-recompute toggle UI) not yet started -- waits for
-this migration to be confirmed, same standing rule as every other batch this session.
+is what makes the selection immutable after response with zero new logic needed for that. Migration 148
+itself was confirmed applied by E (2026-09-15).
+
+**Migration 148's canonical test's first draft had a real bug (test script only, migration 148
+untouched): FIXED.** E's first attempt failed with `ERROR: 42501: new row violates row-level security
+policy for table "sales_quote_proposals"`. Root cause: the test's fixture setup directly `insert`ed
+into `sales_quote_proposals`, copying a pattern from migration 139's own test -- but migration 139
+predates migration 144, which later dropped `sales_quote_proposals`' entire direct-write policy (Queue
+C2.7 part 2, "close direct-write bypasses"), and migration 147 additionally revoked `authenticated`'s
+direct EXECUTE on `create_and_send_quote_proposal_version()` itself. Neither a direct INSERT nor a
+direct call to that underlying function is legal anymore -- `request_or_send_quote_proposal_version()`
+(migration 147) is the only authenticated-callable entry point today. Fixed by rebuilding both
+fixtures through that RPC (fixture quotes carry no `discount_percent`, so the approval gate can never
+apply regardless of its live settings, guaranteeing `outcome=sent`). The identical bug was pre-emptively
+fixed in migration 149's still-unsent test too, which had copied the same stale pattern twice (fixture
+creation AND a direct `UPDATE ... SET status = 'approved'`, also now illegal) -- both replaced with the
+same RPC calls a real client/Sales action would make. Lesson for future test-writing in this repo: a
+prior test file's fixture pattern is only safe to copy if it postdates every migration that has since
+narrowed that table's own write policy -- check the table's CURRENT policies, not just an older test's
+example. Corrected migration 148 test not yet sent -- next single file.
+
+Frontend (BOM line editor checkbox, `id`/`isOptional` added to `ProposalBomLineSnapshot`, the public
+page's live-recompute toggle UI) not yet started -- waits for this migration's test to be confirmed,
+same standing rule as every other batch this session.
 
 **D16 (Client Proposal Q&A) -- migration 149 drafted (2026-09-15), held pending migration 148's
 confirmation (one manual SQL action at a time).** The live `notification_rules.event_type` CHECK
