@@ -172,6 +172,26 @@ Admin settings panel, the Approval Requests review queue, and a pending-approval
 Proposal panel) shipped in `f0bc686`. Do not re-litigate D3/D4 (table at "D3"/"D4" further below), do
 not re-derive this design from scratch, and do not rerun migrations 146/147 or their tests.
 
+**D16/D17 approved 2026-09-15 — see HANDOFF.md for full detail and
+`PRODUCT_PROPOSAL_QA_AND_OPTIONAL_BOM_DECISION.md` for the design rationale, this is the short pointer.
+Both are FULLY SHIPPED. No open items remain in either.** D16 (Client Proposal Q&A): scoped to
+one proposal VERSION, not the quote; Sales/manager/admin may answer, never PM; read-only after
+approval/rejection/supersession/expiration/disablement/revocation, explicitly still open through
+revision_requested — migration 149 applied; its own canonical test found a real bug in 149 itself (a
+`RETURNS TABLE` column name colliding with a real table column, same class migration 121 already fixed
+once), corrected by migration 150 (149 itself never touched), test passed clean after. Frontend
+(`submitProposalQuestion`/`respondToProposalQuestion`, a Quote Proposal panel question-thread card, a
+non-status-changing "Ask a Question" section on the public page) shipped in `997ec7b`. D17 (optional
+BOM lines): optional lines begin UNSELECTED (not included-by-default); required lines always included;
+live client-side recompute from the frozen snapshot; selection + server-computed final totals stored
+atomically with the response, immutable after — migration 148 applied; its own canonical test needed
+two test-script-only fixes (a stale direct-write fixture pattern predating migrations 144/147's
+write-path closure; a missing `created_by_email` on fixture quotes masking the owner-notification
+check), migration 148 itself never touched. Frontend (BOM line editor checkbox,
+`ProposalBomLineSnapshot.id`/`isOptional`, the public page's live-recompute toggle UI) shipped in
+`2fc3a6e`. Do not re-litigate D16/D17 (table at "D16"/"D17" further below), do not re-derive this
+design from scratch, and do not rerun migrations 148/149/150 or their tests.
+
 The pricing statement E approved 2026-09-13:
 
 > Approve recommended pricing: catalog price starts each line; Sales may override with an audit

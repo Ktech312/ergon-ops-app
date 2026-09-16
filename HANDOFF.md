@@ -5,129 +5,44 @@
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
 requires continued work across independent lanes when a migration or decision is blocked, and it
 defines the morning report and the one-file Supabase handoff. Then use
-`CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
+`CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history and decision
+register (§8).
 
-**D16 and D17 both approved 2026-09-15, each with corrections to the recommended default -- see
-`CONTINUOUS_CODER_HANDOFF.md` §8 and `PRODUCT_PROPOSAL_QA_AND_OPTIONAL_BOM_DECISION.md`.** D16 (Client
-Q&A): scoped to one proposal VERSION (not the quote, as recommended); notification to the quote owner
-is required (was deferred in the recommendation); history locks read-only after
-approval/rejection/supersession/expiration/disablement/revocation, explicitly NOT after
-revision_requested. D17 (optional BOM lines): optional lines begin UNSELECTED (not included-by-default,
-as recommended); required lines always included; live client-side recompute from the frozen snapshot;
-selected line IDs + server-computed final totals stored atomically with the response, immutable after;
-explicitly NOT "alternates" -- mutually-exclusive grouping is a separate, later, undecided question.
+**Completed and verified (2026-09-15 session):** migrations 134-150 (137+141, 140+142, 149+150 as
+corrective pairs) are all applied in production, **every one with a passing canonical test.** Queue C1,
+Queue C2 (share-link lifecycle, server-owned Create & Send, direct-write closure), Batch 4b (D3),
+Batch 5 (D4), D16 (Client Proposal Q&A), and D17 (optional BOM lines) are **all FULLY CLOSED, backend
+and frontend, no open items anywhere.** Full per-batch design rationale lives in
+`CONTINUOUS_CODER_HANDOFF.md` §8 (the D-numbered decision register) and
+`PRODUCT_PROPOSAL_QA_AND_OPTIONAL_BOM_DECISION.md`; the exact commits are in `git log`, not reproduced
+here. One-line summary of what each shipped:
+- **D3** — `projects.source_quote_ref`, frozen at conversion from the Sales Quote's `quote_ref`,
+  displayed as "Source Quote."
+- **D4** — a configurable per-workspace discount-approval gate (disabled by default, 10% threshold,
+  Sales Manager/admin only, never PM) in front of Create & Send.
+- **D16** — client "Ask a Question" on a proposal, scoped to the proposal version, answerable by
+  Sales/manager/admin (never PM), locked read-only after approval/rejection/supersession/expiration/
+  disablement/revocation but explicitly still open through a revision request.
+- **D17** — Sales flags a BOM line optional; the client's copy shows it unselected by default with a
+  live-recomputing checkbox; the final selection and server-computed totals are stored atomically with
+  the one terminal response and are immutable after. Not "alternates" — every optional line is
+  independently toggleable, no mutually-exclusive grouping exists yet (that's a separate, later,
+  undecided question).
 
-**D17 (optional BOM lines) -- migration 148 AND its canonical test are both confirmed applied
-(2026-09-15, `Success. No rows returned` on the final run).** `backend/supabase/migrations/
-148_optional_bom_lines.sql`: adds `sales_quote_bom_lines.is_optional`; adds
-`selected_optional_line_ids`/`final_subtotal`/`final_discount_amount`/`final_tax_amount`/
-`final_grand_total` to `sales_quote_proposals`; extends `respond_to_quote_proposal()` (explicit DROP +
-CREATE, not a bare CREATE OR REPLACE, to avoid any ambiguity about Postgres's parameter-addition rules
-for a function this consequential) with a new `p_selected_optional_line_ids uuid[]` parameter -- the
-server computes final totals from the frozen snapshot itself (never trusts a client-submitted total,
-same discipline migration 136 established for pricing generally), gated behind `snapshot ? 'grandTotal'`
-so a pre-136 snapshot's totals stay NULL rather than guessed. The function's own pre-existing
-`where sqp.status = 'sent'` guard (migration 139) is what makes the selection immutable after response
-with zero new logic needed for that.
-
-The canonical test needed two real, test-script-only corrections before it passed clean, both fully
-resolved -- **migration 148 itself was never touched by either fix:**
-1. The first draft's fixture setup directly `insert`ed into `sales_quote_proposals`, copying a pattern
-   from migration 139's own test -- but 139 predates migration 144 (dropped that table's entire
-   direct-write policy, Queue C2.7 part 2) and migration 147 (revoked `authenticated`'s direct EXECUTE
-   on `create_and_send_quote_proposal_version()` itself). Fixed by routing fixture creation through
-   `request_or_send_quote_proposal_version()`, the actual current entry point (fixture quotes carry no
-   `discount_percent`, so the approval gate can never apply, guaranteeing `outcome=sent`). The identical
-   bug was pre-emptively fixed in migration 149's still-unsent test too (three fixtures plus a direct
-   `UPDATE ... SET status = 'approved'`, also illegal).
-2. The corrected test's second run then found that `sales_quotes.created_by_email` has no default or
-   trigger -- only the real frontend sets it, at creation, from the signed-in user -- so the fixture
-   quotes had no owner and the pre-existing `quote_proposal_responded` notification check correctly
-   found nothing to notify. Fixed by setting `created_by_email`/`created_by_user_id` explicitly on every
-   fixture quote (also pre-emptively applied to migration 149's test), and by moving that `auth.users`
-   lookup to before the role switch to `authenticated` (which has no direct grant to query `auth.users`)
-   -- caught before sending, not from a third live run.
-
-Lesson for future test-writing in this repo: a prior test file's fixture pattern is only safe to copy
-if it postdates every migration that has since narrowed that table's own write policy -- check the
-table's CURRENT policies, not just an older test's example.
-
-**D17 frontend shipped (`2fc3a6e`, 2026-09-15).** `SalesQuoteBomLine` carries `isOptional` end to end
-(checkbox on both the add and edit BOM line forms, `addSalesQuoteBomLines`/`updateSalesQuoteBomLine`
-write it, "(optional)" shown in the read-only list). `ProposalBomLineSnapshot` freezes `id`/`isOptional`
-per line at send time so the public page and the server's own computation can both reference the exact
-same line. `ProposalPublicPage`: optional lines begin unselected exactly as decided; a per-line checkbox
-toggles inclusion while reviewing; totals recompute live via `computeProposalTotals` (the same function
-`buildProposalSnapshot` itself already uses, so an untouched selection always matches the frozen
-snapshot exactly, no duplicated math); the selection is sent as part of the one terminal response and
-never editable afterward; reverts to the plain frozen totals display once responded, rather than trying
-to reconstruct the actual accepted selection from local state a reload wouldn't have. `tsc -b` clean,
-434/434 Vitest (fixed six pre-existing `updateSalesQuoteBomLine` test call sites for the now-required
-field, plus one exact-PATCH-body assertion), `eslint` 0 errors, build clean. **D17 is FULLY CLOSED --
-no open items remain anywhere in this batch, backend or frontend.**
-
-**D16 (Client Proposal Q&A) -- migration 149 APPLIED (2026-09-15, `Success. No rows returned`).** The
-live `notification_rules.event_type` CHECK constraint was confirmed directly from production before
-finalizing this migration -- via `pg_get_constraintdef(oid)`, independently cross-checked against a
-live row dump of `notification_rules`, both agreeing on the exact same 13 values -- not reconstructed
-from old migration files (this repo has a documented real production failure from exactly that mistake,
-migration 054's own header). `backend/supabase/migrations/149_client_proposal_qa.sql`: widens that
-constraint to add `proposal_question_received`; creates `sales_quote_proposal_questions` (RLS
-read-only, zero write policies, matching Queue C2.7's discipline applied from the start); two RPCs --
-`submit_proposal_question()` (anon-granted, the client's "Ask a question" action) and
-`respond_to_proposal_question()` (authenticated-granted, Sales/manager/admin only, PM excluded, matching
-`request_or_send_quote_proposal_version()`'s own existing check). Notifies the quote's owner
-(`sales_quotes.created_by_email`), reusing `quote_proposal_responded`'s exact established pattern.
-Read-only after the six decided triggers (approval, rejection, supersession, expiration, disablement,
-revocation) -- deliberately NOT after `revision_requested`, per E's own instruction.
-
-**Migration 149's own canonical test found a real bug in migration 149 itself (2026-09-15): FIXED by a
-new corrective migration, 149 never edited or rerun.** E's live run got
-`ERROR: 42702: column reference "asked_at" is ambiguous`. Root cause: both new RPCs declare a
-`RETURNS TABLE` column with the same name as a real table column
-(`submit_proposal_question`'s `asked_at`, `respond_to_proposal_question`'s `answered_at`) -- every
-RETURNS TABLE column becomes an implicit PL/pgSQL variable in scope for the whole function body, so the
-bare column name in each function's own INSERT/UPDATE ... RETURNING clause is genuinely ambiguous
-between that variable and the table's own column. This is the exact bug class migration 121 already hit
-and fixed for `respond_to_quote_proposal`'s own RETURNS TABLE columns -- missed here because it wasn't
-caught until E's own live test run. `backend/supabase/migrations/
-150_fix_proposal_question_ambiguous_columns.sql`: aliases the table in both statements and qualifies
-every RETURNING column with it (`as sqpq` / `sqpq.column`), matching `respond_to_quote_proposal`'s own
-established pattern exactly -- logic, signatures, and return shapes otherwise byte-for-byte unchanged.
-Migration 150 confirmed applied (2026-09-15, `Success. No rows returned`), and migration 149's own
-canonical test (resent unchanged -- the bug was in 149's functions, not the test) then passed clean:
-`ALL MIGRATION 149 CLIENT PROPOSAL Q&A TESTS PASSED -- ZERO SECTIONS SKIPPED`. **D16's backend is FULLY
-CLOSED -- no open items remain.**
-
-**D16 frontend shipped (`997ec7b`, 2026-09-15).** `persistence.ts`: `ProposalQuestion`,
-`loadProposalQuestionsForProposals` (batch-loads across every proposal version currently shown),
-`submitProposalQuestion` (anon, the client's action), `respondToProposalQuestion` (authenticated,
-Sales/manager/admin only, PM excluded server-side). `main.tsx`: `proposalQuestions` threaded
-`App -> SalesHome -> SalesQuoteBuilder`, reloaded alongside `quoteProposals` itself since Q&A is scoped
-to a proposal VERSION, not the quote; each version's own card in the Quote Proposal panel shows its
-question thread via a new `ProposalQuestionCard` (open questions get a reply box, answered ones show
-the exchange). `ProposalPublicPage` gets a non-status-changing "Ask a Question" section, reachable both
-before a decision and after a `revision_requested` response (still an active conversation) but not
-after a terminal approve/reject -- no thread is shown back to the client, matching the questions
-table's own zero anon-read access and the existing Request-Revision UX pattern ("your representative
-will follow up"). `tsc -b` clean, 434/434 Vitest, `eslint` 0 errors, build clean. **D16 is FULLY
-CLOSED -- no open items remain anywhere in this batch, backend or frontend.**
-
-**Both D16 and D17 are now fully shipped end to end.** E-signature (D12), Billing (D15), and Phase 3
-RLS (D11) remain untouched and unstarted, as instructed.
-**Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
-(+ corrective 142), 143, 144, 145, 146, 147, 148, 149 (+ corrective 150), are all applied in production,
-**every one of them with a passing canonical test.** Queue C1 (frozen Sales
-pricing), Queue C2.2-C2.6 (share-link lifecycle foundation + internal controls), Queue C2.7
-(server-owned Create & Send + direct-write closure), Batch 4b (D3, `source_quote_ref` carry-through),
-and Batch 5 (D4, configurable discount-approval gate) are all shipped, deployed, and canonically tested. **Queue C2 is FULLY
-CLOSED** -- migration 143's own function-body changes were recorded as applied but were never actually
-live in production; root-caused via a six-round diagnostic investigation; migration 145 re-applied the
-correct logic (`Success. No rows returned`, 2026-09-15); its extended canonical test (with the new
-Section 0 structural check) then also passed (`Success. No rows returned`, 2026-09-15). **D3 and D4
-are also FULLY CLOSED** (2026-09-15) -- see below for full detail, including two real test-script bugs
-migration 147's own canonical test caught and had fixed on live data. **No open items remain anywhere
-in Queue C2, Batch 4b, or Batch 5.**
+**Real bugs this pass's canonical tests caught and fixed (all resolved, nothing open):**
+- Migration 147's test found two live-data fixture assumptions that didn't hold in this workspace (a
+  real person holding both "pm" and "sales" roles; a real "sales" holder already holding "manager") —
+  both test-script-only fixes, migration 147 itself untouched.
+- Migration 148's test copied a stale direct-write fixture pattern from an older test that predated
+  migrations 144/147 closing that write path — fixed by routing fixtures through the real RPC entry
+  point instead. Same test also caught a missing `created_by_email` on synthetic fixture quotes,
+  masking the owner-notification check.
+- Migration 149 itself had a genuine bug — a `RETURNS TABLE` column name colliding with a real table
+  column, the same ambiguity class migration 121 already fixed once elsewhere — corrected by a new
+  migration (150), never by editing the applied 149.
+- **Standing lesson:** a prior test file's fixture pattern is only safe to copy if it postdates every
+  migration that has since narrowed that table's own write policy — check the table's CURRENT grants/
+  policies, not just an older test's example.
 
 **Also shipped (2026-09-15, `8b4a6b6`):** the Product Catalog's Bundle components field now carries a
 "Reference only -- listing components here doesn't add them to a quote's BOM automatically" disclaimer
@@ -138,105 +53,9 @@ now sees exactly what happens. `tsc -b` clean, 431/431 Vitest, `eslint` 0 errors
 and verified live via Claude-in-Chrome (opened Add Product, switched Item type to Bundle, confirmed the
 disclaimer renders correctly, cancelled without saving -- no real catalog data touched).
 
-**D3 and D4 approved (2026-09-15).** D3: add `projects.source_quote_ref`, populated from the Sales
-Quote's `quote_ref` at conversion time, `source_sales_quote_id` stays the durable relational link,
-displayed as "Source Quote," treated as historical (frozen at conversion, never live-synced). D4: a
-configurable per-workspace discount-approval gate, disabled by default, requiring Sales Manager or
-workspace admin approval (never PM) above a configurable threshold (default 10%) before a proposal can
-be sent; margin-based approval explicitly deferred until cost/margin calculations are formally defined.
-Both Batch 4b and Batch 5 approved to proceed; configuration must be workspace-aware and editable
-through settings, no code deploy required for a future customer to change it.
-
-**Batch 4b (`source_quote_ref` carry-through) -- FULLY SHIPPED (2026-09-15).** Migration 146 applied
-(`Success. No rows returned`) and its canonical test passed (`ALL MIGRATION 146 SOURCE_QUOTE_REF
-CARRY-THROUGH TESTS PASSED -- ZERO SECTIONS SKIPPED`, including Section 0's real-data backfill check).
-`backend/supabase/migrations/146_project_source_quote_ref_carry_through.sql`: added
-`projects.source_quote_ref text`, backfilled every already-converted project exactly (via the existing
-`source_sales_quote_id` relational link -- no guessing required, unlike `accepted_proposal_total`'s own
-deliberately-NULL backfill in migration 136), and redefined `create_project_from_quote()` to also carry
-`quote_ref` going forward -- preserved migration 136's entire function body byte-for-byte except this
-one addition, same discipline as every prior redefinition in this chain (127 -> 134 -> 136 -> 146).
-Frontend shipped (`3d8452d`): `sourceQuoteRef` read into `ProjectSite`, displayed as "Source Quote" in
-the Projects panel. `tsc -b` clean, 427/427 Vitest, `eslint` 0 errors, build clean, isolated from
-Batch 5's still-uncommitted frontend by hunk-splitting the working tree before commit (both batches had
-been drafted in the same working files). **No open items remain in Batch 4b.**
-
-**Batch 5 (configurable discount-approval gate) -- FULLY SHIPPED (2026-09-15).** Migration 147 applied
-(`Success. No rows returned`) and its canonical test passed after two test-script-only corrections
-(`ALL MIGRATION 147 SALES DISCOUNT APPROVAL GATE TESTS PASSED -- ZERO SECTIONS SKIPPED` -- see both
-corrections below). `backend/supabase/migrations/147_sales_discount_approval_gate.sql`:
-two new tables (`workspace_sales_approval_settings` -- toggle + threshold, one row per workspace,
-admin-editable through Admin settings, modeled directly on `workspace_share_link_settings` including
-the grant-layer correction migration 141 taught this repo to apply from the start;
-`sales_quote_proposal_approval_requests` -- RLS read-only, zero write policies, every write goes
-through an RPC, applying Queue C2.7's "close direct-write bypasses" lesson from day one instead of as
-a follow-up) plus two RPCs: `request_or_send_quote_proposal_version()` (the new sole Create & Send
-entry point -- wraps `create_and_send_quote_proposal_version()` completely unchanged, calling it
-directly when the gate doesn't apply or creating a pending request when it does) and
-`respond_to_proposal_approval_request()` (Sales Manager/admin approve-or-reject, row-locked against a
-concurrent double-review race). `create_and_send_quote_proposal_version()`'s own direct EXECUTE grant
-to `authenticated` is revoked, closing the obvious bypass (send directly, skip the gate) -- its nested
-call from the wrapper is unaffected, since both share the same owner. Deliberately does NOT touch
-`notification_rules.event_type` -- this repo has already hit a real production failure from
-reconstructing that constraint's allow-list from migration files instead of live data (documented at
-length above); left as a small, independent follow-up once E can confirm the live list. Authorization
-deliberately reuses `has_role()`/`app_user_roles` (hardened in migration 135), not the newer
-`workspace_member_roles` pattern `create_project_from_quote()` uses -- matches the function this
-migration actually wraps (`create_and_send_quote_proposal_version()`, migration 140, already authorized
-that way), keeping one consistent story for this call chain rather than mixing two role systems in one
-feature.
-
-**Migration 147's canonical test found a real bug on its own live run (2026-09-15): FIXED, TEST
-SCRIPT ONLY, migration 147 itself untouched.** E ran it and got `ERROR: P0001: TEST FAILED: an
-unrelated PM-only, non-requester, non-manager caller could read someone else's approval request row.`
-Root cause: the test's own fixture discovery (`migration_147_sales_discount_approval_gate_tests.sql`,
-mirroring migration 140's own fixture-discovery/temp-role-grant conventions) picked a "pm" role holder
-and a "sales" role holder who turned out to be the SAME real person in this workspace's actual data --
-that person holds both roles. The primary lookup for `sales_user_id` didn't exclude `pm_user_id` the
-way its own fallback path already did, so when Section 11 impersonated "pm_user_id" to prove an
-unrelated party can't read someone else's request, it was actually re-impersonating the original
-requester, who of course can see their own row via the RLS policy's `requested_by = auth.uid()` clause
--- exactly as designed. Migration 147's RLS policy and RPCs were never wrong; only the test's
-assumption that the discovered pm and sales fixtures were distinct people was. Fixed by adding
-`and ur.user_id <> pm_user_id` to the primary `sales_user_id` lookup, matching the exclusion its
-fallback path already had.
-
-**Same test's SECOND live run found a second, related real bug (2026-09-15): FIXED, TEST SCRIPT ONLY,
-migration 147 still untouched.** With pm/sales now guaranteed distinct, E got
-`ERROR: P0001: TEST FAILED: the Sales user who created the request was able to approve their own
-request.` Root cause: the real Sales person this workspace's fixture discovery found already held
-'manager' as a genuine pre-existing secondary role in production (entirely plausible on a small team)
--- the test's own header comment claimed "no manager role yet" without ever verifying or enforcing it,
-unlike the PM fixture, which the test DOES correctly isolate to a single role before its own negative
-check (Section 5). `respond_to_proposal_approval_request()` correctly allowed the self-approval through
-since `has_role('manager')` correctly returned true for that real person -- the assertion's premise was
-simply false for this specific user, not a gap in the RPC's own authorization logic. Fixed by applying
-the same single-role-isolation technique already used for PM to the Sales fixture too: capture and
-strip any pre-existing 'manager' role before the self-approval negative check, restore it (or
-deliberately re-grant it for the positive-approval check right after) at the same points the script
-already handles PM's isolation. Both corrections are test-script-only; migration 147 itself was never
-touched by either.
-
-Frontend shipped (`f0bc686`): `persistence.ts` replaces `createAndSendQuoteProposalVersion` with
-`requestOrSendQuoteProposalVersion` (returns a `ProposalSendOutcome` discriminated union -- `sent` |
-`pending_approval` | `ok:false`, never throws) plus `respondToProposalApprovalRequest`,
-`loadProposalApprovalRequests`, `loadSalesApprovalSettings`, and `saveSalesApprovalSettings`.
-`main.tsx`: `handleCreateQuoteProposal` branches on the new outcome; a new `AdminPage` "Sales Approval
-Settings" panel (admin-only, checkbox + draft/Save threshold input, following the established
-draft-state pattern) and "Proposal Approval Requests" panel (visible to admin + manager via the page's
-existing `canReviewApprovals` gate) let a Sales Manager/admin review pending requests;
-`SalesQuoteBuilder`'s Quote Proposal panel shows a persistent "awaiting Sales Manager approval" note
-for the current quote's own pending request, threaded down through `SalesHome`. `tsc -b` clean,
-434/434 Vitest (rewrote the stale `createAndSendQuoteProposalVersion` unit tests to cover the new
-RPC/outcome shape), `eslint` 0 errors (warnings match the repo's existing draft-state effect pattern,
-not new problems), production build clean. **No open items remain in Batch 5. D3 and D4 are both fully
-shipped -- no open items remain anywhere in this queue.**
-
-See
-"Current database
-gate" below for the full history, including migration 140's own real bug (ambiguous `token`
-reference) and migration 142's real-default-grant follow-up, both found and fixed before/because of
-E's real runs.
+E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain untouched and unstarted, as instructed.
+See "Current database gate" below for Queue C2's own full history, including migration 140's real bug
+(ambiguous `token` reference) and migration 142's real-default-grant follow-up.
 
 **Migration 143's canonical test found a real bug on its own live run (2026-09-14): FIXED, TEST
 SCRIPT ONLY, migration 143 itself untouched.** E ran it and got `ERROR: 42501: new row violates
