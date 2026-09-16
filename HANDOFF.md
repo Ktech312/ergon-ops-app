@@ -50,13 +50,25 @@ resolved -- **migration 148 itself was never touched by either fix:**
 
 Lesson for future test-writing in this repo: a prior test file's fixture pattern is only safe to copy
 if it postdates every migration that has since narrowed that table's own write policy -- check the
-table's CURRENT policies, not just an older test's example. **No open items remain in D17's backend.**
+table's CURRENT policies, not just an older test's example.
 
-Frontend (BOM line editor checkbox, `id`/`isOptional` added to `ProposalBomLineSnapshot`, the public
-page's live-recompute toggle UI) starting now.
+**D17 frontend shipped (`2fc3a6e`, 2026-09-15).** `SalesQuoteBomLine` carries `isOptional` end to end
+(checkbox on both the add and edit BOM line forms, `addSalesQuoteBomLines`/`updateSalesQuoteBomLine`
+write it, "(optional)" shown in the read-only list). `ProposalBomLineSnapshot` freezes `id`/`isOptional`
+per line at send time so the public page and the server's own computation can both reference the exact
+same line. `ProposalPublicPage`: optional lines begin unselected exactly as decided; a per-line checkbox
+toggles inclusion while reviewing; totals recompute live via `computeProposalTotals` (the same function
+`buildProposalSnapshot` itself already uses, so an untouched selection always matches the frozen
+snapshot exactly, no duplicated math); the selection is sent as part of the one terminal response and
+never editable afterward; reverts to the plain frozen totals display once responded, rather than trying
+to reconstruct the actual accepted selection from local state a reload wouldn't have. `tsc -b` clean,
+434/434 Vitest (fixed six pre-existing `updateSalesQuoteBomLine` test call sites for the now-required
+field, plus one exact-PATCH-body assertion), `eslint` 0 errors, build clean. **D17 is FULLY CLOSED --
+no open items remain anywhere in this batch, backend or frontend.**
 
-**D16 (Client Proposal Q&A) -- migration 149 drafted (2026-09-15), held pending migration 148's
-confirmation (one manual SQL action at a time).** The live `notification_rules.event_type` CHECK
+**D16 (Client Proposal Q&A) -- migration 149 drafted (2026-09-15), sent to E as the next single SQL
+action (migration 148 and D17's frontend are both done; 149 is the current one out for review).** The
+live `notification_rules.event_type` CHECK
 constraint was confirmed directly from production before finalizing this migration -- via
 `pg_get_constraintdef(oid)`, independently cross-checked against a live row dump of
 `notification_rules`, both agreeing on the exact same 13 values -- not reconstructed from old migration
