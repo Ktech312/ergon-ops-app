@@ -221,6 +221,7 @@ import {
   loadDeviceRecipes,
   loadHandoversForProject,
   loadInventoryItems,
+  loadInventoryItemsPage,
   loadInventoryItemSkusByIds,
   loadInventoryMovements,
   loadLocalAppState,
@@ -403,6 +404,7 @@ import {
   type DeletionLogEntry,
   type NotificationDeliveryFailure,
   type SystemHealthEvent,
+  type InventoryItemsPageFilters,
   type OneOffReconciliation,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
@@ -2067,6 +2069,15 @@ function App() {
       return null;
     }
     return getPurchaseOrderFileDownloadUrl(storagePath, authSession.accessToken);
+  }
+
+  // Inventory pagination (Queue R1 item 2): thin wrapper so the Inventory
+  // component itself doesn't need direct access to authSession.
+  async function handleLoadInventoryItemsPage(filters: InventoryItemsPageFilters, cursor: string | null, pageSize: number) {
+    if (!authSession) {
+      return { items: [], nextCursor: null };
+    }
+    return loadInventoryItemsPage(filters, cursor, pageSize, authSession.accessToken);
   }
 
   // Real per-line receiving + receiving log (2026-08-20). E: "we need to
@@ -8008,7 +8019,7 @@ function App() {
             ) : (
               <>
                 {view === "purchasing" && allowedTabs.includes("purchasing") && <Purchasing projectSites={projectSites} inventoryItems={inventoryItems} purchaseRequests={purchaseRequests} purchaseOrders={purchaseOrders} onCreatePurchase={createPurchase} onUploadPurchaseOrderFile={handleUploadPurchaseOrderFile} onDeletePurchaseOrderFile={handleDeletePurchaseOrderFile} deletedPurchaseOrderFiles={deletedPurchaseOrderFiles} onRestorePurchaseOrderFile={handleRestorePurchaseOrderFile} canReviewDeleted={isAdmin || roleMode === "manager"} onGetPurchaseOrderFileUrl={handleGetPurchaseOrderFileUrl} onReceivePurchaseOrderLine={handleReceivePurchaseOrderLine} onReceiveAllPurchaseOrderLines={handleReceiveAllPurchaseOrderLines} onPutPurchaseOrderOnHold={handlePutPurchaseOrderOnHold} onResumePurchaseOrder={handleResumePurchaseOrder} lowStock={lowStock} buildTransactions={buildTransactions} onQueueReorderRequests={queueReorderRequests} onQueuePlannedBuildShortageRequests={queuePlannedBuildShortageRequests} onUpdatePurchaseRequest={updatePurchaseRequest} onUpdatePurchaseRequestStatus={updatePurchaseRequestStatus} onCancelPurchaseRequest={cancelPurchaseRequest} onReceivePurchaseRequest={receivePurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={purchasingSearchFocus} />}
-                {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onDeleteBuildTransaction={handleDeleteBuildTransaction} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDismissOneOff={dismissOneOff} onDeleteItem={handleDeleteInventoryItem} onForceDeleteItem={handleForceDeleteInventoryItem} isAdmin={isAdmin} />}
+                {view === "inventory" && allowedTabs.includes("inventory") && <Inventory roleMode={roleMode} inventoryItems={inventoryItems} lowStock={lowStock} projectSites={projectSites} deviceRecipes={deviceRecipes} setDeviceRecipes={setDeviceRecipes} onDeleteRecipe={handleDeleteDeviceRecipe} buildTransactions={buildTransactions} inventoryMovements={inventoryMovements} onAddItem={addInventoryItem} onUpdateItem={updateInventoryItem} onAdjustStock={adjustInventoryStock} onTransferToProject={transferInventoryToProject} onPlanBuild={planBuildTransaction} onBuildInventoryUnit={buildInventoryUnit} onUndoBuildTransaction={undoBuildTransaction} onUpdateBuildStage={updateBuildStage} onCancelPlannedBuild={cancelPlannedBuild} onDeleteBuildTransaction={handleDeleteBuildTransaction} onQueueBuildShortageRequests={queueBuildShortageRequests} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} searchFocus={inventorySearchFocus} purchaseOrders={purchaseOrders} oneOffReconciliations={oneOffReconciliations} onMergeOneOff={mergeOneOffIntoInventory} onDismissOneOff={dismissOneOff} onDeleteItem={handleDeleteInventoryItem} onForceDeleteItem={handleForceDeleteInventoryItem} isAdmin={isAdmin} onLoadInventoryItemsPage={handleLoadInventoryItemsPage} />}
                 {view === "vendors" && allowedTabs.includes("vendors") && <Vendors vendors={vendors} vendorStatus={vendorStatus} onCreate={handleCreateVendor} onUpdate={handleUpdateVendor} />}
               </>
             )}
@@ -10297,10 +10308,12 @@ function Inventory({
   onDeleteItem,
   onForceDeleteItem,
   isAdmin,
+  onLoadInventoryItemsPage,
 }: {
   roleMode: RoleMode;
   inventoryItems: Part[];
   lowStock: Part[];
+  onLoadInventoryItemsPage: (filters: InventoryItemsPageFilters, cursor: string | null, pageSize: number) => Promise<{ items: Part[]; nextCursor: string | null }>;
   projectSites: ProjectSite[];
   deviceRecipes: BuildRecipe[];
   setDeviceRecipes: Dispatch<SetStateAction<BuildRecipe[]>>;
@@ -10398,6 +10411,86 @@ function Inventory({
     setFilters({ ref: searchFocus.term, part: "", category: "All", manufacturer: "", status: "All", tag: "All" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchFocus?.token]);
+
+  // Inventory pagination (2026-09-16, PRODUCT_INVENTORY_PAGINATION_DESIGN.md,
+  // Queue R1 item 2): a second, independent, server-side-searched data
+  // source used ONLY for what's rendered in the two big table views below
+  // (desktop table + mobile card list). filteredInventoryItems above is
+  // deliberately left untouched -- CSV export and the "N items" count
+  // still need the FULL filtered set, not one page of it. The "status"
+  // filter (a derived label, not a plain column) is applied client-side
+  // on each fetched page, since it depends on a joined/aggregated
+  // allocated quantity that isn't cheaply filterable server-side.
+  const INVENTORY_PAGE_SIZE = 50;
+  const [paginatedItems, setPaginatedItems] = useState<Part[]>([]);
+  const [paginatedCursor, setPaginatedCursor] = useState<string | null>(null);
+  // Starts true so the first paint never briefly flashes "No items match
+  // the current filters" before the initial page has actually loaded.
+  const [paginatedLoading, setPaginatedLoading] = useState(true);
+  const [paginatedLoadError, setPaginatedLoadError] = useState("");
+  const pageFilters: InventoryItemsPageFilters = {
+    ref: filters.ref,
+    part: filters.part,
+    manufacturer: filters.manufacturer,
+    category: filters.category,
+    tag: filters.tag,
+    tab: inventoryTab,
+  };
+  const pageFiltersKey = JSON.stringify(pageFilters);
+  useEffect(() => {
+    let cancelled = false;
+    setPaginatedLoading(true);
+    setPaginatedLoadError("");
+    const timer = setTimeout(() => {
+      onLoadInventoryItemsPage(pageFilters, null, INVENTORY_PAGE_SIZE)
+        .then((page) => {
+          if (cancelled) {
+            return;
+          }
+          setPaginatedItems(page.items);
+          setPaginatedCursor(page.nextCursor);
+          setPaginatedLoading(false);
+        })
+        .catch((error) => {
+          if (cancelled) {
+            return;
+          }
+          // "Last known good" -- keep whatever rendered before rather
+          // than replacing it with an empty table on a transient failure.
+          setPaginatedLoadError(error instanceof Error ? error.message : "Couldn't load inventory items.");
+          setPaginatedLoading(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageFiltersKey]);
+
+  async function loadMoreInventoryItems() {
+    if (!paginatedCursor || paginatedLoading) {
+      return;
+    }
+    setPaginatedLoading(true);
+    setPaginatedLoadError("");
+    try {
+      const page = await onLoadInventoryItemsPage(pageFilters, paginatedCursor, INVENTORY_PAGE_SIZE);
+      setPaginatedItems((current) => [...current, ...page.items]);
+      setPaginatedCursor(page.nextCursor);
+    } catch (error) {
+      setPaginatedLoadError(error instanceof Error ? error.message : "Couldn't load more inventory items.");
+    } finally {
+      setPaginatedLoading(false);
+    }
+  }
+
+  // The "status" filter is the one field the server-side page doesn't
+  // filter on directly (see comment above) -- applied here, on the
+  // already-fetched page only.
+  const visiblePaginatedItems =
+    filters.status === "All" ? paginatedItems : paginatedItems.filter((part) => inventoryStatusLabel(part) === filters.status);
+
   const [skuScan, setSkuScan] = useState("");
   const [scanStatus, setScanStatus] = useState("Scan or enter a SKU to pull up the item.");
   const [buildDraft, setBuildDraft] = useState({ recipeName: deviceRecipes.find((recipe) => !recipe.retired)?.name ?? deviceRecipes[0]?.name ?? "", qty: 1 });
@@ -11208,7 +11301,7 @@ function Inventory({
               </tr>
             </thead>
             <tbody>
-              {filteredInventoryItems.map((part) => (
+              {visiblePaginatedItems.map((part) => (
                 <tr key={part.ref} className="clickable-row" {...clickableRowProps(() => openEditItemModal(part))}>
                   <td onClick={(event) => event.stopPropagation()}>
                     <button className="thumbnail-button" type="button" onClick={() => setPreviewItem(part)} aria-label={`Open image for ${part.name}`}>
@@ -11237,6 +11330,18 @@ function Inventory({
               ))}
             </tbody>
           </table>
+          {paginatedLoadError && <p className="error-text" role="alert">{paginatedLoadError}</p>}
+          {visiblePaginatedItems.length === 0 && !paginatedLoading && !paginatedLoadError && (
+            <p className="empty-compact-state">No items match the current filters.</p>
+          )}
+          {visiblePaginatedItems.length > 0 && (
+            <p className="muted">Showing {visiblePaginatedItems.length} of {filteredInventoryItems.length} matching items{paginatedCursor ? "" : " (all loaded)"}.</p>
+          )}
+          {paginatedCursor && (
+            <button className="secondary-action mini-action" type="button" onClick={loadMoreInventoryItems} disabled={paginatedLoading}>
+              {paginatedLoading ? "Loading..." : "Load more"}
+            </button>
+          )}
         </div>
 
         <div className="mobile-card-list inventory-mobile-list">
@@ -11264,7 +11369,7 @@ function Inventory({
               <option>Retired</option>
             </select>
           </div>
-          {filteredInventoryItems.map((part) => (
+          {visiblePaginatedItems.map((part) => (
             <div key={part.ref} className="mobile-card" role="button" tabIndex={0} onClick={() => openEditItemModal(part)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") openEditItemModal(part); }}>
               <span className="mobile-card-row">
                 <span
@@ -11295,7 +11400,18 @@ function Inventory({
               </span>
             </div>
           ))}
-          {filteredInventoryItems.length === 0 && <div className="empty-compact-state">No items match the current filters.</div>}
+          {paginatedLoadError && <p className="error-text" role="alert">{paginatedLoadError}</p>}
+          {visiblePaginatedItems.length === 0 && !paginatedLoading && !paginatedLoadError && (
+            <div className="empty-compact-state">No items match the current filters.</div>
+          )}
+          {visiblePaginatedItems.length > 0 && (
+            <p className="muted">Showing {visiblePaginatedItems.length} of {filteredInventoryItems.length} matching items{paginatedCursor ? "" : " (all loaded)"}.</p>
+          )}
+          {paginatedCursor && (
+            <button className="secondary-action mini-action" type="button" onClick={loadMoreInventoryItems} disabled={paginatedLoading}>
+              {paginatedLoading ? "Loading..." : "Load more"}
+            </button>
+          )}
         </div>
       </section>
       <section className="panel wide">

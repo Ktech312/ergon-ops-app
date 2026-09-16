@@ -5687,6 +5687,112 @@ export async function loadInventoryItems(accessToken?: string): Promise<Part[]> 
   return allRows.map(mapInventoryItemRow);
 }
 
+// Inventory pagination (2026-09-16, PRODUCT_INVENTORY_PAGINATION_DESIGN.md,
+// Queue R1 item 2): a SECOND, independent data source, used only by the
+// Inventory page's own big browsable table -- it does NOT replace
+// loadInventoryItems/inventoryItems above, which stays exactly as-is for
+// its 100+ other consumers (lookups, dropdowns, global search, CSV export,
+// aggregates). Server-side filtered on every field the existing
+// client-side filter bar already exposes (ref/part+description/
+// manufacturer/category/tag), matching this app's real filter UI field-
+// by-field rather than one generic "search" box. The one field NOT
+// filterable server-side without a computed view is the derived "status"
+// label (Retired/Not Tracked/Reorder/Healthy -- depends on
+// stock/allocated, itself a joined aggregate from inventory_balances, not
+// a plain column) -- callers apply that filter client-side on the
+// returned page, same as the design doc's own "illustrative, to be
+// verified at implementation time" allowance.
+export type InventoryItemsPageFilters = {
+  ref: string;
+  part: string;
+  manufacturer: string;
+  category: string; // "All" or an exact category
+  tag: string; // "All" or an exact tag
+  tab: "parts" | "finished"; // "finished" = category === "Build"; "parts" = everything else
+};
+
+export type InventoryItemsPage = {
+  items: Part[];
+  // Opaque -- encodes (item_name, id) of the last row on this page. Pass
+  // back as `cursor` to fetch the next page; null means this was the last
+  // page.
+  nextCursor: string | null;
+};
+
+function encodeInventoryItemsCursor(name: string, id: string): string {
+  return btoa(unescape(encodeURIComponent(JSON.stringify({ name, id }))));
+}
+
+function decodeInventoryItemsCursor(cursor: string): { name: string; id: string } | null {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(escape(atob(cursor)))) as { name?: unknown; id?: unknown };
+    if (typeof parsed.name === "string" && typeof parsed.id === "string") {
+      return { name: parsed.name, id: parsed.id };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// PostgREST ilike uses `*` as its own wildcard (translated to SQL `%`
+// internally) -- a raw `%` in the search term must be escaped first or it
+// would be interpreted as a literal SQL wildcard instead of a literal
+// percent sign.
+function ilikeTerm(value: string): string {
+  return `*${value.trim().replace(/%/g, "\\%").replace(/\*/g, "\\*")}*`;
+}
+
+export async function loadInventoryItemsPage(
+  filters: InventoryItemsPageFilters,
+  cursor: string | null,
+  pageSize: number,
+  accessToken?: string,
+): Promise<InventoryItemsPage> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { items: [], nextCursor: null };
+  }
+
+  const params: string[] = [`select=${INVENTORY_ITEM_SELECT}`, "order=item_name.asc,id.asc", `limit=${pageSize}`];
+
+  if (filters.ref.trim()) {
+    params.push(`sku=ilike.${encodeURIComponent(ilikeTerm(filters.ref))}`);
+  }
+  if (filters.part.trim()) {
+    const term = encodeURIComponent(ilikeTerm(filters.part));
+    params.push(`or=(item_name.ilike.${term},description.ilike.${term})`);
+  }
+  if (filters.manufacturer.trim()) {
+    params.push(`manufacturer=ilike.${encodeURIComponent(ilikeTerm(filters.manufacturer))}`);
+  }
+  if (filters.category !== "All") {
+    params.push(`category=eq.${encodeURIComponent(filters.category)}`);
+  }
+  params.push(filters.tab === "finished" ? "category=eq.Build" : "category=neq.Build");
+  if (filters.tag !== "All") {
+    params.push(`inventory_tags=cs.{${encodeURIComponent(filters.tag)}}`);
+  }
+
+  const decodedCursor = cursor ? decodeInventoryItemsCursor(cursor) : null;
+  if (decodedCursor) {
+    const name = encodeURIComponent(decodedCursor.name);
+    const id = encodeURIComponent(decodedCursor.id);
+    params.push(`and=(item_name.gt.${name},or(item_name.eq.${name},id.gt.${id}))`);
+  }
+
+  const response = await fetch(supabaseUrl(`inventory_items?${params.join("&")}`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not load inventory items"));
+  }
+  const rows = (await response.json()) as InventoryItemRow[];
+  const items = rows.map(mapInventoryItemRow);
+  const lastRow = rows[rows.length - 1];
+  const nextCursor = rows.length === pageSize && lastRow ? encodeInventoryItemsCursor(lastRow.item_name, lastRow.id) : null;
+  return { items, nextCursor };
+}
+
 let mainWarehouseLocationId: string | null = null;
 
 async function getMainWarehouseLocationId(accessToken: string): Promise<string | null> {
