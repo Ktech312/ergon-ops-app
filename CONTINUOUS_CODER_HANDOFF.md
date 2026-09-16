@@ -1226,6 +1226,8 @@ Queue A/B work.
 | D13 | Support first release | Ticket/request lifecycle linked to Client Ledger, Project, site, and installed asset | Support module |
 | D14 | Engineering first release | Product/solution request + technical review + Catalog release link | Engineering module |
 | D15 | **Already decided for now:** Commercial SaaS billing | Remains deferred until explicit authorization; do not ask again during current operational-product work | SaaS commercialization only |
+| D16 | Client Proposal Q&A: mechanism, scope, and who may answer | Dedicated `sales_quote_proposal_questions` table + two token/role-gated RPCs (not the `channels` system -- see `PRODUCT_PROPOSAL_QA_AND_OPTIONAL_BOM_DECISION.md` §1.1 for the re-trace showing why not); scoped to the quote, not one frozen proposal version; any Sales/manager/admin may answer | Client Proposal Q&A implementation |
+| D17 | Optional/alternate BOM lines: default inclusion state and whether selection blocks/gates the response | `is_optional` boolean on `sales_quote_bom_lines`; optional lines default to included (checked) on the public page; excluding one never blocks or gates any of the three terminal responses | Optional BOM line implementation |
 
 ### Manual database actions
 

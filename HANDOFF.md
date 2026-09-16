@@ -6,6 +6,20 @@ For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`
 requires continued work across independent lanes when a migration or decision is blocked, and it
 defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
+
+**Next planning batch traced and designed, not yet implemented (2026-09-15) --
+see `PRODUCT_PROPOSAL_QA_AND_OPTIONAL_BOM_DECISION.md`.** Client Proposal Q&A (§5 row 13) and
+Optional/alternate BOM lines (§5 row 14) were both re-traced directly against live source (not the
+prior doc's lighter pass) and given implementation-ready designs. Key finding: the earlier suggestion
+to build Q&A on the internal `channels` system does not hold up on closer inspection -- `channels` has
+no anonymous-write path, no actual client-channel implementation despite a schema placeholder, and no
+per-quote scoping; the recommended design instead mirrors migration 147's own dedicated-table +
+token/role-gated-RPC pattern. Optional BOM lines' only stated blocker (sequencing behind pricing) is
+now cleared, since Batch 1 shipped. Two new decisions added to the register
+(`CONTINUOUS_CODER_HANDOFF.md` §8): **D16** (Q&A mechanism/scope/who-answers) and **D17** (optional-line
+default inclusion state), each with a recommended default. **No code, migration, or RPC exists for
+either feature yet** -- do not begin building until E answers D16/D17. E-signature (D12), Billing
+(D15), and Phase 3 RLS (D11) remain untouched and unstarted, as instructed.
 **Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
 (+ corrective 142), 143, 144, 145, 146, and 147 are all applied in production, **every one of them
 with a passing canonical test.** Queue C1 (frozen Sales pricing), Queue C2.2-C2.6 (share-link
