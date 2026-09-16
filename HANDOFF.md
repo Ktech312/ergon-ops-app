@@ -7,19 +7,40 @@ requires continued work across independent lanes when a migration or decision is
 defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history.
 
-**Next planning batch traced and designed, not yet implemented (2026-09-15) --
-see `PRODUCT_PROPOSAL_QA_AND_OPTIONAL_BOM_DECISION.md`.** Client Proposal Q&A (§5 row 13) and
-Optional/alternate BOM lines (§5 row 14) were both re-traced directly against live source (not the
-prior doc's lighter pass) and given implementation-ready designs. Key finding: the earlier suggestion
-to build Q&A on the internal `channels` system does not hold up on closer inspection -- `channels` has
-no anonymous-write path, no actual client-channel implementation despite a schema placeholder, and no
-per-quote scoping; the recommended design instead mirrors migration 147's own dedicated-table +
-token/role-gated-RPC pattern. Optional BOM lines' only stated blocker (sequencing behind pricing) is
-now cleared, since Batch 1 shipped. Two new decisions added to the register
-(`CONTINUOUS_CODER_HANDOFF.md` §8): **D16** (Q&A mechanism/scope/who-answers) and **D17** (optional-line
-default inclusion state), each with a recommended default. **No code, migration, or RPC exists for
-either feature yet** -- do not begin building until E answers D16/D17. E-signature (D12), Billing
-(D15), and Phase 3 RLS (D11) remain untouched and unstarted, as instructed.
+**D16 and D17 both approved 2026-09-15, each with corrections to the recommended default -- see
+`CONTINUOUS_CODER_HANDOFF.md` §8 and `PRODUCT_PROPOSAL_QA_AND_OPTIONAL_BOM_DECISION.md`.** D16 (Client
+Q&A): scoped to one proposal VERSION (not the quote, as recommended); notification to the quote owner
+is required (was deferred in the recommendation); history locks read-only after
+approval/rejection/supersession/expiration/disablement/revocation, explicitly NOT after
+revision_requested. D17 (optional BOM lines): optional lines begin UNSELECTED (not included-by-default,
+as recommended); required lines always included; live client-side recompute from the frozen snapshot;
+selected line IDs + server-computed final totals stored atomically with the response, immutable after;
+explicitly NOT "alternates" -- mutually-exclusive grouping is a separate, later, undecided question.
+
+**D17 implementation started -- migration 148 drafted and sent to E as the first single SQL action
+(2026-09-15).** `backend/supabase/migrations/148_optional_bom_lines.sql`: adds
+`sales_quote_bom_lines.is_optional`; adds `selected_optional_line_ids`/`final_subtotal`/
+`final_discount_amount`/`final_tax_amount`/`final_grand_total` to `sales_quote_proposals`; extends
+`respond_to_quote_proposal()` (explicit DROP + CREATE, not a bare CREATE OR REPLACE, to avoid any
+ambiguity about Postgres's parameter-addition rules for a function this consequential) with a new
+`p_selected_optional_line_ids uuid[]` parameter -- the server computes final totals from the frozen
+snapshot itself (never trusts a client-submitted total, same discipline migration 136 established for
+pricing generally), gated behind `snapshot ? 'grandTotal'` so a pre-136 snapshot's totals stay NULL
+rather than guessed. The function's own pre-existing `where sqp.status = 'sent'` guard (migration 139)
+is what makes the selection immutable after response with zero new logic needed for that. Canonical
+test drafted (`migration_148_optional_bom_lines_tests.sql`) but not yet sent, per the
+one-file-at-a-time convention. Frontend (BOM line editor checkbox, `id`/`isOptional` added to
+`ProposalBomLineSnapshot`, the public page's live-recompute toggle UI) not yet started -- waits for
+this migration to be confirmed, same standing rule as every other batch this session.
+
+**D16 (Client Proposal Q&A) implementation not yet started.** The notification requirement (notify the
+quote's owner) needs the LIVE current `notification_rules.event_type` CHECK constraint list before a
+migration can safely widen it -- this repo has a documented real production failure from reconstructing
+that list from migration files instead of live data (migration 054's own header records an earlier,
+caught-before-shipping instance of the exact same mistake). A read-only diagnostic query confirming the
+live list is the next single action once D17's migration is confirmed, per "one manual SQL action at a
+time." E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain untouched and unstarted, as
+instructed.
 **Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
 (+ corrective 142), 143, 144, 145, 146, and 147 are all applied in production, **every one of them
 with a passing canonical test.** Queue C1 (frozen Sales pricing), Queue C2.2-C2.6 (share-link
