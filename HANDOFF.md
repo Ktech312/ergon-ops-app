@@ -53,9 +53,15 @@ now sees exactly what happens. `tsc -b` clean, 431/431 Vitest, `eslint` 0 errors
 and verified live via Claude-in-Chrome (opened Add Product, switched Item type to Bundle, confirmed the
 disclaimer renders correctly, cancelled without saving -- no real catalog data touched).
 
-E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain untouched and unstarted, as instructed.
-See "Current database gate" below for Queue C2's own full history, including migration 140's real bug
-(ambiguous `token` reference) and migration 142's real-default-grant follow-up.
+**Consolidated decision document delivered 2026-09-15, not yet approved:**
+`PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` traces and designs both frozen proposal PDF
+generation/download (D18) and e-signature scope/legal-record/signer-identity/completion-behavior (D12,
+revised). Nothing implemented -- recommended defaults only, awaiting approval. Reconciles/replaces D12's
+old one-line placeholder in `CONTINUOUS_CODER_HANDOFF.md` §8; D18 is a new row there.
+
+Billing (D15) and Phase 3 RLS (D11) remain untouched and unstarted, as instructed. See "Current database
+gate" below for Queue C2's own full history, including migration 140's real bug (ambiguous `token`
+reference) and migration 142's real-default-grant follow-up.
 
 **Migration 143's canonical test found a real bug on its own live run (2026-09-14): FIXED, TEST
 SCRIPT ONLY, migration 143 itself untouched.** E ran it and got `ERROR: 42501: new row violates
