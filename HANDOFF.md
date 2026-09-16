@@ -17,52 +17,43 @@ as recommended); required lines always included; live client-side recompute from
 selected line IDs + server-computed final totals stored atomically with the response, immutable after;
 explicitly NOT "alternates" -- mutually-exclusive grouping is a separate, later, undecided question.
 
-**D17 implementation started -- migration 148 drafted and sent to E as the first single SQL action
-(2026-09-15).** `backend/supabase/migrations/148_optional_bom_lines.sql`: adds
-`sales_quote_bom_lines.is_optional`; adds `selected_optional_line_ids`/`final_subtotal`/
-`final_discount_amount`/`final_tax_amount`/`final_grand_total` to `sales_quote_proposals`; extends
-`respond_to_quote_proposal()` (explicit DROP + CREATE, not a bare CREATE OR REPLACE, to avoid any
-ambiguity about Postgres's parameter-addition rules for a function this consequential) with a new
-`p_selected_optional_line_ids uuid[]` parameter -- the server computes final totals from the frozen
-snapshot itself (never trusts a client-submitted total, same discipline migration 136 established for
-pricing generally), gated behind `snapshot ? 'grandTotal'` so a pre-136 snapshot's totals stay NULL
-rather than guessed. The function's own pre-existing `where sqp.status = 'sent'` guard (migration 139)
-is what makes the selection immutable after response with zero new logic needed for that. Migration 148
-itself was confirmed applied by E (2026-09-15).
+**D17 (optional BOM lines) -- migration 148 AND its canonical test are both confirmed applied
+(2026-09-15, `Success. No rows returned` on the final run).** `backend/supabase/migrations/
+148_optional_bom_lines.sql`: adds `sales_quote_bom_lines.is_optional`; adds
+`selected_optional_line_ids`/`final_subtotal`/`final_discount_amount`/`final_tax_amount`/
+`final_grand_total` to `sales_quote_proposals`; extends `respond_to_quote_proposal()` (explicit DROP +
+CREATE, not a bare CREATE OR REPLACE, to avoid any ambiguity about Postgres's parameter-addition rules
+for a function this consequential) with a new `p_selected_optional_line_ids uuid[]` parameter -- the
+server computes final totals from the frozen snapshot itself (never trusts a client-submitted total,
+same discipline migration 136 established for pricing generally), gated behind `snapshot ? 'grandTotal'`
+so a pre-136 snapshot's totals stay NULL rather than guessed. The function's own pre-existing
+`where sqp.status = 'sent'` guard (migration 139) is what makes the selection immutable after response
+with zero new logic needed for that.
 
-**Migration 148's canonical test's first draft had a real bug (test script only, migration 148
-untouched): FIXED.** E's first attempt failed with `ERROR: 42501: new row violates row-level security
-policy for table "sales_quote_proposals"`. Root cause: the test's fixture setup directly `insert`ed
-into `sales_quote_proposals`, copying a pattern from migration 139's own test -- but migration 139
-predates migration 144, which later dropped `sales_quote_proposals`' entire direct-write policy (Queue
-C2.7 part 2, "close direct-write bypasses"), and migration 147 additionally revoked `authenticated`'s
-direct EXECUTE on `create_and_send_quote_proposal_version()` itself. Neither a direct INSERT nor a
-direct call to that underlying function is legal anymore -- `request_or_send_quote_proposal_version()`
-(migration 147) is the only authenticated-callable entry point today. Fixed by rebuilding both
-fixtures through that RPC (fixture quotes carry no `discount_percent`, so the approval gate can never
-apply regardless of its live settings, guaranteeing `outcome=sent`). The identical bug was pre-emptively
-fixed in migration 149's still-unsent test too, which had copied the same stale pattern twice (fixture
-creation AND a direct `UPDATE ... SET status = 'approved'`, also now illegal) -- both replaced with the
-same RPC calls a real client/Sales action would make. Lesson for future test-writing in this repo: a
-prior test file's fixture pattern is only safe to copy if it postdates every migration that has since
-narrowed that table's own write policy -- check the table's CURRENT policies, not just an older test's
-example.
+The canonical test needed two real, test-script-only corrections before it passed clean, both fully
+resolved -- **migration 148 itself was never touched by either fix:**
+1. The first draft's fixture setup directly `insert`ed into `sales_quote_proposals`, copying a pattern
+   from migration 139's own test -- but 139 predates migration 144 (dropped that table's entire
+   direct-write policy, Queue C2.7 part 2) and migration 147 (revoked `authenticated`'s direct EXECUTE
+   on `create_and_send_quote_proposal_version()` itself). Fixed by routing fixture creation through
+   `request_or_send_quote_proposal_version()`, the actual current entry point (fixture quotes carry no
+   `discount_percent`, so the approval gate can never apply, guaranteeing `outcome=sent`). The identical
+   bug was pre-emptively fixed in migration 149's still-unsent test too (three fixtures plus a direct
+   `UPDATE ... SET status = 'approved'`, also illegal).
+2. The corrected test's second run then found that `sales_quotes.created_by_email` has no default or
+   trigger -- only the real frontend sets it, at creation, from the signed-in user -- so the fixture
+   quotes had no owner and the pre-existing `quote_proposal_responded` notification check correctly
+   found nothing to notify. Fixed by setting `created_by_email`/`created_by_user_id` explicitly on every
+   fixture quote (also pre-emptively applied to migration 149's test), and by moving that `auth.users`
+   lookup to before the role switch to `authenticated` (which has no direct grant to query `auth.users`)
+   -- caught before sending, not from a third live run.
 
-**Corrected migration 148 test's SECOND live run found a second, real bug (test script only, migration
-148 untouched): FIXED.** E got `ERROR: P0001: TEST FAILED: the pre-existing quote_proposal_responded
-notification did not fire.` Root cause: `sales_quotes.created_by_email` has no default and no
-trigger -- a real quote only gets it because the frontend passes the signed-in user's email explicitly
-at creation. The test's fixture quotes never set it, so `respond_to_quote_proposal()`'s own untouched,
-pre-existing notify-the-owner logic correctly found no owner to notify (`owner_email is not null` was
-false) -- the migration's notification logic was never broken, only the test's fixture data was
-incomplete. Fixed by setting `created_by_email`/`created_by_user_id` explicitly on both fixture quotes
-(the same fix pre-emptively applied to migration 149's still-unsent test too, which builds fixture
-quotes the identical way and asserts its own owner-notification check). Corrected migration 148 test
-not yet sent -- next single file.
+Lesson for future test-writing in this repo: a prior test file's fixture pattern is only safe to copy
+if it postdates every migration that has since narrowed that table's own write policy -- check the
+table's CURRENT policies, not just an older test's example. **No open items remain in D17's backend.**
 
 Frontend (BOM line editor checkbox, `id`/`isOptional` added to `ProposalBomLineSnapshot`, the public
-page's live-recompute toggle UI) not yet started -- waits for this migration's test to be confirmed,
-same standing rule as every other batch this session.
+page's live-recompute toggle UI) starting now.
 
 **D16 (Client Proposal Q&A) -- migration 149 drafted (2026-09-15), held pending migration 148's
 confirmation (one manual SQL action at a time).** The live `notification_rules.event_type` CHECK
