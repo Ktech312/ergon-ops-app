@@ -97,9 +97,24 @@ established pattern exactly -- logic, signatures, and return shapes otherwise by
 Migration 150 confirmed applied (2026-09-15, `Success. No rows returned`), and migration 149's own
 canonical test (resent unchanged -- the bug was in 149's functions, not the test) then passed clean:
 `ALL MIGRATION 149 CLIENT PROPOSAL Q&A TESTS PASSED -- ZERO SECTIONS SKIPPED`. **D16's backend is FULLY
-CLOSED -- no open items remain.** Frontend (client "Ask a question" action on `ProposalPublicPage`, a
-Sales/manager/admin reply surface inside `SalesQuoteBuilder`'s Quote Proposal panel) starting now.
-E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain untouched and unstarted, as instructed.
+CLOSED -- no open items remain.**
+
+**D16 frontend shipped (`997ec7b`, 2026-09-15).** `persistence.ts`: `ProposalQuestion`,
+`loadProposalQuestionsForProposals` (batch-loads across every proposal version currently shown),
+`submitProposalQuestion` (anon, the client's action), `respondToProposalQuestion` (authenticated,
+Sales/manager/admin only, PM excluded server-side). `main.tsx`: `proposalQuestions` threaded
+`App -> SalesHome -> SalesQuoteBuilder`, reloaded alongside `quoteProposals` itself since Q&A is scoped
+to a proposal VERSION, not the quote; each version's own card in the Quote Proposal panel shows its
+question thread via a new `ProposalQuestionCard` (open questions get a reply box, answered ones show
+the exchange). `ProposalPublicPage` gets a non-status-changing "Ask a Question" section, reachable both
+before a decision and after a `revision_requested` response (still an active conversation) but not
+after a terminal approve/reject -- no thread is shown back to the client, matching the questions
+table's own zero anon-read access and the existing Request-Revision UX pattern ("your representative
+will follow up"). `tsc -b` clean, 434/434 Vitest, `eslint` 0 errors, build clean. **D16 is FULLY
+CLOSED -- no open items remain anywhere in this batch, backend or frontend.**
+
+**Both D16 and D17 are now fully shipped end to end.** E-signature (D12), Billing (D15), and Phase 3
+RLS (D11) remain untouched and unstarted, as instructed.
 **Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
 (+ corrective 142), 143, 144, 145, 146, 147, 148, 149 (+ corrective 150), are all applied in production,
 **every one of them with a passing canonical test.** Queue C1 (frozen Sales
