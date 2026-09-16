@@ -66,34 +66,44 @@ to reconstruct the actual accepted selection from local state a reload wouldn't 
 field, plus one exact-PATCH-body assertion), `eslint` 0 errors, build clean. **D17 is FULLY CLOSED --
 no open items remain anywhere in this batch, backend or frontend.**
 
-**D16 (Client Proposal Q&A) -- migration 149 drafted (2026-09-15), sent to E as the next single SQL
-action (migration 148 and D17's frontend are both done; 149 is the current one out for review).** The
-live `notification_rules.event_type` CHECK
-constraint was confirmed directly from production before finalizing this migration -- via
-`pg_get_constraintdef(oid)`, independently cross-checked against a live row dump of
-`notification_rules`, both agreeing on the exact same 13 values -- not reconstructed from old migration
-files (this repo has a documented real production failure from exactly that mistake, migration 054's
-own header). `backend/supabase/migrations/149_client_proposal_qa.sql`: widens that constraint to add
-`proposal_question_received`; creates `sales_quote_proposal_questions` (RLS read-only, zero write
-policies, matching Queue C2.7's discipline applied from the start); two RPCs --
+**D16 (Client Proposal Q&A) -- migration 149 APPLIED (2026-09-15, `Success. No rows returned`).** The
+live `notification_rules.event_type` CHECK constraint was confirmed directly from production before
+finalizing this migration -- via `pg_get_constraintdef(oid)`, independently cross-checked against a
+live row dump of `notification_rules`, both agreeing on the exact same 13 values -- not reconstructed
+from old migration files (this repo has a documented real production failure from exactly that mistake,
+migration 054's own header). `backend/supabase/migrations/149_client_proposal_qa.sql`: widens that
+constraint to add `proposal_question_received`; creates `sales_quote_proposal_questions` (RLS
+read-only, zero write policies, matching Queue C2.7's discipline applied from the start); two RPCs --
 `submit_proposal_question()` (anon-granted, the client's "Ask a question" action) and
 `respond_to_proposal_question()` (authenticated-granted, Sales/manager/admin only, PM excluded, matching
 `request_or_send_quote_proposal_version()`'s own existing check). Notifies the quote's owner
 (`sales_quotes.created_by_email`), reusing `quote_proposal_responded`'s exact established pattern.
 Read-only after the six decided triggers (approval, rejection, supersession, expiration, disablement,
-revocation) -- deliberately NOT after `revision_requested`, per E's own instruction. Canonical test
-drafted (`migration_149_client_proposal_qa_tests.sql`) -- caught and fixed a real bug in its own fixture
-setup along the way (it first tried a direct INSERT into the RLS-locked questions table, which has zero
-write grants by design; fixed by using `submit_proposal_question()` itself to seed the fixture, exactly
-as a real client would). Not sent yet -- migration 148 is still the one file out for review; 149 follows
-only once E confirms 148 succeeded. E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain
-untouched and unstarted, as instructed.
+revocation) -- deliberately NOT after `revision_requested`, per E's own instruction.
+
+**Migration 149's own canonical test found a real bug in migration 149 itself (2026-09-15): FIXED by a
+new corrective migration, 149 never edited or rerun.** E's live run got
+`ERROR: 42702: column reference "asked_at" is ambiguous`. Root cause: both new RPCs declare a
+`RETURNS TABLE` column with the same name as a real table column
+(`submit_proposal_question`'s `asked_at`, `respond_to_proposal_question`'s `answered_at`) -- every
+RETURNS TABLE column becomes an implicit PL/pgSQL variable in scope for the whole function body, so the
+bare column name in each function's own INSERT/UPDATE ... RETURNING clause is genuinely ambiguous
+between that variable and the table's own column. This is the exact bug class migration 121 already hit
+and fixed for `respond_to_quote_proposal`'s own RETURNS TABLE columns -- missed here because it wasn't
+caught until E's own live test run. `backend/supabase/migrations/
+150_fix_proposal_question_ambiguous_columns.sql`: aliases the table in both statements and qualifies
+every RETURNING column with it (`as sqpq` / `sqpq.column`), matching `respond_to_quote_proposal`'s own
+established pattern exactly -- logic, signatures, and return shapes otherwise byte-for-byte unchanged.
+Sent to E as the next single SQL action; the test (already correct, no changes needed) follows once 150
+is confirmed. E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain untouched and unstarted, as
+instructed.
 **Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
-(+ corrective 142), 143, 144, 145, 146, and 147 are all applied in production, **every one of them
-with a passing canonical test.** Queue C1 (frozen Sales pricing), Queue C2.2-C2.6 (share-link
-lifecycle foundation + internal controls), Queue C2.7 (server-owned Create & Send + direct-write
-closure), Batch 4b (D3, `source_quote_ref` carry-through), and Batch 5 (D4, configurable
-discount-approval gate) are all shipped, deployed, and canonically tested. **Queue C2 is FULLY
+(+ corrective 142), 143, 144, 145, 146, 147, and 148 are all applied in production, **every one of them
+with a passing canonical test.** Migration 149 is applied but its own canonical test found a real bug
+in 149 itself, fixed by corrective migration 150 (not yet applied) -- see above. Queue C1 (frozen Sales
+pricing), Queue C2.2-C2.6 (share-link lifecycle foundation + internal controls), Queue C2.7
+(server-owned Create & Send + direct-write closure), Batch 4b (D3, `source_quote_ref` carry-through),
+and Batch 5 (D4, configurable discount-approval gate) are all shipped, deployed, and canonically tested. **Queue C2 is FULLY
 CLOSED** -- migration 143's own function-body changes were recorded as applied but were never actually
 live in production; root-caused via a six-round diagnostic investigation; migration 145 re-applied the
 correct logic (`Success. No rows returned`, 2026-09-15); its extended canonical test (with the new
