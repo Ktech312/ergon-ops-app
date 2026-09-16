@@ -266,6 +266,163 @@ export async function loadNotificationDeliveryFailures(accessToken?: string): Pr
   return Array.from(byKey.values()).sort((a, b) => b.lastOccurredAt.localeCompare(a.lastOccurredAt));
 }
 
+// System Health Phase B (2026-09-15, PRODUCT_SYSTEM_HEALTH_PLAN.md, Queue
+// R1 item 1): the durable system_health_events table (migration 151),
+// independent of Phase A's notification_deliveries-derived view above.
+// Covers cron/RPC/API/backup-restore failures Phase A can't see at all.
+export type SystemHealthSeverity = "info" | "degraded" | "down";
+export type SystemHealthEventStatus = "active" | "acknowledged" | "resolved";
+
+export type SystemHealthEvent = {
+  id: string;
+  surface: string;
+  entityType: string | null;
+  entityId: string | null;
+  failureReasonCode: string;
+  severity: SystemHealthSeverity;
+  status: SystemHealthEventStatus;
+  occurrenceCount: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+  acknowledgedByEmail: string | null;
+  safeDetail: Record<string, unknown> | null;
+};
+
+type SystemHealthEventRow = {
+  id: string;
+  surface: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  failure_reason_code: string;
+  severity: SystemHealthSeverity;
+  status: SystemHealthEventStatus;
+  occurrence_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  resolved_at: string | null;
+  acknowledged_by_email: string | null;
+  safe_detail: Record<string, unknown> | null;
+};
+
+function mapSystemHealthEventRow(row: SystemHealthEventRow): SystemHealthEvent {
+  return {
+    id: row.id,
+    surface: row.surface,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    failureReasonCode: row.failure_reason_code,
+    severity: row.severity,
+    status: row.status,
+    occurrenceCount: row.occurrence_count,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
+    resolvedAt: row.resolved_at,
+    acknowledgedByEmail: row.acknowledged_by_email,
+    safeDetail: row.safe_detail,
+  };
+}
+
+// Admin-only via RLS (migration 151) -- this loader simply reflects
+// whatever the server already decided the caller may see, matching every
+// other admin-gated loader in this file (e.g. loadNotificationDeliveryFailures
+// above). Degrades to "couldn't refresh" via the caller's own last-known-
+// good state on a failed fetch (§10 of the design doc) rather than ever
+// claiming "no active issues" when the real answer is "couldn't check" --
+// callers should keep the previous array on a thrown/failed response, not
+// replace it with [].
+export async function loadSystemHealthEvents(accessToken?: string): Promise<SystemHealthEvent[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(
+      "system_health_events?select=id,surface,entity_type,entity_id,failure_reason_code,severity,status,occurrence_count,first_seen_at,last_seen_at,resolved_at,acknowledged_by_email,safe_detail&status=in.(active,acknowledged)&order=last_seen_at.desc&limit=500",
+    ),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not load System Health events"));
+  }
+  const rows = (await response.json()) as SystemHealthEventRow[];
+  return rows.map(mapSystemHealthEventRow);
+}
+
+export async function acknowledgeSystemHealthEvent(eventId: string, accessToken?: string): Promise<{ ok: boolean; message: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+  const response = await fetch(supabaseUrl("rpc/acknowledge_system_health_event"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_event_id: eventId }),
+  });
+  if (!response.ok) {
+    return { ok: false, message: await readSupabaseError(response, "Could not acknowledge this event") };
+  }
+  return { ok: true, message: "Acknowledged." };
+}
+
+export async function resolveSystemHealthEvent(eventId: string, accessToken?: string): Promise<{ ok: boolean; message: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+  const response = await fetch(supabaseUrl("rpc/resolve_system_health_event"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_event_id: eventId }),
+  });
+  if (!response.ok) {
+    return { ok: false, message: await readSupabaseError(response, "Could not resolve this event") };
+  }
+  return { ok: true, message: "Resolved." };
+}
+
+// The one dedicated write path (design doc §3's self-monitoring rule).
+// Per §10, this helper must never throw to its caller -- a real
+// business-logic failure (the thing that triggered this call) must never
+// fail, retry, or roll back because the health-event logging about it
+// failed. Swallows every failure internally (console.error only) and
+// returns a plain boolean, exactly as specified.
+export async function recordSystemHealthEvent(
+  params: {
+    surface: string;
+    entityType?: string | null;
+    entityId?: string | null;
+    failureReasonCode: string;
+    severity: SystemHealthSeverity;
+    safeDetail?: Record<string, unknown> | null;
+  },
+  accessToken?: string,
+): Promise<boolean> {
+  try {
+    if (!isRemotePersistenceConfigured() || !accessToken) {
+      return false;
+    }
+    const response = await fetch(supabaseUrl("rpc/record_system_health_event"), {
+      method: "POST",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({
+        p_surface: params.surface,
+        p_entity_type: params.entityType ?? null,
+        p_entity_id: params.entityId ?? null,
+        p_failure_reason_code: params.failureReasonCode,
+        p_severity: params.severity,
+        p_safe_detail: params.safeDetail ?? null,
+        p_workspace_id: null,
+      }),
+    });
+    if (!response.ok) {
+      console.error(`recordSystemHealthEvent: request failed for surface "${params.surface}":`, await readSupabaseError(response, "unknown error"));
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error(`recordSystemHealthEvent: unexpected failure for surface "${params.surface}":`, error);
+    return false;
+  }
+}
+
 // A one-off's aggregate qty is recomputed fresh from purchase-order receipts
 // on every render (see `oneOffItems` in main.tsx) -- merging doesn't rename
 // or delete anything, so without this record the same aggregate would just
@@ -8479,6 +8636,15 @@ export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnap
       const message = error instanceof Error ? error.message : "An unknown error occurred.";
       console.error(`restoreFullBackupSnapshot: section "${section}" failed:`, error);
       sections.push({ section, attempted: true, succeeded: false, count, error: message });
+      // System Health Phase B (Queue R1 item 1, PRODUCT_SYSTEM_HEALTH_PLAN.md
+      // §11 step 2's first-ranked call site): best-effort, never awaited into
+      // the restore's own control flow -- a health-logging failure must
+      // never affect the restore itself, matching recordSystemHealthEvent's
+      // own never-throws contract.
+      void recordSystemHealthEvent(
+        { surface: "backup_restore", failureReasonCode: `section_failed:${section}`, severity: "degraded", safeDetail: { section, count, error: message } },
+        accessToken,
+      );
     }
   }
 

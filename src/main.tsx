@@ -242,6 +242,9 @@ import {
   loadDeletedTasks,
   loadDeletionLog,
   loadNotificationDeliveryFailures,
+  loadSystemHealthEvents,
+  acknowledgeSystemHealthEvent,
+  resolveSystemHealthEvent,
   loadOneOffReconciliations,
   logOneOffReconciliation,
   loadScheduleTemplates,
@@ -399,6 +402,7 @@ import {
   type TaskActivityEntry,
   type DeletionLogEntry,
   type NotificationDeliveryFailure,
+  type SystemHealthEvent,
   type OneOffReconciliation,
   type ScheduleTemplate,
   type ScheduleTemplatePhase,
@@ -1298,6 +1302,8 @@ function App() {
   const [deletionLog, setDeletionLog] = useState<DeletionLogEntry[]>([]);
   const [oneOffReconciliations, setOneOffReconciliations] = useState<OneOffReconciliation[]>([]);
   const [notificationDeliveryFailures, setNotificationDeliveryFailures] = useState<NotificationDeliveryFailure[]>([]);
+  const [systemHealthEvents, setSystemHealthEvents] = useState<SystemHealthEvent[]>([]);
+  const [systemHealthEventsStatus, setSystemHealthEventsStatus] = useState("");
   const [taskStatusMessage, setTaskStatusMessage] = useState("");
   const [taskActivity, setTaskActivity] = useState<TaskActivityEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -2385,6 +2391,25 @@ function App() {
       return;
     }
     loadNotificationDeliveryFailures(authSession.accessToken).then(setNotificationDeliveryFailures).catch(() => undefined);
+  }, [authSession, isAdmin]);
+
+  // System Health Phase B (2026-09-15, migration 151): durable
+  // system_health_events, independent of Phase A's view above. Per the
+  // design doc §10, a failed refresh must never silently read as "no
+  // active issues" -- on failure this keeps whatever was last
+  // successfully loaded (never resets to []) and surfaces a plain status
+  // message instead, exactly the "last known good" pattern already used
+  // elsewhere in this app (e.g. loadInventoryItems' own load-failure path).
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured() || !isAdmin) {
+      return;
+    }
+    loadSystemHealthEvents(authSession.accessToken)
+      .then((events) => {
+        setSystemHealthEvents(events);
+        setSystemHealthEventsStatus("");
+      })
+      .catch(() => setSystemHealthEventsStatus(`Couldn't refresh System Health events -- showing data from ${new Date().toLocaleString()}.`));
   }, [authSession, isAdmin]);
 
   useEffect(() => {
@@ -5460,6 +5485,38 @@ function App() {
     }
   }
 
+  // System Health Phase B (migration 151): admin-only acknowledge/resolve
+  // on a durable event. Reloads the list from the server afterward rather
+  // than optimistically patching local state, matching this file's
+  // established pattern for every other admin lifecycle action.
+  async function handleAcknowledgeSystemHealthEvent(eventId: string) {
+    if (!authSession) {
+      return;
+    }
+    setSystemHealthEventsStatus("Acknowledging...");
+    const result = await acknowledgeSystemHealthEvent(eventId, authSession.accessToken);
+    if (!result.ok) {
+      setSystemHealthEventsStatus(result.message);
+      return;
+    }
+    setSystemHealthEventsStatus("");
+    loadSystemHealthEvents(authSession.accessToken).then(setSystemHealthEvents).catch(() => undefined);
+  }
+
+  async function handleResolveSystemHealthEvent(eventId: string) {
+    if (!authSession) {
+      return;
+    }
+    setSystemHealthEventsStatus("Resolving...");
+    const result = await resolveSystemHealthEvent(eventId, authSession.accessToken);
+    if (!result.ok) {
+      setSystemHealthEventsStatus(result.message);
+      return;
+    }
+    setSystemHealthEventsStatus("");
+    loadSystemHealthEvents(authSession.accessToken).then(setSystemHealthEvents).catch(() => undefined);
+  }
+
   // D16 (migration 149): any Sales/manager/admin may answer -- not
   // restricted to the quote's own rep, matching the server's own check.
   async function handleRespondToProposalQuestion(question: ProposalQuestion, answerText: string) {
@@ -8238,6 +8295,10 @@ function App() {
             onReorderProposalTemplateSection={handleReorderProposalTemplateSection}
             deletionLog={deletionLog}
             notificationDeliveryFailures={notificationDeliveryFailures}
+            systemHealthEvents={systemHealthEvents}
+            systemHealthEventsStatus={systemHealthEventsStatus}
+            onAcknowledgeSystemHealthEvent={handleAcknowledgeSystemHealthEvent}
+            onResolveSystemHealthEvent={handleResolveSystemHealthEvent}
             salesApprovalSettings={salesApprovalSettings}
             salesApprovalSettingsStatus={salesApprovalSettingsStatus}
             onSaveSalesApprovalSettings={handleSaveSalesApprovalSettings}
@@ -18152,6 +18213,10 @@ function AdminPage({
   onReorderProposalTemplateSection,
   deletionLog,
   notificationDeliveryFailures,
+  systemHealthEvents,
+  systemHealthEventsStatus,
+  onAcknowledgeSystemHealthEvent,
+  onResolveSystemHealthEvent,
   salesApprovalSettings,
   salesApprovalSettingsStatus,
   onSaveSalesApprovalSettings,
@@ -18231,6 +18296,10 @@ function AdminPage({
   onReorderProposalTemplateSection: (sectionId: string, direction: "up" | "down") => void;
   deletionLog?: DeletionLogEntry[];
   notificationDeliveryFailures?: NotificationDeliveryFailure[];
+  systemHealthEvents?: SystemHealthEvent[];
+  systemHealthEventsStatus?: string;
+  onAcknowledgeSystemHealthEvent: (eventId: string) => void;
+  onResolveSystemHealthEvent: (eventId: string) => void;
   salesApprovalSettings: SalesApprovalSettings | null;
   salesApprovalSettingsStatus: string;
   onSaveSalesApprovalSettings: (updates: Partial<Pick<SalesApprovalSettings, "discountApprovalEnabled" | "discountApprovalThresholdPercent">>) => void;
@@ -18245,10 +18314,16 @@ function AdminPage({
   const [showDeletionLog, setShowDeletionLog] = useState(false);
   const [showSystemHealth, setShowSystemHealth] = useState(false);
   const [systemHealthChannelFilter, setSystemHealthChannelFilter] = useState("all");
+  const [showSystemHealthEvents, setShowSystemHealthEvents] = useState(false);
+  const [systemHealthEventsSurfaceFilter, setSystemHealthEventsSurfaceFilter] = useState("all");
   const knownUserByEmail = new Map(knownUsers.map((user) => [user.email.toLowerCase(), user]));
   const systemHealthChannels = Array.from(new Set((notificationDeliveryFailures ?? []).map((f) => f.channel))).sort();
   const filteredSystemHealthFailures = (notificationDeliveryFailures ?? []).filter(
     (f) => systemHealthChannelFilter === "all" || f.channel === systemHealthChannelFilter,
+  );
+  const systemHealthEventSurfaces = Array.from(new Set((systemHealthEvents ?? []).map((e) => e.surface))).sort();
+  const filteredSystemHealthEvents = (systemHealthEvents ?? []).filter(
+    (e) => systemHealthEventsSurfaceFilter === "all" || e.surface === systemHealthEventsSurfaceFilter,
   );
 
   async function triggerPasswordReset(email: string) {
@@ -18424,6 +18499,82 @@ function AdminPage({
                             <td data-label="First seen">{new Date(failure.firstOccurredAt).toLocaleString()}</td>
                             <td data-label="Last seen">{new Date(failure.lastOccurredAt).toLocaleString()}</td>
                             <td data-label="Last recipient">{failure.lastRecipientEmail || "Unknown"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {isAdmin && (
+        <section className="panel wide">
+          <div className="panel-title-row">
+            <div>
+              <h2>System Health -- Events</h2>
+              <p>
+                Durable, admin-visible cron/RPC/API/backup-restore failures beyond what the notification-delivery view above can see. Currently wired to backup restore's per-section failures; other producers are queued (see PRODUCT_MASTER_COMPLETION_PLAN.md Queue R1).
+              </p>
+            </div>
+            <button className="secondary-action mini-action" type="button" onClick={() => setShowSystemHealthEvents((current) => !current)}>
+              {showSystemHealthEvents ? "Hide" : "Show"} ({(systemHealthEvents ?? []).length})
+            </button>
+          </div>
+          {systemHealthEventsStatus && <small className="muted">{systemHealthEventsStatus}</small>}
+          {showSystemHealthEvents && (
+            <div className="deleted-tasks-panel">
+              {(systemHealthEvents ?? []).length === 0 ? (
+                // Never claim "no active issues" when a refresh actually
+                // failed (design doc §10) -- the status line above already
+                // explains a load failure; this empty state only applies
+                // when there genuinely is nothing to show.
+                !systemHealthEventsStatus && (
+                  <p className="muted">No active or acknowledged System Health events. This only reflects what's been recorded so far -- it is not a live infrastructure check.</p>
+                )
+              ) : (
+                <>
+                  <label className="inline-filter-field">
+                    Surface
+                    <select value={systemHealthEventsSurfaceFilter} onChange={(event) => setSystemHealthEventsSurfaceFilter(event.target.value)}>
+                      <option value="all">All surfaces</option>
+                      {systemHealthEventSurfaces.map((surface) => (
+                        <option key={surface} value={surface}>{surface}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {filteredSystemHealthEvents.length === 0 ? (
+                    <p className="muted">No events for this surface.</p>
+                  ) : (
+                    <table className="stack-table-mobile">
+                      <thead>
+                        <tr><th>Surface</th><th>Reason</th><th>Severity</th><th>Status</th><th>Occurrences</th><th>First seen</th><th>Last seen</th><th>Actions</th></tr>
+                      </thead>
+                      <tbody>
+                        {filteredSystemHealthEvents.map((healthEvent) => (
+                          <tr key={healthEvent.id}>
+                            <td data-label="Surface">{healthEvent.surface}</td>
+                            <td data-label="Reason">{healthEvent.failureReasonCode}</td>
+                            <td data-label="Severity">
+                              <span className={`status ${healthEvent.severity === "down" ? "danger" : healthEvent.severity === "degraded" ? "warn" : "ok"}`}>{healthEvent.severity}</span>
+                            </td>
+                            <td data-label="Status">{healthEvent.status}</td>
+                            <td data-label="Occurrences"><span className="status warn">{healthEvent.occurrenceCount}</span></td>
+                            <td data-label="First seen">{new Date(healthEvent.firstSeenAt).toLocaleString()}</td>
+                            <td data-label="Last seen">{new Date(healthEvent.lastSeenAt).toLocaleString()}</td>
+                            <td data-label="Actions">
+                              {healthEvent.status === "active" && (
+                                <button className="secondary-action mini-action" type="button" onClick={() => onAcknowledgeSystemHealthEvent(healthEvent.id)}>
+                                  Acknowledge
+                                </button>
+                              )}
+                              <button className="secondary-action mini-action" type="button" onClick={() => onResolveSystemHealthEvent(healthEvent.id)}>
+                                Resolve
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>

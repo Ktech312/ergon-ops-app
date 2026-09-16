@@ -453,7 +453,13 @@ describe("saveRestoredProjectDocuments (via restoreFullBackupSnapshot)", () => {
       error: "Some project documents could not be restored.",
     });
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("saveRestoredProjectDocuments failed (400)"));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Exactly one request for the section's own save attempt (no retry),
+    // plus exactly one more for System Health Phase B's best-effort
+    // recordSystemHealthEvent call this failure now also fires (migration
+    // 151, Queue R1 item 1) -- a second, DIFFERENT request, not a retry of
+    // the first.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("rpc/record_system_health_event");
   });
 
   it("reports a non-400 failure as a failed section, also with exactly one request", async () => {
@@ -462,7 +468,22 @@ describe("saveRestoredProjectDocuments (via restoreFullBackupSnapshot)", () => {
     const outcome = await restoreFullBackupSnapshot({ projectDocuments: [makeProjectDocument()] }, "token");
     expect(outcome.sections.find((s) => s.section === "projectDocuments")).toMatchObject({ succeeded: false });
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("saveRestoredProjectDocuments failed (500)"));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Same reasoning as the 400 case above: one save attempt, one
+    // additional recordSystemHealthEvent call, never a retry of the save.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("rpc/record_system_health_event");
+  });
+
+  it("records a System Health event naming the failed section, degraded severity", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(false, 500, { message: "db error" }));
+    globalThis.fetch = fetchMock;
+    await restoreFullBackupSnapshot({ projectDocuments: [makeProjectDocument()] }, "token");
+    const healthEventCall = fetchMock.mock.calls.find(([url]) => String(url).includes("rpc/record_system_health_event"));
+    expect(healthEventCall).toBeDefined();
+    const body = JSON.parse((healthEventCall as [string, { body: string }])[1].body) as { p_surface: string; p_failure_reason_code: string; p_severity: string };
+    expect(body.p_surface).toBe("backup_restore");
+    expect(body.p_failure_reason_code).toBe("section_failed:projectDocuments");
+    expect(body.p_severity).toBe("degraded");
   });
 
   it("keeps uploaded_by_email (and the purchase order/request links) in the single request sent", async () => {
