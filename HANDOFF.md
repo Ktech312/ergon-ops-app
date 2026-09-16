@@ -94,13 +94,15 @@ caught until E's own live test run. `backend/supabase/migrations/
 150_fix_proposal_question_ambiguous_columns.sql`: aliases the table in both statements and qualifies
 every RETURNING column with it (`as sqpq` / `sqpq.column`), matching `respond_to_quote_proposal`'s own
 established pattern exactly -- logic, signatures, and return shapes otherwise byte-for-byte unchanged.
-Sent to E as the next single SQL action; the test (already correct, no changes needed) follows once 150
-is confirmed. E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain untouched and unstarted, as
-instructed.
+Migration 150 confirmed applied (2026-09-15, `Success. No rows returned`), and migration 149's own
+canonical test (resent unchanged -- the bug was in 149's functions, not the test) then passed clean:
+`ALL MIGRATION 149 CLIENT PROPOSAL Q&A TESTS PASSED -- ZERO SECTIONS SKIPPED`. **D16's backend is FULLY
+CLOSED -- no open items remain.** Frontend (client "Ask a question" action on `ProposalPublicPage`, a
+Sales/manager/admin reply surface inside `SalesQuoteBuilder`'s Quote Proposal panel) starting now.
+E-signature (D12), Billing (D15), and Phase 3 RLS (D11) remain untouched and unstarted, as instructed.
 **Completed and verified:** migrations 134, 135, 136, 137 (+ corrective 141), 138, 139, 140
-(+ corrective 142), 143, 144, 145, 146, 147, and 148 are all applied in production, **every one of them
-with a passing canonical test.** Migration 149 is applied but its own canonical test found a real bug
-in 149 itself, fixed by corrective migration 150 (not yet applied) -- see above. Queue C1 (frozen Sales
+(+ corrective 142), 143, 144, 145, 146, 147, 148, 149 (+ corrective 150), are all applied in production,
+**every one of them with a passing canonical test.** Queue C1 (frozen Sales
 pricing), Queue C2.2-C2.6 (share-link lifecycle foundation + internal controls), Queue C2.7
 (server-owned Create & Send + direct-write closure), Batch 4b (D3, `source_quote_ref` carry-through),
 and Batch 5 (D4, configurable discount-approval gate) are all shipped, deployed, and canonically tested. **Queue C2 is FULLY
