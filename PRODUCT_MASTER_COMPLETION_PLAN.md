@@ -239,14 +239,32 @@ rule, not simply D8's channel question).
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-**Nothing is currently in this state.** Migration 151 (the last item to pass through this stage) is
-now fully confirmed as of §3 above.
+**Migration 152 — System Health alert wiring (D8 approved 2026-09-16)** (`c6de0fa`,
+`PRODUCT_SYSTEM_HEALTH_PLAN.md` §9, extended by E's explicit threshold decision): `alerted_at` column,
+`record_system_health_event`'s return type changed to jsonb (event_id + alert_worthy + admin_emails),
+new `record_system_health_recovery` and `list_admin_emails` RPCs. Application layer fully wired and
+deployed: `api/send-system-health-alert.js` (browser-triggered call sites), `api/_lib/systemHealth.js`
+extended for the 3 server-side call sites, `persistence.ts`'s `recordSystemHealthEvent`/new
+`recordSystemHealthRecovery`. All 4 original failure call sites now also call recovery on their
+success path. — *Implemented locally, Tests passed (migration_152's own canonical test drafted but NOT
+YET RUN against production — requires the migration to be live first; 18 new/updated TS-side tests all
+passing), Deployed (frontend/API code only). **Migration NOT YET APPLIED** — this is the one item in §5
+below.*
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Nothing is currently queued.** Migration 151 was the only queued item and is now fully confirmed
-(applied + canonical test passed, 2026-09-16). The next Queue R1 item (A3, aria-live announcements) is
-pure frontend — no migration, no manual action needed.
+**Item 1 (current, only item queued): apply migration 152 (System Health alert wiring, D8 approved
+2026-09-16).**
+- File: `backend/supabase/migrations/152_system_health_alerting.sql`
+- Then run its canonical test: `backend/supabase/migration_152_system_health_alerting_tests.sql` —
+  transaction-safe (`begin;`/`rollback;`), ends in exactly one of two ways: a notice reading "ALL
+  MIGRATION 152 SYSTEM HEALTH ALERTING TESTS PASSED -- ZERO SECTIONS SKIPPED", or a hard SQL error
+  naming what failed or was skipped.
+- Migration 151's own canonical test (`migration_151_system_health_phase_b_tests.sql`) was updated to
+  match 152's new return shape — safe to re-run afterward too if E wants extra confirmation, not
+  required.
+- Once confirmed passing, update this section back to "nothing queued" and move `alerted_at`/alert
+  wiring from "awaiting migration" to "confirmed live" in §3/§4.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
