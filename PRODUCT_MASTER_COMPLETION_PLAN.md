@@ -357,19 +357,51 @@ resuming this plan should not invent new "safe autonomous" scope beyond what's n
 first re-deriving it the way this plan's own items were derived — from a real, cited design document
 or audit finding, not guesswork.
 
-## 8. Queue R2 — designed, decision-gated; implement once E answers, not before
+## 8. Queue R2 — decision status
 
-| Decision | What's ready | What's blocked | Where the full design lives |
-|---|---|---|---|
-| D9 — backup restore unresolved-reference policy | Full `restore_runs`/`restore_run_sections` schema, deterministic retry key, resume/cancel behavior, stale-reference rule, test matrix | The spec's own header says "nothing below should be built until D9 is answered" — the recommended direction (warned skip/retry) is recorded but not confirmed | `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md` |
-| D6 — `xlsx` → `exceljs` | Exhaustive current-usage trace (2 call sites, both read-only, client-side), library comparison, migration outline, affected-file list | A real dependency swap on both bulk-import paths (BOM, catalog) needs live-file parity testing (blank-cell handling especially differs between libraries) before it's safe to ship, plus the library choice itself is still framed as E's call | `PRODUCT_XLSX_REPLACEMENT_EVALUATION.md` |
-| D12 (revised) — e-signature hardening | Keep typed-acceptance; fix the currently-dead `approval_ip` capture; add `approval_email` verified against the proposal's `client_email`; no OTP/drawn signature/third-party integration | Awaiting E's confirmation before any column is added or any capture logic changes | `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §2 |
-| D18 — frozen proposal PDF | Keep `window.print()` by default; build a server pipeline (`@react-pdf/renderer` recommended) only if a concrete need is confirmed | Awaiting E's confirmation on whether a stored/emailable file is actually needed | `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §1 |
-| D5 (remaining half) — bundle-components full explosion | Interim relabel already shipped (2026-09-15, copy-only) | Whether to build real BOM-line explosion from `bundle_components`, or make the relabel the permanent behavior | §5 row 6 below |
-| Sales Batch 15/16 duplicate — superseded by D12/D18 | — | — | Historical §5 rows below now point to the consolidated decision doc instead of standing alone |
-| D11 — Phase 3 RLS | 16-threat design complete | Explicit process discussion with E first — this is the one item that cannot be de-risked by more solo drafting | `PRODUCT_PHASE3_PLAN.md`, §6 of this document |
-| D13/D14 — Support/Engineering modules | Placeholder scoping only | Full design pass — "what is this" is itself still open | `PRODUCT_SUPPORT_MODULE_DESIGN.md`, `PRODUCT_ENGINEERING_MODULE_DESIGN.md` |
-| D15 — Commercial SaaS billing | — | Explicitly deferred, no design work without an explicit go-ahead | §6 stop boundary |
+**Standing authorization, 2026-09-16: D5, D6, D9, D12, D18 are all APPROVED** (E's own explicit
+decisions, recorded verbatim in `CONTINUOUS_CODER_HANDOFF.md` §8's register). D12 is fully shipped
+(§3/§4). D5 is fully closed (§9, no code change needed — the interim copy was already the correct
+permanent copy). D6/D9/D18 are approved but not yet fully implemented — tracked in Queue R3 below, not
+here. Only D11/D13/D14/D15 remain genuinely gated on a future E decision.
+
+| Decision | Status |
+|---|---|
+| D5 — bundle-components | **APPROVED, FULLY CLOSED.** Remains reference-only, permanently — see §9. |
+| D6 — `xlsx` → `exceljs` | **APPROVED.** Build and test `exceljs` parity against the real supported import/export formats; replace `xlsx` when parity passes; if a specific format blocks replacement, document it and move on. See Queue R3. |
+| D9 — backup restore checkpointing | **APPROVED.** Resumable, per-section checkpointing; unresolved optional references produce visible, retryable warnings; required-data failures stop that section; never report full success while a section failed or was skipped. See Queue R3. |
+| D12 (revised) — e-signature hardening | **APPROVED, FULLY SHIPPED.** See §3/§4/§5 — migration 153. |
+| D18 — frozen proposal PDF | **APPROVED.** Keep browser printing from the frozen snapshot for v1; improve print output and regression coverage where needed; no stored/server-generated PDF unless a real attachment/storage/integration requirement appears. See Queue R3. |
+| D11 — Phase 3 RLS | Still gated — 16-threat design complete, but blocked on the standing "discuss the process first" conversation. Not part of this authorization. |
+| D13/D14 — Support/Engineering modules | Still gated — placeholder scoping only, "what is this" itself still open. Not part of this authorization. |
+| D15 — Commercial SaaS billing | Still gated — explicitly deferred, no design work without an explicit go-ahead. Not part of this authorization. |
+
+## 8b. Queue R3 — approved, implementation in progress (D5/D6/D9/D12/D18)
+
+Ordered by dependency and risk, same discipline as Queue R1. D5 and D12 are already fully closed (§3/§4/§9)
+and not relisted here.
+
+1. **D18 — proposal PDF: improve print output and regression coverage — NOT YET STARTED, this is the
+   exact next task.** `window.print()` stays the v1 mechanism (approved, no server-generated PDF unless
+   a concrete attachment/storage/integration need appears later). Needs: (a) trace exactly what "improve
+   print output" should mean in practice — re-check the existing `@media print` CSS
+   (`styles.css:6532-6548` as of the last trace) against a real rendered proposal for genuine gaps (page
+   breaks, orphaned headers, image sizing, etc.), not a guess; (b) add regression test coverage for the
+   print path where none exists today. No migration.
+2. **D9 — backup restore: resumable per-section checkpointing.** Per E's approved spec: unresolved
+   *optional* references produce visible, retryable warnings; a *required*-data failure stops that
+   section (does not silently continue); never report full success while any section failed or was
+   skipped. `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md` has the full `restore_runs`/
+   `restore_run_sections` schema, deterministic retry key, resume/cancel behavior already designed
+   against the OLD "warned skip/retry for everything" framing (D9's original recorded direction) — needs
+   a pass reconciling it against the new required-vs-optional distinction before implementing verbatim,
+   not a blind copy. Needs a migration.
+3. **D6 — `xlsx` → `exceljs`.** `PRODUCT_XLSX_REPLACEMENT_EVALUATION.md` has the exhaustive trace (2
+   call sites, both read-only client-side: `handleBomFileSelect`, `handleCatalogFileSelect`) and a
+   migration outline. Per E's approved spec: build and test parity against the real supported
+   import/export formats; replace `xlsx` when parity passes; if a specific format blocks replacement,
+   document it and move to the next task rather than blocking indefinitely. No migration — pure
+   dependency swap + two call-site rewrites.
 
 ## 9. Sales workstream — batch reference (historical detail, current status only)
 
@@ -384,7 +416,7 @@ decision documents; this table is a status index, not a re-derivation.
 | 4. `client_id` carry-through | Migration 134 | **SHIPPED** |
 | 4b. `quote_ref` carry-through | D3 | **SHIPPED** — §3 |
 | 5. Internal approval-before-send gate | D4 | **SHIPPED** — §3 |
-| 6. Bundle-components explosion | D5 | **Interim relabel SHIPPED**; full explosion vs. permanent-notes-field still open — §8 |
+| 6. Bundle-components explosion | D5 | **FULLY CLOSED (2026-09-16)** — reference-only is the permanent behavior, no further work planned |
 | 7. Searchable catalog picker | `CatalogItemPicker` | **SHIPPED** |
 | 8. Branding wire-up | Frozen company name/logo on snapshot | **SHIPPED** |
 | 9. Proposal-page mobile data-labels | `stack-table-mobile` | **SHIPPED** |
@@ -393,8 +425,8 @@ decision documents; this table is a status index, not a re-derivation.
 | 12. Version-comparison view | `compareProposalSnapshots` | **SHIPPED** |
 | 13. Client Q&A on a proposal | D16 | **SHIPPED** — §3 |
 | 14. Optional/alternate BOM lines | D17 | **SHIPPED** — §3 |
-| 15. Real e-signature | D12 (revised) | **Designed, awaiting approval** — §8 |
-| 16. Server-generated PDF | D18 | **Designed, awaiting approval** — §8 |
+| 15. Real e-signature | D12 (revised) | **APPROVED and SHIPPED as scoped** — typed-name acceptance stays v1; `approval_ip`/`approval_email` hardened (migration 153, §3/§4). No drawn signature/OTP/third-party service — not part of the approved scope. |
+| 16. Server-generated PDF | D18 | **APPROVED: keep `window.print()`, improve where needed** — §7 Queue R3 (print/regression improvements not yet started) |
 
 ## 10. What this reconciliation pass changed
 
