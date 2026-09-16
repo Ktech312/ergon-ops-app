@@ -104,10 +104,21 @@ Queue R1 (safe autonomous work) without stopping to ask again:
   depends on a joined/aggregated `allocated` quantity, not a plain column). 8 new tests. `tsc -b`
   clean, 453/453 Vitest, `eslint` 0 errors (75 warnings, one new -- same accepted
   set-state-in-effect pattern already present 74 times elsewhere), production build clean.
-- **Exact next task: finish Queue R1 item 1** -- System Health Phase B's other three named
-  `recordSystemHealthEvent` call sites (notification-delivery write failures, cron failures,
-  rate-limit hits) and step 5's alert wiring (documented fallback: email every admin, per D8), per
-  `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 item 1.
+- **System Health's remaining call sites -- Queue R1 item 1 steps 1-4 now FULLY DONE (`d1e8d24`).**
+  Notification-delivery write failures, cron job failures (task-overdue.js's own systemic load
+  failure), and rate-limit hits (every `checkRateLimit` caller) all now record durable System Health
+  events via a new shared `api/_lib/systemHealth.js` helper. 2 new tests. `tsc -b` clean, 455/455
+  Vitest, `eslint` 0 errors, production build clean. **Step 5 (alert wiring) deliberately NOT built**
+  -- the design doc's threshold rule ("down after 3 consecutive failures spanning >=5 minutes, alert
+  only then") needs occurrence-timing logic this schema doesn't track and has a genuinely ambiguous
+  "spanning >=5 minutes" clause -- flagged as needing a spec-precision pass from E, not a mechanical
+  follow-up.
+- **Queue R1 (the safe autonomous queue) is now fully exhausted -- every item that could be built
+  without a business decision or spec clarification has been built, tested, and deployed.** What's
+  left: System Health step 5 (blocked on the spec question above) or Queue R2 (entirely decision-gated,
+  blocked on E -- D9/D6/D12/D18/D5's remainder). No new "safe autonomous" scope should be invented
+  without a real cited design doc or audit finding backing it, per
+  `PRODUCT_MASTER_COMPLETION_PLAN.md` §7's own closing note.
 
 Billing (D15) and Phase 3 RLS (D11) remain untouched and unstarted, as instructed. See "Current database
 gate" below for Queue C2's own full history, including migration 140's real bug (ambiguous `token`

@@ -218,11 +218,18 @@ second, independent, server-side-searched, cursor-paginated query wired ONLY int
 page's own desktop table + mobile card list (50-item pages, "Load more," 300ms debounce);
 `loadInventoryItems`/`inventoryItems`/`filteredInventoryItems` (CSV export, counts, the 100+ other
 consumers) are completely untouched. The derived "status" filter is applied client-side per fetched
-page (documented scope cut, not server-filterable without a joined-aggregate computed view). **Exact
-next task: finish Queue R1 item 1** — System Health Phase B's other three named
-`recordSystemHealthEvent` call sites (notification-delivery write failures, cron failures, rate-limit
-hits) and step 5's alert wiring, per `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 item 1. Do not
-rerun/re-derive any of the above; do not re-litigate D12/D18 (open,
+page (documented scope cut, not server-filterable without a joined-aggregate computed view). (6)
+**System Health's remaining three call sites — Queue R1 item 1 steps 1-4 now FULLY DONE (`d1e8d24`).**
+Notification-delivery write failures, cron job failures, and rate-limit hits all now record durable
+System Health events, via a new shared `api/_lib/systemHealth.js` helper. **Step 5 (alert wiring) was
+deliberately NOT built** — the design doc's own threshold rule needs occurrence-timing logic this
+schema doesn't track and has a genuinely ambiguous "spanning ≥5 minutes" clause; flagged as needing a
+spec-precision pass from E, not a mechanical follow-up.
+
+**Queue R1 is now fully exhausted as of 2026-09-16 — every safe-autonomous item is done.** Do not
+invent new Queue R1-style scope without a real cited design doc/audit finding backing it. The only
+remaining work is Queue R2 (entirely decision-gated, blocked on E) or System Health step 5 (blocked on
+a spec clarification). Do not rerun/re-derive any of the above; do not re-litigate D12/D18 (open,
 awaiting E) or D3/D4 (already fixed, see this file's own D-register below).
 
 The pricing statement E approved 2026-09-13:

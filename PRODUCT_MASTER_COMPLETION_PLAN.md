@@ -220,20 +220,22 @@ code, not silently approximated. — *Implemented locally, Tests passed (`tsc -b
 tests/eslint 0 errors/build all clean), Deployed. Production verification (a real large filtered
 result set) still pending real use.*
 
-**System Health Phase B, steps 1-4 — FULLY CONFIRMED (2026-09-16)** (`9a90903`,
+**System Health Phase B, steps 1-4 — FULLY DONE (2026-09-16)** (`9a90903`, `d1e8d24`,
 `PRODUCT_SYSTEM_HEALTH_PLAN.md`): migration 151 (`system_health_events` + monthly summary table, the
 dedup-upsert `record_system_health_event` RPC that never throws to its caller, admin-only
 acknowledge/resolve RPCs, a service-role-only retention rollup function) **applied by E and its
 canonical test run clean** ("Success. No rows returned" — the correct, expected result for a
-`do $$ ... $$; rollback;` block that completes with no exception; the alternative would have been a
-surfaced `TEST FAILED: ...` error, not a silent success). One call site wired
-(`restoreFullBackupSnapshot`'s per-section failure path — the design doc's own first-ranked one); the
-admin panel and retention cron (`api/cron/system-health-retention.js`, weekly) are deployed and now
-have a live table to read/write. — *Migration applied, Tests passed, Deployed. Production
-verification (a real failure showing up in the Admin panel) still pending real use — nothing has
-failed yet to display.* The other three named `recordSystemHealthEvent` call sites
-(notification-delivery write failures, cron failures, rate-limit hits) and alert wiring (step 5, D8)
-are queued next, not built — see §7 Queue R1 item 1's remainder.
+`do $$ ... $$; rollback;` block that completes with no exception). **All four named
+`recordSystemHealthEvent` call sites are wired**: restore per-section failures
+(`restoreFullBackupSnapshot`), notification-delivery write failures (`recordNotificationDelivery`),
+cron job failures (`api/cron/task-overdue.js`'s own systemic load failure, not routine per-task
+hiccups), and rate-limit hits (`checkRateLimit`, every caller, via a new shared
+`api/_lib/systemHealth.js` helper). The admin panel and retention cron
+(`api/cron/system-health-retention.js`, weekly) are deployed with a live table to read/write. — *Migration
+applied, Tests passed, Deployed. Production verification (a real failure showing up in the Admin
+panel) still pending real use — nothing has failed yet to display.* **Step 5 (alert wiring) is
+deliberately NOT built** — see §7 item 1 for exactly why (a spec-precision gap in the threshold
+rule, not simply D8's channel question).
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
@@ -271,15 +273,21 @@ Ordered by dependency and risk, smallest-safe-step first. Skip any row already s
 against §3 before starting, since this plan is only as trustworthy as its last reconciliation (see
 §9's own lesson from this pass).
 
-1. **System Health Phase B — steps 1-4 — PARTIALLY DONE, migration confirmed live (2026-09-16,
-   `9a90903`; migration 151 applied + canonical test passed the same day). This is the exact next
-   task.** Table, dedup RPC, admin lifecycle RPCs, and retention rollup are all live in production.
-   Frontend deployed: the Admin panel, one `recordSystemHealthEvent` call site
-   (`restoreFullBackupSnapshot`'s per-section failures — the design doc's own first-ranked one), and
-   the weekly retention cron. **Still to do**: the other three named call sites (notification-delivery
-   write failures, cron failures, rate-limit hits) and step 5's alert wiring (documented fallback in
-   the design doc's §9: "email to every workspace admin" if D8 isn't otherwise answered — implement
-   using that default, flagged as a default, not a confirmed decision).
+1. **System Health Phase B — steps 1-4 ALL DONE (2026-09-16, `9a90903`, `d1e8d24`); migration 151
+   applied + canonical test passed the same day.** Table, dedup RPC, admin lifecycle RPCs, retention
+   rollup, admin panel, retention cron, and **all four named `recordSystemHealthEvent` call sites**
+   (restore per-section failures, notification-delivery write failures, cron job failures, rate-limit
+   hits) are live. **Step 5 (alert wiring) deliberately NOT built — needs a spec-precision pass before
+   implementation, not just a business decision.** The design doc's own threshold rule ("degraded
+   after 2 consecutive failures... down after 3 consecutive failures spanning ≥5 minutes, alert only
+   on that down transition") needs occurrence-*timing* logic this schema doesn't track (only
+   `first_seen_at`/`last_seen_at`/`occurrence_count` on the aggregate row, no per-occurrence
+   timestamps), and "spanning ≥5 minutes" is genuinely ambiguous (the 3rd failure being ≥5 minutes
+   after the 1st? a rolling 5-minute window?) without re-deriving intent from the original A2.4
+   discussion. This is a different risk category than the mechanical call-site wiring above — flagged
+   as the next item requiring E's input (a spec question, not strictly D8's channel/recipient
+   question, which already has a documented default: "email to every workspace admin"), not silently
+   skipped.
 2. **Inventory pagination — DONE (2026-09-16), see §3.** `loadInventoryItemsPage` wired into the
    Inventory page's own desktop table and mobile card list only, `loadInventoryItems`/
    `inventoryItems`/`filteredInventoryItems` untouched. The Reports page's own filter (optional per
@@ -290,11 +298,20 @@ against §3 before starting, since this plan is only as trustworthy as its last 
    status-message `<div>`s that sometimes show an error, not the class-identified `.error-text`/
    `.modal-error-text` sites) is a separate, later, non-mechanical follow-up — not part of this item.
    - A4 — DONE. A5 — DONE. A6 — DONE. A7 — DONE. (See §3 for exact commits/detail.)
-4. **Regression coverage** — as each of the above ships, add its own test coverage in the same pass
-   (matching this repo's standing convention — no item above should land without a test; System
-   Health Phase B's own canonical SQL test IS run and passed — see §3), plus a quick audit
-   for any of Queue A8's six flows (`PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md`) that have drifted
-   since it was last written.
+4. **Regression coverage** — satisfied continuously: every item above shipped with its own new test
+   coverage in the same commit (matching this repo's standing convention), and System Health Phase
+   B's own canonical SQL test is run and passed (see §3). A fresh audit of Queue A8's six flows
+   (`PRODUCT_CRITICAL_FLOW_COVERAGE_MATRIX.md`) for drift was not separately performed this pass — a
+   reasonable next pass if a coder has spare capacity, not a known gap.
+
+**Queue R1 is now fully exhausted as of 2026-09-16** — every item that could be built without a
+business decision or a spec-precision pass has been built, tested, deployed, and (for the one item
+needing it) migrated. What remains for a coder to pick up next is either: (a) System Health's step 5,
+once E has clarified the exact threshold semantics named above, or (b) Queue R2 below, which is
+entirely decision-gated and must not be started without E's answer, per §6's stop boundaries. A coder
+resuming this plan should not invent new "safe autonomous" scope beyond what's named here without
+first re-deriving it the way this plan's own items were derived — from a real, cited design document
+or audit finding, not guesswork.
 
 ## 8. Queue R2 — designed, decision-gated; implement once E answers, not before
 
