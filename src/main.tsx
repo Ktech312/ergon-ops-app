@@ -3540,6 +3540,7 @@ function App() {
       catalogItemId?: string | null;
       unitPrice?: number;
       priceSource?: SalesQuoteBomLine["priceSource"];
+      isOptional?: boolean;
     }>,
   ) {
     if (!authSession || lines.length === 0) {
@@ -3582,7 +3583,7 @@ function App() {
   async function handleUpdateSalesQuoteBomLine(
     quoteId: string,
     lineId: string,
-    updates: { item: string; qty: number; notes: string; catalogItemId: string | null; unitPrice: number },
+    updates: { item: string; qty: number; notes: string; catalogItemId: string | null; unitPrice: number; isOptional: boolean },
   ): Promise<boolean> {
     if (!authSession) {
       return false;
@@ -5300,6 +5301,11 @@ function App() {
           datasheetUrl,
           unitPrice: line.unitPrice,
           lineTotal,
+          // D17 (migration 148): frozen so the public page's live
+          // recompute and respond_to_quote_proposal's own server-side
+          // computation can both reference this exact line by id.
+          id: line.id,
+          isOptional: line.isOptional,
         };
       }),
       templateSections: proposalTemplateSections
@@ -19381,9 +19387,9 @@ function SalesHome({
   onUpdateSalesQuoteStatus: (quoteId: string, status: SalesQuote["status"]) => Promise<boolean>;
   onDeleteSalesQuote: (quoteId: string) => void;
   onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectConversionOutcome>;
-  onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null }>) => void;
+  onAddSalesQuoteBomLines: (quoteId: string, lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null; unitPrice?: number; priceSource?: SalesQuoteBomLine["priceSource"]; isOptional?: boolean }>) => void;
   onDeleteSalesQuoteBomLine: (quoteId: string, lineId: string) => void;
-  onUpdateSalesQuoteBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null; unitPrice: number }) => Promise<boolean>;
+  onUpdateSalesQuoteBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null; unitPrice: number; isOptional: boolean }) => Promise<boolean>;
   onReorderSalesQuoteBomLine: (quoteId: string, lineId: string, direction: "up" | "down") => void;
   onUpdateSalesQuoteBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateSalesQuoteProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
@@ -23505,10 +23511,10 @@ function SalesQuoteBuilder({
   onCreateProjectFromClosedWonQuote: (quote: SalesQuote) => Promise<ProjectConversionOutcome>;
   onAddBomLines: (
     quoteId: string,
-    lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null; unitPrice?: number; priceSource?: SalesQuoteBomLine["priceSource"] }>,
+    lines: Array<{ item: string; qty: number; notes?: string; catalogItemId?: string | null; unitPrice?: number; priceSource?: SalesQuoteBomLine["priceSource"]; isOptional?: boolean }>,
   ) => void;
   onDeleteBomLine: (quoteId: string, lineId: string) => void;
-  onUpdateBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null; unitPrice: number }) => Promise<boolean>;
+  onUpdateBomLine: (quoteId: string, lineId: string, updates: { item: string; qty: number; notes: string; catalogItemId: string | null; unitPrice: number; isOptional: boolean }) => Promise<boolean>;
   onReorderBomLine: (quoteId: string, lineId: string, direction: "up" | "down") => void;
   onUpdateBomLineCatalogLink: (quoteId: string, lineId: string, catalogItemId: string | null) => void;
   onUpdateProposalFields: (quoteId: string, updates: Partial<{ clientEmail: string; proposalSummary: string }>) => void;
@@ -23588,9 +23594,9 @@ function SalesQuoteBuilder({
   const [presalesTier, setPresalesTier] = useState("");
   const [presalesNodeCount, setPresalesNodeCount] = useState(1);
   const [presalesCloudSync, setPresalesCloudSync] = useState(false);
-  const [bomLineDraft, setBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "", unitPrice: 0 });
+  const [bomLineDraft, setBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "", unitPrice: 0, isOptional: false });
   const [editingBomLineId, setEditingBomLineId] = useState<string | null>(null);
-  const [editingBomLineDraft, setEditingBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "", unitPrice: 0 });
+  const [editingBomLineDraft, setEditingBomLineDraft] = useState({ item: "", qty: 1, notes: "", catalogItemId: "", unitPrice: 0, isOptional: false });
   const [isSavingBomLine, setIsSavingBomLine] = useState(false);
   const [proposalClientEmailDraft, setProposalClientEmailDraft] = useState("");
   const [proposalSummaryDraft, setProposalSummaryDraft] = useState("");
@@ -24220,6 +24226,14 @@ function SalesQuoteBuilder({
                             onChange={(event) => setEditingBomLineDraft((current) => ({ ...current, unitPrice: Number(event.target.value) }))}
                           />
                         </label>
+                        <label className="quote-bom-line-optional-field">
+                          <input
+                            type="checkbox"
+                            checked={editingBomLineDraft.isOptional}
+                            onChange={(event) => setEditingBomLineDraft((current) => ({ ...current, isOptional: event.target.checked }))}
+                          />
+                          {" "}Optional -- client chooses whether to include it
+                        </label>
                         <small className="muted">Line total {money(editingBomLineDraft.unitPrice * editingBomLineDraft.qty)}</small>
                         <div className="quote-bom-line-edit-actions">
                           <button
@@ -24241,6 +24255,7 @@ function SalesQuoteBuilder({
                                 notes: editingBomLineDraft.notes,
                                 catalogItemId: editingBomLineDraft.catalogItemId || null,
                                 unitPrice: editingBomLineDraft.unitPrice,
+                                isOptional: editingBomLineDraft.isOptional,
                               });
                               setIsSavingBomLine(false);
                               if (saved) setEditingBomLineId(null);
@@ -24254,7 +24269,7 @@ function SalesQuoteBuilder({
                     ) : (
                       <>
                         <div>
-                          <strong>{line.item}</strong>
+                          <strong>{line.item}</strong>{line.isOptional && <em className="muted"> (optional)</em>}
                           <span>Qty {line.qty}{line.notes ? ` -- ${line.notes}` : ""}</span>
                           <span>
                             {money(line.unitPrice)} each -- {money(line.unitPrice * line.qty)} total
@@ -24299,7 +24314,7 @@ function SalesQuoteBuilder({
                             type="button"
                             onClick={() => {
                               setEditingBomLineId(line.id);
-                              setEditingBomLineDraft({ item: line.item, qty: line.qty, notes: line.notes, catalogItemId: line.catalogItemId ?? "", unitPrice: line.unitPrice });
+                              setEditingBomLineDraft({ item: line.item, qty: line.qty, notes: line.notes, catalogItemId: line.catalogItemId ?? "", unitPrice: line.unitPrice, isOptional: line.isOptional });
                             }}
                           >
                             Edit
@@ -24335,6 +24350,14 @@ function SalesQuoteBuilder({
                 value={bomLineDraft.unitPrice}
                 onChange={(event) => setBomLineDraft({ ...bomLineDraft, unitPrice: Number(event.target.value) })}
               />
+              <label className="quote-bom-line-optional-field">
+                <input
+                  type="checkbox"
+                  checked={bomLineDraft.isOptional}
+                  onChange={(event) => setBomLineDraft({ ...bomLineDraft, isOptional: event.target.checked })}
+                />
+                {" "}Optional
+              </label>
               <button
                 className="secondary-action mini-action"
                 type="button"
@@ -24347,6 +24370,7 @@ function SalesQuoteBuilder({
                       notes: bomLineDraft.notes.trim() || undefined,
                       catalogItemId: bomLineDraft.catalogItemId || undefined,
                       unitPrice: bomLineDraft.unitPrice,
+                      isOptional: bomLineDraft.isOptional,
                       // Same catalog-default-vs-override comparison as the
                       // edit form, computed here since this is the only
                       // add-line call site that offers a price field a rep
@@ -24358,7 +24382,7 @@ function SalesQuoteBuilder({
                       })(),
                     },
                   ]);
-                  setBomLineDraft({ item: "", qty: 1, notes: "", catalogItemId: "", unitPrice: 0 });
+                  setBomLineDraft({ item: "", qty: 1, notes: "", catalogItemId: "", unitPrice: 0, isOptional: false });
                 }}
               >
                 + Add line
@@ -26588,6 +26612,12 @@ function ProposalPublicPage({ token }: { token: string }) {
   const [respondedAt, setRespondedAt] = useState<string | null>(null);
   const [respondedByName, setRespondedByName] = useState<string | null>(null);
   const [respondedByMe, setRespondedByMe] = useState(false);
+  // D17 (migration 148): optional lines begin UNSELECTED, exactly as
+  // decided -- the client consciously adds one in, never starts with it
+  // already counted. Not persisted until the one terminal response;
+  // reviewing again in a fresh tab/reload starts unselected again, same
+  // as never having touched it.
+  const [selectedOptionalLineIds, setSelectedOptionalLineIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchPublicQuoteProposal(token)
@@ -26627,7 +26657,7 @@ function ProposalPublicPage({ token }: { token: string }) {
     }
     setSubmitError("");
     setSubmitting(true);
-    const result = await respondToPublicQuoteProposal(token, newStatus, approverName.trim(), notes.trim());
+    const result = await respondToPublicQuoteProposal(token, newStatus, approverName.trim(), notes.trim(), Array.from(selectedOptionalLineIds));
     setSubmitting(false);
 
     if (result.outcome === "success") {
@@ -26723,6 +26753,21 @@ function ProposalPublicPage({ token }: { token: string }) {
   const hasPricing = snapshot.grandTotal !== undefined;
   const respondedDateLabel = respondedAt ? new Date(respondedAt).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : "";
   const respondedByLabel = respondedByName ? ` by ${respondedByName}` : "";
+  // D17 (migration 148): interactive selection only while still reviewing
+  // -- once responded, this page reverts to the plain frozen full-BOM
+  // totals it has always shown, rather than trying to reconstruct the
+  // actual accepted selection from local state that a fresh tab/reload
+  // wouldn't have. Required lines (isOptional falsy, true for every line
+  // on a proposal sent before this feature existed) always count;
+  // computeProposalTotals is the same single source of this math
+  // buildProposalSnapshot itself uses, so a live recompute over every
+  // line (nothing excluded) always matches the frozen snapshot exactly.
+  const includedLines = phase === "ready"
+    ? snapshot.bom.filter((line) => !line.isOptional || (line.id !== undefined && selectedOptionalLineIds.has(line.id)))
+    : snapshot.bom;
+  const liveTotals = hasPricing
+    ? computeProposalTotals(includedLines.map((line) => ({ unitPrice: line.unitPrice ?? 0, qty: line.qty })), snapshot.discountPercent ?? 0, snapshot.taxRate ?? 0)
+    : null;
 
   return (
     <div className="submittal-public-page proposal-public-page">
@@ -26780,35 +26825,64 @@ function ProposalPublicPage({ token }: { token: string }) {
               {hasPricing && <th>Unit Price</th>}
               {hasPricing && <th>Line Total</th>}
               <th>Datasheet</th>
+              {phase === "ready" && <th>Include</th>}
             </tr>
           </thead>
           <tbody>
-            {snapshot.bom.map((line, index) => (
-              <tr key={`${line.item}-${index}`}>
-                <td data-label="Image">{line.imageUrl ? <img className="proposal-bom-thumb" src={line.imageUrl} alt={line.item} /> : null}</td>
-                <td data-label="Item"><strong>{line.item}</strong>{line.manufacturer ? <span className="muted"> - {line.manufacturer}</span> : null}</td>
-                <td data-label="Description">{line.description || line.notes || "-"}</td>
-                <td data-label="Qty">{line.qty}</td>
-                {hasPricing && <td data-label="Unit Price">{line.unitPrice !== undefined ? money(line.unitPrice) : "-"}</td>}
-                {hasPricing && <td data-label="Line Total">{line.lineTotal !== undefined ? money(line.lineTotal) : "-"}</td>}
-                <td data-label="Datasheet">{line.hasDatasheet ? <a href={line.datasheetUrl} target="_blank" rel="noreferrer">View datasheet</a> : "-"}</td>
-              </tr>
-            ))}
+            {snapshot.bom.map((line, index) => {
+              // D17: a required line has nothing to toggle -- always
+              // included, matches this app's own "absent means required"
+              // rule for a proposal sent before this feature existed.
+              const isSelectable = phase === "ready" && line.isOptional && line.id !== undefined;
+              const isIncluded = !line.isOptional || (line.id !== undefined && selectedOptionalLineIds.has(line.id));
+              return (
+                <tr key={`${line.item}-${index}`}>
+                  <td data-label="Image">{line.imageUrl ? <img className="proposal-bom-thumb" src={line.imageUrl} alt={line.item} /> : null}</td>
+                  <td data-label="Item"><strong>{line.item}</strong>{line.manufacturer ? <span className="muted"> - {line.manufacturer}</span> : null}{line.isOptional && <em className="muted"> (optional)</em>}</td>
+                  <td data-label="Description">{line.description || line.notes || "-"}</td>
+                  <td data-label="Qty">{line.qty}</td>
+                  {hasPricing && <td data-label="Unit Price">{line.unitPrice !== undefined ? money(line.unitPrice) : "-"}</td>}
+                  {hasPricing && <td data-label="Line Total">{line.lineTotal !== undefined ? money(line.lineTotal) : "-"}</td>}
+                  <td data-label="Datasheet">{line.hasDatasheet ? <a href={line.datasheetUrl} target="_blank" rel="noreferrer">View datasheet</a> : "-"}</td>
+                  {phase === "ready" && (
+                    <td data-label="Include">
+                      {isSelectable ? (
+                        <input
+                          type="checkbox"
+                          aria-label={`Include ${line.item}`}
+                          checked={isIncluded}
+                          onChange={(event) => {
+                            const lineId = line.id as string;
+                            setSelectedOptionalLineIds((current) => {
+                              const next = new Set(current);
+                              if (event.target.checked) next.add(lineId); else next.delete(lineId);
+                              return next;
+                            });
+                          }}
+                        />
+                      ) : (
+                        !line.isOptional && <span className="muted">Required</span>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
             {snapshot.bom.length === 0 && (
               <tr><td colSpan={hasPricing ? 7 : 5} className="empty-compact-state">No line items on this proposal.</td></tr>
             )}
           </tbody>
         </table>
-        {hasPricing && (
+        {hasPricing && liveTotals && (
           <div className="proposal-totals">
-            <p>Subtotal <span>{money(snapshot.subtotal ?? 0)}</span></p>
-            {(snapshot.discountAmount ?? 0) > 0 && (
-              <p>Discount ({snapshot.discountPercent ?? 0}%) <span>-{money(snapshot.discountAmount ?? 0)}</span></p>
+            <p>Subtotal <span>{money(liveTotals.subtotal)}</span></p>
+            {liveTotals.discountAmount > 0 && (
+              <p>Discount ({snapshot.discountPercent ?? 0}%) <span>-{money(liveTotals.discountAmount)}</span></p>
             )}
-            {(snapshot.taxAmount ?? 0) > 0 && (
-              <p>Tax ({snapshot.taxRate ?? 0}%) <span>{money(snapshot.taxAmount ?? 0)}</span></p>
+            {liveTotals.taxAmount > 0 && (
+              <p>Tax ({snapshot.taxRate ?? 0}%) <span>{money(liveTotals.taxAmount)}</span></p>
             )}
-            <p className="proposal-grand-total"><strong>Total</strong> <strong>{money(snapshot.grandTotal ?? 0)}</strong></p>
+            <p className="proposal-grand-total"><strong>Total</strong> <strong>{money(liveTotals.grandTotal)}</strong></p>
           </div>
         )}
       </section>

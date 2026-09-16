@@ -2279,6 +2279,14 @@ td small.quote-ref-tag {
   gap: 2px;
 }
 
+.quote-bom-line-optional-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .quote-bom-line-edit {
     grid-template-columns: 1fr;

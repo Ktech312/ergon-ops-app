@@ -9545,6 +9545,13 @@ export type SalesQuoteBomLine = {
   priceSource: "catalog_default" | "manual_override" | "legacy_unverified";
   priceOverriddenBy: string | null;
   priceOverriddenAt: string | null;
+  // D17 (migration 148): Sales flags a line optional while building the
+  // quote. A required line (false) is always included in every total; an
+  // optional line only counts once the client selects it while reviewing
+  // the proposal -- see ProposalBomLineSnapshot/ProposalSnapshot below.
+  // Never "alternates" -- every optional line is independently
+  // toggleable, not part of a mutually-exclusive group.
+  isOptional: boolean;
 };
 
 export type SalesQuote = {
@@ -9667,6 +9674,7 @@ type SalesQuoteBomLineRow = {
   price_source: string;
   price_overridden_by: string | null;
   price_overridden_at: string | null;
+  is_optional: boolean;
 };
 
 type SalesQuoteRow = {
@@ -9770,6 +9778,7 @@ function mapSalesQuoteBomLineRow(row: SalesQuoteBomLineRow): SalesQuoteBomLine {
     priceSource: (row.price_source as SalesQuoteBomLine["priceSource"]) ?? "legacy_unverified",
     priceOverriddenBy: row.price_overridden_by ?? null,
     priceOverriddenAt: row.price_overridden_at ?? null,
+    isOptional: row.is_optional ?? false,
   };
 }
 
@@ -9810,7 +9819,7 @@ function mapSalesQuoteRow(row: SalesQuoteRow): SalesQuote {
 }
 
 const SALES_QUOTE_SELECT =
-  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,saas_type,saas_contract_amount,saas_billing_frequency,sale_amount,discount_percent,tax_rate,sales_quote_locations(id,quote_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id,unit_price,price_source,price_overridden_by,price_overridden_at)";
+  "id,quote_ref,client_name,site_name,city,created_by_email,created_at,closed_at,status,client_email,proposal_summary,contact_full_name,contact_phone,preferred_communication,site_street_address,site_state,site_zip,client_street_address,client_city,client_state,client_zip,saas_type,saas_contract_amount,saas_billing_frequency,sale_amount,discount_percent,tax_rate,sales_quote_locations(id,quote_id,location_type,name,address,line_sort,fli,lpr,people_counting,fli_camera_item_id,lpr_camera_item_id,people_counting_camera_item_id,entries_count,exits_count,levels_count,sales_quote_location_images(id,image_type,storage_path,file_name,description,uploaded_at,uploaded_by_email,photo_lat,photo_lng),sales_quote_location_items(id,quote_location_id,line_type,catalog_item_id,qty,line_sort,location_label,accessory_catalog_item_id,accessory_qty)),sales_quote_bom_lines(id,quote_id,item_name,qty,notes,line_sort,catalog_item_id,source_location_id,unit_price,price_source,price_overridden_by,price_overridden_at,is_optional)";
 
 // Migration 088: soft-deleted quotes/locations/items/images/bom-lines
 // filtered out here rather than dropped from the select, so
@@ -10089,6 +10098,7 @@ export async function addSalesQuoteBomLines(
     sourceLocationId?: string | null;
     unitPrice?: number;
     priceSource?: SalesQuoteBomLine["priceSource"];
+    isOptional?: boolean;
   }>,
   nextLineSort: number,
   accessToken?: string,
@@ -10115,6 +10125,11 @@ export async function addSalesQuoteBomLines(
         // is a separate, not-yet-scoped follow-up, not part of this batch.
         unit_price: line.unitPrice ?? 0,
         price_source: line.priceSource ?? "manual_override",
+        // D17: bulk-generated lines (Pull Location Hardware, Pre-Sales
+        // Quick Estimate) are always required -- optional is a deliberate
+        // choice a rep makes for one manually-added line, not something
+        // those generators infer.
+        is_optional: line.isOptional ?? false,
       })),
     ),
   });
@@ -10193,6 +10208,7 @@ export async function updateSalesQuoteBomLine(
     unitPrice: number;
     priceSource: SalesQuoteBomLine["priceSource"];
     overriddenByUserId?: string | null;
+    isOptional: boolean;
   },
   accessToken?: string,
 ): Promise<SalesQuoteBomLine> {
@@ -10216,6 +10232,7 @@ export async function updateSalesQuoteBomLine(
       catalog_item_id: updates.catalogItemId || null,
       unit_price: updates.unitPrice,
       price_source: updates.priceSource,
+      is_optional: updates.isOptional,
       // Migration 136's trigger treats these as requested values only:
       // Postgres replaces them with auth.uid()/database time for an
       // authenticated manual override, so the browser cannot forge the
@@ -11953,6 +11970,14 @@ export type ProposalBomLineSnapshot = {
   // 0, which would falsely claim a real, quoted price of zero).
   unitPrice?: number;
   lineTotal?: number;
+  // D17 (migration 148): the source sales_quote_bom_lines.id, frozen so
+  // the public page and respond_to_quote_proposal's own server-side
+  // computation can both reference this exact line -- present only on a
+  // proposal sent after this feature existed. isOptional mirrors the
+  // quote line's own flag at send time; absent/undefined means required
+  // (matches the DB default and every proposal sent before this feature).
+  id?: string;
+  isOptional?: boolean;
 };
 
 export type ProposalTemplateSectionSnapshot = { title: string; body: string };
@@ -11996,6 +12021,19 @@ export type SalesQuoteProposal = {
   shareToken: string | null;
   shareTokenStatus: ShareLinkTokenStatus | null;
   createdAt: string;
+  // D17 (migration 148): populated atomically with the client's response
+  // -- null until responded, and null forever on a proposal with no
+  // optional lines to select from or one sent before this feature
+  // existed. finalGrandTotal etc. are server-computed from the frozen
+  // snapshot at response time, never trusted from the client, and never
+  // recomputed afterward -- the definitive "what was actually accepted"
+  // record, distinct from the snapshot's own (unconditional, every-line)
+  // subtotal/grandTotal.
+  selectedOptionalLineIds: string[] | null;
+  finalSubtotal: number | null;
+  finalDiscountAmount: number | null;
+  finalTaxAmount: number | null;
+  finalGrandTotal: number | null;
 };
 
 export type PublicQuoteProposalView = {
@@ -12061,6 +12099,11 @@ type SalesQuoteProposalRow = {
   response_notes: string | null;
   approval_name: string | null;
   created_at: string;
+  selected_optional_line_ids: string[] | null;
+  final_subtotal: number | string | null;
+  final_discount_amount: number | string | null;
+  final_tax_amount: number | string | null;
+  final_grand_total: number | string | null;
 };
 
 function mapQuoteProposalRow(row: SalesQuoteProposalRow, tokenRow: ShareTokenRow | undefined): SalesQuoteProposal {
@@ -12079,6 +12122,11 @@ function mapQuoteProposalRow(row: SalesQuoteProposalRow, tokenRow: ShareTokenRow
     shareToken: tokenRow?.token ?? null,
     shareTokenStatus: (tokenRow?.status as ShareLinkTokenStatus | undefined) ?? null,
     createdAt: row.created_at,
+    selectedOptionalLineIds: row.selected_optional_line_ids ?? null,
+    finalSubtotal: row.final_subtotal === null || row.final_subtotal === undefined ? null : Number(row.final_subtotal),
+    finalDiscountAmount: row.final_discount_amount === null || row.final_discount_amount === undefined ? null : Number(row.final_discount_amount),
+    finalTaxAmount: row.final_tax_amount === null || row.final_tax_amount === undefined ? null : Number(row.final_tax_amount),
+    finalGrandTotal: row.final_grand_total === null || row.final_grand_total === undefined ? null : Number(row.final_grand_total),
   };
 }
 
@@ -12727,6 +12775,11 @@ export async function respondToPublicQuoteProposal(
   newStatus: "approved" | "rejected" | "revision_requested",
   approverName: string,
   notes: string,
+  // D17 (migration 148): the optional line ids the client chose to
+  // include, from ProposalBomLineSnapshot.id -- required lines are
+  // always included server-side regardless of this list. Empty/omitted
+  // means no optional lines were selected, not "skip the feature."
+  selectedOptionalLineIds: string[] = [],
 ): Promise<ProposalResponseResult> {
   const failed: ProposalResponseResult = { outcome: "error", status: null, respondedAt: null, approvalName: null, version: null };
   if (!isRemotePersistenceConfigured() || !token) {
@@ -12743,6 +12796,7 @@ export async function respondToPublicQuoteProposal(
         approver_name: approverName || "Unknown",
         approver_ip: "",
         notes: notes || "",
+        p_selected_optional_line_ids: selectedOptionalLineIds,
       }),
     });
   } catch {

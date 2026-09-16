@@ -163,7 +163,7 @@ describe("updateSalesQuoteBomLine", () => {
     await expect(
       updateSalesQuoteBomLine(
         "line-1",
-        { item: " Camera ", qty: 3, notes: " North entrance ", catalogItemId: "item-1", unitPrice: 150, priceSource: "manual_override", overriddenByUserId: "user-1" },
+        { item: " Camera ", qty: 3, notes: " North entrance ", catalogItemId: "item-1", unitPrice: 150, priceSource: "manual_override", overriddenByUserId: "user-1", isOptional: false },
         "token",
       ),
     ).resolves.toMatchObject({ id: "line-1", item: "Camera", qty: 3, notes: "North entrance", catalogItemId: "item-1", unitPrice: 150, priceSource: "manual_override" });
@@ -175,6 +175,7 @@ describe("updateSalesQuoteBomLine", () => {
       catalog_item_id: "item-1",
       unit_price: 150,
       price_source: "manual_override",
+      is_optional: false,
       price_overridden_by: "user-1",
       price_overridden_at: expect.any(String),
     });
@@ -188,7 +189,7 @@ describe("updateSalesQuoteBomLine", () => {
     };
     const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, [savedRow]));
     globalThis.fetch = fetchMock;
-    await updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: "item-1", unitPrice: 100, priceSource: "catalog_default" }, "token");
+    await updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: "item-1", unitPrice: 100, priceSource: "catalog_default", isOptional: false }, "token");
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.price_overridden_by).toBeNull();
     expect(body.price_overridden_at).toBeNull();
@@ -197,7 +198,7 @@ describe("updateSalesQuoteBomLine", () => {
   it("rejects invalid input before making a request", async () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock;
-    await expect(updateSalesQuoteBomLine("line-1", { item: " ", qty: 0, notes: "", catalogItemId: null, unitPrice: 0, priceSource: "manual_override" }, "token"))
+    await expect(updateSalesQuoteBomLine("line-1", { item: " ", qty: 0, notes: "", catalogItemId: null, unitPrice: 0, priceSource: "manual_override", isOptional: false }, "token"))
       .rejects.toThrow("Enter an item name and a quantity greater than zero.");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -205,21 +206,21 @@ describe("updateSalesQuoteBomLine", () => {
   it("rejects a negative unit price before making a request", async () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock;
-    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null, unitPrice: -5, priceSource: "manual_override" }, "token"))
+    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null, unitPrice: -5, priceSource: "manual_override", isOptional: false }, "token"))
       .rejects.toThrow("Enter a unit price of zero or more.");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("logs technical detail and throws plain text when the write fails", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(false, 500, { message: "constraint detail" }));
-    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null, unitPrice: 0, priceSource: "manual_override" }, "token"))
+    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null, unitPrice: 0, priceSource: "manual_override", isOptional: false }, "token"))
       .rejects.toThrow("Could not save this BOM line.");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("updateSalesQuoteBomLine failed for line line-1 (500)"));
   });
 
   it("rejects a successful response that did not update exactly one row", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, []));
-    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null, unitPrice: 0, priceSource: "manual_override" }, "token"))
+    await expect(updateSalesQuoteBomLine("line-1", { item: "Camera", qty: 1, notes: "", catalogItemId: null, unitPrice: 0, priceSource: "manual_override", isOptional: false }, "token"))
       .rejects.toThrow("Could not save this BOM line.");
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("affected 0 rows for line line-1; expected exactly 1"));
   });
