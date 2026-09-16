@@ -152,7 +152,13 @@ import {
   loadProposalTemplateSections,
   updateProposalTemplateSection,
   loadProposalsForQuote,
-  createAndSendQuoteProposalVersion,
+  requestOrSendQuoteProposalVersion,
+  type ProposalApprovalRequest,
+  loadProposalApprovalRequests,
+  respondToProposalApprovalRequest,
+  type SalesApprovalSettings,
+  loadSalesApprovalSettings,
+  saveSalesApprovalSettings,
   fetchPublicQuoteProposal,
   respondToPublicQuoteProposal,
   loadSalesQuoteIntakeResponse,
@@ -1366,6 +1372,19 @@ function App() {
   const [proposalTemplateSections, setProposalTemplateSections] = useState<ProposalTemplateSection[]>([]);
   const [quoteProposals, setQuoteProposals] = useState<SalesQuoteProposal[]>([]);
   const [quoteProposalStatus, setQuoteProposalStatus] = useState("");
+  // Sales Batch 5 (migration 147, D4): the configurable discount-approval
+  // gate. approvalRequests is loaded once auth is ready (same lifecycle as
+  // other workspace-wide lists) -- RLS already scopes it to the requester
+  // or a Sales Manager/admin, so no client-side filtering by role is
+  // needed for correctness, only for which UI sections render it.
+  const [salesApprovalSettings, setSalesApprovalSettings] = useState<SalesApprovalSettings | null>(null);
+  const [salesApprovalSettingsStatus, setSalesApprovalSettingsStatus] = useState("");
+  const [proposalApprovalRequests, setProposalApprovalRequests] = useState<ProposalApprovalRequest[]>([]);
+  // Named distinctly from the pre-existing approvalReviewStatus/
+  // setApprovalReviewStatus pair (sign-in approval queue's own status
+  // message) to avoid a duplicate-declaration collision in this same
+  // component scope.
+  const [discountApprovalReviewStatus, setDiscountApprovalReviewStatus] = useState("");
   const [handoverSchema, setHandoverSchema] = useState<FormSchema | null>(null);
   const [formBuilderStatus, setFormBuilderStatus] = useState("");
   const [handovers, setHandovers] = useState<ProjectHandover[]>([]);
@@ -2363,6 +2382,20 @@ function App() {
       return;
     }
     loadCompanyBranding(authSession.accessToken).then(setBranding).catch(() => undefined);
+  }, [authSession]);
+
+  // Sales Batch 5 (migration 147, D4): loaded for anyone authenticated,
+  // same as company branding above -- the settings' own RLS policy is
+  // "authenticated read", and the approval requests' own RLS policy
+  // already scopes rows to the requester or a Sales Manager/admin, so
+  // there is nothing to gate client-side for correctness. Which UI
+  // sections actually render this data is gated separately below.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      return;
+    }
+    loadSalesApprovalSettings(authSession.accessToken).then(setSalesApprovalSettings).catch(() => undefined);
+    loadProposalApprovalRequests(authSession.accessToken).then(setProposalApprovalRequests).catch(() => undefined);
   }, [authSession]);
 
   async function handleSaveCompanyName(name: string) {
@@ -5303,15 +5336,32 @@ function App() {
     try {
       const existing = await loadProposalsForQuote(quote.id, authSession.accessToken);
       const snapshot = buildProposalSnapshot(quote);
-      // Queue C2.7: one atomic RPC now handles version numbering (computed
-      // server-side, closing the race the old client-computed nextVersion
-      // above left open), token creation, and auto-superseding every prior
-      // version's still-live link -- replacing the old two-step
-      // createQuoteProposal+createQuoteProposalShareToken direct-write flow.
-      const created = await createAndSendQuoteProposalVersion(
+      // Sales Batch 5 (migration 147, D4): request_or_send_quote_proposal_
+      // version is now the sole entry point -- it either sends immediately
+      // (same atomic version-numbering/token/supersession behavior Queue
+      // C2.7 already established) or, when the workspace's configurable
+      // discount-approval gate is enabled and this quote's discount exceeds
+      // the threshold, creates a pending request for a Sales Manager/admin
+      // to review instead. Never both in one call.
+      const result = await requestOrSendQuoteProposalVersion(
         { quoteId: quote.id, contentSnapshot: snapshot, clientName: quote.clientName, clientEmail: quote.clientEmail },
         authSession.accessToken,
       );
+
+      if (!result.ok) {
+        setQuoteProposalStatus(result.message);
+        return;
+      }
+
+      if (result.outcome === "pending_approval") {
+        setQuoteProposalStatus(
+          `This quote's ${result.discountPercent}% discount is above the ${result.thresholdPercent}% approval threshold -- sent to a Sales Manager for approval. Nothing was emailed to the client yet.`,
+        );
+        loadProposalApprovalRequests(authSession.accessToken).then(setProposalApprovalRequests).catch(() => undefined);
+        return;
+      }
+
+      const created = result.proposal;
       const shareToken = created.shareToken as string;
       setQuoteProposals([created, ...existing]);
 
@@ -5334,6 +5384,69 @@ function App() {
       }
     } catch (error) {
       setQuoteProposalStatus(error instanceof Error ? error.message : "Could not create proposal.");
+    }
+  }
+
+  // Sales Batch 5 (migration 147, D4): a Sales Manager/admin approves or
+  // rejects a pending discount-approval request. Approving sends the
+  // originally-submitted snapshot (server-side, from the request row, not
+  // re-derived here) -- the same email-send follow-up as a normal Create &
+  // Send, since the client still hasn't been notified at all until now.
+  async function handleRespondToApprovalRequest(request: ProposalApprovalRequest, decision: "approved" | "rejected", note: string) {
+    if (!authSession) {
+      return;
+    }
+    setDiscountApprovalReviewStatus(decision === "approved" ? "Approving..." : "Rejecting...");
+    try {
+      const result = await respondToProposalApprovalRequest(request.id, decision, note, authSession.accessToken);
+
+      if (!result.ok) {
+        setDiscountApprovalReviewStatus(result.message);
+        return;
+      }
+
+      loadProposalApprovalRequests(authSession.accessToken).then(setProposalApprovalRequests).catch(() => undefined);
+
+      if (result.outcome === "rejected") {
+        setDiscountApprovalReviewStatus(`Request rejected. No proposal was sent to ${request.clientEmail}.`);
+        return;
+      }
+
+      const created = result.proposal;
+      await reloadQuoteProposals(request.quoteId);
+
+      setDiscountApprovalReviewStatus(`Approved. Sending email to ${request.clientEmail}...`);
+      const shareUrl = `${window.location.origin}${window.location.pathname}?proposal=${created.shareToken}`;
+      try {
+        const emailResponse = await fetch("/api/send-proposal-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
+          body: JSON.stringify({ proposalId: created.id, shareUrl }),
+        });
+        const emailResult = (await emailResponse.json()) as { sent: boolean; reason?: string; error?: string };
+        if (emailResult.sent) {
+          setDiscountApprovalReviewStatus(`Approved and emailed to ${request.clientEmail}.`);
+        } else {
+          setDiscountApprovalReviewStatus(`Approved. ${emailResult.reason || emailResult.error || "Email was not sent."}`);
+        }
+      } catch (emailError) {
+        setDiscountApprovalReviewStatus(`Approved, but the send request failed. Use Copy client link on the proposal to share it manually.`);
+      }
+    } catch (error) {
+      setDiscountApprovalReviewStatus(error instanceof Error ? error.message : "Could not submit review.");
+    }
+  }
+
+  async function handleSaveSalesApprovalSettings(updates: Partial<Pick<SalesApprovalSettings, "discountApprovalEnabled" | "discountApprovalThresholdPercent">>) {
+    if (!authSession || !salesApprovalSettings?.workspaceId) {
+      return;
+    }
+    try {
+      await saveSalesApprovalSettings(salesApprovalSettings.workspaceId, updates, authSession.accessToken);
+      setSalesApprovalSettings((current) => (current ? { ...current, ...updates } : current));
+      setSalesApprovalSettingsStatus("Saved.");
+    } catch (error) {
+      setSalesApprovalSettingsStatus(error instanceof Error ? error.message : "Could not save Sales approval settings.");
     }
   }
 
@@ -7845,6 +7958,7 @@ function App() {
             quoteProposalStatus={quoteProposalStatus}
             onLoadQuoteProposals={reloadQuoteProposals}
             onCreateQuoteProposal={handleCreateQuoteProposal}
+            proposalApprovalRequests={proposalApprovalRequests}
             canManageProposalLinks={canManageProposalLinks}
             onProposalShareLinkChange={handleProposalShareLinkChange}
             accessToken={authSession?.accessToken}
@@ -8061,6 +8175,12 @@ function App() {
             onReorderProposalTemplateSection={handleReorderProposalTemplateSection}
             deletionLog={deletionLog}
             notificationDeliveryFailures={notificationDeliveryFailures}
+            salesApprovalSettings={salesApprovalSettings}
+            salesApprovalSettingsStatus={salesApprovalSettingsStatus}
+            onSaveSalesApprovalSettings={handleSaveSalesApprovalSettings}
+            proposalApprovalRequests={proposalApprovalRequests}
+            discountApprovalReviewStatus={discountApprovalReviewStatus}
+            onRespondToApprovalRequest={handleRespondToApprovalRequest}
             onRefresh={() => {
               if (!authSession) {
                 return;
@@ -17538,6 +17658,32 @@ function expiresOnToIsoEndOfDay(dateOnly: string): string | null {
   return new Date(year, month - 1, day, 23, 59, 59, 999).toISOString();
 }
 
+// Sales Batch 5 (migration 147, D4): one row per pending discount-approval
+// request. A local, unsaved note field feeds whichever decision button is
+// actually clicked -- there's no separate "save note" step.
+function ProposalApprovalRequestRow({
+  request,
+  onRespond,
+}: {
+  request: ProposalApprovalRequest;
+  onRespond: (request: ProposalApprovalRequest, decision: "approved" | "rejected", note: string) => void;
+}) {
+  const [note, setNote] = useState("");
+  return (
+    <tr>
+      <td data-label="Client">{request.clientName} -- <small className="muted">{request.clientEmail}</small></td>
+      <td data-label="Discount">{request.discountPercent}%</td>
+      <td data-label="Threshold">{request.thresholdPercent}%</td>
+      <td data-label="Requested by">{request.requestedByEmail}</td>
+      <td>
+        <input placeholder="Optional note" value={note} onChange={(event) => setNote(event.target.value)} />
+        <button className="primary-action mini-action" type="button" onClick={() => onRespond(request, "approved", note)}>Approve</button>
+        <button className="secondary-action mini-action" type="button" onClick={() => onRespond(request, "rejected", note)}>Reject</button>
+      </td>
+    </tr>
+  );
+}
+
 function PendingApprovalRow({
   user,
   onApprove,
@@ -17894,6 +18040,12 @@ function AdminPage({
   onReorderProposalTemplateSection,
   deletionLog,
   notificationDeliveryFailures,
+  salesApprovalSettings,
+  salesApprovalSettingsStatus,
+  onSaveSalesApprovalSettings,
+  proposalApprovalRequests,
+  discountApprovalReviewStatus,
+  onRespondToApprovalRequest,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -17967,6 +18119,12 @@ function AdminPage({
   onReorderProposalTemplateSection: (sectionId: string, direction: "up" | "down") => void;
   deletionLog?: DeletionLogEntry[];
   notificationDeliveryFailures?: NotificationDeliveryFailure[];
+  salesApprovalSettings: SalesApprovalSettings | null;
+  salesApprovalSettingsStatus: string;
+  onSaveSalesApprovalSettings: (updates: Partial<Pick<SalesApprovalSettings, "discountApprovalEnabled" | "discountApprovalThresholdPercent">>) => void;
+  proposalApprovalRequests: ProposalApprovalRequest[];
+  discountApprovalReviewStatus: string;
+  onRespondToApprovalRequest: (request: ProposalApprovalRequest, decision: "approved" | "rejected", note: string) => void;
 }) {
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
   const [editingRosterId, setEditingRosterId] = useState<string | null>(null);
@@ -18044,6 +18202,21 @@ function AdminPage({
     setCompanyNameDraft(branding.companyName);
   }, [branding.companyName]);
   const logoUrl = branding.logoStoragePath ? companyLogoUrl(branding.logoStoragePath) : null;
+
+  // Sales Batch 5 (migration 147, D4): same draft-plus-explicit-Save
+  // pattern as companyNameDraft above -- the threshold is a number a
+  // manager types digit by digit, not something to save on every
+  // keystroke. The enabled checkbox saves immediately on toggle (a single
+  // deliberate action, not a typed value).
+  const [discountThresholdDraft, setDiscountThresholdDraft] = useState(
+    String(salesApprovalSettings?.discountApprovalThresholdPercent ?? 10),
+  );
+  useEffect(() => {
+    setDiscountThresholdDraft(String(salesApprovalSettings?.discountApprovalThresholdPercent ?? 10));
+  }, [salesApprovalSettings?.discountApprovalThresholdPercent]);
+  const discountThresholdDraftValue = Number(discountThresholdDraft);
+  const discountThresholdDraftValid =
+    discountThresholdDraft.trim() !== "" && !Number.isNaN(discountThresholdDraftValue) && discountThresholdDraftValue >= 0 && discountThresholdDraftValue <= 100;
 
   // Pre-Sales Rules are authored against real Sales-maintained categories
   // instead of a freeform "tier" string an admin has to invent and keep
@@ -18174,6 +18347,83 @@ function AdminPage({
           {brandingStatus && <small className="muted">{brandingStatus}</small>}
         </section>
       )}
+
+      {isAdmin && (
+        <section className="panel wide">
+          <PanelHeader
+            title="Sales Approval Settings"
+            label="Require a Sales Manager or admin to approve a proposal before it sends, above a discount threshold"
+          />
+          <div className="bom-modal-grid">
+            <label>
+              <input
+                type="checkbox"
+                checked={salesApprovalSettings?.discountApprovalEnabled ?? false}
+                onChange={(event) => onSaveSalesApprovalSettings({ discountApprovalEnabled: event.target.checked })}
+              />
+              {" "}Require approval for high-discount proposals
+            </label>
+            <label>Discount threshold (%)
+              <div className="branding-name-row">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.01"
+                  value={discountThresholdDraft}
+                  onChange={(event) => setDiscountThresholdDraft(event.target.value)}
+                />
+                <button
+                  className="primary-action mini-action"
+                  type="button"
+                  disabled={!discountThresholdDraftValid || discountThresholdDraftValue === salesApprovalSettings?.discountApprovalThresholdPercent}
+                  onClick={() => onSaveSalesApprovalSettings({ discountApprovalThresholdPercent: discountThresholdDraftValue })}
+                >
+                  Save
+                </button>
+              </div>
+            </label>
+          </div>
+          <p className="muted">
+            {salesApprovalSettings?.discountApprovalEnabled
+              ? `Currently active -- a proposal with a discount above ${salesApprovalSettings.discountApprovalThresholdPercent}% requires approval before sending. PM cannot approve; only a Sales Manager or admin can.`
+              : "Currently off -- every proposal sends immediately regardless of discount."}
+          </p>
+          {salesApprovalSettingsStatus && <small className="muted">{salesApprovalSettingsStatus}</small>}
+        </section>
+      )}
+
+      <section className="panel wide">
+        <PanelHeader
+          title="Proposal Approval Requests"
+          label="Proposals held for a discount above the configured threshold -- Sales Manager or admin review"
+        />
+        <div className="report-filter-row">
+          {discountApprovalReviewStatus && <span className="muted">{discountApprovalReviewStatus}</span>}
+        </div>
+        {proposalApprovalRequests.filter((request) => request.status === "pending").length === 0 ? (
+          <div className="empty-compact-state">No proposals are waiting on approval right now.</div>
+        ) : (
+          <table className="stack-table-mobile">
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th>Discount</th>
+                <th>Threshold</th>
+                <th>Requested by</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {proposalApprovalRequests
+                .filter((request) => request.status === "pending")
+                .map((request) => (
+                  <ProposalApprovalRequestRow key={request.id} request={request} onRespond={onRespondToApprovalRequest} />
+                ))}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       <section className="panel wide">
         <PanelHeader title="Pending Approvals" label="New sign-ins wait here until a Manager or Admin lets them in" />
@@ -19059,6 +19309,7 @@ function SalesHome({
   quoteProposalStatus,
   onLoadQuoteProposals,
   onCreateQuoteProposal,
+  proposalApprovalRequests,
   canManageProposalLinks,
   onProposalShareLinkChange,
   accessToken,
@@ -19149,6 +19400,7 @@ function SalesHome({
   quoteProposalStatus: string;
   onLoadQuoteProposals: (quoteId: string) => void;
   onCreateQuoteProposal: (quote: SalesQuote) => void;
+  proposalApprovalRequests: ProposalApprovalRequest[];
   canManageProposalLinks: boolean;
   onProposalShareLinkChange: (proposalId: string, next: { token: string; status: ShareLinkTokenStatus }) => void;
   accessToken: string | undefined;
@@ -19323,6 +19575,7 @@ function SalesHome({
         quoteProposalStatus={quoteProposalStatus}
         onLoadQuoteProposals={onLoadQuoteProposals}
         onCreateQuoteProposal={onCreateQuoteProposal}
+        proposalApprovalRequests={proposalApprovalRequests}
         canManageProposalLinks={canManageProposalLinks}
         onProposalShareLinkChange={onProposalShareLinkChange}
         accessToken={accessToken}
@@ -23193,6 +23446,7 @@ function SalesQuoteBuilder({
   quoteProposalStatus,
   onLoadQuoteProposals,
   onCreateQuoteProposal,
+  proposalApprovalRequests,
   canManageProposalLinks,
   onProposalShareLinkChange,
   accessToken,
@@ -23285,6 +23539,7 @@ function SalesQuoteBuilder({
   quoteProposalStatus: string;
   onLoadQuoteProposals: (quoteId: string) => void;
   onCreateQuoteProposal: (quote: SalesQuote) => void;
+  proposalApprovalRequests: ProposalApprovalRequest[];
   canManageProposalLinks: boolean;
   onProposalShareLinkChange: (proposalId: string, next: { token: string; status: ShareLinkTokenStatus }) => void;
   accessToken: string | undefined;
@@ -24175,6 +24430,13 @@ function SalesQuoteBuilder({
               Create &amp; Send Proposal
             </button>
             {quoteProposalStatus && <small className="muted">{quoteProposalStatus}</small>}
+            {proposalApprovalRequests.some(
+              (request) => request.quoteId === selectedQuote.id && request.status === "pending",
+            ) && (
+              <small className="muted">
+                This proposal's discount is awaiting Sales Manager approval before it can be sent.
+              </small>
+            )}
             <div className="submittal-list">
               {quoteProposals.filter((proposal) => proposal.quoteId === selectedQuote.id).length === 0 && (
                 <div className="empty-compact-state">No proposals yet for this quote.</div>

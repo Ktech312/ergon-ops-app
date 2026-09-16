@@ -12264,35 +12264,18 @@ export function compareProposalSnapshots(before: ProposalSnapshot, after: Propos
   return { fieldChanges, bomLines, templateSections };
 }
 
-// Queue C2.7: the sole creation path for a new proposal version, going
-// through migration 140's single atomic RPC -- see
-// createAndSendSubmittalVersion's own comment for the full rationale
-// (server-computed version number, auto-supersession of every prior
-// version's still-live token, one round-trip fewer than the RPC-only
-// approach would need since it only returns {proposal_id, token}).
-export async function createAndSendQuoteProposalVersion(
-  input: { quoteId: string; contentSnapshot: ProposalSnapshot; clientName: string; clientEmail: string },
-  accessToken?: string,
-): Promise<SalesQuoteProposal> {
-  if (!isRemotePersistenceConfigured() || !accessToken) {
-    throw new Error("Supabase is not configured.");
-  }
-  const response = await fetch(supabaseUrl("rpc/create_and_send_quote_proposal_version"), {
-    method: "POST",
-    headers: supabaseHeaders(accessToken),
-    body: JSON.stringify({
-      p_quote_id: input.quoteId,
-      p_content_snapshot: input.contentSnapshot,
-      p_client_name: input.clientName || null,
-      p_client_email: input.clientEmail || null,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(await readSupabaseError(response, "Could not create proposal"));
-  }
-  const rpcRows = (await response.json()) as Array<{ proposal_id: string; token: string }>;
-  const { proposal_id: proposalId, token } = rpcRows[0];
-
+// Sales Batch 5 (migration 147, D4): request_or_send_quote_proposal_version
+// is now the SOLE entry point for Create & Send -- it replaces the old
+// createAndSendQuoteProposalVersion above (removed; migration 147 revokes
+// authenticated's direct EXECUTE on create_and_send_quote_proposal_version
+// itself, so calling that RPC directly would now fail with a permission
+// error). The new RPC internally calls the old, completely unchanged
+// function when no approval is required, or creates a pending approval
+// request instead when the quote's discount_percent exceeds the
+// workspace's configured threshold -- either way this is still the one
+// round-trip needed; server-computed version numbers and auto-supersession
+// of prior tokens are unchanged from before.
+async function fetchQuoteProposalByIdAndToken(proposalId: string, token: string, accessToken: string): Promise<SalesQuoteProposal> {
   const [proposalRes, tokenRes] = await Promise.all([
     fetch(supabaseUrl(`sales_quote_proposals?id=eq.${proposalId}&select=*`), { headers: supabaseHeaders(accessToken) }),
     fetch(supabaseUrl(`public_share_tokens?token=eq.${token}&select=token,entity_id,status,created_at`), { headers: supabaseHeaders(accessToken) }),
@@ -12303,6 +12286,219 @@ export async function createAndSendQuoteProposalVersion(
   const proposalRows = (await proposalRes.json()) as SalesQuoteProposalRow[];
   const tokenRows = tokenRes.ok ? ((await tokenRes.json()) as ShareTokenRow[]) : [];
   return mapQuoteProposalRow(proposalRows[0], tokenRows[0]);
+}
+
+export type ProposalSendOutcome =
+  | { ok: true; outcome: "sent"; proposal: SalesQuoteProposal }
+  | { ok: true; outcome: "pending_approval"; approvalRequestId: string; discountPercent: number; thresholdPercent: number }
+  | { ok: false; message: string };
+
+export async function requestOrSendQuoteProposalVersion(
+  input: { quoteId: string; contentSnapshot: ProposalSnapshot; clientName: string; clientEmail: string },
+  accessToken?: string,
+): Promise<ProposalSendOutcome> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+  const response = await fetch(supabaseUrl("rpc/request_or_send_quote_proposal_version"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({
+      p_quote_id: input.quoteId,
+      p_content_snapshot: input.contentSnapshot,
+      p_client_name: input.clientName || null,
+      p_client_email: input.clientEmail || null,
+    }),
+  });
+  if (!response.ok) {
+    return { ok: false, message: await readSupabaseError(response, "Could not create proposal") };
+  }
+  const result = (await response.json()) as {
+    outcome: "sent" | "pending_approval";
+    proposal_id?: string;
+    token?: string;
+    approval_request_id?: string;
+    discount_percent?: number | string;
+    threshold_percent?: number | string;
+  };
+
+  if (result.outcome === "pending_approval") {
+    return {
+      ok: true,
+      outcome: "pending_approval",
+      approvalRequestId: result.approval_request_id as string,
+      discountPercent: Number(result.discount_percent),
+      thresholdPercent: Number(result.threshold_percent),
+    };
+  }
+
+  const proposal = await fetchQuoteProposalByIdAndToken(result.proposal_id as string, result.token as string, accessToken);
+  return { ok: true, outcome: "sent", proposal };
+}
+
+// The Sales Manager/admin review step. Approving sends the ORIGINALLY-
+// submitted snapshot (stored on the request row at request time, not
+// re-read from the quote's current state -- the quote may have changed
+// since the request was made); rejecting never creates a proposal at all.
+export type ProposalApprovalReviewOutcome =
+  | { ok: true; outcome: "approved"; proposal: SalesQuoteProposal }
+  | { ok: true; outcome: "rejected" }
+  | { ok: false; message: string };
+
+export async function respondToProposalApprovalRequest(
+  requestId: string,
+  decision: "approved" | "rejected",
+  note: string,
+  accessToken?: string,
+): Promise<ProposalApprovalReviewOutcome> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { ok: false, message: "Supabase is not configured." };
+  }
+  const response = await fetch(supabaseUrl("rpc/respond_to_proposal_approval_request"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_request_id: requestId, p_decision: decision, p_note: note || null }),
+  });
+  if (!response.ok) {
+    return { ok: false, message: await readSupabaseError(response, "Could not submit review") };
+  }
+  const result = (await response.json()) as { outcome: "approved" | "rejected"; proposal_id?: string; token?: string };
+  if (result.outcome === "rejected") {
+    return { ok: true, outcome: "rejected" };
+  }
+  const proposal = await fetchQuoteProposalByIdAndToken(result.proposal_id as string, result.token as string, accessToken);
+  return { ok: true, outcome: "approved", proposal };
+}
+
+// Sales Batch 5 (migration 147): one row per pending/resolved discount-
+// approval request. RLS scopes visible rows to the requester or a Sales
+// Manager/admin -- this loader simply reflects whatever the server
+// already decided the caller may see, no client-side filtering needed.
+export type ProposalApprovalRequest = {
+  id: string;
+  quoteId: string;
+  clientName: string;
+  clientEmail: string;
+  discountPercent: number;
+  thresholdPercent: number;
+  requestedByEmail: string;
+  status: "pending" | "approved" | "rejected";
+  reviewedByEmail: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+  resultingProposalId: string | null;
+  createdAt: string;
+};
+
+type ProposalApprovalRequestRow = {
+  id: string;
+  quote_id: string;
+  client_name: string;
+  client_email: string;
+  discount_percent: number | string;
+  threshold_percent: number | string;
+  requested_by_email: string;
+  status: string;
+  reviewed_by_email: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  resulting_proposal_id: string | null;
+  created_at: string;
+};
+
+function mapProposalApprovalRequestRow(row: ProposalApprovalRequestRow): ProposalApprovalRequest {
+  return {
+    id: row.id,
+    quoteId: row.quote_id,
+    clientName: row.client_name,
+    clientEmail: row.client_email,
+    discountPercent: Number(row.discount_percent),
+    thresholdPercent: Number(row.threshold_percent),
+    requestedByEmail: row.requested_by_email,
+    status: row.status as ProposalApprovalRequest["status"],
+    reviewedByEmail: row.reviewed_by_email,
+    reviewedAt: row.reviewed_at,
+    reviewNote: row.review_note,
+    resultingProposalId: row.resulting_proposal_id,
+    createdAt: row.created_at,
+  };
+}
+
+export async function loadProposalApprovalRequests(accessToken?: string): Promise<ProposalApprovalRequest[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(
+      "sales_quote_proposal_approval_requests?select=id,quote_id,client_name,client_email,discount_percent,threshold_percent,requested_by_email,status,reviewed_by_email,reviewed_at,review_note,resulting_proposal_id,created_at&order=created_at.desc",
+    ),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ProposalApprovalRequestRow[];
+  return rows.map(mapProposalApprovalRequestRow);
+}
+
+// Sales Batch 5 (migration 147): one row per workspace, admin-editable
+// through the Admin section -- no code deploy required for a future
+// customer to change it. Mirrors loadCompanyBranding/saveCompanyBranding's
+// own shape above; there is always exactly one workspace in this app
+// today (bridge functions enforce it -- see active_workspace_id()), so no
+// workspace_id filter is needed on the read, only on the write.
+export type SalesApprovalSettings = {
+  workspaceId: string;
+  discountApprovalEnabled: boolean;
+  discountApprovalThresholdPercent: number;
+};
+
+export async function loadSalesApprovalSettings(accessToken?: string): Promise<SalesApprovalSettings> {
+  const fallback: SalesApprovalSettings = { workspaceId: "", discountApprovalEnabled: false, discountApprovalThresholdPercent: 10 };
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return fallback;
+  }
+  const response = await fetch(
+    supabaseUrl("workspace_sales_approval_settings?select=workspace_id,discount_approval_enabled,discount_approval_threshold_percent&limit=1"),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return fallback;
+  }
+  const rows = (await response.json()) as Array<{
+    workspace_id: string;
+    discount_approval_enabled: boolean;
+    discount_approval_threshold_percent: number | string;
+  }>;
+  if (!rows[0]) {
+    return fallback;
+  }
+  return {
+    workspaceId: rows[0].workspace_id,
+    discountApprovalEnabled: rows[0].discount_approval_enabled,
+    discountApprovalThresholdPercent: Number(rows[0].discount_approval_threshold_percent),
+  };
+}
+
+export async function saveSalesApprovalSettings(
+  workspaceId: string,
+  updates: Partial<Pick<SalesApprovalSettings, "discountApprovalEnabled" | "discountApprovalThresholdPercent">>,
+  accessToken?: string,
+) {
+  if (!isRemotePersistenceConfigured() || !accessToken || !workspaceId) {
+    return;
+  }
+  const payload: Record<string, unknown> = {};
+  if (updates.discountApprovalEnabled !== undefined) payload.discount_approval_enabled = updates.discountApprovalEnabled;
+  if (updates.discountApprovalThresholdPercent !== undefined) payload.discount_approval_threshold_percent = updates.discountApprovalThresholdPercent;
+  const response = await fetch(supabaseUrl(`workspace_sales_approval_settings?workspace_id=eq.${workspaceId}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not save Sales approval settings: ${response.status}`);
+  }
 }
 
 // --- Queue C2.6: share-link lifecycle controls (migrations 138/139) -------

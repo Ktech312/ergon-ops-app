@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createAndSendSubmittalVersion, createAndSendQuoteProposalVersion } from "./persistence";
+import { createAndSendSubmittalVersion, requestOrSendQuoteProposalVersion, respondToProposalApprovalRequest } from "./persistence";
 
 // Queue C2.7: createAndSendSubmittalVersion/createAndSendQuoteProposalVersion
 // replace the old two-step create-row-then-create-token direct-write flow
@@ -80,10 +80,85 @@ describe("createAndSendSubmittalVersion", () => {
   });
 });
 
-describe("createAndSendQuoteProposalVersion", () => {
-  it("posts to rpc/create_and_send_quote_proposal_version with the real parameter names, then re-fetches the full row and token", async () => {
+describe("requestOrSendQuoteProposalVersion", () => {
+  const snapshot = { siteName: "Test Site", clientName: "Test Client", city: "", quoteRef: "SQ-1", proposalSummary: "", bom: [], templateSections: [] };
+
+  it("posts to rpc/request_or_send_quote_proposal_version with the real parameter names, then re-fetches the full row and token when sent outright", async () => {
     globalThis.fetch = mockFetchSequence([
-      { status: 200, body: [{ proposal_id: "prop1", token: "tok456" }] },
+      { status: 200, body: { outcome: "sent", proposal_id: "prop1", token: "tok456" } },
+      {
+        status: 200,
+        body: [
+          {
+            id: "prop1",
+            quote_id: "q1",
+            version: 2,
+            status: "sent",
+            content_snapshot: snapshot,
+            client_name: "Test Client",
+            client_email: "client@example.com",
+            sent_at: "2026-09-14T00:00:00Z",
+            responded_at: null,
+            response_notes: null,
+            approval_name: null,
+            created_at: "2026-09-14T00:00:00Z",
+          },
+        ],
+      },
+      { status: 200, body: [{ token: "tok456", entity_id: "prop1", status: "active", created_at: "2026-09-14T00:00:00Z" }] },
+    ]);
+
+    const result = await requestOrSendQuoteProposalVersion(
+      { quoteId: "q1", contentSnapshot: snapshot, clientName: "Test Client", clientEmail: "client@example.com" },
+      "access-token",
+    );
+
+    const rpcCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(rpcCall[0]).toContain("rpc/request_or_send_quote_proposal_version");
+    expect(JSON.parse(rpcCall[1].body)).toEqual({
+      p_quote_id: "q1",
+      p_content_snapshot: snapshot,
+      p_client_name: "Test Client",
+      p_client_email: "client@example.com",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok && result.outcome === "sent") {
+      expect(result.proposal.id).toBe("prop1");
+      expect(result.proposal.version).toBe(2);
+      expect(result.proposal.shareToken).toBe("tok456");
+      expect(result.proposal.shareTokenStatus).toBe("active");
+    } else {
+      throw new Error("expected outcome 'sent'");
+    }
+  });
+
+  it("returns a pending_approval outcome without re-fetching a proposal when the discount exceeds the workspace threshold", async () => {
+    globalThis.fetch = mockFetchSequence([
+      { status: 200, body: { outcome: "pending_approval", approval_request_id: "req1", discount_percent: 15, threshold_percent: 10 } },
+    ]);
+
+    const result = await requestOrSendQuoteProposalVersion(
+      { quoteId: "q1", contentSnapshot: snapshot, clientName: "Test Client", clientEmail: "client@example.com" },
+      "access-token",
+    );
+
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    expect(result).toEqual({ ok: true, outcome: "pending_approval", approvalRequestId: "req1", discountPercent: 15, thresholdPercent: 10 });
+  });
+
+  it("returns ok:false when the RPC call itself fails, without attempting the follow-up fetches", async () => {
+    globalThis.fetch = mockFetchSequence([{ status: 403, body: { message: "Only Sales, a manager, or an admin may create and send a proposal version." } }]);
+    const result = await requestOrSendQuoteProposalVersion({ quoteId: "q1", contentSnapshot: {} as never, clientName: "", clientEmail: "" }, "access-token");
+    expect(result.ok).toBe(false);
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+});
+
+describe("respondToProposalApprovalRequest", () => {
+  it("posts the decision and note, then re-fetches the proposal and token on approval", async () => {
+    globalThis.fetch = mockFetchSequence([
+      { status: 200, body: { outcome: "approved", proposal_id: "prop1", token: "tok456" } },
       {
         status: 200,
         body: [
@@ -106,31 +181,24 @@ describe("createAndSendQuoteProposalVersion", () => {
       { status: 200, body: [{ token: "tok456", entity_id: "prop1", status: "active", created_at: "2026-09-14T00:00:00Z" }] },
     ]);
 
-    const result = await createAndSendQuoteProposalVersion(
-      { quoteId: "q1", contentSnapshot: { siteName: "Test Site", clientName: "Test Client", city: "", quoteRef: "SQ-1", proposalSummary: "", bom: [], templateSections: [] }, clientName: "Test Client", clientEmail: "client@example.com" },
-      "access-token",
-    );
+    const result = await respondToProposalApprovalRequest("req1", "approved", "Looks fine", "access-token");
 
     const rpcCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(rpcCall[0]).toContain("rpc/create_and_send_quote_proposal_version");
-    expect(JSON.parse(rpcCall[1].body)).toEqual({
-      p_quote_id: "q1",
-      p_content_snapshot: { siteName: "Test Site", clientName: "Test Client", city: "", quoteRef: "SQ-1", proposalSummary: "", bom: [], templateSections: [] },
-      p_client_name: "Test Client",
-      p_client_email: "client@example.com",
-    });
+    expect(rpcCall[0]).toContain("rpc/respond_to_proposal_approval_request");
+    expect(JSON.parse(rpcCall[1].body)).toEqual({ p_request_id: "req1", p_decision: "approved", p_note: "Looks fine" });
 
-    expect(result.id).toBe("prop1");
-    expect(result.version).toBe(2);
-    expect(result.shareToken).toBe("tok456");
-    expect(result.shareTokenStatus).toBe("active");
+    expect(result.ok).toBe(true);
+    if (result.ok && result.outcome === "approved") {
+      expect(result.proposal.id).toBe("prop1");
+    } else {
+      throw new Error("expected outcome 'approved'");
+    }
   });
 
-  it("throws when the RPC call itself fails, without attempting the follow-up fetches", async () => {
-    globalThis.fetch = mockFetchSequence([{ status: 403, body: { message: "Only Sales, a manager, or an admin may create and send a proposal version." } }]);
-    await expect(
-      createAndSendQuoteProposalVersion({ quoteId: "q1", contentSnapshot: {} as never, clientName: "", clientEmail: "" }, "access-token"),
-    ).rejects.toThrow();
+  it("returns outcome 'rejected' without any follow-up fetch when rejected", async () => {
+    globalThis.fetch = mockFetchSequence([{ status: 200, body: { outcome: "rejected" } }]);
+    const result = await respondToProposalApprovalRequest("req1", "rejected", "Too steep", "access-token");
+    expect(result).toEqual({ ok: true, outcome: "rejected" });
     expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
   });
 });
