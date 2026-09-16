@@ -431,6 +431,7 @@ import {
 } from "./persistence";
 import { DataLoadErrorBanner } from "./components/DataLoadErrorBanner";
 import { runClosedWonConversionFlow, buildProjectConversionStatusMessage } from "./quote-conversion-flow";
+import { parseWorkbookSheetToRows } from "./xlsx-import";
 import "./styles.css";
 
 type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "messages" | "search" | "profile";
@@ -12977,17 +12978,13 @@ function Projects({
     }
     setBomImportStatus("Parsing...");
     try {
-      // Dynamic import (2026-09-12, overnight reliability closeout part
-      // 2, task 7): xlsx is a large dependency (a few hundred KB) used
-      // only by this handler and handleCatalogFileSelect below -- every
-      // other session paid for it on first load regardless of whether a
-      // spreadsheet was ever imported. Loading it only when this handler
-      // actually runs keeps it out of the eager bundle entirely.
-      const XLSX = await import("xlsx");
+      // D6 (2026-09-16): exceljs, not xlsx -- see xlsx-import.ts's own
+      // header for why. parseWorkbookSheetToRows dynamically imports
+      // exceljs itself, preserving the original lazy-load discipline
+      // (2026-09-12, overnight reliability closeout part 2, task 7) that
+      // kept this large dependency out of the eager bundle.
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      const rawRows = await parseWorkbookSheetToRows(buffer);
       const parsed = rawRows
         .map((row) => {
           const keys = Object.keys(row);
@@ -20331,12 +20328,10 @@ function SalesCatalog({
     setImportStatus("Parsing...");
     setImportStatusIsError(false);
     try {
-      // Dynamic import -- see handleBomFileSelect's own comment above.
-      const XLSX = await import("xlsx");
+      // D6 (2026-09-16): exceljs, not xlsx -- see handleBomFileSelect's
+      // own comment above and xlsx-import.ts's header.
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      const rawRows = await parseWorkbookSheetToRows(buffer);
       const parsed = rawRows
         .map((row) => {
           const keys = Object.keys(row);
