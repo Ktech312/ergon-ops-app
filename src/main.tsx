@@ -7655,6 +7655,7 @@ function App() {
           <input
             type="text"
             value={globalSearchQuery}
+            aria-label="Search everything -- parts, tasks, projects, messages"
             placeholder="Search everything -- parts, tasks, projects, messages..."
             onChange={(event) => {
               setGlobalSearchQuery(event.target.value);
@@ -9413,7 +9414,7 @@ function Purchasing({
         <div className="request-filter-row">
           <label>
             Search
-            <input value={requestFilters.text} onChange={(event) => setRequestFilters((current) => ({ ...current, text: event.target.value }))} placeholder="Request, SKU, part, vendor, build" />
+            <input value={requestFilters.text} onChange={(event) => setRequestFilters((current) => ({ ...current, text: event.target.value }))} placeholder="Request, SKU, part, vendor, build" aria-label="Search purchase requests" />
           </label>
           <label>
             Status
@@ -9662,7 +9663,7 @@ function Purchasing({
         <div className="request-filter-row">
           <label>
             Search
-            <input value={poFilters.text} onChange={(event) => setPoFilters((current) => ({ ...current, text: event.target.value }))} placeholder="PO number, part, vendor, project, who purchased" />
+            <input value={poFilters.text} onChange={(event) => setPoFilters((current) => ({ ...current, text: event.target.value }))} placeholder="PO number, part, vendor, project, who purchased" aria-label="Search purchase orders" />
           </label>
           <label>
             From
@@ -11170,8 +11171,8 @@ function Inventory({
               <tr><th>Image</th><th>SKU</th><th>Part</th><th>Tags</th><th>Category</th><th>Manufacturer</th><th>Stock</th><th>Allocated</th><th>Available</th><th>Unit Cost</th><th>Status</th><th></th></tr>
               <tr className="filter-row">
                 <th></th>
-                <th><input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter SKU" /></th>
-                <th><input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" /></th>
+                <th><input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter SKU" aria-label="Filter by SKU" /></th>
+                <th><input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" aria-label="Filter by part name" /></th>
                 <th>
                   <select value={filters.tag} onChange={(event) => setFilters((current) => ({ ...current, tag: event.target.value }))}>
                     <option>All</option>
@@ -11189,7 +11190,7 @@ function Inventory({
                     <option>Build</option>
                   </select>
                 </th>
-                <th><input value={filters.manufacturer} onChange={(event) => setFilters((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Filter vendor" /></th>
+                <th><input value={filters.manufacturer} onChange={(event) => setFilters((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Filter vendor" aria-label="Filter by manufacturer" /></th>
                 <th></th>
                 <th></th>
                 <th></th>
@@ -11240,8 +11241,8 @@ function Inventory({
 
         <div className="mobile-card-list inventory-mobile-list">
           <div className="mobile-card-filters">
-            <input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter SKU" />
-            <input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" />
+            <input value={filters.ref} onChange={(event) => setFilters((current) => ({ ...current, ref: event.target.value }))} placeholder="Filter SKU" aria-label="Filter by SKU" />
+            <input value={filters.part} onChange={(event) => setFilters((current) => ({ ...current, part: event.target.value }))} placeholder="Filter part" aria-label="Filter by part name" />
             <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
               <option>All</option>
               <option>Base</option>
@@ -14784,7 +14785,7 @@ function ClientLedger({
             <>
               <div className="bom-modal-grid">
                 <label className="span-2">Search
-                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by site name, ref, or client" />
+                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by site name, ref, or client" aria-label="Search by site name, ref, or client" />
                 </label>
               </div>
               <table className="stack-table-mobile">
@@ -15222,6 +15223,7 @@ function PeoplePicker({
         type="text"
         className="people-picker-input"
         placeholder="Search people to add..."
+        aria-label="Search people to add"
         value={searchText}
         onChange={(event) => setSearchText(event.target.value)}
       />
@@ -17515,7 +17517,7 @@ function Reports({
         <div className="request-filter-row report-filter-row">
           <label>
             Search / SKU
-            <input value={reportFilters.search} onChange={(event) => setReportFilters((current) => ({ ...current, search: event.target.value }))} placeholder="SKU, item, PO, project" />
+            <input value={reportFilters.search} onChange={(event) => setReportFilters((current) => ({ ...current, search: event.target.value }))} placeholder="SKU, item, PO, project" aria-label="Search purchasing reports" />
           </label>
           <label>
             Project
@@ -20369,14 +20371,14 @@ function SalesCatalog({
                 <tr className="filter-row">
                   <th></th>
                   <th></th>
-                  <th><input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Filter product/tag" /></th>
+                  <th><input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Filter product/tag" aria-label="Filter by product or tag" /></th>
                   <th>
                     <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
                       <option>All</option>
                       {CATALOG_CATEGORY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
                     </select>
                   </th>
-                  <th><input value={filters.manufacturer} onChange={(event) => setFilters((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Filter vendor" /></th>
+                  <th><input value={filters.manufacturer} onChange={(event) => setFilters((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Filter vendor" aria-label="Filter by manufacturer" /></th>
                   <th></th>
                   <th></th>
                   <th></th>
@@ -20450,7 +20452,7 @@ function SalesCatalog({
                 in styles.css). */}
             <div className="catalog-mobile-list">
               <div className="catalog-mobile-filters">
-                <input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search product/tag" />
+                <input value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search product/tag" aria-label="Search by product or tag" />
                 <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))}>
                   <option>All</option>
                   {CATALOG_CATEGORY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
