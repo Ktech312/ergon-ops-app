@@ -46,7 +46,19 @@ creation AND a direct `UPDATE ... SET status = 'approved'`, also now illegal) --
 same RPC calls a real client/Sales action would make. Lesson for future test-writing in this repo: a
 prior test file's fixture pattern is only safe to copy if it postdates every migration that has since
 narrowed that table's own write policy -- check the table's CURRENT policies, not just an older test's
-example. Corrected migration 148 test not yet sent -- next single file.
+example.
+
+**Corrected migration 148 test's SECOND live run found a second, real bug (test script only, migration
+148 untouched): FIXED.** E got `ERROR: P0001: TEST FAILED: the pre-existing quote_proposal_responded
+notification did not fire.` Root cause: `sales_quotes.created_by_email` has no default and no
+trigger -- a real quote only gets it because the frontend passes the signed-in user's email explicitly
+at creation. The test's fixture quotes never set it, so `respond_to_quote_proposal()`'s own untouched,
+pre-existing notify-the-owner logic correctly found no owner to notify (`owner_email is not null` was
+false) -- the migration's notification logic was never broken, only the test's fixture data was
+incomplete. Fixed by setting `created_by_email`/`created_by_user_id` explicitly on both fixture quotes
+(the same fix pre-emptively applied to migration 149's still-unsent test too, which builds fixture
+quotes the identical way and asserts its own owner-notification check). Corrected migration 148 test
+not yet sent -- next single file.
 
 Frontend (BOM line editor checkbox, `id`/`isOptional` added to `ProposalBomLineSnapshot`, the public
 page's live-recompute toggle UI) not yet started -- waits for this migration's test to be confirmed,

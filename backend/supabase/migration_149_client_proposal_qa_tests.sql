@@ -19,6 +19,7 @@ do $$
 declare
   original_role text;
   admin_user_id uuid;
+  admin_email text;
   pm_user_id uuid;
   sales_user_id uuid;
   pm_role_preexisted boolean;
@@ -109,6 +110,13 @@ begin
       perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
       perform set_config('role', 'authenticated', true);
 
+      -- created_by_email has no default and no trigger -- a real Sales
+      -- Quote row only gets it because the frontend passes the signed-in
+      -- user's email explicitly at creation. Fixture quotes need to set
+      -- it too, or Section 1's notify-the-owner check below would find
+      -- no owner to notify through no fault of migration 149's own logic.
+      select email into admin_email from auth.users where id = admin_user_id;
+
       -- Migration 144 dropped sales_quote_proposals' direct-write policy
       -- entirely, and migration 147 additionally revoked authenticated's
       -- direct EXECUTE on create_and_send_quote_proposal_version itself --
@@ -120,8 +128,8 @@ begin
       -- outcome=sent every time. It returns jsonb, not a table.
 
       -- Fixture 1: an open, live, sent proposal -- the happy-path thread.
-      insert into public.sales_quotes (client_name, site_name, status)
-        values ('ZZ Test Client', 'ZZ_TEST_QA_' || substr(md5(random()::text), 1, 10), 'open')
+      insert into public.sales_quotes (client_name, site_name, status, created_by_email, created_by_user_id)
+        values ('ZZ Test Client', 'ZZ_TEST_QA_' || substr(md5(random()::text), 1, 10), 'open', admin_email, admin_user_id)
         returning id into quote_id_1;
       select public.request_or_send_quote_proposal_version(quote_id_1, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') into send_result;
       if send_result ->> 'outcome' <> 'sent' then
@@ -135,8 +143,8 @@ begin
       -- since sales_quote_proposal_questions has zero direct-write
       -- grants and can only ever be written through the two RPCs, never
       -- a raw INSERT even from this fixture-setup block.
-      insert into public.sales_quotes (client_name, site_name, status)
-        values ('ZZ Test Client', 'ZZ_TEST_QA_APPROVED_' || substr(md5(random()::text), 1, 10), 'open')
+      insert into public.sales_quotes (client_name, site_name, status, created_by_email, created_by_user_id)
+        values ('ZZ Test Client', 'ZZ_TEST_QA_APPROVED_' || substr(md5(random()::text), 1, 10), 'open', admin_email, admin_user_id)
         returning id into quote_id_2;
       select public.request_or_send_quote_proposal_version(quote_id_2, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') into send_result;
       if send_result ->> 'outcome' <> 'sent' then
@@ -150,8 +158,8 @@ begin
       -- anon-callable respond_to_quote_proposal, exactly like a real
       -- client) since there is no way to create a proposal directly in
       -- that status.
-      insert into public.sales_quotes (client_name, site_name, status)
-        values ('ZZ Test Client', 'ZZ_TEST_QA_REVISION_' || substr(md5(random()::text), 1, 10), 'open')
+      insert into public.sales_quotes (client_name, site_name, status, created_by_email, created_by_user_id)
+        values ('ZZ Test Client', 'ZZ_TEST_QA_REVISION_' || substr(md5(random()::text), 1, 10), 'open', admin_email, admin_user_id)
         returning id into quote_id_3;
       select public.request_or_send_quote_proposal_version(quote_id_3, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') into send_result;
       if send_result ->> 'outcome' <> 'sent' then

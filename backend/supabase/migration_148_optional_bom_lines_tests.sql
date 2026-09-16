@@ -36,6 +36,7 @@ do $$
 declare
   original_role text;
   admin_user_id uuid;
+  admin_email text;
   skipped_count integer := 0;
   skipped_names text[] := array[]::text[];
 
@@ -74,10 +75,18 @@ begin
     perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
     perform set_config('role', 'authenticated', true);
 
+    -- created_by_email has no default and no trigger -- a real Sales
+    -- Quote row only gets it because the frontend passes the signed-in
+    -- user's email explicitly at creation. Fixture quotes need to set it
+    -- too, or the regression check below (Section 1) would find no
+    -- owner to notify through no fault of migration 148's own,
+    -- unmodified notification logic.
+    select email into admin_email from auth.users where id = admin_user_id;
+
     -- Section 0: the is_optional column itself -- default false, reads
     -- back correctly -- independent of the proposal-response flow.
-    insert into public.sales_quotes (client_name, site_name, status)
-      values ('ZZ Test Client', 'ZZ_TEST_OPTLINES_' || substr(md5(random()::text), 1, 10), 'open')
+    insert into public.sales_quotes (client_name, site_name, status, created_by_email, created_by_user_id)
+      values ('ZZ Test Client', 'ZZ_TEST_OPTLINES_' || substr(md5(random()::text), 1, 10), 'open', admin_email, admin_user_id)
       returning id into quote_id_1;
     insert into public.sales_quote_bom_lines (quote_id, item_name, qty)
       values (quote_id_1, 'ZZ Test Line', 1)
@@ -133,8 +142,8 @@ begin
         jsonb_build_object('item', 'Pre-pricing Line', 'qty', 1)
       )
     );
-    insert into public.sales_quotes (client_name, site_name, status)
-      values ('ZZ Test Client', 'ZZ_TEST_OPTLINES_OLD_' || substr(md5(random()::text), 1, 10), 'open')
+    insert into public.sales_quotes (client_name, site_name, status, created_by_email, created_by_user_id)
+      values ('ZZ Test Client', 'ZZ_TEST_OPTLINES_OLD_' || substr(md5(random()::text), 1, 10), 'open', admin_email, admin_user_id)
       returning id into quote_id_2;
     select public.request_or_send_quote_proposal_version(quote_id_2, snapshot_without_pricing, 'ZZ Test Client', 'zz-test@example.com') into send_result;
     if send_result ->> 'outcome' <> 'sent' then
