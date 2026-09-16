@@ -23324,6 +23324,7 @@ function ProjectLocationsSection({
                     className="icon-button compact-remove row-delete-btn"
                     type="button"
                     title={`Delete ${location.locationType === "garage" ? "garage" : "lot"}`}
+                    aria-label={`Delete ${location.locationType === "garage" ? "garage" : "lot"}`}
                     onClick={(event) => {
                       event.stopPropagation();
                       if (window.confirm(`Delete "${location.name || (location.locationType === "garage" ? "this garage" : "this lot")}"? Its photos, files, and hardware line items go with it. This can't be undone.`)) {
@@ -24176,6 +24177,7 @@ function SalesQuoteBuilder({
                             className="icon-button compact-remove row-delete-btn"
                             type="button"
                             title="Delete site"
+                            aria-label="Delete site"
                             onClick={(event) => {
                               event.stopPropagation();
                               if (window.confirm(`Delete "${quote.siteName}"? This removes all of its garages/lots, photos, files, and BOM lines, and unlinks (but doesn't delete) any tasks tied to it. This can't be undone.`)) {
@@ -24214,6 +24216,7 @@ function SalesQuoteBuilder({
                           className="icon-button compact-remove"
                           type="button"
                           title="Delete site"
+                          aria-label="Delete site"
                           onClick={(event) => {
                             event.stopPropagation();
                             if (window.confirm(`Delete "${quote.siteName}"? This removes all of its garages/lots, photos, files, and BOM lines, and unlinks (but doesn't delete) any tasks tied to it. This can't be undone.`)) {
@@ -24371,6 +24374,7 @@ function SalesQuoteBuilder({
                         className="icon-button compact-remove row-delete-btn"
                         type="button"
                         title={`Delete ${location.locationType === "garage" ? "garage" : "lot"}`}
+                        aria-label={`Delete ${location.locationType === "garage" ? "garage" : "lot"}`}
                         onClick={(event) => {
                           event.stopPropagation();
                           if (window.confirm(`Delete "${location.name || (location.locationType === "garage" ? "this garage" : "this lot")}"? Its photos, files, and hardware line items go with it. This can't be undone.`)) {
