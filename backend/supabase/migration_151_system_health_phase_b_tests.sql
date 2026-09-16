@@ -11,6 +11,18 @@
 --
 -- Requires migrations 134-150 to already be live.
 --
+-- Updated for migration 152 (2026-09-16, alert wiring): record_system_
+-- health_event's return type changed from a bare uuid to jsonb (a drop
+-- and recreate, since Postgres cannot change a function's return type
+-- via CREATE OR REPLACE) -- every assertion below is unchanged, only the
+-- handful of lines extracting the returned event id now read it out of
+-- the jsonb response. Alert-threshold/recovery-specific behavior is
+-- covered separately in migration_152_system_health_alerting_tests.sql,
+-- not duplicated here. Run this script AFTER 152 is applied (its own
+-- header still says "requires 134-150" because that was true when this
+-- test was first written for 151 alone; today it exercises the current
+-- live function, which is 152's version).
+--
 -- A production-acceptance run of this script ends in exactly one of two
 -- ways: the final notice reading "ALL MIGRATION 151 SYSTEM HEALTH PHASE
 -- B TESTS PASSED -- ZERO SECTIONS SKIPPED", or a hard SQL error naming
@@ -27,6 +39,11 @@ declare
   event_id_1_again uuid;
   event_id_2 uuid;
   event_id_1_reopened uuid;
+  -- Migration 152 changed record_system_health_event's return type from
+  -- a bare uuid to jsonb (event_id + alert metadata) -- this variable
+  -- holds that response so event_id can be extracted; every original
+  -- assertion below is otherwise unchanged.
+  v_health_result jsonb;
   row_count integer;
   caught boolean;
   anon_can_execute boolean;
@@ -60,7 +77,8 @@ begin
     perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
     perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
     perform set_config('role', 'authenticated', true);
-    select public.record_system_health_event('ZZ_TEST_surface', 'zz_test_entity', null, 'ZZ_TEST_reason_one', 'degraded', '{"detail":"first"}'::jsonb, null) into event_id_1;
+    select public.record_system_health_event('ZZ_TEST_surface', 'zz_test_entity', null, 'ZZ_TEST_reason_one', 'degraded', '{"detail":"first"}'::jsonb, null) into v_health_result;
+    event_id_1 := (v_health_result ->> 'event_id')::uuid;
     perform set_config('role', original_role, true);
 
     if event_id_1 is null then
@@ -80,7 +98,8 @@ begin
     perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
     perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
     perform set_config('role', 'authenticated', true);
-    select public.record_system_health_event('ZZ_TEST_surface', 'zz_test_entity', null, 'ZZ_TEST_reason_one', 'degraded', '{"detail":"second"}'::jsonb, null) into event_id_1_again;
+    select public.record_system_health_event('ZZ_TEST_surface', 'zz_test_entity', null, 'ZZ_TEST_reason_one', 'degraded', '{"detail":"second"}'::jsonb, null) into v_health_result;
+    event_id_1_again := (v_health_result ->> 'event_id')::uuid;
     perform set_config('role', original_role, true);
 
     if event_id_1_again <> event_id_1 then
@@ -98,7 +117,8 @@ begin
     perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
     perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
     perform set_config('role', 'authenticated', true);
-    select public.record_system_health_event('ZZ_TEST_surface', 'zz_test_entity', null, 'ZZ_TEST_reason_two', 'info', null, null) into event_id_2;
+    select public.record_system_health_event('ZZ_TEST_surface', 'zz_test_entity', null, 'ZZ_TEST_reason_two', 'info', null, null) into v_health_result;
+    event_id_2 := (v_health_result ->> 'event_id')::uuid;
     perform set_config('role', original_role, true);
 
     if event_id_2 = event_id_1 or event_id_2 is null then
@@ -169,7 +189,8 @@ begin
     perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
     perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
     perform set_config('role', 'authenticated', true);
-    select public.record_system_health_event('ZZ_TEST_surface', 'zz_test_entity', null, 'ZZ_TEST_reason_one', 'down', null, null) into event_id_1_reopened;
+    select public.record_system_health_event('ZZ_TEST_surface', 'zz_test_entity', null, 'ZZ_TEST_reason_one', 'down', null, null) into v_health_result;
+    event_id_1_reopened := (v_health_result ->> 'event_id')::uuid;
     perform set_config('role', original_role, true);
 
     if event_id_1_reopened = event_id_1 or event_id_1_reopened is null then

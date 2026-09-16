@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { loadSystemHealthEvents, acknowledgeSystemHealthEvent, resolveSystemHealthEvent, recordSystemHealthEvent } from "./persistence";
+import { loadSystemHealthEvents, acknowledgeSystemHealthEvent, resolveSystemHealthEvent, recordSystemHealthEvent, recordSystemHealthRecovery } from "./persistence";
 
 // System Health Phase B (2026-09-15, migration 151, PRODUCT_SYSTEM_HEALTH_PLAN.md
 // §10): unlike Phase A's loadNotificationDeliveryFailures (which returns []
@@ -91,10 +91,32 @@ describe("acknowledgeSystemHealthEvent / resolveSystemHealthEvent", () => {
 
 describe("recordSystemHealthEvent", () => {
   it("returns true on a successful RPC call", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, "evt-1"));
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, { event_id: "evt-1", alert_worthy: false }));
     await expect(
       recordSystemHealthEvent({ surface: "test_surface", failureReasonCode: "test_reason", severity: "info" }, "token"),
     ).resolves.toBe(true);
+  });
+
+  // Migration 152 (2026-09-16): the RPC now reports whether this call
+  // crossed the alert threshold; when it does, the browser-side wrapper
+  // fires the actual alert email via api/send-system-health-alert.js.
+  it("POSTs to send-system-health-alert when the RPC reports alert_worthy", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, { event_id: "evt-1", alert_worthy: true }));
+    globalThis.fetch = fetchMock;
+    await recordSystemHealthEvent({ surface: "test_surface", failureReasonCode: "test_reason", severity: "down" }, "token");
+    const alertCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/send-system-health-alert"));
+    expect(alertCall).toBeDefined();
+    const body = JSON.parse((alertCall as [string, { body: string }])[1].body) as { kind: string; surface: string; failureReasonCode: string };
+    expect(body.kind).toBe("alert");
+    expect(body.surface).toBe("test_surface");
+    expect(body.failureReasonCode).toBe("test_reason");
+  });
+
+  it("does NOT POST to send-system-health-alert when the RPC reports alert_worthy=false", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, { event_id: "evt-1", alert_worthy: false }));
+    globalThis.fetch = fetchMock;
+    await recordSystemHealthEvent({ surface: "test_surface", failureReasonCode: "test_reason", severity: "info" }, "token");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/send-system-health-alert"))).toBe(false);
   });
 
   it("returns false (never throws) when the RPC call fails", async () => {
@@ -116,6 +138,52 @@ describe("recordSystemHealthEvent", () => {
     globalThis.fetch = fetchMock;
     await expect(
       recordSystemHealthEvent({ surface: "test_surface", failureReasonCode: "test_reason", severity: "info" }, undefined),
+    ).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordSystemHealthRecovery", () => {
+  it("returns true and sends a recovery notice when the RPC reports a recovered, previously-alerted incident", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, { recovered: true, was_alerted: true }));
+    globalThis.fetch = fetchMock;
+    await expect(
+      recordSystemHealthRecovery({ surface: "test_surface", failureReasonCode: "test_reason" }, "token"),
+    ).resolves.toBe(true);
+    const recoveryCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/send-system-health-alert"));
+    expect(recoveryCall).toBeDefined();
+    const body = JSON.parse((recoveryCall as [string, { body: string }])[1].body) as { kind: string };
+    expect(body.kind).toBe("recovery");
+  });
+
+  it("returns true but sends no notice when nothing needed recovering", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, { recovered: false, was_alerted: false }));
+    globalThis.fetch = fetchMock;
+    await expect(
+      recordSystemHealthRecovery({ surface: "test_surface", failureReasonCode: "test_reason" }, "token"),
+    ).resolves.toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/send-system-health-alert"))).toBe(false);
+  });
+
+  it("returns true but sends no notice when recovered but never alerted", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, { recovered: true, was_alerted: false }));
+    globalThis.fetch = fetchMock;
+    await recordSystemHealthRecovery({ surface: "test_surface", failureReasonCode: "test_reason" }, "token");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/send-system-health-alert"))).toBe(false);
+  });
+
+  it("returns false (never throws) when the RPC call fails", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(false, 500, { message: "db error" }));
+    await expect(
+      recordSystemHealthRecovery({ surface: "test_surface", failureReasonCode: "test_reason" }, "token"),
+    ).resolves.toBe(false);
+  });
+
+  it("returns false without calling fetch when no access token is available", async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+    await expect(
+      recordSystemHealthRecovery({ surface: "test_surface", failureReasonCode: "test_reason" }, undefined),
     ).resolves.toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });

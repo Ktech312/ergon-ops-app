@@ -19,7 +19,7 @@
 // unrecoverable meta-failure case as record_system_health_event's own
 // write failing entirely.
 
-import { recordSystemHealthEventServerSide } from "../_lib/systemHealth.js";
+import { recordSystemHealthEventServerSide, recordSystemHealthRecoveryServerSide } from "../_lib/systemHealth.js";
 
 export default async function handler(req, res) {
   const cronSecret = process.env.CRON_SECRET;
@@ -61,6 +61,7 @@ export default async function handler(req, res) {
     }
     const rolledUp = await response.json();
     console.log(`[cron/system-health-retention] rolledUp=${rolledUp}`);
+    await recordSystemHealthRecoveryServerSide({ surface: "system_health_retention", failureReasonCode: "retention_job_failed" });
     res.status(200).json({ rolledUp });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error.";

@@ -486,19 +486,20 @@ describe("saveRestoredProjectDocuments (via restoreFullBackupSnapshot)", () => {
     expect(body.p_severity).toBe("degraded");
   });
 
-  it("keeps uploaded_by_email (and the purchase order/request links) in the single request sent", async () => {
-    let sentBody: unknown;
-    const fetchMock = vi.fn().mockImplementation(async (_url: string, options: { body: string }) => {
-      sentBody = JSON.parse(options.body);
-      return respond(true, 200, [{ id: "doc1" }]);
-    });
+  it("keeps uploaded_by_email (and the purchase order/request links) in the single save request sent", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, [{ id: "doc1" }]));
     globalThis.fetch = fetchMock;
     await restoreFullBackupSnapshot(
       { projectDocuments: [makeProjectDocument({ uploadedByEmail: "e@x.com", purchaseOrderId: "po-1", purchaseRequestId: "pr-1" })] },
       "token",
     );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const rows = sentBody as Array<{ uploaded_by_email: string | null; purchase_order_id: string | null; purchase_request_id: string | null }>;
+    // Exactly one save request plus one System Health recovery-check
+    // request (migration 152 -- a succeeding section now also resolves
+    // any open incident from a previous restore's failure on it).
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const saveCall = fetchMock.mock.calls.find(([url]) => !String(url).includes("rpc/record_system_health"));
+    expect(saveCall).toBeDefined();
+    const rows = JSON.parse((saveCall as [string, { body: string }])[1].body) as Array<{ uploaded_by_email: string | null; purchase_order_id: string | null; purchase_request_id: string | null }>;
     expect(rows[0].uploaded_by_email).toBe("e@x.com");
     expect(rows[0].purchase_order_id).toBe("po-1");
     expect(rows[0].purchase_request_id).toBe("pr-1");
@@ -510,6 +511,8 @@ describe("saveRestoredProjectDocuments (via restoreFullBackupSnapshot)", () => {
     const outcome = await restoreFullBackupSnapshot({ projectDocuments: [makeProjectDocument()] }, "token");
     expect(outcome.ok).toBe(true);
     expect(outcome.sections.find((s) => s.section === "projectDocuments")).toMatchObject({ attempted: true, succeeded: true, count: 1 });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // One save request, one System Health recovery-check (migration 152).
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("rpc/record_system_health_recovery");
   });
 });

@@ -22,7 +22,7 @@
 // the abuse pattern this is actually guarding against (a runaway script
 // or retry loop, not a precisely-timed attacker) -- see HANDOFF.md.
 import { Redis } from "@upstash/redis";
-import { recordSystemHealthEventServerSide } from "./systemHealth.js";
+import { recordSystemHealthEventServerSide, recordSystemHealthRecoveryServerSide } from "./systemHealth.js";
 
 let redis = null;
 if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
@@ -63,16 +63,32 @@ function checkRateLimitInMemory(key, maxCount, windowMs) {
 // convention (see send-notification-email.js etc.) -- only the route-name
 // prefix is recorded, never the caller id, matching this module's own
 // existing "don't print more of `key` than necessary" discipline.
-function recordRateLimitHit(key) {
+//
+// Both helpers are awaited by every call site below, not fire-and-forget
+// -- a Vercel serverless function's execution context can be frozen or
+// torn down right after the response is sent, so an un-awaited promise
+// here risks silently never completing.
+async function recordRateLimitHit(key) {
   const routeName = key.split(":")[0] || "unknown";
-  void recordSystemHealthEventServerSide({ surface: "rate_limit", entityType: "route", entityId: null, failureReasonCode: `rate_limited:${routeName}`, severity: "info" });
+  await recordSystemHealthEventServerSide({ surface: "rate_limit", entityType: "route", entityId: null, failureReasonCode: `rate_limited:${routeName}`, severity: "info" });
+}
+
+// Called on every ALLOWED check, not just after a prior hit -- cheap (a
+// single indexed UPDATE that's a no-op when nothing needs recovering),
+// and there's no cheap way from here alone to know in advance whether
+// this specific key was recently limited.
+async function recordRateLimitRecovery(key) {
+  const routeName = key.split(":")[0] || "unknown";
+  await recordSystemHealthRecoveryServerSide({ surface: "rate_limit", entityType: "route", entityId: null, failureReasonCode: `rate_limited:${routeName}` });
 }
 
 export async function checkRateLimit(key, maxCount, windowMs) {
   if (!redis) {
     const allowed = checkRateLimitInMemory(key, maxCount, windowMs);
-    if (!allowed) {
-      recordRateLimitHit(key);
+    if (allowed) {
+      await recordRateLimitRecovery(key);
+    } else {
+      await recordRateLimitHit(key);
     }
     return allowed;
   }
@@ -89,8 +105,10 @@ export async function checkRateLimit(key, maxCount, windowMs) {
       await redis.expire(bucketKey, windowSeconds);
     }
     const allowed = count <= maxCount;
-    if (!allowed) {
-      recordRateLimitHit(key);
+    if (allowed) {
+      await recordRateLimitRecovery(key);
+    } else {
+      await recordRateLimitHit(key);
     }
     return allowed;
   } catch (error) {
@@ -99,8 +117,10 @@ export async function checkRateLimit(key, maxCount, windowMs) {
     // worse failure mode) silently applying no rate limit at all.
     console.error(`[rateLimit] Durable check failed, falling back to in-memory for this call: ${error instanceof Error ? error.message : error}`);
     const allowed = checkRateLimitInMemory(key, maxCount, windowMs);
-    if (!allowed) {
-      recordRateLimitHit(key);
+    if (allowed) {
+      await recordRateLimitRecovery(key);
+    } else {
+      await recordRateLimitHit(key);
     }
     return allowed;
   }

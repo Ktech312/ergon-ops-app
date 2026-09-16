@@ -378,23 +378,51 @@ export async function resolveSystemHealthEvent(eventId: string, accessToken?: st
   return { ok: true, message: "Resolved." };
 }
 
+type SystemHealthEventParams = {
+  surface: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  failureReasonCode: string;
+  severity: SystemHealthSeverity;
+  safeDetail?: Record<string, unknown> | null;
+};
+
+// Migration 152: fires the actual alert email for a browser-triggered
+// call site (server-side call sites send directly via
+// api/_lib/systemHealth.js, no HTTP hop needed there). Best-effort --
+// a failed alert send must never surface to the caller of
+// recordSystemHealthEvent/recordSystemHealthRecovery, which have
+// already done their own real job (recording/resolving the event) by
+// the time this fires.
+async function sendSystemHealthNotice(
+  kind: "alert" | "recovery",
+  params: Pick<SystemHealthEventParams, "surface" | "entityType" | "entityId" | "failureReasonCode" | "severity" | "safeDetail">,
+  accessToken?: string,
+) {
+  try {
+    if (!accessToken) {
+      return;
+    }
+    await fetch("/api/send-system-health-alert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ kind, ...params }),
+    });
+  } catch (error) {
+    console.error(`sendSystemHealthNotice: could not send ${kind} for surface "${params.surface}":`, error);
+  }
+}
+
 // The one dedicated write path (design doc §3's self-monitoring rule).
 // Per §10, this helper must never throw to its caller -- a real
 // business-logic failure (the thing that triggered this call) must never
 // fail, retry, or roll back because the health-event logging about it
 // failed. Swallows every failure internally (console.error only) and
-// returns a plain boolean, exactly as specified.
-export async function recordSystemHealthEvent(
-  params: {
-    surface: string;
-    entityType?: string | null;
-    entityId?: string | null;
-    failureReasonCode: string;
-    severity: SystemHealthSeverity;
-    safeDetail?: Record<string, unknown> | null;
-  },
-  accessToken?: string,
-): Promise<boolean> {
+// returns a plain boolean, exactly as specified. Migration 152: also
+// fires the admin alert email when the RPC reports this call crossed
+// the alert threshold (3+ consecutive occurrences, no intervening
+// success, spanning >=5 minutes).
+export async function recordSystemHealthEvent(params: SystemHealthEventParams, accessToken?: string): Promise<boolean> {
   try {
     if (!isRemotePersistenceConfigured() || !accessToken) {
       return false;
@@ -416,9 +444,51 @@ export async function recordSystemHealthEvent(
       console.error(`recordSystemHealthEvent: request failed for surface "${params.surface}":`, await readSupabaseError(response, "unknown error"));
       return false;
     }
+    const result = (await response.json()) as { event_id: string | null; alert_worthy: boolean };
+    if (result.alert_worthy) {
+      void sendSystemHealthNotice("alert", params, accessToken);
+    }
     return true;
   } catch (error) {
     console.error(`recordSystemHealthEvent: unexpected failure for surface "${params.surface}":`, error);
+    return false;
+  }
+}
+
+// Migration 152: call this on a SUCCESSFUL event for a key that may
+// have a live active/acknowledged row -- resolves it and, if an alert
+// had actually fired for it, sends a recovery notice. A no-op (no
+// email) when there was nothing to recover from. Same never-throws
+// contract as recordSystemHealthEvent.
+export async function recordSystemHealthRecovery(
+  params: Pick<SystemHealthEventParams, "surface" | "entityType" | "entityId" | "failureReasonCode">,
+  accessToken?: string,
+): Promise<boolean> {
+  try {
+    if (!isRemotePersistenceConfigured() || !accessToken) {
+      return false;
+    }
+    const response = await fetch(supabaseUrl("rpc/record_system_health_recovery"), {
+      method: "POST",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({
+        p_surface: params.surface,
+        p_entity_type: params.entityType ?? null,
+        p_entity_id: params.entityId ?? null,
+        p_failure_reason_code: params.failureReasonCode,
+      }),
+    });
+    if (!response.ok) {
+      console.error(`recordSystemHealthRecovery: request failed for surface "${params.surface}":`, await readSupabaseError(response, "unknown error"));
+      return false;
+    }
+    const result = (await response.json()) as { recovered: boolean; was_alerted: boolean };
+    if (result.recovered && result.was_alerted) {
+      void sendSystemHealthNotice("recovery", { ...params, severity: "info" }, accessToken);
+    }
+    return true;
+  } catch (error) {
+    console.error(`recordSystemHealthRecovery: unexpected failure for surface "${params.surface}":`, error);
     return false;
   }
 }
@@ -3613,11 +3683,23 @@ export async function recordNotificationDelivery(
   // top of what Phase A's own notification_deliveries-derived view
   // already aggregates. Best-effort, never awaited into this function's
   // own control flow.
+  //
+  // Deliberately NOT scoped to this one notificationId as entity_id --
+  // each notification is sent (and thus can fail) at most once per
+  // channel, so a per-notification key could never accumulate the
+  // "3 consecutive failures" the alert threshold (migration 152) needs.
+  // The dedup key is the CHANNEL itself (email/slack/push failing
+  // repeatedly is the real signal to alert on, matching how Phase A's
+  // own view already aggregates by channel, not by individual
+  // notification) -- notificationId is kept in safeDetail for diagnosis
+  // only, not part of the dedup identity.
   if (status === "failed") {
     void recordSystemHealthEvent(
-      { surface: "notification_delivery", entityType: "notification", entityId: notificationId, failureReasonCode: `channel_failed:${channel}`, severity: "degraded", safeDetail: { channel, error: errorMessage ?? null } },
+      { surface: "notification_delivery", entityType: "channel", entityId: null, failureReasonCode: `channel_failed:${channel}`, severity: "degraded", safeDetail: { notificationId, channel, error: errorMessage ?? null } },
       accessToken,
     );
+  } else if (status === "sent") {
+    void recordSystemHealthRecovery({ surface: "notification_delivery", entityType: "channel", entityId: null, failureReasonCode: `channel_failed:${channel}` }, accessToken);
   }
 }
 
@@ -8752,6 +8834,10 @@ export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnap
     try {
       await run();
       sections.push({ section, attempted: true, succeeded: true, count });
+      // Migration 152: a section succeeding resolves any open incident
+      // from a previous restore's failure on this same section, best-
+      // effort, matching the failure path's own never-throws contract.
+      void recordSystemHealthRecovery({ surface: "backup_restore", failureReasonCode: `section_failed:${section}` }, accessToken);
     } catch (error) {
       const message = error instanceof Error ? error.message : "An unknown error occurred.";
       console.error(`restoreFullBackupSnapshot: section "${section}" failed:`, error);

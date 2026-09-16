@@ -60,3 +60,20 @@ export function jsonResponse(status, data) {
 export function authUserResponse(user) {
   return jsonResponse(200, user);
 }
+
+// System Health Phase B (migrations 151/152) call sites fire a
+// best-effort RPC on nearly every code path in several routes now
+// (cron, rate-limit) -- most tests for those routes don't care about
+// System Health at all and would otherwise need to either add their own
+// matcher or (worse) silently log a caught "no handler matched" error
+// that has nothing to do with what the test is actually checking. Spread
+// this into a test's own handler list for a benign, ignore-it default;
+// a test that DOES care about System Health behavior adds its own
+// more specific matcher for these same URLs instead (listed first, so
+// it wins -- mockFetchRouter matches in order).
+export function systemHealthRpcHandlers() {
+  return [
+    { match: "/rest/v1/rpc/record_system_health_event", respond: () => jsonResponse(200, { event_id: "test-event-id", alert_worthy: false }) },
+    { match: "/rest/v1/rpc/record_system_health_recovery", respond: () => jsonResponse(200, { recovered: false, was_alerted: false }) },
+  ];
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createMockReq, createMockRes, mockFetchRouter, jsonResponse } from "./_test-helpers.js";
+import { createMockReq, createMockRes, mockFetchRouter, jsonResponse, systemHealthRpcHandlers } from "./_test-helpers.js";
 
 const handler = (await import("../../api/cron/task-overdue.js")).default;
 
@@ -33,6 +33,7 @@ describe("cron/task-overdue", () => {
     const inserted = [];
     global.fetch = vi.fn(
       mockFetchRouter([
+        ...systemHealthRpcHandlers(),
         {
           match: "/rest/v1/tasks",
           respond: () =>
@@ -62,6 +63,7 @@ describe("cron/task-overdue", () => {
   it("does not include a task whose assignee is a role, not a real email (the live query itself filters assignee_email=not.is.null)", async () => {
     global.fetch = vi.fn(
       mockFetchRouter([
+        ...systemHealthRpcHandlers(),
         // The real Supabase filter excludes role-only assignments server-side --
         // this mock simulates that by simply never returning such a row, the
         // same as production would.
@@ -78,6 +80,7 @@ describe("cron/task-overdue", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     global.fetch = vi.fn(
       mockFetchRouter([
+        ...systemHealthRpcHandlers(),
         {
           match: "/rest/v1/tasks",
           respond: () =>
@@ -111,6 +114,7 @@ describe("cron/task-overdue", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     global.fetch = vi.fn(
       mockFetchRouter([
+        ...systemHealthRpcHandlers(),
         {
           match: "/rest/v1/tasks",
           respond: () =>
@@ -135,7 +139,7 @@ describe("cron/task-overdue", () => {
 
   it("logs a clear failure when the overdue-task query itself fails, without ever logging the secret", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    global.fetch = vi.fn(mockFetchRouter([{ match: "/rest/v1/tasks", respond: () => jsonResponse(500, { error: "db down" }) }]));
+    global.fetch = vi.fn(mockFetchRouter([...systemHealthRpcHandlers(), { match: "/rest/v1/tasks", respond: () => jsonResponse(500, { error: "db down" }) }]));
     const res = createMockRes();
     await handler(createMockReq({ token: "test-cron-secret" }), res);
     expect(res.statusCode).toBe(502);

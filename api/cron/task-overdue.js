@@ -15,7 +15,7 @@
 // Vercel Cron automatically sends `authorization: Bearer $CRON_SECRET`
 // when CRON_SECRET is set; reject anything else.
 
-import { recordSystemHealthEventServerSide } from "../_lib/systemHealth.js";
+import { recordSystemHealthEventServerSide, recordSystemHealthRecoveryServerSide } from "../_lib/systemHealth.js";
 
 const TASK_STATUS_LABEL_DONE = "done";
 
@@ -127,5 +127,6 @@ export default async function handler(req, res) {
   // Vercel's logs alone (without opening Supabase) that a given day's
   // cron actually scanned what it should have.
   console.log(`[cron/task-overdue] scanned=${tasks.length} created=${created}`);
+  await recordSystemHealthRecoveryServerSide({ surface: "cron", entityType: "cron_job", failureReasonCode: "task_overdue_load_failed" });
   res.status(200).json({ scanned: tasks.length, created });
 }

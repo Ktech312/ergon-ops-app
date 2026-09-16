@@ -67,24 +67,44 @@ describe("recordNotificationDelivery", () => {
   // call site): a genuine delivery failure also records a durable
   // System Health event, on top of the notification_deliveries row.
   describe("System Health Phase B wiring", () => {
-    it("calls recordSystemHealthEvent with the correct surface/failure_reason_code on a failed delivery", async () => {
-      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
+    it("calls recordSystemHealthEvent with the correct surface/failure_reason_code on a failed delivery, scoped to the channel (not one notification)", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({ event_id: "evt-1", alert_worthy: false }) });
       globalThis.fetch = fetchMock;
       await recordNotificationDelivery("notif-1", "slack", "failed", "webhook 404", "token");
       const healthEventCall = fetchMock.mock.calls.find(([url]) => String(url).includes("rpc/record_system_health_event"));
       expect(healthEventCall).toBeDefined();
-      const body = JSON.parse((healthEventCall as [string, { body: string }])[1].body) as { p_surface: string; p_failure_reason_code: string; p_entity_id: string };
+      const body = JSON.parse((healthEventCall as [string, { body: string }])[1].body) as {
+        p_surface: string;
+        p_failure_reason_code: string;
+        p_entity_id: string | null;
+        p_safe_detail: { notificationId: string };
+      };
       expect(body.p_surface).toBe("notification_delivery");
       expect(body.p_failure_reason_code).toBe("channel_failed:slack");
-      expect(body.p_entity_id).toBe("notif-1");
+      // Scoped to the channel, not this one notification -- otherwise
+      // "3 consecutive failures" could never accumulate, since a given
+      // notification is only sent (and can only fail) once per channel.
+      expect(body.p_entity_id).toBeNull();
+      expect(body.p_safe_detail.notificationId).toBe("notif-1");
     });
 
     it("does not call recordSystemHealthEvent for a 'sent' or 'skipped' delivery", async () => {
-      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({ recovered: false, was_alerted: false }) });
       globalThis.fetch = fetchMock;
       await recordNotificationDelivery("notif-1", "email", "sent", undefined, "token");
       await recordNotificationDelivery("notif-1", "email", "skipped", "no recipient", "token");
       expect(fetchMock.mock.calls.some(([url]) => String(url).includes("rpc/record_system_health_event"))).toBe(false);
+    });
+
+    it("calls recordSystemHealthRecovery on a 'sent' delivery (but not 'skipped')", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({ recovered: false, was_alerted: false }) });
+      globalThis.fetch = fetchMock;
+      await recordNotificationDelivery("notif-1", "email", "sent", undefined, "token");
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("rpc/record_system_health_recovery"))).toBe(true);
+
+      fetchMock.mockClear();
+      await recordNotificationDelivery("notif-1", "email", "skipped", "no recipient", "token");
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("rpc/record_system_health_recovery"))).toBe(false);
     });
   });
 });
