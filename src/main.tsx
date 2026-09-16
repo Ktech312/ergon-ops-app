@@ -159,6 +159,10 @@ import {
   type SalesApprovalSettings,
   loadSalesApprovalSettings,
   saveSalesApprovalSettings,
+  type ProposalQuestion,
+  loadProposalQuestionsForProposals,
+  submitProposalQuestion,
+  respondToProposalQuestion,
   fetchPublicQuoteProposal,
   respondToPublicQuoteProposal,
   loadSalesQuoteIntakeResponse,
@@ -1385,6 +1389,12 @@ function App() {
   // message) to avoid a duplicate-declaration collision in this same
   // component scope.
   const [discountApprovalReviewStatus, setDiscountApprovalReviewStatus] = useState("");
+  // D16 (migration 149): every open/answered question across whatever
+  // proposal versions are currently loaded for the selected quote --
+  // reloaded alongside quoteProposals itself (see the effect below),
+  // since Q&A is scoped to a proposal VERSION, not the quote as a whole.
+  const [proposalQuestions, setProposalQuestions] = useState<ProposalQuestion[]>([]);
+  const [proposalQuestionReplyStatus, setProposalQuestionReplyStatus] = useState("");
   const [handoverSchema, setHandoverSchema] = useState<FormSchema | null>(null);
   const [formBuilderStatus, setFormBuilderStatus] = useState("");
   const [handovers, setHandovers] = useState<ProjectHandover[]>([]);
@@ -5324,10 +5334,17 @@ function App() {
   async function reloadQuoteProposals(quoteId: string) {
     if (!authSession || !quoteId) {
       setQuoteProposals([]);
+      setProposalQuestions([]);
       return;
     }
     const rows = await loadProposalsForQuote(quoteId, authSession.accessToken);
     setQuoteProposals(rows);
+    // D16: Q&A is scoped to a proposal VERSION, not the quote -- reload
+    // every version's questions together whenever the version list
+    // itself reloads, rather than a separate effect that could drift out
+    // of sync with which proposal ids are actually current.
+    const questions = await loadProposalQuestionsForProposals(rows.map((proposal) => proposal.id), authSession.accessToken);
+    setProposalQuestions(questions);
   }
 
   async function handleCreateQuoteProposal(quote: SalesQuote) {
@@ -5440,6 +5457,43 @@ function App() {
       }
     } catch (error) {
       setDiscountApprovalReviewStatus(error instanceof Error ? error.message : "Could not submit review.");
+    }
+  }
+
+  // D16 (migration 149): any Sales/manager/admin may answer -- not
+  // restricted to the quote's own rep, matching the server's own check.
+  async function handleRespondToProposalQuestion(question: ProposalQuestion, answerText: string) {
+    if (!authSession) {
+      return;
+    }
+    setProposalQuestionReplyStatus("Sending...");
+    try {
+      const result = await respondToProposalQuestion(question.id, answerText, authSession.accessToken);
+      if (result.outcome === "answered") {
+        setProposalQuestionReplyStatus("Answer sent.");
+        const owningQuoteId = quoteProposals.find((proposal) => proposal.id === question.proposalId)?.quoteId;
+        if (owningQuoteId) {
+          await reloadQuoteProposals(owningQuoteId);
+        }
+        return;
+      }
+      // Checked as "not error" first, not via three separate outcome
+      // checks -- TS can't narrow away the whole error branch's
+      // `{message}` shape across several individual literal comparisons
+      // within the same combined non-error variant.
+      if (result.outcome !== "error") {
+        if (result.outcome === "already_answered") {
+          setProposalQuestionReplyStatus("This question was already answered.");
+        } else if (result.outcome === "closed") {
+          setProposalQuestionReplyStatus("This proposal is no longer open -- the question can't be answered.");
+        } else {
+          setProposalQuestionReplyStatus("This question could not be found.");
+        }
+        return;
+      }
+      setProposalQuestionReplyStatus(result.message);
+    } catch (error) {
+      setProposalQuestionReplyStatus(error instanceof Error ? error.message : "Could not submit the answer.");
     }
   }
 
@@ -7965,6 +8019,9 @@ function App() {
             onLoadQuoteProposals={reloadQuoteProposals}
             onCreateQuoteProposal={handleCreateQuoteProposal}
             proposalApprovalRequests={proposalApprovalRequests}
+            proposalQuestions={proposalQuestions}
+            proposalQuestionReplyStatus={proposalQuestionReplyStatus}
+            onRespondToProposalQuestion={handleRespondToProposalQuestion}
             canManageProposalLinks={canManageProposalLinks}
             onProposalShareLinkChange={handleProposalShareLinkChange}
             accessToken={authSession?.accessToken}
@@ -17667,6 +17724,55 @@ function expiresOnToIsoEndOfDay(dateOnly: string): string | null {
 // Sales Batch 5 (migration 147, D4): one row per pending discount-approval
 // request. A local, unsaved note field feeds whichever decision button is
 // actually clicked -- there's no separate "save note" step.
+// D16 (migration 149): one question thread entry within a proposal
+// version's own card in the Quote Proposal panel -- not a table row, since
+// this lives inside the existing .submittal-row div, not a table. An open
+// question gets a reply box; an answered one just shows the exchange.
+function ProposalQuestionCard({
+  question,
+  onRespond,
+}: {
+  question: ProposalQuestion;
+  onRespond: (question: ProposalQuestion, answerText: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const askedDate = new Date(question.askedAt).toLocaleDateString();
+  return (
+    <div className="proposal-question-card">
+      <p className="proposal-question-text">
+        <strong>{question.askerName || "Client"}</strong> asked on {askedDate}: "{question.questionText}"
+      </p>
+      {question.status === "answered" ? (
+        <p className="proposal-question-answer muted">
+          Answered by {question.answeredByEmail || "a team member"}
+          {question.answeredAt ? ` on ${new Date(question.answeredAt).toLocaleDateString()}` : ""}: "{question.answerText}"
+        </p>
+      ) : (
+        <div className="proposal-question-reply">
+          <textarea
+            aria-label={`Answer to ${question.askerName || "the client"}'s question`}
+            placeholder="Type your answer..."
+            rows={2}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <button
+            className="primary-action mini-action"
+            type="button"
+            disabled={!draft.trim()}
+            onClick={() => {
+              onRespond(question, draft.trim());
+              setDraft("");
+            }}
+          >
+            Send answer
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProposalApprovalRequestRow({
   request,
   onRespond,
@@ -19316,6 +19422,9 @@ function SalesHome({
   onLoadQuoteProposals,
   onCreateQuoteProposal,
   proposalApprovalRequests,
+  proposalQuestions,
+  proposalQuestionReplyStatus,
+  onRespondToProposalQuestion,
   canManageProposalLinks,
   onProposalShareLinkChange,
   accessToken,
@@ -19407,6 +19516,9 @@ function SalesHome({
   onLoadQuoteProposals: (quoteId: string) => void;
   onCreateQuoteProposal: (quote: SalesQuote) => void;
   proposalApprovalRequests: ProposalApprovalRequest[];
+  proposalQuestions: ProposalQuestion[];
+  proposalQuestionReplyStatus: string;
+  onRespondToProposalQuestion: (question: ProposalQuestion, answerText: string) => void;
   canManageProposalLinks: boolean;
   onProposalShareLinkChange: (proposalId: string, next: { token: string; status: ShareLinkTokenStatus }) => void;
   accessToken: string | undefined;
@@ -19582,6 +19694,9 @@ function SalesHome({
         onLoadQuoteProposals={onLoadQuoteProposals}
         onCreateQuoteProposal={onCreateQuoteProposal}
         proposalApprovalRequests={proposalApprovalRequests}
+        proposalQuestions={proposalQuestions}
+        proposalQuestionReplyStatus={proposalQuestionReplyStatus}
+        onRespondToProposalQuestion={onRespondToProposalQuestion}
         canManageProposalLinks={canManageProposalLinks}
         onProposalShareLinkChange={onProposalShareLinkChange}
         accessToken={accessToken}
@@ -23453,6 +23568,9 @@ function SalesQuoteBuilder({
   onLoadQuoteProposals,
   onCreateQuoteProposal,
   proposalApprovalRequests,
+  proposalQuestions,
+  proposalQuestionReplyStatus,
+  onRespondToProposalQuestion,
   canManageProposalLinks,
   onProposalShareLinkChange,
   accessToken,
@@ -23546,6 +23664,9 @@ function SalesQuoteBuilder({
   onLoadQuoteProposals: (quoteId: string) => void;
   onCreateQuoteProposal: (quote: SalesQuote) => void;
   proposalApprovalRequests: ProposalApprovalRequest[];
+  proposalQuestions: ProposalQuestion[];
+  proposalQuestionReplyStatus: string;
+  onRespondToProposalQuestion: (question: ProposalQuestion, answerText: string) => void;
   canManageProposalLinks: boolean;
   onProposalShareLinkChange: (proposalId: string, next: { token: string; status: ShareLinkTokenStatus }) => void;
   accessToken: string | undefined;
@@ -24504,9 +24625,26 @@ function SalesQuoteBuilder({
                       accessToken={accessToken}
                       onChange={(next) => onProposalShareLinkChange(proposal.id, next)}
                     />
+                    {(() => {
+                      const questionsForVersion = proposalQuestions.filter((question) => question.proposalId === proposal.id);
+                      if (questionsForVersion.length === 0) {
+                        return null;
+                      }
+                      return (
+                        <div className="proposal-question-list">
+                          <span className="label">
+                            Questions ({questionsForVersion.filter((question) => question.status === "open").length} awaiting an answer)
+                          </span>
+                          {questionsForVersion.map((question) => (
+                            <ProposalQuestionCard key={question.id} question={question} onRespond={onRespondToProposalQuestion} />
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
             </div>
+            {proposalQuestionReplyStatus && <small className="muted">{proposalQuestionReplyStatus}</small>}
             {(() => {
               const proposalsForQuote = quoteProposals
                 .filter((proposal) => proposal.quoteId === selectedQuote.id)
@@ -26618,6 +26756,17 @@ function ProposalPublicPage({ token }: { token: string }) {
   // reviewing again in a fresh tab/reload starts unselected again, same
   // as never having touched it.
   const [selectedOptionalLineIds, setSelectedOptionalLineIds] = useState<Set<string>>(new Set());
+  // D16 (migration 149): a non-status-changing "Ask a question" action --
+  // separate from the one terminal response above. No thread is shown
+  // back on this page (the questions table itself has zero anon-read
+  // access, matching every other client-facing surface here staying
+  // stateless/anonymous) -- a plain confirmation, same pattern already
+  // established for Request Revision ("your Ergon representative will
+  // follow up").
+  const [questionText, setQuestionText] = useState("");
+  const [askingQuestion, setAskingQuestion] = useState(false);
+  const [questionSubmitError, setQuestionSubmitError] = useState("");
+  const [questionSubmitted, setQuestionSubmitted] = useState(false);
 
   useEffect(() => {
     fetchPublicQuoteProposal(token)
@@ -26689,6 +26838,40 @@ function ProposalPublicPage({ token }: { token: string }) {
     }
 
     setSubmitError("Could not submit your response. Please try again or contact your Ergon representative.");
+  }
+
+  // D16 (migration 149): non-status-changing -- never touches phase
+  // (except the shared invalid/expired/superseded/unavailable
+  // redirects), so it can be called both before AND after a
+  // revision_requested response.
+  async function askQuestion() {
+    if (!questionText.trim()) {
+      setQuestionSubmitError("Please enter your question.");
+      return;
+    }
+    setQuestionSubmitError("");
+    setAskingQuestion(true);
+    const result = await submitProposalQuestion(token, questionText.trim(), approverName.trim());
+    setAskingQuestion(false);
+
+    if (result.outcome === "submitted") {
+      setQuestionText("");
+      setQuestionSubmitted(true);
+      return;
+    }
+    if (result.outcome === "invalid_token" || result.outcome === "expired" || result.outcome === "superseded" || result.outcome === "unavailable") {
+      setPhase(result.outcome === "invalid_token" ? "invalid" : result.outcome);
+      return;
+    }
+    if (result.outcome === "closed") {
+      setQuestionSubmitError("This proposal has already been decided -- questions are no longer open.");
+      return;
+    }
+    if (result.outcome === "invalid_input") {
+      setQuestionSubmitError("Please enter your question.");
+      return;
+    }
+    setQuestionSubmitError("Could not send your question. Please try again or contact your Ergon representative.");
   }
 
   if (phase === "loading") {
@@ -26895,6 +27078,28 @@ function ProposalPublicPage({ token }: { token: string }) {
           ))}
         </section>
       ))}
+
+      {/* D16 (migration 149): non-status-changing, so it stays reachable
+          both before a decision (phase "ready") and after a client has
+          asked for a revision -- they're still in an active back-and-forth
+          at that point, not done with the conversation. Not shown after a
+          final approve/reject, which are terminal. */}
+      {(phase === "ready" || (phase === "responded" && respondedStatus === "revision_requested")) && (
+        <section className="submittal-public-section proposal-no-print">
+          <h2>Ask a Question</h2>
+          {questionSubmitted ? (
+            <p className="muted">Your question has been sent. Your Ergon representative will follow up.</p>
+          ) : (
+            <>
+              <label>Your question<textarea value={questionText} onChange={(event) => setQuestionText(event.target.value)} rows={2} /></label>
+              {questionSubmitError && <small className="error-text">{questionSubmitError}</small>}
+              <button type="button" className="secondary-action" disabled={askingQuestion} onClick={askQuestion}>
+                {askingQuestion ? "Sending..." : "Send question"}
+              </button>
+            </>
+          )}
+        </section>
+      )}
 
       {phase === "ready" && (
         <section className="submittal-public-section submittal-response-form proposal-no-print">

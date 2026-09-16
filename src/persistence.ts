@@ -12549,6 +12549,146 @@ export async function saveSalesApprovalSettings(
   }
 }
 
+// --- D16 (migration 149): client proposal Q&A ------------------------------
+// Scoped to one proposal VERSION, not the quote (E's own correction to the
+// original recommendation) -- questions asked against an earlier version
+// stay attached to it, even after a newer version supersedes it.
+
+export type ProposalQuestion = {
+  id: string;
+  proposalId: string;
+  questionText: string;
+  askerName: string | null;
+  askedAt: string;
+  status: "open" | "answered";
+  answerText: string | null;
+  answeredByEmail: string | null;
+  answeredAt: string | null;
+};
+
+type ProposalQuestionRow = {
+  id: string;
+  proposal_id: string;
+  question_text: string;
+  asker_name: string | null;
+  asked_at: string;
+  status: string;
+  answer_text: string | null;
+  answered_by_email: string | null;
+  answered_at: string | null;
+};
+
+function mapProposalQuestionRow(row: ProposalQuestionRow): ProposalQuestion {
+  return {
+    id: row.id,
+    proposalId: row.proposal_id,
+    questionText: row.question_text,
+    askerName: row.asker_name,
+    askedAt: row.asked_at,
+    status: row.status === "answered" ? "answered" : "open",
+    answerText: row.answer_text,
+    answeredByEmail: row.answered_by_email,
+    answeredAt: row.answered_at,
+  };
+}
+
+// Batch-loads every question across a set of proposal versions in one
+// request -- the Quote Proposal panel already has every version's id once
+// its proposals are loaded, so this avoids one round-trip per version.
+export async function loadProposalQuestionsForProposals(proposalIds: string[], accessToken?: string): Promise<ProposalQuestion[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken || proposalIds.length === 0) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(
+      `sales_quote_proposal_questions?proposal_id=in.(${proposalIds.join(",")})&select=id,proposal_id,question_text,asker_name,asked_at,status,answer_text,answered_by_email,answered_at&order=asked_at.asc`,
+    ),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ProposalQuestionRow[];
+  return rows.map(mapProposalQuestionRow);
+}
+
+// The client's "Ask a question" action -- anon-callable, token-authorized,
+// same outcome vocabulary as get_quote_proposal_by_token/
+// respond_to_quote_proposal (found/expired/superseded/unavailable), plus
+// "closed" (the proposal itself already reached approved/rejected) and
+// "invalid_input" (blank or over-length text, rejected before any write).
+export type SubmitProposalQuestionResult =
+  | { outcome: "submitted"; questionId: string; askedAt: string }
+  | { outcome: "invalid_input" | "invalid_token" | "expired" | "superseded" | "unavailable" | "closed" }
+  | { outcome: "error" };
+
+export async function submitProposalQuestion(token: string, questionText: string, askerName: string): Promise<SubmitProposalQuestionResult> {
+  if (!isRemotePersistenceConfigured() || !token) {
+    return { outcome: "error" };
+  }
+  let response: Response;
+  try {
+    response = await fetch(supabaseUrl("rpc/submit_proposal_question"), {
+      method: "POST",
+      headers: supabaseHeaders(),
+      body: JSON.stringify({ share_token: token, question_text: questionText, asker_name: askerName || null }),
+    });
+  } catch {
+    return { outcome: "error" };
+  }
+  if (!response.ok) {
+    return { outcome: "error" };
+  }
+  const rows = (await response.json()) as Array<{ outcome: string; question_id: string | null; asked_at: string | null }>;
+  const row = rows[0];
+  if (!row) {
+    return { outcome: "error" };
+  }
+  if (row.outcome === "submitted" && row.question_id && row.asked_at) {
+    return { outcome: "submitted", questionId: row.question_id, askedAt: row.asked_at };
+  }
+  if (
+    (["invalid_input", "invalid_token", "expired", "superseded", "unavailable", "closed"] as string[]).includes(row.outcome)
+  ) {
+    return { outcome: row.outcome as "invalid_input" | "invalid_token" | "expired" | "superseded" | "unavailable" | "closed" };
+  }
+  return { outcome: "error" };
+}
+
+// The rep's reply -- authenticated, Sales/manager/admin only (PM excluded,
+// enforced server-side). "closed" covers both an already-answered question
+// and a proposal that has since reached one of the six read-only triggers.
+export type RespondToProposalQuestionResult =
+  | { outcome: "answered"; answeredAt: string }
+  | { outcome: "not_found" | "already_answered" | "closed" }
+  | { outcome: "error"; message: string };
+
+export async function respondToProposalQuestion(questionId: string, answerText: string, accessToken?: string): Promise<RespondToProposalQuestionResult> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { outcome: "error", message: "Not configured." };
+  }
+  const response = await fetch(supabaseUrl("rpc/respond_to_proposal_question"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_question_id: questionId, p_answer_text: answerText }),
+  });
+  if (!response.ok) {
+    return { outcome: "error", message: await readSupabaseError(response, "Could not submit the answer") };
+  }
+  const rows = (await response.json()) as Array<{ outcome: string; answered_at: string | null }>;
+  const row = rows[0];
+  if (!row) {
+    return { outcome: "error", message: "Could not submit the answer." };
+  }
+  if (row.outcome === "answered" && row.answered_at) {
+    return { outcome: "answered", answeredAt: row.answered_at };
+  }
+  if ((["not_found", "already_answered", "closed"] as string[]).includes(row.outcome)) {
+    return { outcome: row.outcome as "not_found" | "already_answered" | "closed" };
+  }
+  return { outcome: "error", message: "Could not submit the answer." };
+}
+
 // --- Queue C2.6: share-link lifecycle controls (migrations 138/139) -------
 // disable/re-enable/permanently-revoke are entity-agnostic (they take just
 // a token); the "generate new link" step after a revoke is entity-specific

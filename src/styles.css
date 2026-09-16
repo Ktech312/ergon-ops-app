@@ -6243,6 +6243,40 @@ td.empty-compact-state {
   margin-top: 8px;
 }
 
+.proposal-question-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.proposal-question-card {
+  background: #f7f5f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.proposal-question-text,
+.proposal-question-answer {
+  font-size: 13px;
+  margin: 0;
+}
+
+.proposal-question-reply {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.proposal-question-reply textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+}
+
 .status-pill.submittal-status-draft { background: #ebe5d8; color: #443c2d; }
 .status-pill.submittal-status-sent { background: #eff3e8; color: #627a29; }
 .status-pill.submittal-status-approved { background: #f0ecea; color: #a01029; }
