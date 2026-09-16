@@ -71,17 +71,21 @@ begin
     skipped_count := skipped_count + 1;
     skipped_names := array_append(skipped_names, 'all-sections (no admin user found)');
   else
-    perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
-    perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
-    perform set_config('role', 'authenticated', true);
-
     -- created_by_email has no default and no trigger -- a real Sales
     -- Quote row only gets it because the frontend passes the signed-in
     -- user's email explicitly at creation. Fixture quotes need to set it
     -- too, or the regression check below (Section 1) would find no
     -- owner to notify through no fault of migration 148's own,
-    -- unmodified notification logic.
+    -- unmodified notification logic. Read while still at original_role
+    -- (the SQL editor's own connection), like every other real-user
+    -- lookup in this script -- 'authenticated' has no direct grant to
+    -- query auth.users, only a SECURITY DEFINER function's own bypassed
+    -- context does.
     select email into admin_email from auth.users where id = admin_user_id;
+
+    perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+    perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
+    perform set_config('role', 'authenticated', true);
 
     -- Section 0: the is_optional column itself -- default false, reads
     -- back correctly -- independent of the proposal-response flow.

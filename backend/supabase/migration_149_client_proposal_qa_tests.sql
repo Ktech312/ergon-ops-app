@@ -106,16 +106,20 @@ begin
       select coalesce((select is_primary from public.app_user_roles where user_id = pm_user_id and role_key = 'manager'), false) into pm_manager_was_primary;
       delete from public.app_user_roles where user_id = pm_user_id and role_key in ('sales', 'manager');
 
-      perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
-      perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
-      perform set_config('role', 'authenticated', true);
-
       -- created_by_email has no default and no trigger -- a real Sales
       -- Quote row only gets it because the frontend passes the signed-in
       -- user's email explicitly at creation. Fixture quotes need to set
       -- it too, or Section 1's notify-the-owner check below would find
       -- no owner to notify through no fault of migration 149's own logic.
+      -- Read while still at original_role (the SQL editor's own
+      -- connection), like every other real-user lookup in this script --
+      -- 'authenticated' has no direct grant to query auth.users, only a
+      -- SECURITY DEFINER function's own bypassed context does.
       select email into admin_email from auth.users where id = admin_user_id;
+
+      perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+      perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
+      perform set_config('role', 'authenticated', true);
 
       -- Migration 144 dropped sales_quote_proposals' direct-write policy
       -- entirely, and migration 147 additionally revoked authenticated's
