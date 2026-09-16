@@ -207,13 +207,15 @@ applied by E and its canonical test run clean ("Success. No rows returned" — t
 its `do $$ ... $$; rollback;` shape completing with no exception). Frontend (Admin panel, one
 `recordSystemHealthEvent` call site wired to `restoreFullBackupSnapshot`'s per-section failures,
 weekly retention cron) was already deployed and now has a live table. **Manual-action queue is empty
-again** — see `PRODUCT_MASTER_COMPLETION_PLAN.md` §5. (4) Accessibility — four of five items DONE
-(`f930f39`, `6b42ca1`): A4 (filter/search input labels), A5 (WCAG AA contrast fix, computed against
-both page backgrounds), A6 (icon-button `aria-label` normalization), A7 (mobile tap-target sizing).
-**A3 (aria-live on form-submission errors) is the exact next task, picked up directly after this
-pointer**, per `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 Queue R1. Do not rerun/re-derive any of the
-above; do not re-litigate D12/D18 (open, awaiting E) or D3/D4 (already fixed, see this file's own
-D-register below).
+again** — see `PRODUCT_MASTER_COMPLETION_PLAN.md` §5. (4) **Accessibility — ALL FIVE ITEMS DONE
+(`f930f39`, `6b42ca1`, `9af073c`).** A4 (filter/search input labels), A5 (WCAG AA contrast fix,
+computed against both page backgrounds), A6 (icon-button `aria-label` normalization), A7 (mobile
+tap-target sizing), A3 (`role="alert"` on all 9 `.error-text`/`.modal-error-text` sites, including
+both public pages — deliberately does not cover generic dual-purpose status strings, flagged as a
+separate later follow-up, not silently skipped). **Queue R1 item 3 is fully closed. Exact next task:
+Queue R1 item 2, Inventory pagination** — no migration needed, pure frontend, design already
+non-blocking (D10). Do not rerun/re-derive any of the above; do not re-litigate D12/D18 (open,
+awaiting E) or D3/D4 (already fixed, see this file's own D-register below).
 
 The pricing statement E approved 2026-09-13:
 

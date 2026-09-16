@@ -76,20 +76,27 @@ Queue R1 (safe autonomous work) without stopping to ask again:
   has a live table; existing `task5-restore-write-verification.test.ts` assertions were updated for
   the new second fetch call this introduces. Deliberately NOT done: the other three named call sites
   and step 5's alert wiring (D8) -- queued next, see the master plan.
-- **Accessibility -- four of five items DONE (`f930f39`, `6b42ca1`).** A5 (WCAG AA contrast: three
-  "muted" text colors, one used at 19+ sites, computed and replaced against BOTH page backgrounds, not
-  just one); A6 (four icon-only delete buttons normalized from `title`-only to also carry
-  `aria-label`); A7 (`.icon-button`/`.compact-remove`/checkboxes reach 44px/22-24px under a 760px
-  mobile media query, desktop untouched); A4 (nine filter/search inputs across Inventory/Purchasing/
-  Catalog given a real `aria-label` instead of relying on `placeholder` alone). **A3 (aria-live
-  announcements on form-submission errors) is the exact next task, picked up directly after this**,
-  per `PRODUCT_MASTER_COMPLETION_PLAN.md` §7 Queue R1 item 3.
+- **Accessibility -- ALL FIVE ITEMS DONE (`f930f39`, `6b42ca1`, `9af073c`).** A5 (WCAG AA contrast:
+  three "muted" text colors, one used at 19+ sites, computed and replaced against BOTH page
+  backgrounds, not just one); A6 (four icon-only delete buttons normalized from `title`-only to also
+  carry `aria-label`); A7 (`.icon-button`/`.compact-remove`/checkboxes reach 44px/22-24px under a
+  760px mobile media query, desktop untouched); A4 (nine filter/search inputs across
+  Inventory/Purchasing/Catalog given a real `aria-label` instead of relying on `placeholder` alone);
+  A3 (`role="alert"` on all 9 sites using the `.error-text`/`.modal-error-text` classes, including
+  both public unauthenticated pages -- Proposal and Submittal response forms -- and this session's own
+  D16 Q&A question-submit error; deliberately does NOT cover generic dual-purpose status strings that
+  sometimes show an error and sometimes a success message, flagged as a separate later follow-up in
+  the master plan, not silently skipped). **Queue R1 item 3 fully closed.**
 - Every change this pass: `tsc -b` clean, 445/445 Vitest (11 new tests), `eslint` 0 errors (74
   pre-existing warnings unchanged), production build clean, each pushed separately and deployed.
   **Not live-verified in the browser** -- this session's own dev-server preview pointed at a different
   project (VLTD, the default working directory), and the Ergon Ops app's admin/authenticated surfaces
   weren't reachable to click through; deterministic checks (contrast math, grant tests, tsc/vitest)
   stand in for that this pass.
+- **Exact next task: Queue R1 item 2, Inventory pagination** (`PRODUCT_INVENTORY_PAGINATION_DESIGN.md`)
+  -- a new, separate, server-side-searched cursor-paginated query for the Inventory page's own table
+  only, leaving `loadInventoryItems`/`inventoryItems` untouched for its 100+ other consumers. No
+  migration needed; D10's direction is already recorded as non-blocking.
 
 Billing (D15) and Phase 3 RLS (D11) remain untouched and unstarted, as instructed. See "Current database
 gate" below for Queue C2's own full history, including migration 140's real bug (ambiguous `token`
