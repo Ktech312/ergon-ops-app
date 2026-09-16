@@ -17676,7 +17676,7 @@ function ProposalApprovalRequestRow({
       <td data-label="Threshold">{request.thresholdPercent}%</td>
       <td data-label="Requested by">{request.requestedByEmail}</td>
       <td>
-        <input placeholder="Optional note" value={note} onChange={(event) => setNote(event.target.value)} />
+        <input aria-label="Note for this approval decision" placeholder="Optional note" value={note} onChange={(event) => setNote(event.target.value)} />
         <button className="primary-action mini-action" type="button" onClick={() => onRespond(request, "approved", note)}>Approve</button>
         <button className="secondary-action mini-action" type="button" onClick={() => onRespond(request, "rejected", note)}>Reject</button>
       </td>
