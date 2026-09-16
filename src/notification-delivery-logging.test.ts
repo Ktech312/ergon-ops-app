@@ -62,4 +62,29 @@ describe("recordNotificationDelivery", () => {
     await recordNotificationDelivery("notif-1", "email", "sent", undefined, "token");
     expect(console.error).not.toHaveBeenCalled();
   });
+
+  // System Health Phase B (2026-09-16, Queue R1 item 1's second-ranked
+  // call site): a genuine delivery failure also records a durable
+  // System Health event, on top of the notification_deliveries row.
+  describe("System Health Phase B wiring", () => {
+    it("calls recordSystemHealthEvent with the correct surface/failure_reason_code on a failed delivery", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
+      globalThis.fetch = fetchMock;
+      await recordNotificationDelivery("notif-1", "slack", "failed", "webhook 404", "token");
+      const healthEventCall = fetchMock.mock.calls.find(([url]) => String(url).includes("rpc/record_system_health_event"));
+      expect(healthEventCall).toBeDefined();
+      const body = JSON.parse((healthEventCall as [string, { body: string }])[1].body) as { p_surface: string; p_failure_reason_code: string; p_entity_id: string };
+      expect(body.p_surface).toBe("notification_delivery");
+      expect(body.p_failure_reason_code).toBe("channel_failed:slack");
+      expect(body.p_entity_id).toBe("notif-1");
+    });
+
+    it("does not call recordSystemHealthEvent for a 'sent' or 'skipped' delivery", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
+      globalThis.fetch = fetchMock;
+      await recordNotificationDelivery("notif-1", "email", "sent", undefined, "token");
+      await recordNotificationDelivery("notif-1", "email", "skipped", "no recipient", "token");
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("rpc/record_system_health_event"))).toBe(false);
+    });
+  });
 });

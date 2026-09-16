@@ -19,31 +19,7 @@
 // unrecoverable meta-failure case as record_system_health_event's own
 // write failing entirely.
 
-async function recordRetentionFailure(supabaseUrl, serviceRoleKey, reason) {
-  try {
-    await fetch(`${supabaseUrl}/rest/v1/rpc/record_system_health_event`, {
-      method: "POST",
-      headers: {
-        apikey: serviceRoleKey,
-        authorization: `Bearer ${serviceRoleKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        p_surface: "system_health_retention",
-        p_entity_type: null,
-        p_entity_id: null,
-        p_failure_reason_code: "retention_job_failed",
-        p_severity: "degraded",
-        p_safe_detail: { reason },
-        p_workspace_id: null,
-      }),
-    });
-  } catch (error) {
-    // Genuinely nowhere further to go -- console.error only, matching
-    // §10's explicit exception for an insert-failure-into-the-failure-table.
-    console.error("[cron/system-health-retention] Could not even record the retention failure itself:", error instanceof Error ? error.message : error);
-  }
-}
+import { recordSystemHealthEventServerSide } from "../_lib/systemHealth.js";
 
 export default async function handler(req, res) {
   const cronSecret = process.env.CRON_SECRET;
@@ -74,7 +50,12 @@ export default async function handler(req, res) {
     if (!response.ok) {
       const message = `HTTP ${response.status}`;
       console.error(`[cron/system-health-retention] roll_up_system_health_events failed: ${message}`);
-      await recordRetentionFailure(supabaseUrl, serviceRoleKey, message);
+      await recordSystemHealthEventServerSide({
+        surface: "system_health_retention",
+        failureReasonCode: "retention_job_failed",
+        severity: "degraded",
+        safeDetail: { reason: message },
+      });
       res.status(502).json({ error: "Retention rollup failed." });
       return;
     }
@@ -84,7 +65,12 @@ export default async function handler(req, res) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error.";
     console.error("[cron/system-health-retention] Retention rollup failed:", message);
-    await recordRetentionFailure(supabaseUrl, serviceRoleKey, message);
+    await recordSystemHealthEventServerSide({
+      surface: "system_health_retention",
+      failureReasonCode: "retention_job_failed",
+      severity: "degraded",
+      safeDetail: { reason: message },
+    });
     res.status(500).json({ error: message });
   }
 }

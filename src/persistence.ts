@@ -3605,6 +3605,20 @@ export async function recordNotificationDelivery(
   } catch (error) {
     console.error(`recordNotificationDelivery network error for notification ${notificationId} (${channel}):`, error);
   }
+
+  // System Health Phase B (Queue R1 item 1, §11 step 2's second-ranked
+  // call site): a genuine delivery failure (the channel send itself
+  // failed, not merely "skipped" -- e.g. no recipient configured) is
+  // worth a durable, admin-visible record with occurrence tracking, on
+  // top of what Phase A's own notification_deliveries-derived view
+  // already aggregates. Best-effort, never awaited into this function's
+  // own control flow.
+  if (status === "failed") {
+    void recordSystemHealthEvent(
+      { surface: "notification_delivery", entityType: "notification", entityId: notificationId, failureReasonCode: `channel_failed:${channel}`, severity: "degraded", safeDetail: { channel, error: errorMessage ?? null } },
+      accessToken,
+    );
+  }
 }
 
 // Reviewed 2026-09-12 (overnight reliability closeout part 2, task 2):

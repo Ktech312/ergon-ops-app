@@ -22,6 +22,7 @@
 // the abuse pattern this is actually guarding against (a runaway script
 // or retry loop, not a precisely-timed attacker) -- see HANDOFF.md.
 import { Redis } from "@upstash/redis";
+import { recordSystemHealthEventServerSide } from "./systemHealth.js";
 
 let redis = null;
 if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
@@ -54,9 +55,26 @@ function checkRateLimitInMemory(key, maxCount, windowMs) {
   return recent.length <= maxCount;
 }
 
+// System Health Phase B (Queue R1 item 1, §11 step 2's third-ranked call
+// site): a rate-limit hit is worth a durable, admin-visible record --
+// could mean real abuse, a runaway client-side retry loop, or a limit set
+// too low for legitimate use, any of which is worth an admin noticing.
+// `key` is `<route-name>:<caller-id>` by every existing caller's own
+// convention (see send-notification-email.js etc.) -- only the route-name
+// prefix is recorded, never the caller id, matching this module's own
+// existing "don't print more of `key` than necessary" discipline.
+function recordRateLimitHit(key) {
+  const routeName = key.split(":")[0] || "unknown";
+  void recordSystemHealthEventServerSide({ surface: "rate_limit", entityType: "route", entityId: null, failureReasonCode: `rate_limited:${routeName}`, severity: "info" });
+}
+
 export async function checkRateLimit(key, maxCount, windowMs) {
   if (!redis) {
-    return checkRateLimitInMemory(key, maxCount, windowMs);
+    const allowed = checkRateLimitInMemory(key, maxCount, windowMs);
+    if (!allowed) {
+      recordRateLimitHit(key);
+    }
+    return allowed;
   }
   try {
     const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
@@ -70,12 +88,20 @@ export async function checkRateLimit(key, maxCount, windowMs) {
       // expire with the window it belongs to.
       await redis.expire(bucketKey, windowSeconds);
     }
-    return count <= maxCount;
+    const allowed = count <= maxCount;
+    if (!allowed) {
+      recordRateLimitHit(key);
+    }
+    return allowed;
   } catch (error) {
     // Upstash unreachable/erroring -- fail open to the in-memory limiter
     // for this one call rather than either blocking real traffic or (the
     // worse failure mode) silently applying no rate limit at all.
     console.error(`[rateLimit] Durable check failed, falling back to in-memory for this call: ${error instanceof Error ? error.message : error}`);
-    return checkRateLimitInMemory(key, maxCount, windowMs);
+    const allowed = checkRateLimitInMemory(key, maxCount, windowMs);
+    if (!allowed) {
+      recordRateLimitHit(key);
+    }
+    return allowed;
   }
 }

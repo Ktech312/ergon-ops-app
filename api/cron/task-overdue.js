@@ -15,6 +15,8 @@
 // Vercel Cron automatically sends `authorization: Bearer $CRON_SECRET`
 // when CRON_SECRET is set; reject anything else.
 
+import { recordSystemHealthEventServerSide } from "../_lib/systemHealth.js";
+
 const TASK_STATUS_LABEL_DONE = "done";
 
 // Every console.error below logs only the task id and an HTTP status/
@@ -92,13 +94,16 @@ export default async function handler(req, res) {
     );
     if (!response.ok) {
       console.error(`[cron/task-overdue] Could not load overdue tasks: HTTP ${response.status}`);
+      await recordSystemHealthEventServerSide({ surface: "cron", entityType: "cron_job", failureReasonCode: "task_overdue_load_failed", severity: "degraded", safeDetail: { status: response.status } });
       res.status(502).json({ error: "Could not load overdue tasks." });
       return;
     }
     tasks = await response.json();
   } catch (error) {
-    console.error("[cron/task-overdue] Could not load overdue tasks:", error instanceof Error ? error.message : error);
-    res.status(500).json({ error: error instanceof Error ? error.message : "Could not load overdue tasks." });
+    const message = error instanceof Error ? error.message : "Could not load overdue tasks.";
+    console.error("[cron/task-overdue] Could not load overdue tasks:", message);
+    await recordSystemHealthEventServerSide({ surface: "cron", entityType: "cron_job", failureReasonCode: "task_overdue_load_failed", severity: "degraded", safeDetail: { error: message } });
+    res.status(500).json({ error: message });
     return;
   }
 
