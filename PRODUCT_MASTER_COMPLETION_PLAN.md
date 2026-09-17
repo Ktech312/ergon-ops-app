@@ -6,7 +6,8 @@
 > and exact next task. This document is the authoritative, always-current product roadmap: what's
 > live, what's staged, what's left, in what order, and what's explicitly off-limits without E.
 
-Status: **AUTHORITATIVE, RECONCILED 2026-09-15** against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md`
+Status: **AUTHORITATIVE, RECONCILED 2026-09-16** (D5/D6/D8/D9/D12/D18 shipped this pass; migration 152
+confirmed live) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md`
 §8's full D1-D18 decision register, every applied migration (115 through 150), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
@@ -117,7 +118,7 @@ Subscription tiers, usage metering, payment processing for Ergon itself (distinc
 own operational Billing/Client Ledger, which Ergon already tracks for the customer). **Do not begin
 design work on this phase without an explicit go-ahead — standing instruction, unchanged.**
 
-## 3. Completed and live — migration range 115 through 150
+## 3. Completed and live — migration range 115 through 150, plus 152
 
 Everything below is **deployed and production-verified** unless a narrower label is given. Full
 turn-by-turn history lives in `git log` and the relevant design doc, not reproduced here (this
@@ -237,8 +238,6 @@ panel) still pending real use — nothing has failed yet to display.* **Step 5 (
 deliberately NOT built** — see §7 item 1 for exactly why (a spec-precision gap in the threshold
 rule, not simply D8's channel question).
 
-## 4. Completed locally but not yet migrated/deployed/verified
-
 **Migration 152 — System Health alert wiring (D8 approved 2026-09-16)** (`c6de0fa`,
 `PRODUCT_SYSTEM_HEALTH_PLAN.md` §9, extended by E's explicit threshold decision): `alerted_at` column,
 `record_system_health_event`'s return type changed to jsonb (event_id + alert_worthy + admin_emails),
@@ -246,10 +245,13 @@ new `record_system_health_recovery` and `list_admin_emails` RPCs. Application la
 deployed: `api/send-system-health-alert.js` (browser-triggered call sites), `api/_lib/systemHealth.js`
 extended for the 3 server-side call sites, `persistence.ts`'s `recordSystemHealthEvent`/new
 `recordSystemHealthRecovery`. All 4 original failure call sites now also call recovery on their
-success path. — *Implemented locally, Tests passed (migration_152's own canonical test drafted but NOT
-YET RUN against production — requires the migration to be live first; 18 new/updated TS-side tests all
-passing), Deployed (frontend/API code only). **Migration NOT YET APPLIED** — this is item 1 in §5
-below.*
+success path. — *Migration applied and canonical test PASSED in production (E confirmed
+2026-09-16: "Success. No rows returned" for both the migration and its test), 18 new/updated TS-side
+tests all passing, Deployed. D8 is fully shipped end-to-end. Production verification of a real
+alert firing (not just the SQL test) still pending real use — nothing has failed 3x within 5 minutes
+yet to trigger one.*
+
+## 4. Completed locally but not yet migrated/deployed/verified
 
 **Migration 153 — Proposal acceptance hardening (D12 approved 2026-09-16)** (`eecb8b1`,
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §2): new `approval_email` column set from the proposal's own
@@ -260,7 +262,7 @@ only path now (`respondToPublicQuoteProposal` no longer calls the RPC directly).
 Tests passed (migration_153's own canonical test drafted but NOT YET RUN — requires the migration live
 first; 11 new/updated TS-side tests all passing), Deployed (frontend/API code only — safe ahead of the
 migration since the new route already handles both old-anon-still-open and new-anon-closed states
-identically from the frontend's perspective). **Migration NOT YET APPLIED** — this is item 2 in §5
+identically from the frontend's perspective). **Migration NOT YET APPLIED** — this is item 1 in §5
 below.*
 
 **Migration 154 — Resumable backup restore checkpointing (D9 approved 2026-09-16)** (`a889b60`,
@@ -277,24 +279,16 @@ for part 1's new outcome type) + 4 RPCs (start-or-resume, update-section, finali
 only the UI trigger is deferred (this app's restores are fast enough today that this isn't a P0). —
 *Implemented locally, Tests passed (migration_154's own canonical test drafted but NOT YET RUN — 23 new
 TS-side tests all passing), Deployed (frontend code only — degrades safely to a normal, non-checkpointed
-restore if this migration isn't live yet). **Migration NOT YET APPLIED** — this is item 3 in §5 below.*
+restore if this migration isn't live yet). **Migration NOT YET APPLIED** — this is item 2 in §5 below.*
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Item 1 (current): apply migration 152 (System Health alert wiring, D8 approved 2026-09-16).**
-- File: `backend/supabase/migrations/152_system_health_alerting.sql`
-- Then run its canonical test: `backend/supabase/migration_152_system_health_alerting_tests.sql` —
-  transaction-safe (`begin;`/`rollback;`), ends in exactly one of two ways: a notice reading "ALL
-  MIGRATION 152 SYSTEM HEALTH ALERTING TESTS PASSED -- ZERO SECTIONS SKIPPED", or a hard SQL error
-  naming what failed or was skipped.
-- Migration 151's own canonical test (`migration_151_system_health_phase_b_tests.sql`) was updated to
-  match 152's new return shape — safe to re-run afterward too if E wants extra confirmation, not
-  required.
-- Once confirmed passing, update this section (move to item 2 below) and move `alerted_at`/alert
-  wiring from "awaiting migration" to "confirmed live" in §3/§4.
+**Migration 152 (System Health alert wiring, D8) — DONE.** Applied and canonical test passed in
+production 2026-09-16 ("Success. No rows returned" confirmed by E for both). Fully reconciled into
+§3 above. No longer queued.
 
-**Item 2 (queued next, do not run until item 1 is confirmed): apply migration 153 (proposal acceptance
-hardening — real `approval_ip`, verified `approval_email`; D12 approved 2026-09-16).**
+**Item 1 (current): apply migration 153 (proposal acceptance hardening — real `approval_ip`, verified
+`approval_email`; D12 approved 2026-09-16).**
 - File: `backend/supabase/migrations/153_proposal_acceptance_ip_and_email.sql`
 - Then run its canonical test: `backend/supabase/migration_153_proposal_acceptance_ip_and_email_tests.sql`
   — same transaction-safe pattern, ends with "ALL MIGRATION 153 PROPOSAL ACCEPTANCE TESTS PASSED --
@@ -305,10 +299,10 @@ hardening — real `approval_ip`, verified `approval_email`; D12 approved 2026-0
   proposal-approval flow would break, since the frontend switch already shipped ahead of the grant
   closure. No functional dependency on migration 152 — the two are independent, this repo's convention
   is simply to apply in numeric order.
-- Once confirmed passing, update this section (move to item 3 below) and move this item from
+- Once confirmed passing, update this section (move to item 2 below) and move this item from
   "awaiting migration" to "confirmed live" in §3/§4.
 
-**Item 3 (queued next, do not run until item 2 is confirmed): apply migration 154 (resumable backup
+**Item 2 (queued next, do not run until item 1 is confirmed): apply migration 154 (resumable backup
 restore checkpointing; D9 approved 2026-09-16).**
 - File: `backend/supabase/migrations/154_backup_restore_checkpointing.sql`
 - Then run its canonical test: `backend/supabase/migration_154_backup_restore_checkpointing_tests.sql`
