@@ -52,11 +52,12 @@ Engineering/Product Development remain thin placeholders or entirely undesigned.
 Equipment Recipe save, Project BOM replace, and quote-to-project conversion are atomic and
 race-safe (migrations 127/128/130/131/132, deployed, production verified). Backup restore reports
 accurate per-section success/failure (`RestoreOutcome`, deployed). Every confirmed-critical write
-has a check+plain-error+log. System Health Phase A is real and admin-visible. **Open, non-blocking
-follow-on**: backup restore's own checkpoint/resume (§4, Queue R2) and System Health Phase B
-(durable event storage beyond `notification_deliveries`, §4 Queue R1) extend this gate further but
-are not required to consider it met — the gate itself (no silent data loss, no partial writes) is
-satisfied.
+has a check+plain-error+log. System Health is real, admin-visible, and now alerts (Phase A+B+alert
+wiring, migrations 151/152, both applied and tested in production 2026-09-16). Backup restore's own
+checkpoint/resume (D9) is implemented and deployed, degraded-safe until migration 154 is applied
+(§4/§5). The gate itself (no silent data loss, no partial writes) was already satisfied before either
+of these shipped; both now extend it further, not merely "open, non-blocking follow-on" — they're
+done.
 
 ### Phase 2 — Tenant containment and Phase 3 RLS — **NOT STARTED, explicitly blocked**
 **Gate**: a second real workspace can be created with data provably invisible to the first
@@ -80,29 +81,31 @@ deferred phase, not part of this gate.
 undesigned in code**. Blocked in practice on Phase 2/3 RLS landing first or in parallel (onboarding
 a real second company needs isolation to mean something).
 
-### Phase 5 — Sales presentation/template experience — **GATE MOSTLY MET, two items deliberately deferred**
+### Phase 5 — Sales presentation/template experience — **GATE MET, two items deliberately scoped closed, not deferred**
 A PM/salesperson can today generate a priced, branded, approval-gated, Q&A-capable, share-link-
 controlled proposal from Ergon end-to-end (pricing, in-place BOM editing, searchable catalog
 picker, branding, mobile labels, `client_id`/`source_quote_ref` carry-through, section reordering,
-share-link expiry/revocation, version comparison, client Q&A, optional BOM lines — see §3 for the
-full shipped list). What remains, **by deliberate, decision-gated deferral, not oversight**: real
-e-signature beyond typed-name+hash, and a server-generated PDF beyond `window.print()` — both fully
-traced and designed with recommended defaults in `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`, neither
-implemented, both awaiting E's confirmation (D12 revised, D18). The phase's actual measurement gate
-("stop needing HubSpot/PandaDoc for this step, one real deal closed end-to-end") is a usage
-milestone, not a code gate, and remains open pending real use.
+share-link expiry/revocation, version comparison, client Q&A, optional BOM lines, acceptance IP/email
+hardening, print-output fixes — see §3 for the full shipped list). **D12 (revised) and D18 are both
+APPROVED and FULLY SHIPPED as of 2026-09-16** — not awaiting confirmation. Typed-name+hash acceptance
+with server-observed IP/verified email was deliberately kept as v1 in place of a regulated
+e-signature product; `window.print()` from the frozen snapshot was deliberately kept as v1 in place
+of a server-generated PDF pipeline, since no stored-file/attachment/integration requirement has ever
+emerged to justify one — see `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §1/§2 for the full reasoning.
+Neither is a gap; both are closed, scoped decisions. The phase's actual measurement gate ("stop
+needing HubSpot/PandaDoc for this step, one real deal closed end-to-end") is a usage milestone, not a
+code gate, and remains open pending real use — that is the only thing still open in this phase.
 
-### Phase 6 — Mobile and accessibility — **GATE MOSTLY MET**
+### Phase 6 — Mobile and accessibility — **GATE MET**
 Every modal has focus trap/return/Escape-close (`useModalA11y`, source-wide, zero remaining
 unconverted). Every flagged desktop clickable row is keyboard-operable. Photo uploads are resized
 client-side. Two real bugs were found and fixed in this work, not just polish (mobile
-`stack-table-mobile` overflow; `saveBuildTransactions` equipment-lookup key mismatch). **Still
-open, not yet started**: three items from `PRODUCT_ACCESSIBILITY_MOBILE_PERF_AUDIT.md` — form-
-submission errors have no `aria-live` announcement anywhere in the app (A3); filter/search inputs
-rely on `placeholder` alone, not a real accessible name (A4); a family of hardcoded "muted" text
-colors fails WCAG AA contrast (A5); mobile tap targets on icon buttons/checkboxes fall short of
-44px guidance (A7). None of these need a business decision — WCAG AA is the standing bar. See §4
-Queue R1.
+`stack-table-mobile` overflow; `saveBuildTransactions` equipment-lookup key mismatch). **All five
+mechanical items from `PRODUCT_ACCESSIBILITY_MOBILE_PERF_AUDIT.md` Part A are DONE (2026-09-16)** —
+A4 (accessible names on filter/search inputs), A5 (WCAG AA contrast on "muted" text colors), A6, and
+A7 (44px mobile tap targets) all shipped; see §3/§7 item 3. A3's remaining scope (generic
+dual-purpose status-message `<div>`s beyond the class-identified error sites) is a separate, later,
+non-mechanical follow-up, not part of this gate.
 
 ### Phase 7 — Service/Support and client ledger expansion — **CLIENT LEDGER RELIABILITY DONE, MODULE NOT DESIGNED**
 Client Ledger's save path is serialized/queued and surfaces failures (Queue A10). No dedicated
