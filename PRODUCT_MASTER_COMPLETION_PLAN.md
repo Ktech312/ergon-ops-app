@@ -7,10 +7,11 @@
 > live, what's staged, what's left, in what order, and what's explicitly off-limits without E.
 
 Status: **AUTHORITATIVE, RECONCILED 2026-09-17** (D5/D6/D8/D9/D12/D18 shipped; standing authorization
-given for the full Phase 3 rollout, D11/D13/D14 now approved, see §11 — Stage 1 (migration 155) and
-Stage 2's ownership half (migration 156) both confirmed applied and tested live; Stage 2's RLS half is
-next) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's full D1-D18 decision register, every
-applied migration (115 through 156), and
+given for the full Phase 3 rollout, D11/D13/D14 now approved, see §11 — Stage 1 (migration 155)
+confirmed applied and tested live; Stage 2's ownership half (migration 156) confirmed applied, its
+canonical test not yet run (§5's current item); Stage 2's RLS half not yet written) against
+`HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's full D1-D18 decision register, every applied
+migration (115 through 156), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
 document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
@@ -304,20 +305,26 @@ from migration 023, confirmed unchanged by direct read). `tasks.workspace_id` de
 own creator's workspace membership rather than fuzzy-matching the loose `project_ref` text column — a
 mechanical extension of the existing ownership-trigger pattern, not a new business decision. No
 frontend/API code change accompanies this migration (pure ownership metadata, no access change). —
-*Migration applied and canonical test PASSED in production (E confirmed, 2026-09-17). Stage 2's
-ownership half is fully shipped end-to-end; Stage 2's RLS half is separate, later work — see §11.*
+*Migration CONFIRMED APPLIED in production (E: "156 - Success. No rows returned", 2026-09-17).
+Canonical test drafted, sent to E, **NOT YET RUN** — this is item 1 in §5 below. Stage 2's RLS half is
+separate, later work — see §11.*
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-Nothing currently queued here — migrations 155 and 156 are both confirmed applied, tested, and
-deployed; see §3 above.
+Nothing currently queued here beyond migration 156's own canonical test (§5 item 1) — the migration
+itself is applied; see §3 above.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Nothing queued.** Migrations 155 and 156 are both confirmed applied and their canonical tests both
-passed in production, 2026-09-17. The next migration this queue will carry is Stage 2's RLS half
-(the access-restriction migration for `projects`/`tasks` and their child tables), once it's written —
-see §11 for current status.
+**Item 1 (current): run migration 156's canonical test** (the migration itself is already applied —
+this is verification only, no schema change).
+- File: `backend/supabase/migration_156_phase3_projects_tasks_workspace_ownership_tests.sql`
+- Ends with "ALL MIGRATION 156 PHASE 3 PROJECTS TASKS WORKSPACE OWNERSHIP TESTS PASSED -- ZERO
+  SECTIONS SKIPPED" or a hard error.
+- Once confirmed passing, update this section (move to "nothing queued") and move this item from
+  "test not yet run" to "confirmed live" in §3/§11.
+
+Migration 155 and its own canonical test are both confirmed applied and passed already.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
@@ -483,7 +490,8 @@ between stages:
 2. **Projects, tasks, locations, BOM, and related delivery records — OWNERSHIP HALF DONE, RLS HALF NOT
    STARTED.** Migration 156 (`df9a6bf`) adds and backfills `projects.workspace_id`/
    `tasks.workspace_id`, mirroring migration 117's ownership-then-RLS pattern for Clients+Sales.
-   Confirmed applied and its canonical test passed in production, 2026-09-17. See §3. Scope confirmed
+   Confirmed applied in production, 2026-09-17 ("156 - Success. No rows returned"). Canonical test
+   drafted and sent to E, **not yet run** — this is §5's current item. See §3. Scope confirmed
    by direct schema
    read: `project_locations`/`_images`/`_items`, `project_scope_of_work`, `project_bom_lines`,
    `project_submittals`, `project_handovers`, `project_stakeholders`, `installed_assets`,
