@@ -286,9 +286,25 @@ needed a real caller identity, not the `postgres` role, since `guard_workspace_i
 trigger and role-switching bypasses RLS but not trigger execution; migration 159 itself was never
 touched. **Stage 3's ownership half is now fully shipped.**
 
-**Manual-action queue for E, current exact state: EMPTY.** Migrations 155, 156, 157, 158, and 159 are
-all confirmed applied and their canonical tests all passed in production, 2026-09-17. Stage 3's RLS
-half (migration 160) scoping is next.
+**Stage 3's RLS half delivered**: migration 160 (`df341ab`) adds workspace-scoped RLS to the seven
+root tables plus their ten children, via three new owner-resolver helper functions
+(`purchase_order_owner_workspace_id`, `inventory_item_owner_workspace_id`,
+`equipment_type_owner_workspace_id`; migration 157's `project_owner_workspace_id` reused directly for
+`project_inventory_allocations`). Two tables with no single NOT NULL anchor
+(`inventory_transactions`, `project_allocation_history`) are resolved inline via a coalesce of two or
+three resolvers. Every pre-existing migration-023 role gate is preserved, ANDed with the new
+workspace predicate -- confirmed `vendors`/`locations`/`purchase_orders` and their four immediate
+children never had a role gate at all. No RPC changes needed. `purchase_order_files`' storage.objects
+bucket policies are deliberately untouched (Stage 4). **Not yet applied -- implemented locally and
+queued for E's review.**
+
+**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 160
+(`backend/supabase/migrations/160_phase3_purchasing_inventory_workspace_rls.sql`), then run its
+canonical test
+(`backend/supabase/migration_160_phase3_purchasing_inventory_workspace_rls_tests.sql`). Migrations
+155, 156, 157, 158, and 159 are all confirmed applied and their canonical tests all passed in
+production, 2026-09-17. After 160 is confirmed, Stage 3 is fully shipped end-to-end and Stage 4
+scoping is next.
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
