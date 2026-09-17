@@ -4,14 +4,32 @@ Status: **READ-ONLY AUDIT (as originally written). The 6 findings in §1.2 below
 applied under Queue A10-15 (task A13) — see `HANDOFF.md`'s Queue A13 entry for the three commits.**
 Written for `CONTINUOUS_CODER_HANDOFF.md` Queue B10, then acted on once the follow-up task (A13,
 strict-scope, non-`xlsx`, non-force) confirmed doing so needed no product decision — the fixes below
-are still described exactly as originally found, for the record. Ties to decision **D6** (§8, `xlsx`
-dependency — evaluation already recommends `exceljs`, still no decision made — `xlsx` remains
-untouched). Any database fix stays a manual migration package; §2's security-definer review remains
-findings-only, nothing there was a database change.
+are still described exactly as originally found, for the record. Ties to decision **D6** — **RESOLVED
+2026-09-16**: `xlsx` fully removed, replaced by `exceljs` (see §1.1 below and
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §3/§9). Any database fix stays a manual migration package; §2's
+security-definer review remains findings-only, nothing there was a database change.
+
+**2026-09-16 re-audit**: `npm audit` (with and without `--omit=dev`) now reports **0 vulnerabilities**.
+All 6 findings named in §1.2 below (`nodemailer`, `pdfjs-dist`, `nanoid`, `postcss`, `browserslist`,
+`baseline-browser-mapping`) are resolved — current installed versions (`nodemailer@9.1.1`,
+`pdfjs-dist@6.3.289`, `nanoid@3.3.19`, `postcss@8.5.28`, `browserslist@4.28.9`,
+`baseline-browser-mapping@2.11.23`, confirmed via `npm ls`) are all past the advisories' fixed
+versions, picked up incidentally by `npm install` runs (including D6's `exceljs` install, which
+regenerated the lockfile) rather than a dedicated `npm audit fix` pass. §1.2's table is kept below
+for historical record only — treat it as closed, not open.
 
 ## 1. Dependency audit refresh
 
-### 1.1 `xlsx` finding — revalidated, unchanged
+### 1.1 `xlsx` finding — RESOLVED 2026-09-16 (D6)
+
+**`xlsx` has been fully removed.** Both call sites named below (`handleBomFileSelect`,
+`handleCatalogFileSelect`) now use `parseWorkbookSheetToRows` (`src/xlsx-import.ts`), a thin wrapper
+around `exceljs`. Parity was proven via a real side-by-side comparison against `xlsx` before removal
+(not just documentation), then locked into a permanent regression suite (`src/xlsx-import.test.ts`,
+7 tests). `package.json` no longer lists `xlsx`; `exceljs@^4.4.0` is present, with a `package.json`
+`overrides` entry pinning its transitive `uuid` dependency to `^11.1.1` — `npm audit` reports 0
+vulnerabilities, not one trade for another. See `PRODUCT_MASTER_COMPLETION_PLAN.md` §3/§9 (`13d9979`)
+for full detail. The paragraph below is kept for historical record of the original finding.
 
 Re-grepped the entire repository for every `XLSX.`/`from "xlsx"`/`exceljs` reference. **Still exactly
 two call sites**, same pattern as `PRODUCT_XLSX_REPLACEMENT_EVALUATION.md` already found — only their
@@ -21,7 +39,7 @@ line numbers shifted with the file's growth this session: `handleBomFileSelect`
 `exceljs` present. **The existing recommendation stands unchanged: migrate to `exceljs`.** Nothing in
 this pass's own work touched either call site or introduced a third one.
 
-### 1.2 Fresh `npm audit` — six additional advisories not in the last audit doc
+### 1.2 Fresh `npm audit` — six additional advisories not in the last audit doc — ALL RESOLVED 2026-09-16, table kept for historical record only
 
 `npm audit --omit=dev` (read-only, nothing installed):
 
