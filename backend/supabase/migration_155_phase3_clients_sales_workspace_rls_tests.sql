@@ -261,8 +261,16 @@ begin
 
   -- ============================================================
   -- Section 5: suspended workspace denied (writes); reads still
-  -- allowed.
+  -- allowed. The fixture row must be created WHILE ws_suspended is
+  -- still active -- guard_workspace_id_mutation() blocks EVERY write
+  -- (including INSERT) for a suspended-workspace caller, correctly, so
+  -- there is no way to create fresh data as a suspended member in the
+  -- first place. This mirrors the real scenario this control protects:
+  -- an existing customer's workspace gets suspended sometime AFTER
+  -- their data already exists, not before.
   -- ============================================================
+
+  update public.workspaces set status = 'active' where id = ws_suspended;
 
   delete from public.workspace_members where user_id = real_user_id and workspace_id = real_workspace_id;
   insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws_suspended, real_user_id, false);
@@ -274,9 +282,14 @@ begin
   -- client_a_id reassigned here on purpose -- no later section
   -- references the Section 0 client row again.
 
+  perform set_config('role', 'postgres', true);
+  update public.workspaces set status = 'suspended' where id = ws_suspended;
+  perform set_config('request.jwt.claims', json_build_object('sub', real_user_id::text)::text, true);
+  perform set_config('role', 'authenticated', true);
+
   select count(*) into row_count from public.clients where id = client_a_id;
   if row_count <> 1 then
-    raise exception 'TEST FAILED: a suspended-workspace member could not read their own workspace''s row (reads should remain available under suspension)';
+    raise exception 'TEST FAILED: a suspended-workspace member could not read their own workspace''s pre-existing row (reads should remain available under suspension)';
   end if;
 
   begin
