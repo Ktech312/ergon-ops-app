@@ -8831,6 +8831,132 @@ export type RestoreOutcome = {
   sections: RestoreSectionResult[];
 };
 
+// D9 (approved 2026-09-16, migration 154): resumable, per-section
+// checkpointing. SHA-256 of the uploaded file's own raw text (not the
+// parsed object -- two byte-identical uploads must hash identically for
+// resume to mean anything, and JSON.stringify(JSON.parse(x)) is not
+// guaranteed to reproduce x byte-for-byte). Computed client-side via the
+// Web Crypto API, same as every other hash this app computes.
+export async function computeSnapshotHash(rawFileText: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(rawFileText));
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export type RestoreRunSectionStatus = "pending" | "succeeded" | "failed" | "skipped_empty";
+
+export type RestoreRunCheckpoint = {
+  runId: string;
+  resumed: boolean;
+  sections: Array<{ section: RestoreSectionName; status: RestoreRunSectionStatus; warnings: string[] | null }>;
+};
+
+// Looks up (or starts) a durable restore_runs row for this snapshot's
+// hash -- the caller then skips any section already 'succeeded'/
+// 'skipped_empty' when it calls restoreFullBackupSnapshot below. Returns
+// null on any failure (not configured, network, RPC rejection) -- the
+// caller falls back to a normal, non-checkpointed restore rather than
+// blocking the whole restore on this durable-tracking layer being
+// reachable.
+export async function startOrResumeRestoreRun(snapshotHash: string, accessToken?: string, forceNew = false): Promise<RestoreRunCheckpoint | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  try {
+    const response = await fetch(supabaseUrl("rpc/start_or_resume_restore_run"), {
+      method: "POST",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ p_snapshot_hash: snapshotHash, p_force_new: forceNew }),
+    });
+    if (!response.ok) {
+      console.error("startOrResumeRestoreRun: request failed:", await readSupabaseError(response, "unknown error"));
+      return null;
+    }
+    const result = (await response.json()) as { run_id: string; resumed: boolean; sections: Array<{ section: RestoreSectionName; status: RestoreRunSectionStatus; warnings: string[] | null }> };
+    return { runId: result.run_id, resumed: result.resumed, sections: result.sections };
+  } catch (error) {
+    console.error("startOrResumeRestoreRun: unexpected failure:", error);
+    return null;
+  }
+}
+
+// Best-effort, never throws -- this is durable TELEMETRY about the
+// restore, not the restore itself; a failure to record a checkpoint must
+// never affect the real restore in progress, same discipline as System
+// Health's own recordSystemHealthEvent.
+async function updateRestoreRunSection(
+  runId: string,
+  section: RestoreSectionName,
+  status: RestoreRunSectionStatus,
+  attemptedCount: number,
+  succeededCount: number,
+  error: string | null,
+  warnings: string[] | null,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  try {
+    const response = await fetch(supabaseUrl("rpc/update_restore_run_section"), {
+      method: "POST",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({
+        p_restore_run_id: runId,
+        p_section: section,
+        p_status: status,
+        p_attempted_count: attemptedCount,
+        p_succeeded_count: succeededCount,
+        p_error: error,
+        p_warnings: warnings,
+      }),
+    });
+    if (!response.ok) {
+      console.error(`updateRestoreRunSection: request failed for section "${section}":`, await readSupabaseError(response, "unknown error"));
+    }
+  } catch (error) {
+    console.error(`updateRestoreRunSection: unexpected failure for section "${section}":`, error);
+  }
+}
+
+// Best-effort, never throws -- same reasoning as updateRestoreRunSection.
+export async function finalizeRestoreRun(runId: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  try {
+    const response = await fetch(supabaseUrl("rpc/finalize_restore_run"), {
+      method: "POST",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ p_restore_run_id: runId }),
+    });
+    if (!response.ok) {
+      console.error("finalizeRestoreRun: request failed:", await readSupabaseError(response, "unknown error"));
+    }
+  } catch (error) {
+    console.error("finalizeRestoreRun: unexpected failure:", error);
+  }
+}
+
+// Unlike the two helpers above, a real user action -- surfaced to the
+// caller as a plain boolean so the UI can confirm it actually took
+// effect, not silently swallowed.
+export async function cancelRestoreRun(runId: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  try {
+    const response = await fetch(supabaseUrl("rpc/cancel_restore_run"), {
+      method: "POST",
+      headers: supabaseHeaders(accessToken),
+      body: JSON.stringify({ p_restore_run_id: runId }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Checked before any write begins -- a malformed snapshot (the wrong
 // top-level shape for a field that must be an array) is rejected outright
 // here, rather than discovered partway through as a raw TypeError (e.g.
@@ -8858,7 +8984,21 @@ function validateBackupSnapshotShape(snapshot: Partial<FullBackupSnapshot>): voi
   }
 }
 
-export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnapshot>, accessToken?: string): Promise<RestoreOutcome> {
+// D9 (approved 2026-09-16): `checkpoint`, when provided (from a prior
+// startOrResumeRestoreRun call), makes this a RESUMED restore -- any
+// section already 'succeeded'/'skipped_empty' in the durable record is
+// reported as such WITHOUT re-running its save function (the whole
+// point of checkpointing: don't redo work that already succeeded), and
+// every section's outcome (skipped ones included) is recorded durably
+// as it completes. Completely optional -- every existing 2-arg call
+// (every test in this repo, and any future one that doesn't care about
+// resumability) behaves exactly as before, with zero checkpoint
+// tracking attempted.
+export async function restoreFullBackupSnapshot(
+  snapshot: Partial<FullBackupSnapshot>,
+  accessToken?: string,
+  checkpoint?: RestoreRunCheckpoint,
+): Promise<RestoreOutcome> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return { ok: false, sections: [] };
   }
@@ -8866,6 +9006,11 @@ export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnap
   validateBackupSnapshotShape(snapshot);
 
   const sections: RestoreSectionResult[] = [];
+  const alreadyDoneStatusBySection = new Map(
+    (checkpoint?.sections ?? [])
+      .filter((s) => s.status === "succeeded" || s.status === "skipped_empty")
+      .map((s) => [s.section, s]),
+  );
 
   // Each section runs independently -- catches its own failure, records
   // it, and lets every remaining section still be attempted, rather than
@@ -8888,14 +9033,37 @@ export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnap
   // backup atomicity remains impractical for the reasons documented in
   // PRODUCT_ERROR_VISIBILITY_AUDIT.md's restore trace (A2.5).
   async function runSection(section: RestoreSectionName, count: number, run: () => Promise<{ warnings: string[] } | unknown>): Promise<void> {
+    // D9: this section already succeeded (or was already known to have
+    // nothing to restore) in a prior attempt on this exact snapshot --
+    // skip re-running it entirely. Reported here as succeeded/skipped
+    // (matching the durable record, including any warnings it already
+    // carried) without touching the durable record again.
+    const alreadyDone = alreadyDoneStatusBySection.get(section);
+    if (alreadyDone) {
+      sections.push({
+        section,
+        attempted: alreadyDone.status === "succeeded",
+        succeeded: true,
+        count,
+        warnings: alreadyDone.warnings && alreadyDone.warnings.length > 0 ? alreadyDone.warnings : undefined,
+      });
+      return;
+    }
+
     if (count === 0) {
       sections.push({ section, attempted: false, succeeded: false, count: 0 });
+      if (checkpoint) {
+        await updateRestoreRunSection(checkpoint.runId, section, "skipped_empty", 0, 0, null, null, accessToken);
+      }
       return;
     }
     try {
       const result = await run();
       const warnings = result && typeof result === "object" && "warnings" in result ? (result as { warnings: string[] }).warnings : [];
       sections.push({ section, attempted: true, succeeded: true, count, warnings: warnings.length > 0 ? warnings : undefined });
+      if (checkpoint) {
+        await updateRestoreRunSection(checkpoint.runId, section, "succeeded", count, count, null, warnings.length > 0 ? warnings : null, accessToken);
+      }
       // Migration 152: a section succeeding resolves any open incident
       // from a previous restore's failure on this same section, best-
       // effort, matching the failure path's own never-throws contract.
@@ -8904,6 +9072,9 @@ export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnap
       const message = error instanceof Error ? error.message : "An unknown error occurred.";
       console.error(`restoreFullBackupSnapshot: section "${section}" failed:`, error);
       sections.push({ section, attempted: true, succeeded: false, count, error: message });
+      if (checkpoint) {
+        await updateRestoreRunSection(checkpoint.runId, section, "failed", count, 0, message, null, accessToken);
+      }
       // System Health Phase B (Queue R1 item 1, PRODUCT_SYSTEM_HEALTH_PLAN.md
       // §11 step 2's first-ranked call site): best-effort, never awaited into
       // the restore's own control flow -- a health-logging failure must
@@ -8931,6 +9102,10 @@ export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnap
   await runSection("movementsBuildsAllocations", movementsCount, () =>
     saveMovementsBuildsAllocations(snapshot.buildTransactions ?? [], snapshot.inventoryMovements ?? [], snapshot.projectAllocations ?? [], accessToken, true),
   );
+
+  if (checkpoint) {
+    await finalizeRestoreRun(checkpoint.runId, accessToken);
+  }
 
   return { ok: sections.every((section) => !section.attempted || section.succeeded), sections };
 }

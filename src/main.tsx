@@ -288,6 +288,8 @@ import {
   resolveProjectId,
   respondToPublicSubmittal,
   restoreFullBackupSnapshot,
+  computeSnapshotHash,
+  startOrResumeRestoreRun,
   reviewUserApproval,
   revokeAdmin,
   createDeviceRecipeClientId,
@@ -7200,12 +7202,33 @@ function App() {
     reader.onload = () => {
       void (async () => {
         try {
-          const snapshot = JSON.parse(String(reader.result ?? "{}")) as Partial<FullBackupSnapshot>;
+          const rawText = String(reader.result ?? "{}");
+          const snapshot = JSON.parse(rawText) as Partial<FullBackupSnapshot>;
           if (["warehouse", "purchasing", "pm", "manager"].includes(String(snapshot.roleMode))) {
             setRoleMode(snapshot.roleMode as RoleMode);
           }
+          // D9 (approved 2026-09-16): resumable, per-section checkpointing.
+          // Hashed from the raw file text (not the parsed object -- see
+          // computeSnapshotHash's own comment) so re-uploading the exact
+          // same file resolves to the same durable run. Best-effort: a
+          // failure here (not configured, network, not an admin) simply
+          // means no checkpoint is used -- restoreFullBackupSnapshot's
+          // own `checkpoint` param is fully optional, so the restore
+          // still runs normally, it just can't be resumed if interrupted.
+          const snapshotHash = await computeSnapshotHash(rawText);
+          let checkpoint = await startOrResumeRestoreRun(snapshotHash, authSession.accessToken);
+          if (checkpoint?.resumed) {
+            const alreadyDone = checkpoint.sections.filter((s) => s.status === "succeeded" || s.status === "skipped_empty").length;
+            const wantsResume = window.confirm(
+              `A previous restore of this exact file didn't finish (${alreadyDone} of 6 section(s) already completed). ` +
+                `Resume it (skip what's already done) instead of starting over? Choose Cancel to start over from the beginning.`,
+            );
+            if (!wantsResume) {
+              checkpoint = await startOrResumeRestoreRun(snapshotHash, authSession.accessToken, true);
+            }
+          }
           setAuthStatus("Restoring backup -- this can take a moment for larger snapshots...");
-          const restoreOutcome = await restoreFullBackupSnapshot(snapshot, authSession.accessToken);
+          const restoreOutcome = await restoreFullBackupSnapshot(snapshot, authSession.accessToken, checkpoint ?? undefined);
           // Reload every entity from the tables so the UI reflects the
           // merged result rather than the raw (possibly stale) file contents.
           const [
@@ -7246,13 +7269,29 @@ function App() {
           // "restored" when the outcome says otherwise.
           const failedSections = restoreOutcome.sections.filter((section) => section.attempted && !section.succeeded);
           const attemptedSections = restoreOutcome.sections.filter((section) => section.attempted);
+          // D9: a section that succeeded WITH warnings (an optional
+          // reference that couldn't be resolved, saved without it) is
+          // still a success -- never counted alongside a real failure --
+          // but is worth naming so an admin knows to review/retry it.
+          const warnedSections = restoreOutcome.sections.filter((section) => section.warnings && section.warnings.length > 0);
+          const warningSuffix = warnedSections.length > 0
+            ? ` ${warnedSections.reduce((sum, s) => sum + (s.warnings?.length ?? 0), 0)} optional reference(s) could not be resolved and were saved without them -- see the console/System Health panel for detail.`
+            : "";
+          if (warnedSections.length > 0) {
+            for (const section of warnedSections) {
+              console.warn(`Backup restore: ${RESTORE_SECTION_LABELS[section.section]} -- ${(section.warnings ?? []).join(" ")}`);
+            }
+          }
           if (failedSections.length === 0) {
-            setAuthStatus(attemptedSections.length === 0 ? "Backup restore had nothing to restore." : "Backup restored.");
+            setAuthStatus(
+              attemptedSections.length === 0 ? "Backup restore had nothing to restore." : `Backup restored.${warningSuffix}`,
+            );
           } else {
             setSyncStatus("error");
             const failedLabels = failedSections.map((section) => RESTORE_SECTION_LABELS[section.section]).join(", ");
             setAuthStatus(
-              `Backup restore finished with problems: ${attemptedSections.length - failedSections.length} of ${attemptedSections.length} section(s) restored. Failed: ${failedLabels}. Some information may already have been restored -- review the data before trying again.`,
+              `Backup restore finished with problems: ${attemptedSections.length - failedSections.length} of ${attemptedSections.length} section(s) restored. Failed: ${failedLabels}. Some information may already have been restored -- review the data before trying again. ` +
+                `Re-uploading this exact file will resume from here instead of starting over.${warningSuffix}`,
             );
           }
         } catch (error) {
