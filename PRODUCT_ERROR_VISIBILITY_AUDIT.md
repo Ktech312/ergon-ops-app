@@ -51,10 +51,9 @@ structured `RestoreOutcome` (per-section `succeeded`/`failed`/`skipped_empty` st
 as-is" language in A2.2c above is also now historical: restore-mode saves now warn-and-continue on
 an unresolved optional reference instead of silently preserving null). `importBackup` (`main.tsx`)
 hashes the uploaded file and offers a Resume-vs-Start-Over prompt when a prior incomplete run for
-that exact file is found. **Migration 154 itself is not yet applied in production** — it is the
-current item in `PRODUCT_MASTER_COMPLETION_PLAN.md` §5's manual-action queue; until it's applied,
-the frontend degrades safely to a normal, non-checkpointed restore (unchanged from what this
-document describes). Multi-step non-atomicity within a section (no real DB transaction across a
+that exact file is found. **Migration 154 is CONFIRMED APPLIED in production** — E ran it and its
+canonical test and both returned "Success. No rows returned" (2026-09-16); checkpointing is live.
+Multi-step non-atomicity within a section (no real DB transaction across a
 section's own multiple writes) remains exactly as described — checkpointing tracks section-level
 completion, it does not make a section's own writes atomic. Mid-restore cancellation is backend-
 ready (`cancel_restore_run`) but has no UI trigger yet, deliberately deferred, not an oversight.
