@@ -263,6 +263,22 @@ migration since the new route already handles both old-anon-still-open and new-a
 identically from the frontend's perspective). **Migration NOT YET APPLIED** — this is item 2 in §5
 below.*
 
+**Migration 154 — Resumable backup restore checkpointing (D9 approved 2026-09-16)** (`a889b60`,
+`67b6cb6`, `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md` reconciled against E's exact spec): D9 shipped in
+two parts. **Part 1 (required-vs-optional distinction) is fully live in code already** — every
+reference in the restore path except a movement's own sku (schema-confirmed NOT NULL, migration 001) is
+now saved-without-it-plus-warning instead of failing the whole section, when restore mode is active; no
+migration needed, this part is pure application logic. **Part 2 (durable resumability) needs migration
+154**: `restore_runs`/`restore_run_sections` (extends the spec's schema with a `warnings text[]` column
+for part 1's new outcome type) + 4 RPCs (start-or-resume, update-section, finalize, cancel).
+`restoreFullBackupSnapshot`'s new `checkpoint` parameter is fully optional and backward compatible;
+`importBackup` (main.tsx) hashes the file, offers Resume vs Start Over on a prior incomplete run.
+**Deliberately not built**: a live mid-restore Cancel button — the backend fully supports cancellation,
+only the UI trigger is deferred (this app's restores are fast enough today that this isn't a P0). —
+*Implemented locally, Tests passed (migration_154's own canonical test drafted but NOT YET RUN — 23 new
+TS-side tests all passing), Deployed (frontend code only — degrades safely to a normal, non-checkpointed
+restore if this migration isn't live yet). **Migration NOT YET APPLIED** — this is item 3 in §5 below.*
+
 ## 5. Manual-action queue for E — one action at a time, in order
 
 **Item 1 (current): apply migration 152 (System Health alert wiring, D8 approved 2026-09-16).**
@@ -289,6 +305,21 @@ hardening — real `approval_ip`, verified `approval_email`; D12 approved 2026-0
   proposal-approval flow would break, since the frontend switch already shipped ahead of the grant
   closure. No functional dependency on migration 152 — the two are independent, this repo's convention
   is simply to apply in numeric order.
+- Once confirmed passing, update this section (move to item 3 below) and move this item from
+  "awaiting migration" to "confirmed live" in §3/§4.
+
+**Item 3 (queued next, do not run until item 2 is confirmed): apply migration 154 (resumable backup
+restore checkpointing; D9 approved 2026-09-16).**
+- File: `backend/supabase/migrations/154_backup_restore_checkpointing.sql`
+- Then run its canonical test: `backend/supabase/migration_154_backup_restore_checkpointing_tests.sql`
+  — same transaction-safe pattern, ends with "ALL MIGRATION 154 BACKUP RESTORE CHECKPOINTING TESTS
+  PASSED -- ZERO SECTIONS SKIPPED" or a hard error.
+- No functional dependency on 152/153 — independent, applied in numeric order per convention. The
+  frontend (already deployed, `67b6cb6`) degrades safely if this migration isn't live yet: `checkpoint`
+  is `null` whenever `startOrResumeRestoreRun` can't reach the RPC (not yet applied, network issue,
+  etc.), and `restoreFullBackupSnapshot`'s `checkpoint` parameter is fully optional — a restore run
+  before this migration is applied just runs exactly as it always has, with no resumability, not an
+  error.
 - Once confirmed passing, update this section back to "nothing queued" and move this item from
   "awaiting migration" to "confirmed live" in §3/§4.
 
@@ -368,45 +399,41 @@ here. Only D11/D13/D14/D15 remain genuinely gated on a future E decision.
 | Decision | Status |
 |---|---|
 | D5 — bundle-components | **APPROVED, FULLY CLOSED.** Remains reference-only, permanently — see §9. |
-| D6 — `xlsx` → `exceljs` | **APPROVED.** Build and test `exceljs` parity against the real supported import/export formats; replace `xlsx` when parity passes; if a specific format blocks replacement, document it and move on. See Queue R3. |
-| D9 — backup restore checkpointing | **APPROVED.** Resumable, per-section checkpointing; unresolved optional references produce visible, retryable warnings; required-data failures stop that section; never report full success while a section failed or was skipped. See Queue R3. |
+| D6 — `xlsx` → `exceljs` | **APPROVED, FULLY SHIPPED.** See §3/§9 — `13d9979`. |
+| D9 — backup restore checkpointing | **APPROVED, SHIPPED (two parts).** Part 1 (required-vs-optional) fully live in code. Part 2 (durable resumability) implemented, migration 154 is the one remaining manual action (§5 item 3). See §3/§4/§9. |
 | D12 (revised) — e-signature hardening | **APPROVED, FULLY SHIPPED.** See §3/§4/§5 — migration 153. |
-| D18 — frozen proposal PDF | **APPROVED.** Keep browser printing from the frozen snapshot for v1; improve print output and regression coverage where needed; no stored/server-generated PDF unless a real attachment/storage/integration requirement appears. See Queue R3. |
+| D18 — frozen proposal PDF | **APPROVED, FULLY SHIPPED.** See §3/§9 — `d92a114`. |
 | D11 — Phase 3 RLS | Still gated — 16-threat design complete, but blocked on the standing "discuss the process first" conversation. Not part of this authorization. |
 | D13/D14 — Support/Engineering modules | Still gated — placeholder scoping only, "what is this" itself still open. Not part of this authorization. |
 | D15 — Commercial SaaS billing | Still gated — explicitly deferred, no design work without an explicit go-ahead. Not part of this authorization. |
 
-## 8b. Queue R3 — approved, implementation in progress (D5/D6/D9/D12/D18)
+## 8b. Queue R3 — approved decisions (D5/D6/D9/D12/D18) — ALL IMPLEMENTED (2026-09-16)
 
-Ordered by dependency and risk, same discipline as Queue R1. D5 and D12 are already fully closed (§3/§4/§9)
-and not relisted here.
+Every item in this queue is now done. D5 and D12 were already fully closed (§3/§4/§9). D18, D6, and D9
+were built in this same pass, in this order:
 
-1. **D18 — proposal PDF: improve print output — DONE (2026-09-16, `d92a114`).** Three real,
-   traced gaps fixed: `.stack-table-mobile`'s own `@media (max-width: 760px)` rule (no `screen`
-   qualifier) could silently switch the BOM table to its mobile stacked-card layout during print, for
-   both the Proposal and Submittal pages sharing that class — forced back to a real table under print
-   regardless of width; status-colored banners/pills lost their background color under print in most
-   browsers by default — fixed with `print-color-adjust: exact`; the optional-BOM-line "Include"
-   checkbox is meaningless on paper — replaced with a print-only "Included"/"Not included" text
-   alternative. No dedicated regression test added (this repo has no visual/snapshot testing
-   infrastructure) — verification was `tsc -b`/eslint/build clean plus code review of the actual CSS
-   cascade, noted explicitly rather than silently claimed as "tested." **Exact next task: D6.**
-2. **D6 — `xlsx` → `exceljs` — this is the exact next task, reordered ahead of D9 (smaller, fully
-   independent, no migration, per this queue's own "smallest safe step first" discipline).**
-   `PRODUCT_XLSX_REPLACEMENT_EVALUATION.md` has the exhaustive trace (2 call sites, both read-only
-   client-side: `handleBomFileSelect`, `handleCatalogFileSelect`) and a migration outline. Per E's
-   approved spec: build and test parity against the real supported import/export formats; replace
-   `xlsx` when parity passes; if a specific format blocks replacement, document it and move to the
-   next task rather than blocking indefinitely. No migration — pure dependency swap + two call-site
-   rewrites.
-3. **D9 — backup restore: resumable per-section checkpointing.** Per E's approved spec: unresolved
-   *optional* references produce visible, retryable warnings; a *required*-data failure stops that
-   section (does not silently continue); never report full success while any section failed or was
-   skipped. `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md` has the full `restore_runs`/
-   `restore_run_sections` schema, deterministic retry key, resume/cancel behavior already designed
-   against the OLD "warned skip/retry for everything" framing (D9's original recorded direction) — needs
-   a pass reconciling it against the new required-vs-optional distinction before implementing verbatim,
-   not a blind copy. Needs a migration.
+1. **D18 — proposal PDF: improve print output — DONE (`d92a114`).** Three real, traced gaps fixed:
+   `.stack-table-mobile`'s own `@media (max-width: 760px)` rule (no `screen` qualifier) could silently
+   switch the BOM table to its mobile stacked-card layout during print — forced back to a real table
+   regardless of width; status-colored banners/pills lost their background color under print — fixed
+   with `print-color-adjust: exact`; the optional-BOM-line "Include" checkbox is meaningless on paper —
+   replaced with print-only text. No dedicated regression test (no visual/snapshot infra in this repo)
+   — verification was `tsc -b`/eslint/build clean plus code review, noted explicitly, not overclaimed.
+2. **D6 — `xlsx` → `exceljs` — DONE (`13d9979`).** Real parity proof before removing xlsx: both
+   libraries run side by side against synthetic workbooks covering every edge case the evaluation doc
+   named (blank cells, numeric-looking text, header-only file) — all matched, now a committed regression
+   suite (`src/xlsx-import.test.ts`, 7 tests), not a throwaway script. Found and fixed a real
+   transitive-dependency vulnerability (exceljs's own uuid@8.3.2) via a package.json `overrides` entry
+   instead of arguing it away — `npm audit` now reports 0 vulnerabilities, not 1 traded for another.
+   Honest cost noted: exceljs's own chunk (271KB gzip) is meaningfully larger than xlsx's was (143KB
+   gzip), still lazy-loaded only on actual use.
+3. **D9 — backup restore: resumable per-section checkpointing — DONE, two parts (`a889b60`,
+   `67b6cb6`).** Part 1 (required-vs-optional distinction) is pure application logic, no migration,
+   already fully live in code: every reference in the restore path except a movement's own sku
+   (schema-confirmed NOT NULL) now warns-and-saves-without-it instead of failing the whole section.
+   Part 2 (durable resumability) needs migration 154 (§4/§5 item 3) — `restore_runs`/
+   `restore_run_sections` + 4 RPCs, a Resume-vs-Start-Over prompt in `importBackup`. Mid-restore
+   cancellation is backend-ready but the UI trigger is deliberately deferred, flagged not hidden.
 
 ## 9. Sales workstream — batch reference (historical detail, current status only)
 
@@ -431,7 +458,7 @@ decision documents; this table is a status index, not a re-derivation.
 | 13. Client Q&A on a proposal | D16 | **SHIPPED** — §3 |
 | 14. Optional/alternate BOM lines | D17 | **SHIPPED** — §3 |
 | 15. Real e-signature | D12 (revised) | **APPROVED and SHIPPED as scoped** — typed-name acceptance stays v1; `approval_ip`/`approval_email` hardened (migration 153, §3/§4). No drawn signature/OTP/third-party service — not part of the approved scope. |
-| 16. Server-generated PDF | D18 | **APPROVED: keep `window.print()`, improve where needed** — §7 Queue R3 (print/regression improvements not yet started) |
+| 16. Server-generated PDF | D18 | **APPROVED and SHIPPED as scoped** — `window.print()` stays v1; three real print gaps fixed (`d92a114`). No server-generated PDF — not part of the approved scope. |
 
 ## 10. What this reconciliation pass changed
 
