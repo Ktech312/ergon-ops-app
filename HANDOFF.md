@@ -216,14 +216,29 @@ RLS does nothing to protect them since security-definer bypasses RLS by definiti
 hardened, the latter two also gaining the suspended-workspace check the original plan's own T8 called
 for and confirmed still missing.
 
-**Manual-action queue for E, current exact state: migration 155 is the current, sole item.**
-- File: `backend/supabase/migrations/155_phase3_clients_sales_workspace_rls.sql`
-- Then run its canonical test: `backend/supabase/migration_155_phase3_clients_sales_workspace_rls_tests.sql`
-  -- creates synthetic second/third workspaces only inside a rolled-back transaction, never persisted
-  -- ends with "ALL MIGRATION 155 PHASE 3 CLIENTS SALES WORKSPACE RLS TESTS PASSED -- ZERO SECTIONS
-  SKIPPED" or a hard error.
-- Zero expected visible production change -- exactly one real workspace exists today, so every
-  current user's workspace-membership check evaluates true for exactly the rows they already see.
+**Migration 155 CONFIRMED APPLIED and its canonical test PASSED in production (2026-09-17)** -- the
+test's own Section 5 had a real fixture-ordering bug (tried to insert a fresh row as a caller already
+moved to the suspended workspace; `guard_workspace_id_mutation()` correctly blocks every write,
+including INSERT, for a suspended-workspace caller, so the fixture creation itself failed before the
+read/write assertions could run) -- found on E's first live run, fixed same-day (`3a7692a`, test
+script only, migration 155 itself never touched), re-run clean.
+
+**Stage 2 (Projects/tasks) ownership half delivered**: migration 156 (`df9a6bf`) adds and backfills
+`projects.workspace_id`/`tasks.workspace_id`, mirroring migration 117's ownership-then-RLS pattern.
+Scope decided by revalidating the current FK graph against the standing authorization's own topical
+stage boundaries -- `project_documents` stays Stage 4, the four
+`project_shipment*`/`_shipping_addresses` tables stay Stage 3 ("receiving"),
+`project_schedule_templates`/`_phases` stay Stage 5 (no `project_id` column at all -- a global
+template library), `project_ref_counters` stays Stage 5 (a shared counter table).
+`tasks.workspace_id` derives from each task's own creator's workspace membership rather than
+fuzzy-matching the loose `project_ref` text column (`tasks` has no real FK to `projects`) -- a
+mechanical extension of the existing ownership-trigger pattern. **Migration 156 CONFIRMED APPLIED and
+its canonical test PASSED in production (2026-09-17).** Stage 2's RLS half (the access-restriction
+migration for `projects`/`tasks` and their child tables, mirroring migration 155 for Clients+Sales) is
+not yet written -- next automatic task.
+
+**Manual-action queue for E, current exact state: EMPTY.** Migrations 155 and 156 are both confirmed
+applied and their canonical tests both passed in production, 2026-09-17.
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
