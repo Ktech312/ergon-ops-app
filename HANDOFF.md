@@ -233,12 +233,31 @@ template library), `project_ref_counters` stays Stage 5 (a shared counter table)
 `tasks.workspace_id` derives from each task's own creator's workspace membership rather than
 fuzzy-matching the loose `project_ref` text column (`tasks` has no real FK to `projects`) -- a
 mechanical extension of the existing ownership-trigger pattern. **Migration 156 CONFIRMED APPLIED and
-its canonical test PASSED in production (2026-09-17).** Stage 2's RLS half (the access-restriction
-migration for `projects`/`tasks` and their child tables, mirroring migration 155 for Clients+Sales) is
-not yet written -- next automatic task.
+its canonical test PASSED in production (2026-09-17).**
 
-**Manual-action queue for E, current exact state: EMPTY.** Migrations 155 and 156 are both confirmed
-applied and their canonical tests both passed in production, 2026-09-17.
+**Stage 2's RLS half delivered**: migration 157 (`faee9d6`) adds workspace-scoped RLS to the 14-table
+Projects/Tasks ownership graph. Preserves every existing access rule found by direct read:
+`projects`/`project_scope_of_work`/`project_bom_lines` keep their pm/admin role-gated write policies
+(migration 023), ANDed with the workspace check; `project_submittals` stays SELECT-only (RPC-only
+writes since migration 144); `task_activity_log` keeps its append-only shape;
+`project_conversion_receipts` is left completely untouched (already maximally locked down,
+migration 127). Hardens 3 security-definer RPCs with zero caller-workspace check
+(`create_and_send_submittal_version`, `get_submittal_by_token`, `respond_to_submittal` -- the latter
+two also gain the suspended-workspace check). No `active_workspace_id()` landmine here -- these two
+RPCs are submittal-only, not shared with proposals. **Migration 157 CONFIRMED APPLIED and its
+canonical test PASSED in production (2026-09-17)** -- the test needed two same-day fixes: a `RAISE`
+call missing its argument plus a wrong `cmd='ALL'` policy check (`fd39b66`), then a real
+fixture-ordering bug where `create_and_send_submittal_version`'s own supersession side effect flipped
+a token's status before a later section could test it (`ad18ef8`) -- migration 157 itself was never
+touched. **Stage 2 (Projects/Tasks) is now fully shipped end-to-end.**
+
+Deferred to migration 158, next automatic task: retiring `active_workspace_id()` from the RPCs shared
+between Submittals and Proposals (`regenerate_share_link`, `permanently_revoke_share_link`) -- now
+safely fixable since both `projects.workspace_id` and `sales_quotes.workspace_id` are live, but needs
+its own focused pass.
+
+**Manual-action queue for E, current exact state: EMPTY.** Migrations 155, 156, and 157 are all
+confirmed applied and their canonical tests all passed in production, 2026-09-17.
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
