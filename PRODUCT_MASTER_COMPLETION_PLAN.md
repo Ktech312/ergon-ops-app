@@ -9,10 +9,11 @@
 Status: **AUTHORITATIVE, RECONCILED 2026-09-17** (D5/D6/D8/D9/D12/D18 shipped; standing authorization
 given for the full Phase 3 rollout, D11/D13/D14 now approved, see §11 — Stages 1 and 2 (Clients+Sales,
 Projects+Tasks; migrations 155/156/157) plus the cross-cutting `active_workspace_id()` cleanup
-(migration 158) are all confirmed applied and tested live; manual-action queue empty; Stage 3
-(Purchasing/Inventory) scoping is next) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's
+(migration 158) are all confirmed applied and tested live; Stage 3 (Purchasing/Inventory/Vendors/
+Warehouses) ownership migration 159 is implemented locally and queued as the current manual-action
+item, awaiting application) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's
 full D1-D18 decision register, every applied migration (115
-through 158), and
+through 158, plus 159 pending), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
 document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
@@ -347,14 +348,25 @@ Phase 3's cross-cutting cleanup is now fully shipped end-to-end.*
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-Nothing currently queued here — migration 158 is confirmed applied, tested, and deployed; see §3
-above.
+**Migration 159** (`backend/supabase/migrations/159_phase3_purchasing_inventory_workspace_ownership.sql`,
+commit `f9a5d33`) — Phase 3 Stage 3 ownership half. Adds real, trigger-enforced `workspace_id` to the
+seven root tables of the Purchasing/Inventory/Vendors/Warehouses domain (`vendors`, `locations`,
+`inventory_items`, `purchase_orders`, `purchase_requests`, `equipment_types`, `build_transactions`),
+backfills every existing row, and retires `save_equipment_recipe()`'s `active_workspace_id()`
+fail-closed guard in favor of real per-caller workspace containment — the exact retirement migration
+158 predicted as pending for this stage. RLS on all seven tables is deliberately untouched (still
+exactly what migration 023 left it, whether `using(true)` or role-gated); that tightening is migration
+160, next. Canonical test:
+`backend/supabase/migration_159_phase3_purchasing_inventory_workspace_ownership_tests.sql`. Not yet
+applied — queued below.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Nothing queued.** Migrations 155, 156, 157, and 158 are all confirmed applied and their canonical
-tests all passed in production, 2026-09-17. Stage 3 (Purchasing/Inventory) scoping is next.
-Next after migration 158: Stage 3 (Purchasing/Inventory) scoping.
+**One item queued: apply migration 159**
+(`backend/supabase/migrations/159_phase3_purchasing_inventory_workspace_ownership.sql`), then run its
+canonical test (`backend/supabase/migration_159_phase3_purchasing_inventory_workspace_ownership_tests.sql`).
+Migrations 155, 156, 157, and 158 are all confirmed applied and their canonical tests all passed in
+production, 2026-09-17. After 159 is confirmed, migration 160 (Stage 3 RLS) is next.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
@@ -541,7 +553,19 @@ production, 2026-09-17. See §3. `active_workspace_id()` itself remains in use b
 admin-role bridge and by `save_equipment_recipe()`/`replace_project_bom_lines()` (`equipment_types`
 has no `workspace_id` yet) — genuinely still needed
 there, not an oversight.
-3. **Purchasing, inventory, vendors, warehouses, and receiving — NOT STARTED.**
+3. **Purchasing, inventory, vendors, warehouses, and receiving — IN PROGRESS.** Ownership migration
+   159 (`f9a5d33`) implemented locally and queued for E's review (see §4/§5) — adds `workspace_id` to
+   the seven root tables (`vendors`, `locations`, `inventory_items`, `purchase_orders`,
+   `purchase_requests`, `equipment_types`, `build_transactions`) and retires
+   `save_equipment_recipe()`'s `active_workspace_id()` guard. Scope confirmed by direct schema read
+   (not assumed from this tracker's own earlier text): `purchase_order_lines`/`_files`/`_receipts`/
+   `_holds`, `inventory_balances`, `inventory_movements`, `inventory_transactions`,
+   `project_inventory_allocations`, `project_allocation_history`, `equipment_bom_components` inherit
+   ownership through their FK (no new column) — RLS for the whole group, including these children, is
+   migration 160, next. Deliberately excluded on inspection (topical match, not FK-graph inclusion):
+   the four `project_shipment*`/`_shipping_addresses` tables, re-scoped from this stage to Stage 4
+   (Documents/Notifications) after direct read showed they carry no purchasing/inventory data of their
+   own.
 4. **Documents, notifications, channels, jobs, share-link records, and storage — NOT STARTED.**
 5. **Workspace-scoped uniqueness, reports, aggregates, functions, triggers, and remaining indirect
    access paths — NOT STARTED.**
@@ -559,8 +583,11 @@ one `workspaces` row to exist in the whole database — used by several RPCs pre
 tables THEY touch (`equipment_types`, `projects`, `project_submittals`) don't have their own
 `workspace_id` yet. This is not a bug to fix once; it is retired incrementally, one call site at a
 time, as each table group above gains real per-row workspace ownership:
-- Stage 2 (Projects/BOM) should retire the guard inside `save_equipment_recipe` (migration 130) and
-  `replace_project_bom_lines` (migration 131), once `projects`/`equipment_types` have `workspace_id`.
+- `save_equipment_recipe` (migration 130) — **DONE**, migration 159 retires this call site now that
+  `equipment_types` has real `workspace_id`. `replace_project_bom_lines` (migration 131) still calls
+  `active_workspace_id()`, but only incidentally (reads `inventory_items` for name/id resolution) —
+  its own guard belongs to `project_bom_lines`, already workspace-owned since Stage 2; revisit whether
+  that guard is still needed once Stage 3 is fully reconciled.
 - Stage 2 should also retire the guard inside the SUBMITTAL-side branches of the share-link RPCs
   (`create_and_send_submittal_version`, `regenerate_share_link`, `permanently_revoke_share_link`,
   and their reissue/expiry paths, migrations 138-140) — these are shared with Proposals, which is why
