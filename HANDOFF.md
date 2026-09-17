@@ -53,11 +53,15 @@ now sees exactly what happens. `tsc -b` clean, 431/431 Vitest, `eslint` 0 errors
 and verified live via Claude-in-Chrome (opened Add Product, switched Item type to Bundle, confirmed the
 disclaimer renders correctly, cancelled without saving -- no real catalog data touched).
 
-**Consolidated decision document delivered 2026-09-15, not yet approved:**
-`PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` traces and designs both frozen proposal PDF
+**Consolidated decision document delivered 2026-09-15; both decisions APPROVED and SHIPPED 2026-09-16
+(see the dated entry below) -- this paragraph is now historical.**
+`PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` traced and designed both frozen proposal PDF
 generation/download (D18) and e-signature scope/legal-record/signer-identity/completion-behavior (D12,
-revised). Nothing implemented -- recommended defaults only, awaiting approval. Reconciles/replaces D12's
-old one-line placeholder in `CONTINUOUS_CODER_HANDOFF.md` §8; D18 is a new row there.
+revised). At the time this paragraph was written nothing was implemented; both were approved under a
+standing authorization the next day and are now fully shipped -- D18 via `d92a114` (no migration), D12
+via migration 153 (`eecb8b1`, migration itself not yet applied -- see the manual-action queue below).
+Reconciles/replaces D12's old one-line placeholder in `CONTINUOUS_CODER_HANDOFF.md` §8; D18's row there
+is also now closed.
 
 **Master plan reconciled + Queue R1 items 1 and 3 (System Health Phase B, accessibility) delivered,
 same session, later same day (2026-09-15).** `PRODUCT_MASTER_COMPLETION_PLAN.md` is now the
@@ -114,11 +118,96 @@ Queue R1 (safe autonomous work) without stopping to ask again:
   "spanning >=5 minutes" clause -- flagged as needing a spec-precision pass from E, not a mechanical
   follow-up.
 - **Queue R1 (the safe autonomous queue) is now fully exhausted -- every item that could be built
-  without a business decision or spec clarification has been built, tested, and deployed.** What's
-  left: System Health step 5 (blocked on the spec question above) or Queue R2 (entirely decision-gated,
-  blocked on E -- D9/D6/D12/D18/D5's remainder). No new "safe autonomous" scope should be invented
-  without a real cited design doc or audit finding backing it, per
-  `PRODUCT_MASTER_COMPLETION_PLAN.md` §7's own closing note.
+  without a business decision or spec clarification has been built, tested, and deployed.** What was
+  left at the time: System Health step 5 (blocked on the spec question above) or Queue R2 (entirely
+  decision-gated, blocked on E -- D9/D6/D12/D18/D5's remainder). **This was resolved later the same
+  day -- see the dated entry immediately below; do not treat this paragraph's "blocked on E" framing
+  as current.**
+
+**2026-09-16, later same day: standing authorization given, Queue R2/R3 (D5/D6/D8/D9/D12/D18) all
+implemented, tested, committed, and deployed. `PRODUCT_MASTER_COMPLETION_PLAN.md` §3, §4, §5, §8, and
+§8b are the authoritative current state -- this is the session summary and pointer.** E gave a
+standing authorization to build through the full completion roadmap without stopping to ask after
+each item. Delivered, in this order:
+- **D8 -- System Health alert wiring.** Migration 152 (`c6de0fa` + follow-ups): new `alerted_at`
+  column; `record_system_health_event`'s return type changed to jsonb (event_id + alert_worthy +
+  admin_emails); new `record_system_health_recovery`/`list_admin_emails` RPCs. Alerts all workspace
+  admins after 3 consecutive failures for the same workspace/component (first-to-latest span >=5
+  minutes), one alert per incident, suppressed until recovery, durable record, recovery notice on
+  success -- resolving the exact spec-precision gap flagged above. Application layer deployed:
+  `api/send-system-health-alert.js` (browser-triggered call sites), `api/_lib/systemHealth.js`
+  extended for the 3 server-side call sites, `persistence.ts`'s `recordSystemHealthEvent`/new
+  `recordSystemHealthRecovery`; all 4 original failure call sites now also call recovery on their
+  success path. 18 new/updated TS-side tests passing. **Migration 152 CONFIRMED APPLIED in
+  production** -- E ran it and its canonical test in Supabase Studio and both returned "Success. No
+  rows returned" (2026-09-16). D8 is fully shipped end-to-end, no longer in the manual-action queue.
+- **D9 -- backup restore resumable checkpointing (two parts).** Part 1 (required-vs-optional
+  distinction): unresolved optional references now warn and continue instead of failing the whole
+  section; required-data failures still stop that section. Pure application logic, no migration
+  needed, already fully live (`a889b60`). Part 2 (durable resumability): migration 154 --
+  `restore_runs`/`restore_run_sections` tables + 4 RPCs (start-or-resume, update-section, finalize,
+  cancel); `restoreFullBackupSnapshot`'s new `checkpoint` parameter is fully optional and backward
+  compatible; `importBackup` hashes the file and offers Resume vs Start Over on a prior incomplete run
+  (`67b6cb6`). 23 new TS-side tests passing. Deployed in degraded-safe mode -- runs as a normal,
+  non-resumable restore until migration 154 is live. A live mid-restore Cancel button is deliberately
+  not built (backend supports cancellation; only the UI trigger is deferred, not a P0). **Migration
+  154 NOT YET APPLIED** -- manual-action-queue item 2 below, do not run until item 1 is confirmed.
+- **D6 -- `xlsx` -> `exceljs` replacement.** No migration, pure npm/frontend change. Parity-tested via
+  a real side-by-side comparison script against synthetic workbooks (blank cells, numeric-looking
+  text, header-only file) covering every edge case `PRODUCT_XLSX_REPLACEMENT_EVALUATION.md` named --
+  all matched, now a committed regression suite (`src/xlsx-import.test.ts`, 7 tests). `xlsx` fully
+  removed from `package.json`; a real transitive vulnerability in `exceljs`'s own `uuid@8.3.2` fixed
+  via a `package.json` "overrides" pin -- `npm audit` now reports 0 vulnerabilities, not 1 traded for
+  another. Honest cost noted: `exceljs`'s own chunk (271KB gzip) is larger than `xlsx`'s was (143KB
+  gzip), still lazy-loaded only on actual use. Fully shipped, deployed (`13d9979`).
+- **D12 -- proposal acceptance hardening (revised e-signature scope).** Migration 153 (`eecb8b1`):
+  fixed the dead `approval_ip` behavior using the server-observed request IP (Vercel's
+  `x-forwarded-for`, via new `api/respond-to-proposal.js`, never trusting a client-supplied value);
+  added verified `approval_email`, server-derived from the proposal's own `client_email`, not a client
+  parameter; `respond_to_quote_proposal`'s `anon` direct-call grant revoked by the migration.
+  Typed-name acceptance remains the v1 signature model -- explicitly not a regulated e-signature
+  product, no drawn signature, no third-party integration, no OTP/click-through step. Frontend already
+  deployed and is the only path now (`respondToPublicQuoteProposal` no longer calls the RPC directly).
+  11 new/updated TS-side tests passing. **Migration 153 NOT YET APPLIED** -- manual-action-queue item
+  1 below, the current next task.
+- **D18 -- proposal PDF.** No migration, pure frontend (`d92a114`). Kept `window.print()` from the
+  frozen proposal snapshot as the v1 approach -- explicitly decided NOT to build a
+  server-generated/stored PDF pipeline, since no attachment/storage/integration requirement exists to
+  justify one. Fixed three real print-CSS gaps instead: colors not printing under print
+  (`print-color-adjust: exact`); a stacked-table layout bug shared between the proposal BOM table and
+  the unrelated Submittal page (both use `.stack-table-mobile`); interactive checkboxes replaced with
+  a plain-text "Included"/"Not included" fallback under print (an on-screen checkbox is meaningless on
+  paper). No dedicated regression test (no visual/snapshot infra in this repo) -- verification was
+  `tsc -b`/eslint/build clean plus code review, stated plainly, not overclaimed. Fully shipped,
+  deployed.
+- **D5 -- bundle components.** Remains reference-only per the standing 2026-09-16 decision -- no
+  change needed this pass, confirmed still correctly marked that way in both
+  `PRODUCT_MASTER_COMPLETION_PLAN.md` §9 and `CONTINUOUS_CODER_HANDOFF.md` §8's own D5 row.
+
+**Manual-action queue for E, current exact state (see `PRODUCT_MASTER_COMPLETION_PLAN.md` §5 for the
+authoritative version):**
+- Migration 152 (D8, System Health alert wiring): **DONE.** Confirmed applied and its canonical test
+  passed in production 2026-09-16. No longer queued.
+- **Item 1 (current, next one-at-a-time Supabase SQL action): apply migration 153** (proposal
+  acceptance hardening -- real `approval_ip`, verified `approval_email`; D12).
+  - File: `backend/supabase/migrations/153_proposal_acceptance_ip_and_email.sql`
+  - Then run its canonical test: `backend/supabase/migration_153_proposal_acceptance_ip_and_email_tests.sql`
+    -- same transaction-safe pattern, ends with "ALL MIGRATION 153 PROPOSAL ACCEPTANCE TESTS PASSED --
+    ZERO SECTIONS SKIPPED" or a hard error.
+  - This migration revokes `anon`'s direct-call grant on `respond_to_quote_proposal`. The frontend
+    (already deployed, `eecb8b1`) already calls the new `api/respond-to-proposal.js` route instead of
+    the RPC directly, so this is safe to apply as soon as E is ready -- there is no window where the
+    live proposal-approval flow would break.
+- **Item 2 (queued next, do not run until item 1 is confirmed): apply migration 154** (resumable
+  backup restore checkpointing; D9).
+  - File: `backend/supabase/migrations/154_backup_restore_checkpointing.sql`
+  - Then run its canonical test: `backend/supabase/migration_154_backup_restore_checkpointing_tests.sql`
+    -- same transaction-safe pattern, ends with "ALL MIGRATION 154 BACKUP RESTORE CHECKPOINTING TESTS
+    PASSED -- ZERO SECTIONS SKIPPED" or a hard error.
+  - No functional dependency on 152/153 -- independent, applied in numeric order per this repo's
+    convention. The frontend (already deployed, `67b6cb6`) degrades safely if this migration isn't
+    live yet -- a restore run before it's applied just runs exactly as it always has, with no
+    resumability, not an error.
 
 Billing (D15) and Phase 3 RLS (D11) remain untouched and unstarted, as instructed. See "Current database
 gate" below for Queue C2's own full history, including migration 140's real bug (ambiguous `token`

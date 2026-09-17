@@ -227,10 +227,53 @@ schema doesn't track and has a genuinely ambiguous "spanning ≥5 minutes" claus
 spec-precision pass from E, not a mechanical follow-up.
 
 **Queue R1 is now fully exhausted as of 2026-09-16 — every safe-autonomous item is done.** Do not
-invent new Queue R1-style scope without a real cited design doc/audit finding backing it. The only
-remaining work is Queue R2 (entirely decision-gated, blocked on E) or System Health step 5 (blocked on
-a spec clarification). Do not rerun/re-derive any of the above; do not re-litigate D12/D18 (open,
-awaiting E) or D3/D4 (already fixed, see this file's own D-register below).
+invent new Queue R1-style scope without a real cited design doc/audit finding backing it. Historical
+note only — the paragraph above described D12/D18 as still awaiting E; they were approved and shipped
+later the same day, see the next entry.
+
+**2026-09-16, later same day: standing authorization given, Queue R2/R3 (D5/D6/D8/D9/D12/D18) all
+implemented, tested, committed, and deployed. See `PRODUCT_MASTER_COMPLETION_PLAN.md` §3, §4, §5,
+§8, and §8b for the authoritative current state — this is the short pointer.** E gave a standing
+authorization to build through the full completion roadmap without stopping to ask after each item.
+Under that authorization: **D8 (System Health alert wiring)** — migration 152 (`c6de0fa` + follow-ups):
+`alerted_at` column, `record_system_health_event` return type changed to jsonb, new
+`record_system_health_recovery`/`list_admin_emails` RPCs, `api/send-system-health-alert.js`,
+`api/_lib/systemHealth.js` extended for server-side call sites, all 4 original failure call sites also
+call recovery on success. **Migration 152 is CONFIRMED APPLIED in production** — E ran it and its
+canonical test in Supabase Studio and both returned "Success. No rows returned" (2026-09-16). D8 is
+fully shipped end-to-end, no longer in the manual-action queue. **D9 (backup restore resumable
+checkpointing)** — migration 154 (`a889b60`, `67b6cb6`): Part 1 (required-vs-optional distinction) is
+pure application logic, already fully live, no migration needed. Part 2 (durable per-section
+checkpointing via `restore_runs`/`restore_run_sections` + 4 RPCs) is implemented locally, 23 new tests
+passing, deployed in degraded-safe mode (runs as a normal non-resumable restore until the migration is
+live) — **migration 154 itself is NOT YET applied**, it is manual-action-queue item 2 (after 153).
+**D6 (`xlsx` → `exceljs`)** — no migration, pure npm/frontend change: parity-tested via a real
+side-by-side comparison, locked into a permanent regression test (`src/xlsx-import.test.ts`); `xlsx`
+fully removed from `package.json`, `exceljs` added with a `package.json` "overrides" pin on its
+transitive `uuid` dependency, `npm audit` now 0 vulnerabilities. Fully shipped, deployed. **D12
+(proposal acceptance hardening)** — migration 153 (`eecb8b1`): fixed the dead `approval_ip` behavior
+using the server-observed request IP (`x-forwarded-for` via new `api/respond-to-proposal.js`, never
+trusting client-supplied IP), added verified `approval_email` (server-derived from the proposal's own
+`client_email`, not a client parameter). Typed-name acceptance remains the v1 signature model —
+explicitly not a regulated e-signature product. Frontend already deployed and switched to the new API
+route. **Migration 153 is NOT YET applied** — it is now manual-action-queue item 1 (renumbered from
+item 2, since migration 152 is done). **D18 (proposal PDF)** — no migration, pure frontend (`d92a114`):
+kept `window.print()` from the frozen proposal snapshot as the v1 approach (explicitly decided NOT to
+build a server-generated/stored PDF pipeline — no attachment/storage/integration requirement exists to
+justify it); fixed three real print-CSS gaps (colors not printing via `print-color-adjust: exact`; the
+`.stack-table-mobile` stacked-layout bug shared between the proposal BOM table and the unrelated
+Submittal page; interactive checkboxes replaced with a plain-text "Included"/"Not included" fallback
+under print). Fully shipped, deployed. **D5 (bundle components) remains reference-only per standing
+decision** — no change needed, confirmed still correctly marked that way (§9 of the master plan, D5's
+own row in this file's D-register above, unchanged).
+**Manual-action queue, current exact state**: migration 152 DONE, no longer queued. **Item 1
+(current)**: apply migration 153
+(`backend/supabase/migrations/153_proposal_acceptance_ip_and_email.sql`), then its test
+(`backend/supabase/migration_153_proposal_acceptance_ip_and_email_tests.sql`). **Item 2 (do not run
+until item 1 confirmed)**: apply migration 154
+(`backend/supabase/migrations/154_backup_restore_checkpointing.sql`), then its test
+(`backend/supabase/migration_154_backup_restore_checkpointing_tests.sql`). Do not re-litigate
+D5/D6/D8/D9/D12/D18 (table further above) or rerun migration 152.
 
 The pricing statement E approved 2026-09-13:
 
@@ -681,12 +724,14 @@ separate evidence. Do not call one a substitute for another.
 
 ## 4. Current production baseline
 
-**As of 2026-09-16: `PRODUCT_MASTER_COMPLETION_PLAN.md` §3 is now the authoritative, current
-"completed and live" list (migration range 115-151, D3/D4/D16/D17, Queue C2, Sales pricing,
-accessibility batch) — prefer it over re-deriving status from the bullets below, which stop at
-migration 145/the 2026-09-12/13 session and were not individually rewritten in this pass. Migration
-151 (System Health Phase B) is now applied and its canonical test confirmed passing — the
-manual-action queue (§5) is empty again.**
+**As of 2026-09-16 (later same day): `PRODUCT_MASTER_COMPLETION_PLAN.md` §3 is now the authoritative,
+current "completed and live" list (migration range 115-151, plus 152; D3/D4/D5/D6/D8/D9(part 1)/D12/
+D16/D17/D18, Queue C2, Sales pricing, accessibility batch) — prefer it over re-deriving status from the
+bullets below, which stop at migration 145/the 2026-09-12/13 session and were not individually
+rewritten in this pass. Migration 151 (System Health Phase B) and migration 152 (System Health alert
+wiring, D8) are both applied and their canonical tests confirmed passing. **The manual-action queue
+(§5) now has two items**: migration 153 (D12, proposal acceptance hardening) is current; migration 154
+(D9 part 2, backup restore checkpointing) is queued next, not to be run until 153 is confirmed.**
 
 The next coder should verify this baseline before editing rather than redoing completed work:
 
@@ -1283,19 +1328,19 @@ Queue A/B work.
 | D3 | **APPROVED 2026-09-15.** Add a human-readable quote reference to Projects, and what column name? | Added nullable `source_quote_ref`; kept `source_sales_quote_id` as the durable link | **FULLY CLOSED (2026-09-15)** -- migration 146 applied and its canonical test passed, frontend shipped (`3d8452d`). No open items. |
 | D4 | **APPROVED 2026-09-15.** Customer pricing detail and approval threshold | A configurable per-workspace discount-approval gate (disabled by default, 10% default threshold, Sales Manager/admin only, never PM), reusing the existing Catalog Price Change Requests propose/review/approve pattern | **FULLY CLOSED (2026-09-15)** -- migration 147 applied (canonical test caught two real live-data test-fixture bugs, both fixed test-script-only, migration 147 itself never touched); frontend (`requestOrSendQuoteProposalVersion`, Admin settings panel, Approval Requests review queue, pending-approval indicator) shipped (`f0bc686`). No open items. |
 | D5 | **APPROVED 2026-09-16 — PERMANENT, no further work planned.** `bundle_components`: expand into real lines or relabel as notes? | **Remains reference-only, permanently** — the interim relabel shipped 2026-09-15 (`8b4a6b6`, "Reference only -- listing components here doesn't add them to a quote's BOM automatically") is now the final, confirmed behavior, not a stopgap. Full BOM-line explosion will not be built. | **FULLY CLOSED (2026-09-16).** No open items. |
-| D6 | `xlsx` dependency | Replace with `exceljs` after a real-file proof of both import paths | Dependency remediation |
+| D6 | **APPROVED 2026-09-16 (Queue R2/R3), FULLY SHIPPED.** `xlsx` dependency | Replaced with `exceljs` after a real side-by-side parity proof against synthetic workbooks (blank cells, numeric-looking text, header-only files) — now a committed regression suite (`src/xlsx-import.test.ts`, 7 tests); `xlsx` fully removed from `package.json`; a real transitive `uuid` vulnerability pulled in by `exceljs` fixed via a `package.json` "overrides" pin, `npm audit` now reports 0 vulnerabilities | **FULLY CLOSED (2026-09-16)** -- `13d9979`. No migration involved, pure npm/frontend change. No open items. |
 | D7 | **Already decided:** Share-link policies | Use the eight recorded decisions and seven follow-up decisions in the canonical share-link document; do not ask E to decide them again | Stage 2 schema/review, not a missing policy answer |
-| D8 | System Health down alert recipients/channel | Email every workspace admin by default; later allow a configurable on-call list/channels | System Health alerting |
-| D9 | Backup restore unresolved references | Allow a clearly warned per-section skip/retry during restore; live entry remains strict | Restore checkpointing |
+| D8 | **APPROVED 2026-09-16 (System Health alert wiring, including the threshold-timing spec-precision pass Queue R1 item 1 flagged).** Down-alert recipients/channel, and the exact "3 consecutive failures spanning ≥5 minutes" occurrence-timing rule | Email every workspace admin by default (on-call list/channels remain a later config option, not built); alert all workspace admins after 3 consecutive failures for the same workspace/component (first-to-latest span ≥5 minutes), one alert per incident, suppressed until recovery, durable record, recovery notice on success | **FULLY CLOSED (2026-09-16)** -- migration 152 (`c6de0fa` + follow-ups): new `record_system_health_recovery`/`list_admin_emails` RPCs, `record_system_health_event` return type changed to jsonb, `api/send-system-health-alert.js`, `api/_lib/systemHealth.js` extended for server-side call sites, all 4 original failure call sites now also call recovery on success. Migration applied and its canonical test PASSED in production 2026-09-16 ("Success. No rows returned" for both, E confirmed). No open items. |
+| D9 | **APPROVED 2026-09-16 (Queue R2/R3), SHIPPED IN TWO PARTS.** Backup restore unresolved references + resumable checkpointing | Part 1: unresolved optional references warn and continue during restore (per-reference, not whole-section); required-data failures still stop that section; live manual entry remains strict. Part 2: durable per-section checkpointing (`restore_runs`/`restore_run_sections` + 4 RPCs — start-or-resume, update-section, finalize, cancel), a Resume-vs-Start-Over prompt in `importBackup`; mid-restore Cancel button deliberately deferred (backend-ready, no UI trigger yet) | Part 1 **FULLY CLOSED (2026-09-16)** -- `a889b60`, pure application logic, no migration needed, already live. Part 2 **implemented locally, tested (23 new tests), deployed in degraded-safe mode** (`67b6cb6`) -- runs as a normal non-resumable restore until migration 154 is live. **Migration 154 NOT YET APPLIED** -- manual-action-queue item 2 (do not run until migration 153 is confirmed). |
 | D10 | Inventory pagination UX | A12 first removes silent truncation transparently; later use server-side search + cursor pagination while preserving selected rows | Later UI/performance work, not A12 correctness |
 | D11 | **Already established process:** Phase 3 RLS rollout | Discuss first, then review and approve one complete table group at a time; Clients/Sales Quote graph first | Tenant isolation/onboarding implementation discussion |
-| D12 | **Traced and designed 2026-09-15, not yet approved.** E-signature scope, legal record, signer identity, completion behavior | Keep typed-acceptance (no drawn signature, no third-party integration); fix the currently-dead `approval_ip` capture (stored today but the client always sends `""`, never a real value); add `approval_email`, pre-filled/verified against the proposal's existing `client_email`; no OTP/click-through step by default; no new completion-time side effects unless D18 is separately approved. See `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §2 for the full trace and reasoning | E-signature hardening work |
+| D12 | **APPROVED 2026-09-16 (revised scope), FULLY SHIPPED.** E-signature scope, legal record, signer identity, completion behavior | Kept typed-name acceptance (no drawn signature, no third-party e-signature integration — explicitly not a regulated e-signature product); fixed the previously-dead `approval_ip` capture using the server-observed request IP (Vercel's `x-forwarded-for`, via new `api/respond-to-proposal.js`, never trusting a client-supplied value); added verified `approval_email`, server-derived from the proposal's own `client_email`, not a client parameter; no OTP/click-through step. See `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §2 for the full trace and reasoning | **APPROVED, FULLY SHIPPED** -- migration 153 (`eecb8b1`): new `approval_email` column, `respond_to_quote_proposal`'s `anon` direct-call grant revoked; `api/respond-to-proposal.js` already deployed and is the frontend's only path now (11 new/updated TS-side tests passing). **Migration 153 NOT YET APPLIED** -- manual-action-queue item 1 (current). |
 | D13 | Support first release | Ticket/request lifecycle linked to Client Ledger, Project, site, and installed asset | Support module |
 | D14 | Engineering first release | Product/solution request + technical review + Catalog release link | Engineering module |
 | D15 | **Already decided for now:** Commercial SaaS billing | Remains deferred until explicit authorization; do not ask again during current operational-product work | SaaS commercialization only |
 | D16 | **APPROVED 2026-09-15, with corrections to the recommended default.** Client Proposal Q&A: mechanism, scope, who may answer | Dedicated `sales_quote_proposal_questions` table + two token/role-gated RPCs (not `channels`); **scoped to one proposal VERSION, not the quote** (E overrode the recommended default here); Sales/manager/admin may answer, PM has no proposal authority; notify the quote's owner (was deferred in the original recommendation, E requires it); history becomes read-only after approval/rejection/supersession/expiration/disablement/revocation (NOT after revision_requested, which stays open) | **FULLY CLOSED (2026-09-15)** -- migration 149 + corrective migration 150 (real ambiguous-column bug, test-caught) + canonical test all confirmed, frontend shipped (`997ec7b`). No open items. |
 | D17 | **APPROVED 2026-09-15, with corrections to the recommended default.** Optional BOM lines: default inclusion state, response semantics | `is_optional` boolean; required lines always included; **optional lines begin UNSELECTED** (E overrode the recommended included-by-default); client selects while reviewing; live recompute from the frozen snapshot; selected line IDs + final totals stored atomically with the response, server-computed, never trusted from the client; immutable after response, a new version is required to change it. **Do not call these "alternates"** -- mutually-exclusive alternate groups are an explicitly separate, later, still-undecided product decision | **FULLY CLOSED (2026-09-15)** -- migration 148 + canonical test confirmed applied, frontend shipped (`2fc3a6e`). No open items. |
-| D18 | **Traced and designed 2026-09-15, not yet approved.** Frozen proposal PDF: build a server-generated pipeline, or keep `window.print()` | Keep `window.print()` (already reads the correct frozen `content_snapshot`, already has a dedicated print stylesheet); only build a server pipeline (`@react-pdf/renderer` recommended for Vercel serverless fit) if the business confirms a concrete need a browser "Save as PDF" can't meet -- a stored canonical file, an email-attachment step, or an external system needing a real file. See `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §1 for the full trace and reasoning | PDF-generation implementation |
+| D18 | **APPROVED 2026-09-16, FULLY SHIPPED.** Frozen proposal PDF: build a server-generated pipeline, or keep `window.print()` | Kept `window.print()` as v1 (already read the correct frozen `content_snapshot`, already had a dedicated print stylesheet; no server pipeline built -- no concrete need a browser "Save as PDF" can't meet has emerged: no stored-canonical-file, email-attachment, or external-system requirement exists). Fixed three real print-CSS gaps instead: colors not printing (`print-color-adjust: exact`), a `.stack-table-mobile` stacked-layout bug shared between the proposal BOM table and the unrelated Submittal page, and the optional-BOM-line "Include" checkbox (meaningless on paper) replaced with print-only "Included"/"Not included" text. See `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §1 for the full trace and reasoning | **FULLY CLOSED (2026-09-16)** -- `d92a114`. No migration involved. No open items. |
 
 ### Manual database actions
 
@@ -1503,3 +1548,10 @@ switch, and the version-comparison status badge are all shipped and deployed. **
 resend any of this.** Treat A1–A15, B1–B10, C1, and C2.1–C2.7 as completed records, not a queue with
 open items. Move to Queue B/C's other prepared-but-not-implemented items, or a new task from E, for
 the next unit of work.
+
+**Update, 2026-09-16 (later same day):** the above remains true and is now further superseded by the
+Queue R2/R3 batch described in the launchpad above (D5/D6/D8/D9/D12/D18) and by
+`PRODUCT_MASTER_COMPLETION_PLAN.md`, which is the authoritative current roadmap. The next concrete
+action for the next coder is the manual-action queue in that document's §5: apply migration 153
+(D12), then its canonical test; only after that is confirmed, apply migration 154 (D9 part 2), then
+its canonical test. Both are one-at-a-time Supabase SQL actions for E, not something the coder runs.
