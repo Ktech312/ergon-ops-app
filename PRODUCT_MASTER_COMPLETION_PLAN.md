@@ -6,9 +6,9 @@
 > and exact next task. This document is the authoritative, always-current product roadmap: what's
 > live, what's staged, what's left, in what order, and what's explicitly off-limits without E.
 
-Status: **AUTHORITATIVE, RECONCILED 2026-09-16** (D5/D6/D8/D9/D12/D18 shipped this pass; migration 152
-confirmed live) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md`
-§8's full D1-D18 decision register, every applied migration (115 through 150), and
+Status: **AUTHORITATIVE, RECONCILED 2026-09-16** (D5/D6/D8/D9/D12/D18 shipped this pass; migrations
+152/153/154 all confirmed applied and tested live — manual-action queue empty) against `HANDOFF.md`,
+`CONTINUOUS_CODER_HANDOFF.md` §8's full D1-D18 decision register, every applied migration (115 through 154), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
 document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
@@ -121,7 +121,7 @@ Subscription tiers, usage metering, payment processing for Ergon itself (distinc
 own operational Billing/Client Ledger, which Ergon already tracks for the customer). **Do not begin
 design work on this phase without an explicit go-ahead — standing instruction, unchanged.**
 
-## 3. Completed and live — migration range 115 through 150, plus 152
+## 3. Completed and live — migration range 115 through 150, plus 152, 153, 154
 
 Everything below is **deployed and production-verified** unless a narrower label is given. Full
 turn-by-turn history lives in `git log` and the relevant design doc, not reproduced here (this
@@ -254,71 +254,43 @@ tests all passing, Deployed. D8 is fully shipped end-to-end. Production verifica
 alert firing (not just the SQL test) still pending real use — nothing has failed 3x within 5 minutes
 yet to trigger one.*
 
-## 4. Completed locally but not yet migrated/deployed/verified
-
 **Migration 153 — Proposal acceptance hardening (D12 approved 2026-09-16)** (`eecb8b1`,
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §2): new `approval_email` column set from the proposal's own
 `client_email` (verified by construction, not a client parameter); `respond_to_quote_proposal`'s `anon`
-direct-call grant revoked. New `api/respond-to-proposal.js` captures the real client IP server-side
-(Vercel's `x-forwarded-for`) and calls the RPC via service role — already deployed and is the frontend's
-only path now (`respondToPublicQuoteProposal` no longer calls the RPC directly). — *Implemented locally,
-Tests passed (migration_153's own canonical test drafted but NOT YET RUN — requires the migration live
-first; 11 new/updated TS-side tests all passing), Deployed (frontend/API code only — safe ahead of the
-migration since the new route already handles both old-anon-still-open and new-anon-closed states
-identically from the frontend's perspective). **Migration NOT YET APPLIED** — this is item 1 in §5
-below.*
+direct-call grant revoked. `api/respond-to-proposal.js` captures the real client IP server-side
+(Vercel's `x-forwarded-for`) and calls the RPC via service role — deployed and is the frontend's
+only path now (`respondToPublicQuoteProposal` no longer calls the RPC directly). — *Migration applied
+and canonical test PASSED in production (E confirmed 2026-09-16: "Success. No rows returned" for
+both), 11 new/updated TS-side tests all passing, Deployed. D12 is fully shipped end-to-end.*
 
 **Migration 154 — Resumable backup restore checkpointing (D9 approved 2026-09-16)** (`a889b60`,
 `67b6cb6`, `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md` reconciled against E's exact spec): D9 shipped in
 two parts. **Part 1 (required-vs-optional distinction) is fully live in code already** — every
 reference in the restore path except a movement's own sku (schema-confirmed NOT NULL, migration 001) is
 now saved-without-it-plus-warning instead of failing the whole section, when restore mode is active; no
-migration needed, this part is pure application logic. **Part 2 (durable resumability) needs migration
-154**: `restore_runs`/`restore_run_sections` (extends the spec's schema with a `warnings text[]` column
+migration needed, this part is pure application logic. **Part 2 (durable resumability)**:
+`restore_runs`/`restore_run_sections` (extends the spec's schema with a `warnings text[]` column
 for part 1's new outcome type) + 4 RPCs (start-or-resume, update-section, finalize, cancel).
 `restoreFullBackupSnapshot`'s new `checkpoint` parameter is fully optional and backward compatible;
 `importBackup` (main.tsx) hashes the file, offers Resume vs Start Over on a prior incomplete run.
 **Deliberately not built**: a live mid-restore Cancel button — the backend fully supports cancellation,
 only the UI trigger is deferred (this app's restores are fast enough today that this isn't a P0). —
-*Implemented locally, Tests passed (migration_154's own canonical test drafted but NOT YET RUN — 23 new
-TS-side tests all passing), Deployed (frontend code only — degrades safely to a normal, non-checkpointed
-restore if this migration isn't live yet). **Migration NOT YET APPLIED** — this is item 2 in §5 below.*
+*Migration applied and canonical test PASSED in production (E confirmed 2026-09-16: "Success. No rows
+returned" for both), 23 new TS-side tests all passing, Deployed. D9 is fully shipped end-to-end.
+Production verification of a real resumed restore (not just the SQL test) still pending real use —
+no restore has failed mid-way yet to exercise resume against production.*
+
+## 4. Completed locally but not yet migrated/deployed/verified
+
+Nothing currently queued here — everything built this pass (D5/D6/D8/D9/D12/D18, migrations
+152/153/154) is confirmed applied, tested, and deployed; see §3.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Migration 152 (System Health alert wiring, D8) — DONE.** Applied and canonical test passed in
-production 2026-09-16 ("Success. No rows returned" confirmed by E for both). Fully reconciled into
-§3 above. No longer queued.
-
-**Item 1 (current): apply migration 153 (proposal acceptance hardening — real `approval_ip`, verified
-`approval_email`; D12 approved 2026-09-16).**
-- File: `backend/supabase/migrations/153_proposal_acceptance_ip_and_email.sql`
-- Then run its canonical test: `backend/supabase/migration_153_proposal_acceptance_ip_and_email_tests.sql`
-  — same transaction-safe pattern, ends with "ALL MIGRATION 153 PROPOSAL ACCEPTANCE TESTS PASSED --
-  ZERO SECTIONS SKIPPED" or a hard error.
-- **This migration revokes `anon`'s direct-call grant on `respond_to_quote_proposal`** — the frontend
-  (already deployed, `eecb8b1`) already calls the new `api/respond-to-proposal.js` route instead of the
-  RPC directly, so this is safe to apply as soon as E is ready; there is no window where the live
-  proposal-approval flow would break, since the frontend switch already shipped ahead of the grant
-  closure. No functional dependency on migration 152 — the two are independent, this repo's convention
-  is simply to apply in numeric order.
-- Once confirmed passing, update this section (move to item 2 below) and move this item from
-  "awaiting migration" to "confirmed live" in §3/§4.
-
-**Item 2 (queued next, do not run until item 1 is confirmed): apply migration 154 (resumable backup
-restore checkpointing; D9 approved 2026-09-16).**
-- File: `backend/supabase/migrations/154_backup_restore_checkpointing.sql`
-- Then run its canonical test: `backend/supabase/migration_154_backup_restore_checkpointing_tests.sql`
-  — same transaction-safe pattern, ends with "ALL MIGRATION 154 BACKUP RESTORE CHECKPOINTING TESTS
-  PASSED -- ZERO SECTIONS SKIPPED" or a hard error.
-- No functional dependency on 152/153 — independent, applied in numeric order per convention. The
-  frontend (already deployed, `67b6cb6`) degrades safely if this migration isn't live yet: `checkpoint`
-  is `null` whenever `startOrResumeRestoreRun` can't reach the RPC (not yet applied, network issue,
-  etc.), and `restoreFullBackupSnapshot`'s `checkpoint` parameter is fully optional — a restore run
-  before this migration is applied just runs exactly as it always has, with no resumability, not an
-  error.
-- Once confirmed passing, update this section back to "nothing queued" and move this item from
-  "awaiting migration" to "confirmed live" in §3/§4.
+**Nothing queued.** Migrations 152, 153, and 154 are all confirmed applied and their canonical tests
+all passed in production, 2026-09-16 ("Success. No rows returned" confirmed by E for each). Fully
+reconciled into §3 above. The next migration this queue will carry is whatever a future decision or
+audit produces — none exists today.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
@@ -404,8 +376,8 @@ here. Only D11/D13/D14/D15 remain genuinely gated on a future E decision.
 |---|---|
 | D5 — bundle-components | **APPROVED, FULLY CLOSED.** Remains reference-only, permanently — see §9. |
 | D6 — `xlsx` → `exceljs` | **APPROVED, FULLY SHIPPED.** See §3/§9 — `13d9979`. |
-| D9 — backup restore checkpointing | **APPROVED, SHIPPED (two parts).** Part 1 (required-vs-optional) fully live in code. Part 2 (durable resumability) implemented, migration 154 is the one remaining manual action (§5 item 2). See §3/§4/§9. |
-| D12 (revised) — e-signature hardening | **APPROVED, FULLY SHIPPED.** See §3/§4/§5 — migration 153. |
+| D9 — backup restore checkpointing | **APPROVED, FULLY SHIPPED (two parts).** Part 1 (required-vs-optional) and Part 2 (durable resumability, migration 154) both confirmed applied and tested in production 2026-09-16. See §3/§9. |
+| D12 (revised) — e-signature hardening | **APPROVED, FULLY SHIPPED.** Migration 153 confirmed applied and tested in production 2026-09-16. See §3/§9. |
 | D18 — frozen proposal PDF | **APPROVED, FULLY SHIPPED.** See §3/§9 — `d92a114`. |
 | D11 — Phase 3 RLS | Still gated — 16-threat design complete, but blocked on the standing "discuss the process first" conversation. Not part of this authorization. |
 | D13/D14 — Support/Engineering modules | Still gated — placeholder scoping only, "what is this" itself still open. Not part of this authorization. |
@@ -435,7 +407,7 @@ were built in this same pass, in this order:
    `67b6cb6`).** Part 1 (required-vs-optional distinction) is pure application logic, no migration,
    already fully live in code: every reference in the restore path except a movement's own sku
    (schema-confirmed NOT NULL) now warns-and-saves-without-it instead of failing the whole section.
-   Part 2 (durable resumability) needs migration 154 (§4/§5 item 2) — `restore_runs`/
+   Part 2 (durable resumability) needed migration 154, confirmed applied and tested 2026-09-16 — `restore_runs`/
    `restore_run_sections` + 4 RPCs, a Resume-vs-Start-Over prompt in `importBackup`. Mid-restore
    cancellation is backend-ready but the UI trigger is deliberately deferred, flagged not hidden.
 
