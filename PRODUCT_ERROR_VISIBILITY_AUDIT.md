@@ -38,6 +38,27 @@ run. This update does not touch any other function this document covers — `sav
 BOM lines, the Project BOM RPC, and every other still-open item below remain exactly as
 described.
 
+**Update, 2026-09-16 (D9, Standing Authorization): the backup-restore checkpoint/resume design is
+no longer greenfield.** A2.2c/A2.5 below describe the `restore_runs`/checkpoint/resume design as
+"entirely greenfield, design-only... nothing about it has been implemented" and
+`restoreFullBackupSnapshot` as returning bare `Promise<void>`. **Both are now historical, since-
+fixed claims.** `PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md` was written, migration 154
+(`restore_runs`/`restore_run_sections` tables + 4 RPCs: start-or-resume, update-section, finalize,
+cancel) was implemented and locally tested (23 new tests, `src/restore-checkpointing.test.ts`),
+and `restoreFullBackupSnapshot` now takes an optional `checkpoint` parameter and returns a
+structured `RestoreOutcome` (per-section `succeeded`/`failed`/`skipped_empty` status, with
+`warnings` for unresolved optional references — the "unresolved OPTIONAL associations... preserved
+as-is" language in A2.2c above is also now historical: restore-mode saves now warn-and-continue on
+an unresolved optional reference instead of silently preserving null). `importBackup` (`main.tsx`)
+hashes the uploaded file and offers a Resume-vs-Start-Over prompt when a prior incomplete run for
+that exact file is found. **Migration 154 itself is not yet applied in production** — it is the
+current item in `PRODUCT_MASTER_COMPLETION_PLAN.md` §5's manual-action queue; until it's applied,
+the frontend degrades safely to a normal, non-checkpointed restore (unchanged from what this
+document describes). Multi-step non-atomicity within a section (no real DB transaction across a
+section's own multiple writes) remains exactly as described — checkpointing tracks section-level
+completion, it does not make a section's own writes atomic. Mid-restore cancellation is backend-
+ready (`cancel_restore_run`) but has no UI trigger yet, deliberately deferred, not an oversight.
+
 ---
 
 ## 1. Executive summary
