@@ -6698,9 +6698,20 @@ export async function loadBuildTransactions(accessToken?: string): Promise<Build
   });
 }
 
-export async function saveBuildTransactions(builds: BuildTransaction[], accessToken?: string): Promise<void> {
+// D9 (approved 2026-09-16, PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md
+// reconciled against E's exact spec): `restoreMode` is the ONLY thing
+// that changes this function's behavior -- the live-save path (the
+// default, restoreMode=false) is completely unchanged from before this
+// pass. Every reference this function resolves is confirmed nullable at
+// the schema level (equipment_type_id/finished_inventory_item_id have no
+// NOT NULL constraint, migration 003) -- so in restoreMode, an unresolved
+// equipment name produces a warning and the build is saved with that one
+// field null (exactly what the payload mapping below already does for a
+// genuinely blank equipmentName), instead of rejecting the whole batch.
+export async function saveBuildTransactions(builds: BuildTransaction[], accessToken?: string, restoreMode = false): Promise<{ warnings: string[] }> {
+  const warnings: string[] = [];
   if (!isRemotePersistenceConfigured() || !accessToken || builds.length === 0) {
-    return;
+    return { warnings };
   }
   // Correction (2026-09-11, review): a failed lookup used to silently
   // degrade to an empty map, which meant every build in this save would be
@@ -6772,8 +6783,15 @@ export async function saveBuildTransactions(builds: BuildTransaction[], accessTo
   const unresolvedEquipment = builds.filter((build) => build.equipmentName.trim().length > 0 && !resolveEquipment(build.equipmentName));
   if (unresolvedEquipment.length > 0) {
     const detail = unresolvedEquipment.map((build) => `${build.buildNumber} (equipment "${build.equipmentName}")`).join(", ");
-    console.error(`saveBuildTransactions: unresolved equipment name for build(s): ${detail}`);
-    throw new Error("Some build transactions could not be saved.");
+    if (restoreMode) {
+      console.error(`saveBuildTransactions: unresolved equipment name for build(s), saving without it (restore): ${detail}`);
+      warnings.push(
+        ...unresolvedEquipment.map((build) => `Build ${build.buildNumber}: equipment "${build.equipmentName}" could not be resolved -- saved without it.`),
+      );
+    } else {
+      console.error(`saveBuildTransactions: unresolved equipment name for build(s): ${detail}`);
+      throw new Error("Some build transactions could not be saved.");
+    }
   }
 
   const payload = builds.map((build) => {
@@ -6812,6 +6830,7 @@ export async function saveBuildTransactions(builds: BuildTransaction[], accessTo
     console.error(`saveBuildTransactions returned ${savedRows.length} row(s), expected ${payload.length} -- integrity check failed.`);
     throw new Error("Some build transactions could not be saved.");
   }
+  return { warnings };
 }
 
 // E: "I need to be able to delete these [cancelled/undone builds], it
@@ -6922,9 +6941,17 @@ function isBlankSku(sku: string | null | undefined): boolean {
   return !sku || sku.trim().length === 0;
 }
 
-export async function saveInventoryMovements(movements: InventoryMovement[], accessToken?: string): Promise<void> {
+// D9 (approved 2026-09-16): restoreMode changes ONLY the project/build
+// handling below -- sku stays strict unconditionally, in restore or not,
+// since inventory_item_id is NOT NULL on inventory_movements (migration
+// 001, confirmed, not a policy choice) and is this function's one
+// genuinely required-data field; an unresolved sku is exactly the
+// "required-data failure stops that section" case from E's spec, already
+// true today (this whole call already fails atomically), unchanged here.
+export async function saveInventoryMovements(movements: InventoryMovement[], accessToken?: string, restoreMode = false): Promise<{ warnings: string[] }> {
+  const warnings: string[] = [];
   if (!isRemotePersistenceConfigured() || !accessToken || movements.length === 0) {
-    return;
+    return { warnings };
   }
 
   // Correction (2026-09-11, review): a movement with a missing or
@@ -7011,8 +7038,16 @@ export async function saveInventoryMovements(movements: InventoryMovement[], acc
       ...unresolvedProject.map((m) => `${m.id} (project "${m.projectName}")`),
       ...unresolvedBuild.map((m) => `${m.id} (build "${m.buildNumber}")`),
     ].join(", ");
-    console.error(`saveInventoryMovements: unresolved project/build for movement(s): ${detail}`);
-    throw new Error("Some inventory movements could not be saved.");
+    if (restoreMode) {
+      console.error(`saveInventoryMovements: unresolved project/build for movement(s), saving without it (restore): ${detail}`);
+      warnings.push(
+        ...unresolvedProject.map((m) => `Movement ${m.id}: project "${m.projectName}" could not be resolved -- saved without it.`),
+        ...unresolvedBuild.map((m) => `Movement ${m.id}: build "${m.buildNumber}" could not be resolved -- saved without it.`),
+      );
+    } else {
+      console.error(`saveInventoryMovements: unresolved project/build for movement(s): ${detail}`);
+      throw new Error("Some inventory movements could not be saved.");
+    }
   }
 
   // No filter here (unlike before this review): every movement in
@@ -7051,11 +7086,20 @@ export async function saveInventoryMovements(movements: InventoryMovement[], acc
     console.error(`saveInventoryMovements returned ${savedRows.length} row(s), expected ${payload.length} -- integrity check failed.`);
     throw new Error("Some inventory movements could not be saved.");
   }
+  return { warnings };
 }
 
-export async function saveProjectAllocations(allocations: ProjectAllocationHistory[], accessToken?: string): Promise<void> {
+// D9 (approved 2026-09-16): restoreMode softens all three checks below --
+// project_id/inventory_item_id/movement_id on project_allocation_history
+// are ALL confirmed nullable at the schema level (migration 003, no NOT
+// NULL constraint on any of the three), so none of them is a genuinely
+// required-data field for this table; every unresolved reference here is
+// the "optional reference, visible warning, retryable" case from E's
+// spec, not the "required-data failure stops the section" case.
+export async function saveProjectAllocations(allocations: ProjectAllocationHistory[], accessToken?: string, restoreMode = false): Promise<{ warnings: string[] }> {
+  const warnings: string[] = [];
   if (!isRemotePersistenceConfigured() || !accessToken || allocations.length === 0) {
-    return;
+    return { warnings };
   }
   const skus = Array.from(new Set(allocations.map((a) => a.sku).filter(Boolean)));
   const projectNames = Array.from(new Set(allocations.map((a) => a.projectName).filter(Boolean)));
@@ -7102,17 +7146,24 @@ export async function saveProjectAllocations(allocations: ProjectAllocationHisto
       (a.movementId && !movementIdByLegacyId.has(a.movementId)),
   );
   if (unresolvedAllocations.length > 0) {
-    const detail = unresolvedAllocations
-      .map((a) => {
-        const problems: string[] = [];
-        if (a.sku && !itemIdBySku.has(a.sku)) problems.push(`sku "${a.sku}"`);
-        if (a.projectName && !projectIdByName.has(a.projectName)) problems.push(`project "${a.projectName}"`);
-        if (a.movementId && !movementIdByLegacyId.has(a.movementId)) problems.push(`movement "${a.movementId}"`);
-        return `${a.id} (${problems.join(", ")})`;
-      })
-      .join(", ");
-    console.error(`saveProjectAllocations: unresolved association for allocation(s): ${detail}`);
-    throw new Error("Some project allocations could not be saved.");
+    const problemsById = new Map<string, string[]>();
+    for (const a of unresolvedAllocations) {
+      const problems: string[] = [];
+      if (a.sku && !itemIdBySku.has(a.sku)) problems.push(`sku "${a.sku}"`);
+      if (a.projectName && !projectIdByName.has(a.projectName)) problems.push(`project "${a.projectName}"`);
+      if (a.movementId && !movementIdByLegacyId.has(a.movementId)) problems.push(`movement "${a.movementId}"`);
+      problemsById.set(a.id, problems);
+    }
+    const detail = unresolvedAllocations.map((a) => `${a.id} (${problemsById.get(a.id)!.join(", ")})`).join(", ");
+    if (restoreMode) {
+      console.error(`saveProjectAllocations: unresolved association for allocation(s), saving without it (restore): ${detail}`);
+      warnings.push(
+        ...unresolvedAllocations.map((a) => `Allocation ${a.id}: ${problemsById.get(a.id)!.join(", ")} could not be resolved -- saved without it.`),
+      );
+    } else {
+      console.error(`saveProjectAllocations: unresolved association for allocation(s): ${detail}`);
+      throw new Error("Some project allocations could not be saved.");
+    }
   }
 
   const payload = allocations.map((allocation) => ({
@@ -7146,6 +7197,7 @@ export async function saveProjectAllocations(allocations: ProjectAllocationHisto
     console.error(`saveProjectAllocations returned ${savedRows.length} row(s), expected ${payload.length} -- integrity check failed.`);
     throw new Error("Some project allocations could not be saved.");
   }
+  return { warnings };
 }
 
 // Orchestrates the three saves above in the order their foreign keys
@@ -7156,10 +7208,12 @@ export async function saveMovementsBuildsAllocations(
   movements: InventoryMovement[],
   allocations: ProjectAllocationHistory[],
   accessToken?: string,
-): Promise<void> {
-  await saveBuildTransactions(builds, accessToken);
-  await saveInventoryMovements(movements, accessToken);
-  await saveProjectAllocations(allocations, accessToken);
+  restoreMode = false,
+): Promise<{ warnings: string[] }> {
+  const buildResult = await saveBuildTransactions(builds, accessToken, restoreMode);
+  const movementResult = await saveInventoryMovements(movements, accessToken, restoreMode);
+  const allocationResult = await saveProjectAllocations(allocations, accessToken, restoreMode);
+  return { warnings: [...buildResult.warnings, ...movementResult.warnings, ...allocationResult.warnings] };
 }
 
 // --- Phase 10f: Projects, Scope of Work, and BOM lines (cut over from the
@@ -8760,6 +8814,13 @@ export type RestoreSectionResult = {
   succeeded: boolean;
   count: number;
   error?: string;
+  // D9 (approved 2026-09-16): a succeeded section can still carry
+  // warnings -- an optional (nullable) reference that couldn't be
+  // resolved was saved without it, per E's approved spec. Distinct from
+  // `error`: a warning never prevents `succeeded` from being true, since
+  // "required-data failures stop that section" (a real `error`) is the
+  // only thing that does.
+  warnings?: string[];
 };
 
 export type RestoreOutcome = {
@@ -8826,14 +8887,15 @@ export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnap
   // that honestly as a failed section, it does not roll it back. Whole-
   // backup atomicity remains impractical for the reasons documented in
   // PRODUCT_ERROR_VISIBILITY_AUDIT.md's restore trace (A2.5).
-  async function runSection(section: RestoreSectionName, count: number, run: () => Promise<unknown>): Promise<void> {
+  async function runSection(section: RestoreSectionName, count: number, run: () => Promise<{ warnings: string[] } | unknown>): Promise<void> {
     if (count === 0) {
       sections.push({ section, attempted: false, succeeded: false, count: 0 });
       return;
     }
     try {
-      await run();
-      sections.push({ section, attempted: true, succeeded: true, count });
+      const result = await run();
+      const warnings = result && typeof result === "object" && "warnings" in result ? (result as { warnings: string[] }).warnings : [];
+      sections.push({ section, attempted: true, succeeded: true, count, warnings: warnings.length > 0 ? warnings : undefined });
       // Migration 152: a section succeeding resolves any open incident
       // from a previous restore's failure on this same section, best-
       // effort, matching the failure path's own never-throws contract.
@@ -8860,8 +8922,14 @@ export async function restoreFullBackupSnapshot(snapshot: Partial<FullBackupSnap
   await runSection("purchaseRequests", snapshot.purchaseRequests?.length ?? 0, () => saveRestoredPurchaseRequests(snapshot.purchaseRequests ?? [], accessToken));
   await runSection("projectDocuments", snapshot.projectDocuments?.length ?? 0, () => saveRestoredProjectDocuments(snapshot.projectDocuments ?? [], accessToken));
   const movementsCount = (snapshot.buildTransactions?.length ?? 0) + (snapshot.inventoryMovements?.length ?? 0) + (snapshot.projectAllocations?.length ?? 0);
+  // D9: restoreMode=true -- an unresolved OPTIONAL reference (every
+  // reference in this section except a movement's own sku, confirmed
+  // nullable at the schema level, see saveBuildTransactions/
+  // saveInventoryMovements/saveProjectAllocations' own comments) is
+  // saved without it and surfaced as a warning, not a section-failing
+  // error. An unresolved sku still fails the whole section, unchanged.
   await runSection("movementsBuildsAllocations", movementsCount, () =>
-    saveMovementsBuildsAllocations(snapshot.buildTransactions ?? [], snapshot.inventoryMovements ?? [], snapshot.projectAllocations ?? [], accessToken),
+    saveMovementsBuildsAllocations(snapshot.buildTransactions ?? [], snapshot.inventoryMovements ?? [], snapshot.projectAllocations ?? [], accessToken, true),
   );
 
   return { ok: sections.every((section) => !section.attempted || section.succeeded), sections };

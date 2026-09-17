@@ -85,7 +85,7 @@ describe("saveBuildTransactions", () => {
       if (String(url).includes("equipment_types")) return respond(true, 200, [RESOLVING_EQUIPMENT_ROW]);
       return respond(true, 200, [{ build_number: "BLD-1" }]);
     });
-    await expect(saveBuildTransactions([makeBuild()], "token")).resolves.toBeUndefined();
+    await expect(saveBuildTransactions([makeBuild()], "token")).resolves.toEqual({ warnings: [] });
     expect(console.error).not.toHaveBeenCalled();
   });
 
@@ -162,7 +162,7 @@ describe("saveInventoryMovements", () => {
       if (String(url).includes("build_transactions")) return respond(true, 200, []);
       return respond(true, 200, [{ legacy_id: "m1" }]);
     });
-    await expect(saveInventoryMovements([makeMovement()], "token")).resolves.toBeUndefined();
+    await expect(saveInventoryMovements([makeMovement()], "token")).resolves.toEqual({ warnings: [] });
     expect(console.error).not.toHaveBeenCalled();
   });
 
@@ -314,7 +314,7 @@ describe("saveProjectAllocations", () => {
       if (String(url).includes("inventory_movements")) return respond(true, 200, [{ id: "mv-1", legacy_id: "m1" }]);
       return respond(true, 200, [{ legacy_id: "a1" }]);
     });
-    await expect(saveProjectAllocations([makeAllocation()], "token")).resolves.toBeUndefined();
+    await expect(saveProjectAllocations([makeAllocation()], "token")).resolves.toEqual({ warnings: [] });
     expect(console.error).not.toHaveBeenCalled();
   });
 
@@ -514,5 +514,55 @@ describe("saveRestoredProjectDocuments (via restoreFullBackupSnapshot)", () => {
     // One save request, one System Health recovery-check (migration 152).
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[1][0])).toContain("rpc/record_system_health_recovery");
+  });
+});
+
+// D9 (approved 2026-09-16): restoreFullBackupSnapshot calls
+// saveMovementsBuildsAllocations with restoreMode=true -- these tests
+// prove that end-to-end, through the real orchestrator, not just at the
+// unit level covered in optional-association-warnings.test.ts.
+describe("movementsBuildsAllocations (via restoreFullBackupSnapshot) -- D9 required-vs-optional", () => {
+  it("an unresolved OPTIONAL reference (project name) succeeds the section with a warning, not a failure", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).includes("equipment_types")) return respond(true, 200, []);
+      if (String(url).includes("inventory_items")) return respond(true, 200, [{ id: "item-1", sku: "SKU-1" }]);
+      if (String(url).includes("projects")) return respond(true, 200, []);
+      if (String(url).includes("build_transactions")) return respond(true, 200, []);
+      return respond(true, 200, [{ legacy_id: "m1" }]);
+    });
+    const outcome = await restoreFullBackupSnapshot({ inventoryMovements: [makeMovement({ projectName: "Ghost Project" })] }, "token");
+    const section = outcome.sections.find((s) => s.section === "movementsBuildsAllocations");
+    expect(section).toMatchObject({ attempted: true, succeeded: true });
+    expect(section?.warnings).toEqual(['Movement m1: project "Ghost Project" could not be resolved -- saved without it.']);
+    // A warned-but-succeeded section is still an overall ok:true restore
+    // -- "never report full success while a section failed or was
+    // skipped" (E's spec) is about failures, not warnings.
+    expect(outcome.ok).toBe(true);
+  });
+
+  it("an unresolved REQUIRED reference (sku) fails the whole section, not just a warning", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).includes("equipment_types")) return respond(true, 200, []);
+      if (String(url).includes("inventory_items")) return respond(true, 200, []);
+      if (String(url).includes("projects")) return respond(true, 200, []);
+      if (String(url).includes("build_transactions")) return respond(true, 200, []);
+      return respond(true, 200, [{ legacy_id: "m1" }]);
+    });
+    const outcome = await restoreFullBackupSnapshot({ inventoryMovements: [makeMovement()] }, "token");
+    const section = outcome.sections.find((s) => s.section === "movementsBuildsAllocations");
+    expect(section).toMatchObject({ attempted: true, succeeded: false });
+    expect(section?.error).toBe("Some inventory movements could not be saved.");
+    // Never report full success while a section failed.
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("a fully-resolved batch has no warnings key set at all", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).includes("equipment_types")) return respond(true, 200, [{ id: "eq-1", equipment_name: "Test Recipe", output_inventory_item_id: "item-1", output_item: null }]);
+      return respond(true, 200, [{ build_number: "BLD-1" }]);
+    });
+    const outcome = await restoreFullBackupSnapshot({ buildTransactions: [makeBuild()] }, "token");
+    const section = outcome.sections.find((s) => s.section === "movementsBuildsAllocations");
+    expect(section?.warnings).toBeUndefined();
   });
 });

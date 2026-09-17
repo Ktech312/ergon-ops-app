@@ -74,7 +74,7 @@ describe("saveBuildTransactions -- equipment name resolution and rejection", () 
       return respond(true, 200, [{ build_number: "BLD-1" }]);
     });
     globalThis.fetch = fetchMock;
-    await expect(saveBuildTransactions([makeBuild()], "token")).resolves.toBeUndefined();
+    await expect(saveBuildTransactions([makeBuild()], "token")).resolves.toEqual({ warnings: [] });
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("build_transactions?on_conflict"));
     const body = JSON.parse((call![1] as { body: string }).body);
     expect(body[0]).toMatchObject({ equipment_type_id: "eq-1", finished_inventory_item_id: "item-1" });
@@ -92,7 +92,7 @@ describe("saveBuildTransactions -- equipment name resolution and rejection", () 
       return respond(true, 200, [{ build_number: "BLD-1" }]);
     });
     globalThis.fetch = fetchMock;
-    await expect(saveBuildTransactions([makeBuild({ equipmentName: "Renamed Title" })], "token")).resolves.toBeUndefined();
+    await expect(saveBuildTransactions([makeBuild({ equipmentName: "Renamed Title" })], "token")).resolves.toEqual({ warnings: [] });
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("build_transactions?on_conflict"));
     const body = JSON.parse((call![1] as { body: string }).body);
     expect(body[0]).toMatchObject({ equipment_type_id: "eq-1", finished_inventory_item_id: "item-1" });
@@ -143,7 +143,7 @@ describe("saveBuildTransactions -- equipment name resolution and rejection", () 
       return respond(true, 200, [{ build_number: "BLD-1" }]);
     });
     globalThis.fetch = fetchMock;
-    await expect(saveBuildTransactions([makeBuild({ equipmentName: "" })], "token")).resolves.toBeUndefined();
+    await expect(saveBuildTransactions([makeBuild({ equipmentName: "" })], "token")).resolves.toEqual({ warnings: [] });
     expect(console.error).not.toHaveBeenCalled();
   });
 });
@@ -212,7 +212,7 @@ describe("saveInventoryMovements -- project/build name rejection", () => {
 
   it("a blank projectName/buildNumber is tolerated (legitimately unassociated)", async () => {
     installMovementLookups();
-    await expect(saveInventoryMovements([makeMovement({ projectName: undefined, buildNumber: undefined })], "token")).resolves.toBeUndefined();
+    await expect(saveInventoryMovements([makeMovement({ projectName: undefined, buildNumber: undefined })], "token")).resolves.toEqual({ warnings: [] });
     expect(console.error).not.toHaveBeenCalled();
   });
 });
@@ -283,7 +283,54 @@ describe("saveProjectAllocations -- sku/project/movement rejection", () => {
     installAllocationLookups();
     await expect(
       saveProjectAllocations([makeAllocation({ sku: "", projectName: "", movementId: "" })], "token"),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ warnings: [] });
     expect(console.error).not.toHaveBeenCalled();
+  });
+});
+
+// D9 (approved 2026-09-16, PRODUCT_BACKUP_RESTORE_CHECKPOINT_SPEC.md
+// reconciled against E's exact spec): restoreMode=true softens ONLY the
+// references confirmed nullable at the schema level -- a warning and the
+// record is saved without that one field, instead of rejecting the whole
+// batch. inventory_movements.inventory_item_id (sku) is the one
+// exception: confirmed NOT NULL (migration 001), so it stays a hard
+// rejection ("required-data failure stops that section") even in
+// restoreMode. Live saves (the default, restoreMode=false/omitted) are
+// completely unchanged -- covered by every describe block above.
+describe("restoreMode -- optional references warn and save without them, required data still stops the section", () => {
+  it("saveBuildTransactions: an unresolved equipment name is a warning, not a rejection, in restoreMode", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).includes("equipment_types")) return respond(true, 200, []);
+      return respond(true, 200, [{ build_number: "BLD-1" }]);
+    });
+    const result = await saveBuildTransactions([makeBuild({ equipmentName: "Nonexistent Equipment" })], "token", true);
+    expect(result.warnings).toEqual(['Build BLD-1: equipment "Nonexistent Equipment" could not be resolved -- saved without it.']);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("saving without it (restore)"));
+  });
+
+  it("saveInventoryMovements: an unresolved project/build is a warning, not a rejection, in restoreMode", async () => {
+    installMovementLookups();
+    const result = await saveInventoryMovements([makeMovement({ projectName: "Ghost Project", buildNumber: "BLD-GHOST" })], "token", true);
+    expect(result.warnings).toEqual([
+      'Movement m1: project "Ghost Project" could not be resolved -- saved without it.',
+      'Movement m1: build "BLD-GHOST" could not be resolved -- saved without it.',
+    ]);
+  });
+
+  it("saveInventoryMovements: an unresolved sku still rejects the whole batch even in restoreMode (the one required-data field)", async () => {
+    installMovementLookups({ items: [] });
+    await expect(saveInventoryMovements([makeMovement()], "token", true)).rejects.toThrow("Some inventory movements could not be saved.");
+  });
+
+  it("saveProjectAllocations: an unresolved sku/project/movement is a warning, not a rejection, in restoreMode (all three confirmed nullable)", async () => {
+    installAllocationLookups({ items: [], projects: [], movements: [] });
+    const result = await saveProjectAllocations([makeAllocation()], "token", true);
+    expect(result.warnings).toEqual(['Allocation a1: sku "SKU-1", project "Project X", movement "m1" could not be resolved -- saved without it.']);
+  });
+
+  it("a fully-resolved batch produces zero warnings even in restoreMode", async () => {
+    installMovementLookups({ items: [{ id: "item-1", sku: "SKU-1" }], projects: [{ id: "proj-1", project_name: "Real Project" }] });
+    const result = await saveInventoryMovements([makeMovement({ projectName: "Real Project" })], "token", true);
+    expect(result.warnings).toEqual([]);
   });
 });
