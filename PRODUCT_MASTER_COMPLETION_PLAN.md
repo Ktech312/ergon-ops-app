@@ -8,9 +8,10 @@
 
 Status: **AUTHORITATIVE, RECONCILED 2026-09-17** (D5/D6/D8/D9/D12/D18 shipped; standing authorization
 given for the full Phase 3 rollout, D11/D13/D14 now approved, see §11 — Stage 1 (migration 155) and
-Stage 2's ownership half (migration 156) both confirmed applied and tested live; manual-action queue
-empty; Stage 2's RLS half is next) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's full
-D1-D18 decision register, every applied migration (115 through 156), and
+Stage 2's ownership half (migration 156) both confirmed applied and tested live; Stage 2's RLS half
+(migration 157) implemented, awaiting application — current manual-action-queue item) against
+`HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's full D1-D18 decision register, every applied
+migration (115 through 156), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
 document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
@@ -311,15 +312,37 @@ see §11.*
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-Nothing currently queued here — migrations 155 and 156 are both confirmed applied, tested, and
-deployed; see §3 above.
+**Migration 157 — Phase 3 Stage 2 RLS: Projects + Tasks containment (D11 approved 2026-09-16)**
+(`faee9d6`, see §11): workspace-scoped RLS on the 14-table Projects/Tasks ownership graph, following
+migration 156's ownership half the way migration 155 followed 117 for Clients+Sales. Preserves every
+existing access rule found by direct read: `projects`/`project_scope_of_work`/`project_bom_lines`
+keep their pm/admin role-gated write policies (migration 023), ANDed with the workspace check, not
+replaced; `project_submittals` stays SELECT-only (RPC-only writes since migration 144, no new write
+capability granted); `task_activity_log` keeps its append-only shape (no update/delete policy);
+`project_conversion_receipts` is left completely untouched (already maximally locked down by
+permanent design, migration 127). Hardens 3 security-definer RPCs with zero caller-workspace check
+(`create_and_send_submittal_version`, `get_submittal_by_token`, `respond_to_submittal` — the latter
+two also gain the suspended-workspace check). Unlike migration 155's RPCs, no `active_workspace_id()`
+landmine here — these two RPCs are submittal-only, not shared with proposals, so their settings
+lookups were fixed to use the target project's own resolved `workspace_id` directly. — *Implemented
+locally, Tests passed (canonical test drafted but NOT YET RUN — requires the migration live first),
+no deploy needed (SQL-only change). **Migration NOT YET APPLIED** — this is item 1 in §5 below.*
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Nothing queued.** Migrations 155 and 156 are both confirmed applied and their canonical tests both
-passed in production, 2026-09-17. The next migration this queue will carry is Stage 2's RLS half (the
-access-restriction migration for `projects`/`tasks` and their child tables), once it's written — see
-§11 for current status.
+**Item 1 (current): apply migration 157 (Phase 3 Stage 2 RLS — Projects + Tasks containment, D11
+approved 2026-09-16).**
+- File: `backend/supabase/migrations/157_phase3_projects_tasks_workspace_rls.sql`
+- Then run its canonical test: `backend/supabase/migration_157_phase3_projects_tasks_workspace_rls_tests.sql`
+  — same transaction-safe pattern (creates synthetic second/third workspaces inside a rolled-back
+  transaction, never persisted), ends with "ALL MIGRATION 157 PHASE 3 PROJECTS TASKS WORKSPACE RLS
+  TESTS PASSED -- ZERO SECTIONS SKIPPED" or a hard error.
+- **Zero expected visible change** — same reasoning as migrations 155/156 (exactly one real active
+  workspace today).
+- Once confirmed passing, update this section (move to "nothing queued") and move this item from
+  "awaiting migration" to "confirmed live" in §3/§4/§11.
+
+Migrations 155 and 156 are both confirmed applied and their canonical tests both passed already.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
@@ -482,11 +505,12 @@ between stages:
    10-table Clients/Sales Quote ownership graph, plus 4 hardened security-definer RPCs. Confirmed
    applied and its canonical test passed in production, 2026-09-17 (test-script fix `3a7692a` along
    the way, migration itself untouched). See §3.
-2. **Projects, tasks, locations, BOM, and related delivery records — OWNERSHIP HALF DONE, RLS HALF NOT
-   STARTED.** Migration 156 (`df9a6bf`) adds and backfills `projects.workspace_id`/
-   `tasks.workspace_id`, mirroring migration 117's ownership-then-RLS pattern for Clients+Sales.
-   Confirmed applied and its canonical test passed in production, 2026-09-17 ("Success. No rows
-   returned" for both). See §3. Scope confirmed by direct schema
+2. **Projects, tasks, locations, BOM, and related delivery records — OWNERSHIP DONE, RLS
+   IMPLEMENTED (NOT YET APPLIED).** Migration 156 (`df9a6bf`) adds and backfills
+   `projects.workspace_id`/`tasks.workspace_id` — confirmed applied and its canonical test passed in
+   production, 2026-09-17. Migration 157 (`faee9d6`) adds RLS to the 14-table ownership graph, plus
+   hardens 3 security-definer RPCs (`create_and_send_submittal_version`, `get_submittal_by_token`,
+   `respond_to_submittal`). See §3/§4. Scope confirmed by direct schema
    read: `project_locations`/`_images`/`_items`, `project_scope_of_work`, `project_bom_lines`,
    `project_submittals`, `project_handovers`, `project_stakeholders`, `installed_assets`,
    `project_conversion_receipts`, `task_hardware_dependencies`, `task_activity_log` inherit ownership
@@ -494,8 +518,10 @@ between stages:
    inclusion): `project_documents` (Stage 4), the four `project_shipment*`/`_shipping_addresses`
    tables (Stage 3, "receiving"), `project_schedule_templates`/`_phases` (Stage 5, a global template
    library with no `project_id` column at all), `project_ref_counters` (Stage 5, a shared counter
-   table). RLS tightening for this group (the Stage-1-style second migration) not yet started — next
-   automatic task.
+   table). **Migration 157 NOT YET APPLIED** — item 1 in §5. Deferred to migration 158: retiring
+   `active_workspace_id()` from the RPCs shared with Proposals (`regenerate_share_link`,
+   `permanently_revoke_share_link`) — now safely fixable since both `projects.workspace_id` and
+   `sales_quotes.workspace_id` are live, but needs its own focused pass.
 3. **Purchasing, inventory, vendors, warehouses, and receiving — NOT STARTED.**
 4. **Documents, notifications, channels, jobs, share-link records, and storage — NOT STARTED.**
 5. **Workspace-scoped uniqueness, reports, aggregates, functions, triggers, and remaining indirect
