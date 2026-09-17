@@ -10,9 +10,10 @@ Status: **AUTHORITATIVE, RECONCILED 2026-09-17** (D5/D6/D8/D9/D12/D18 shipped; s
 given for the full Phase 3 rollout, D11/D13/D14 now approved, see §11 — Stages 1 and 2 (Clients+Sales,
 Projects+Tasks; migrations 155/156/157) plus the cross-cutting `active_workspace_id()` cleanup
 (migration 158) and Stage 3's ownership half (migration 159) are all confirmed applied and tested
-live; manual-action queue empty; Stage 3's RLS half (migration 160) is next) against `HANDOFF.md`,
-`CONTINUOUS_CODER_HANDOFF.md` §8's full D1-D18 decision register, every applied migration (115
-through 159), and
+live; Stage 3's RLS half (migration 160) is implemented locally and queued as the current
+manual-action item, awaiting application) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's
+full D1-D18 decision register, every applied migration (115
+through 159, plus 160 pending), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
 document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
@@ -362,14 +363,27 @@ trigger execution; migration 159 itself was never touched).*
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-Nothing currently queued here — migration 159 is confirmed applied, tested, and deployed; see §3
-above.
+**Migration 160** (`backend/supabase/migrations/160_phase3_purchasing_inventory_workspace_rls.sql`,
+commit `df341ab`) — Phase 3 Stage 3 RLS half. Adds workspace-scoped RLS to the seven root tables
+migration 159 gave real `workspace_id` to, plus their ten children, via three new owner-resolver
+helper functions (`purchase_order_owner_workspace_id`, `inventory_item_owner_workspace_id`,
+`equipment_type_owner_workspace_id`; migration 157's `project_owner_workspace_id` is reused directly
+for `project_inventory_allocations`). Every pre-existing role gate from migration 023
+(warehouse/purchasing/admin) is preserved, ANDed with the new workspace predicate, not replaced. No
+RPC changes — confirmed this domain has no RPC layer besides `save_equipment_recipe()`, already
+hardened by migration 159. Canonical test:
+`backend/supabase/migration_160_phase3_purchasing_inventory_workspace_rls_tests.sql`. Not yet applied
+— queued below.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Nothing queued.** Migrations 155, 156, 157, 158, and 159 are all confirmed applied and their
-canonical tests all passed in production, 2026-09-17. Stage 3's RLS half (migration 160) scoping is
-next.
+**One item queued: apply migration 160**
+(`backend/supabase/migrations/160_phase3_purchasing_inventory_workspace_rls.sql`), then run its
+canonical test (`backend/supabase/migration_160_phase3_purchasing_inventory_workspace_rls_tests.sql`).
+Migrations 155, 156, 157, 158, and 159 are all confirmed applied and their canonical tests all passed
+in production, 2026-09-17. After 160 is confirmed, **Stage 3 (Purchasing/Inventory/Vendors/Warehouses)
+is fully shipped end-to-end** — Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage)
+scoping is next.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
@@ -556,19 +570,21 @@ production, 2026-09-17. See §3. `active_workspace_id()` itself remains in use b
 admin-role bridge and by `save_equipment_recipe()`/`replace_project_bom_lines()` (`equipment_types`
 has no `workspace_id` yet) — genuinely still needed
 there, not an oversight.
-3. **Purchasing, inventory, vendors, warehouses, and receiving — IN PROGRESS (ownership half DONE).**
-   Ownership migration 159 (`f9a5d33`) adds `workspace_id` to the seven root tables (`vendors`,
-   `locations`, `inventory_items`, `purchase_orders`, `purchase_requests`, `equipment_types`,
-   `build_transactions`) and retires `save_equipment_recipe()`'s `active_workspace_id()` guard.
-   CONFIRMED APPLIED and its canonical test PASSED in production, 2026-09-17. Scope confirmed by
-   direct schema read (not assumed from this tracker's own earlier text): `purchase_order_lines`/
-   `_files`/`_receipts`/`_holds`, `inventory_balances`, `inventory_movements`,
-   `inventory_transactions`, `project_inventory_allocations`, `project_allocation_history`,
-   `equipment_bom_components` inherit ownership through their FK (no new column) — RLS for the whole
-   group, including these children, is migration 160, next. Deliberately excluded on inspection
-   (topical match, not FK-graph inclusion): the four `project_shipment*`/`_shipping_addresses` tables,
-   re-scoped from this stage to Stage 4 (Documents/Notifications) after direct read showed they carry
-   no purchasing/inventory data of their own.
+3. **Purchasing, inventory, vendors, warehouses, and receiving — IN PROGRESS (ownership half DONE,
+   RLS half implemented locally).** Ownership migration 159 (`f9a5d33`) adds `workspace_id` to the
+   seven root tables (`vendors`, `locations`, `inventory_items`, `purchase_orders`,
+   `purchase_requests`, `equipment_types`, `build_transactions`) and retires
+   `save_equipment_recipe()`'s `active_workspace_id()` guard. CONFIRMED APPLIED and its canonical test
+   PASSED in production, 2026-09-17. RLS migration 160 (`df341ab`) adds workspace-scoped RLS to all
+   seven root tables plus their ten children (`purchase_order_lines`/`_files`/`_receipts`/`_holds`,
+   `inventory_balances`, `inventory_movements`, `inventory_transactions`,
+   `project_inventory_allocations`, `project_allocation_history`, `equipment_bom_components`, all
+   inheriting ownership through their FK via three new resolver functions), preserving every
+   migration-023 role gate alongside the new workspace predicate. Queued for E's review (see §4/§5).
+   Deliberately excluded on inspection (topical match, not FK-graph inclusion): the four
+   `project_shipment*`/`_shipping_addresses` tables, re-scoped from this stage to Stage 4
+   (Documents/Notifications) after direct read showed they carry no purchasing/inventory data of their
+   own; `purchase_order_files`' storage.objects bucket policies (Stage 4 territory, storage).
 4. **Documents, notifications, channels, jobs, share-link records, and storage — NOT STARTED.**
 5. **Workspace-scoped uniqueness, reports, aggregates, functions, triggers, and remaining indirect
    access paths — NOT STARTED.**
