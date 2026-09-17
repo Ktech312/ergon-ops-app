@@ -269,14 +269,54 @@ Submittal page; interactive checkboxes replaced with a plain-text "Included"/"No
 under print). Fully shipped, deployed. **D5 (bundle components) remains reference-only per standing
 decision** — no change needed, confirmed still correctly marked that way (§9 of the master plan, D5's
 own row in this file's D-register above, unchanged).
-**Manual-action queue, current exact state**: migration 152 DONE, no longer queued. **Item 1
-(current)**: apply migration 153
-(`backend/supabase/migrations/153_proposal_acceptance_ip_and_email.sql`), then its test
-(`backend/supabase/migration_153_proposal_acceptance_ip_and_email_tests.sql`). **Item 2 (do not run
-until item 1 confirmed)**: apply migration 154
-(`backend/supabase/migrations/154_backup_restore_checkpointing.sql`), then its test
-(`backend/supabase/migration_154_backup_restore_checkpointing_tests.sql`). Do not re-litigate
-D5/D6/D8/D9/D12/D18 (table further above) or rerun migration 152.
+**Manual-action queue, current exact state (superseded again since -- see the 2026-09-16 Phase 3
+entry further below for the live state)**: migrations 152/153/154 all DONE, no longer queued. Do not
+re-litigate D5/D6/D8/D9/D12/D18 (table further above) or rerun any of them. Migration 155 (Phase 3
+Group 1, Clients + Sales workspace RLS) is now the current, sole manual-action-queue item.
+
+**2026-09-16, later same day: standing authorization given directly by E in chat for the full staged
+Phase 3 tenant-isolation rollout, superseding the prior "discuss first" process gate -- this is the
+current, live state, superseding everything about D11/D13/D14 stated anywhere above.** Authorized
+order (D11's own row above has the full text verbatim): (1) Clients and Sales containment; (2)
+Projects, tasks, locations, BOM, and related delivery records; (3) Purchasing, inventory, vendors,
+warehouses, and receiving; (4) Documents, notifications, channels, jobs, share-link records, and
+storage; (5) workspace-scoped uniqueness, reports, aggregates, functions, triggers, and remaining
+indirect access paths; (6) full automated cross-workspace isolation suite and final Phase 3
+reconciliation (gate: must pass before any second real workspace may be created); (7) company
+onboarding and no-code workspace configuration; (8) Support module first release (D13); (9)
+Engineering module first release (D14). `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 is the authoritative,
+live tracker for this whole rollout -- read it first, not this paragraph, if meaningful time has
+passed.
+
+**Stage 1 (Clients + Sales) delivered**: migration 155 (`0d05d03`) adds workspace-scoped RLS to the
+10-table Clients/Sales Quote ownership graph -- the original 8 tables `PRODUCT_PHASE3_PLAN.md` named
+(`clients`, `sales_quotes`, `sales_quote_locations`, `sales_quote_location_images`,
+`sales_quote_location_items`, `sales_quote_bom_lines`, `sales_quote_intake_responses`,
+`sales_quote_proposals`) plus two tables built after that plan was written and correctly folded into
+the same group during revalidation (`sales_quote_proposal_approval_requests`,
+`sales_quote_proposal_questions`). Also hardens four security-definer RPCs found to have ZERO
+caller-workspace check at all during revalidation -- RLS does nothing to protect them, since
+security-definer bypasses RLS by definition: `request_or_send_quote_proposal_version`,
+`respond_to_proposal_approval_request`, `get_quote_proposal_by_token`, `respond_to_quote_proposal`
+(the latter two also gained the suspended-workspace check the original plan's own T8 called for and
+confirmed still missing). Canonical test covers the full required matrix (correct workspace allowed,
+another workspace denied, missing membership denied, suspended workspace denied, ambiguous membership
+denied, role restrictions preserved) using synthetic second/third workspaces created only inside a
+rolled-back transaction. **Migration 155 NOT YET APPLIED** -- current, sole manual-action-queue item,
+files: `backend/supabase/migrations/155_phase3_clients_sales_workspace_rls.sql` and
+`backend/supabase/migration_155_phase3_clients_sales_workspace_rls_tests.sql`. Zero expected visible
+production change (exactly one real workspace exists today).
+
+**Cross-cutting finding, tracked here so it isn't lost across later stages**: `active_workspace_id()`
+(migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row to
+exist in the WHOLE DATABASE -- used by several RPCs (`save_equipment_recipe`,
+`replace_project_bom_lines`, the legacy `bridge_*` admin-role functions, and the share-link RPCs'
+SUBMITTAL-side branches) precisely because the tables THEY touch (`equipment_types`, `projects`,
+`project_submittals`) don't have their own `workspace_id` yet. Not a bug to fix once -- retire it
+incrementally as each later stage above gives its own table group real per-row workspace ownership.
+Stage 6 (final reconciliation) must confirm every remaining call site is retired before stage 7
+(onboarding) can safely begin -- see `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 for the full breakdown
+of which stage retires which call site.
 
 The pricing statement E approved 2026-09-13:
 
@@ -1336,10 +1376,10 @@ Queue A/B work.
 | D8 | **APPROVED 2026-09-16 (System Health alert wiring, including the threshold-timing spec-precision pass Queue R1 item 1 flagged).** Down-alert recipients/channel, and the exact "3 consecutive failures spanning ≥5 minutes" occurrence-timing rule | Email every workspace admin by default (on-call list/channels remain a later config option, not built); alert all workspace admins after 3 consecutive failures for the same workspace/component (first-to-latest span ≥5 minutes), one alert per incident, suppressed until recovery, durable record, recovery notice on success | **FULLY CLOSED (2026-09-16)** -- migration 152 (`c6de0fa` + follow-ups): new `record_system_health_recovery`/`list_admin_emails` RPCs, `record_system_health_event` return type changed to jsonb, `api/send-system-health-alert.js`, `api/_lib/systemHealth.js` extended for server-side call sites, all 4 original failure call sites now also call recovery on success. Migration applied and its canonical test PASSED in production 2026-09-16 ("Success. No rows returned" for both, E confirmed). No open items. |
 | D9 | **APPROVED 2026-09-16 (Queue R2/R3), FULLY SHIPPED IN TWO PARTS.** Backup restore unresolved references + resumable checkpointing | Part 1: unresolved optional references warn and continue during restore (per-reference, not whole-section); required-data failures still stop that section; live manual entry remains strict. Part 2: durable per-section checkpointing (`restore_runs`/`restore_run_sections` + 4 RPCs — start-or-resume, update-section, finalize, cancel), a Resume-vs-Start-Over prompt in `importBackup`; mid-restore Cancel button deliberately deferred (backend-ready, no UI trigger yet) | **FULLY CLOSED (2026-09-16)** -- Part 1: `a889b60`, pure application logic, no migration needed, already live. Part 2: `67b6cb6`, migration 154 CONFIRMED APPLIED and its canonical test PASSED in production 2026-09-16 ("Success. No rows returned", E confirmed). 23 new tests passing. No longer in the manual-action queue. No open items. |
 | D10 | Inventory pagination UX | A12 first removes silent truncation transparently; later use server-side search + cursor pagination while preserving selected rows | **FULLY CLOSED (2026-09-16)** -- `1e6eb7a`: `loadInventoryItemsPage` (server-side search + cursor pagination) wired into the Inventory page's own desktop table and mobile card list; exports and complete-data calculations untouched (`loadInventoryItems`/full-array load path preserved for those). Standing-authorization instruction to "continue... through the remaining intended Inventory UI" investigated 2026-09-16: the only other inventory-browsing surface, the Reports page, was found NOT a pagination candidate -- its `filteredInventoryItems` feeds aggregate calculations (reorder-point rows, price-trend rows, category/vendor spend) that need the complete dataset, not one cursor page; converting it would break "complete-data calculations," a named protected boundary. No further Inventory UI remains. No open items. |
-| D11 | **Already established process:** Phase 3 RLS rollout | Discuss first, then review and approve one complete table group at a time; Clients/Sales Quote graph first | Tenant isolation/onboarding implementation discussion |
+| D11 | **APPROVED 2026-09-16 -- standing authorization given directly by E in chat for the full staged Phase 3 rollout, superseding the prior "discuss first" process gate.** Phase 3 RLS rollout | Authorized order, one coherent table group at a time, without stopping to ask between stages: (1) Clients and Sales containment; (2) Projects, tasks, locations, BOM, and related delivery records; (3) Purchasing, inventory, vendors, warehouses, and receiving; (4) Documents, notifications, channels, jobs, share-link records, and storage; (5) workspace-scoped uniqueness, reports, aggregates, functions, triggers, and remaining indirect access paths; (6) full automated cross-workspace isolation suite and final Phase 3 reconciliation (gate: must pass before any second real workspace may be created); (7) company onboarding and no-code workspace configuration; (8) Support module first release (D13); (9) Engineering module first release (D14). Every table/RPC/trigger is revalidated against current source before each stage, not trusted from `PRODUCT_PHASE3_PLAN.md` verbatim -- that plan predates 35+ migrations of drift. See `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 for the authoritative, live tracker. | **Stage 1 (Clients + Sales) IMPLEMENTED** -- migration 155 (`0d05d03`): workspace-scoped RLS on the 10-table ownership graph (the original 8 tables plus two built after the original plan, `sales_quote_proposal_approval_requests` and `sales_quote_proposal_questions`), plus 4 security-definer RPCs hardened with an explicit caller-workspace check they previously had none of at all (`request_or_send_quote_proposal_version`, `respond_to_proposal_approval_request`, `get_quote_proposal_by_token`, `respond_to_quote_proposal` -- the latter two also gained a suspended-workspace check). **Migration 155 NOT YET APPLIED** -- current, sole item in the manual-action queue. Stages 2-9 not started. |
 | D12 | **APPROVED 2026-09-16 (revised scope), FULLY SHIPPED.** E-signature scope, legal record, signer identity, completion behavior | Kept typed-name acceptance (no drawn signature, no third-party e-signature integration — explicitly not a regulated e-signature product); fixed the previously-dead `approval_ip` capture using the server-observed request IP (Vercel's `x-forwarded-for`, via new `api/respond-to-proposal.js`, never trusting a client-supplied value); added verified `approval_email`, server-derived from the proposal's own `client_email`, not a client parameter; no OTP/click-through step. See `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md` §2 for the full trace and reasoning | **FULLY CLOSED (2026-09-16)** -- migration 153 (`eecb8b1`): new `approval_email` column, `respond_to_quote_proposal`'s `anon` direct-call grant revoked; `api/respond-to-proposal.js` deployed and is the frontend's only path now (11 new/updated TS-side tests passing). Migration 153 CONFIRMED APPLIED and its canonical test PASSED in production 2026-09-16 ("Success. No rows returned", E confirmed). No longer in the manual-action queue. No open items. |
-| D13 | Support first release | Ticket/request lifecycle linked to Client Ledger, Project, site, and installed asset | Support module |
-| D14 | Engineering first release | Product/solution request + technical review + Catalog release link | Engineering module |
+| D13 | **APPROVED 2026-09-16 -- standing authorization given directly by E in chat, part of the same Phase 3 rollout order (stage 8, after Phase 3 itself completes).** Support first release | Ticket/request lifecycle linked to Client Ledger, Project, site, and installed asset. Use `PRODUCT_SUPPORT_MODULE_DESIGN.md`'s existing recommended first-release boundaries -- not re-scoped by this approval. | **NOT STARTED** -- gated behind Phase 3 stage 7 (company onboarding) completing first, per the authorized order. See `PRODUCT_MASTER_COMPLETION_PLAN.md` §11. |
+| D14 | **APPROVED 2026-09-16 -- standing authorization given directly by E in chat, part of the same Phase 3 rollout order (stage 9, after D13/Support).** Engineering first release | Product/solution request + technical review + Catalog release link. Use `PRODUCT_ENGINEERING_MODULE_DESIGN.md`'s existing recommended first-release boundaries -- not re-scoped by this approval. | **NOT STARTED** -- gated behind D13 (stage 8) completing first, per the authorized order. See `PRODUCT_MASTER_COMPLETION_PLAN.md` §11. |
 | D15 | **Already decided for now:** Commercial SaaS billing | Remains deferred until explicit authorization; do not ask again during current operational-product work | SaaS commercialization only |
 | D16 | **APPROVED 2026-09-15, with corrections to the recommended default.** Client Proposal Q&A: mechanism, scope, who may answer | Dedicated `sales_quote_proposal_questions` table + two token/role-gated RPCs (not `channels`); **scoped to one proposal VERSION, not the quote** (E overrode the recommended default here); Sales/manager/admin may answer, PM has no proposal authority; notify the quote's owner (was deferred in the original recommendation, E requires it); history becomes read-only after approval/rejection/supersession/expiration/disablement/revocation (NOT after revision_requested, which stays open) | **FULLY CLOSED (2026-09-15)** -- migration 149 + corrective migration 150 (real ambiguous-column bug, test-caught) + canonical test all confirmed, frontend shipped (`997ec7b`). No open items. |
 | D17 | **APPROVED 2026-09-15, with corrections to the recommended default.** Optional BOM lines: default inclusion state, response semantics | `is_optional` boolean; required lines always included; **optional lines begin UNSELECTED** (E overrode the recommended included-by-default); client selects while reviewing; live recompute from the frozen snapshot; selected line IDs + final totals stored atomically with the response, server-computed, never trusted from the client; immutable after response, a new version is required to change it. **Do not call these "alternates"** -- mutually-exclusive alternate groups are an explicitly separate, later, still-undecided product decision | **FULLY CLOSED (2026-09-15)** -- migration 148 + canonical test confirmed applied, frontend shipped (`2fc3a6e`). No open items. |
