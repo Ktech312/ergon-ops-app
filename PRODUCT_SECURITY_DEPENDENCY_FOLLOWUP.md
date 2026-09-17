@@ -113,6 +113,42 @@ this window is `authenticated`-only or trigger-only. The genuinely public, anon-
 `respond_to_submittal`, migrations 119/122) is untouched since the last audit and was not re-derived
 here — nothing changed there to review.
 
+### 2.3 Migrations 152–154 (2026-09-16, D8/D9/D12) — checked against the same four criteria
+
+Eight new `security definer` functions were created across the three migrations built this session:
+`record_system_health_event` (152, return-type change), `record_system_health_recovery` (152, new),
+`list_admin_emails` (152, new), `respond_to_quote_proposal` (153, grant tightened — see below),
+`start_or_resume_restore_run`, `update_restore_run_section`, `finalize_restore_run`,
+`cancel_restore_run` (all 154, new). Checked each against the same four criteria as §2 above,
+directly against the current migration SQL (not assumed):
+
+- **`search_path = ''`**: all eight set it explicitly. No exceptions found.
+- **Fully qualified references**: spot-checked across all eight (`public.app_admins`,
+  `public.is_app_admin`, `public.system_health_events`, `public.restore_runs`,
+  `public.restore_run_sections`, etc.) — every reference is schema-qualified.
+- **Minimum grants**: `record_system_health_event`/`record_system_health_recovery` follow the
+  established pattern (`revoke all from public`, `revoke execute from anon`, `grant execute to
+  authenticated`). `list_admin_emails` is fully closed — `revoke all from public, anon, authenticated`,
+  no grant at all, reachable only via the service-role connection used by
+  `api/send-system-health-alert.js`. **`respond_to_quote_proposal`'s grant was deliberately
+  tightened this pass** (D12): `anon`'s prior direct-call grant is now revoked (`revoke all ... from
+  public, anon, authenticated`), matching `list_admin_emails`'s fully-closed pattern — the function is
+  reachable only via the new `api/respond-to-proposal.js` service-role route, which re-derives the
+  caller's IP from `x-forwarded-for` server-side instead of trusting a client-supplied value. The four
+  restore-run functions (154) grant `execute` to `authenticated` (matching `bridge_set_primary_role`'s
+  own established convention of a broad grant plus an in-body admin check) and each opens with `if
+  not public.is_app_admin(...) then raise exception ...` before doing anything else — none skip the
+  check or call the unhardened `has_role()` helper (§2.1); all six call sites use `is_app_admin()`,
+  which was itself hardened in migrations 124/125, prior to this pass and out of this pass's own
+  scope.
+- **Safe errors**: every `raise exception` message across all eight bodies (`'Only an admin may
+  restore a backup.'`, `'This restore run could not be found.'`, `'snapshot_hash is required.'`,
+  etc.) is a plain, user-safe sentence — none leak a table name, constraint name, or raw Postgres
+  error text.
+
+**No new gap found in any of the eight.** Same clean result as §2's original seven, extended to cover
+this session's own new SQL surface.
+
 ## 3. What this document deliberately does not do
 
 As originally written (this pass, B10), it did not run `npm audit fix`, install or replace `xlsx`/
