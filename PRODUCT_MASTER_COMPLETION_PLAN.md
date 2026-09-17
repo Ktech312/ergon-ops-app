@@ -296,6 +296,18 @@ confirmed via direct source read, not assumed. — *Implemented locally, Tests p
 drafted but NOT YET RUN — requires the migration live first), no deploy needed (SQL-only change).
 **Migration NOT YET APPLIED** — this is item 1 in §5 below.*
 
+**Migration 156 — Phase 3 Stage 2 ownership: `projects.workspace_id` + `tasks.workspace_id` (D11
+approved 2026-09-16)** (`df9a6bf`, see §11): the ownership half of Stage 2, mirroring migration 117's
+pattern exactly — adds and backfills `workspace_id` on the two root tables, does not touch RLS on
+either (both keep their exact current policies, including `projects`' own role-gated write policy
+from migration 023, confirmed unchanged by direct read). `tasks.workspace_id` derives from each task's
+own creator's workspace membership rather than fuzzy-matching the loose `project_ref` text column — a
+mechanical extension of the existing ownership-trigger pattern, not a new business decision. No
+frontend/API code change accompanies this migration (pure ownership metadata, no access change). —
+*Implemented locally, Tests passed (canonical test drafted but NOT YET RUN — requires the migration
+live first), no deploy needed (SQL-only change). **Migration NOT YET APPLIED** — this is item 2 in §5
+below.*
+
 ## 5. Manual-action queue for E — one action at a time, in order
 
 **Item 1 (current): apply migration 155 (Phase 3 Group 1 — Clients + Sales Quote workspace RLS, D11
@@ -310,6 +322,20 @@ approved 2026-09-16).**
   already see, so this migration should produce no observable behavior difference in production. The
   test script's own Section 0 confirms it requires at least one real workspace member to exist to run
   at all.
+- Once confirmed passing, update this section (move to item 2 below) and move this item from
+  "awaiting migration" to "confirmed live" in §3/§4/§11.
+
+**Item 2 (queued next, do not run until item 1 is confirmed): apply migration 156 (Phase 3 Stage 2
+ownership — `projects.workspace_id` + `tasks.workspace_id`, D11 approved 2026-09-16).**
+- File: `backend/supabase/migrations/156_phase3_projects_tasks_workspace_ownership.sql`
+- Then run its canonical test: `backend/supabase/migration_156_phase3_projects_tasks_workspace_ownership_tests.sql`
+  — ends with "ALL MIGRATION 156 PHASE 3 PROJECTS TASKS WORKSPACE OWNERSHIP TESTS PASSED -- ZERO
+  SECTIONS SKIPPED" or a hard error.
+- This is the ownership half only (mirroring migration 117 for Clients+Sales) — adds and backfills
+  `workspace_id` on `projects`/`tasks`, does not touch RLS on either table. **Zero expected visible
+  change** — same reasoning as migration 155 (one real workspace today).
+- No functional dependency on migration 155 — independent, applied in numeric order per this repo's
+  convention.
 - Once confirmed passing, update this section (move to "nothing queued") and move this item from
   "awaiting migration" to "confirmed live" in §3/§4/§11.
 
@@ -472,7 +498,18 @@ between stages:
 
 1. **Clients and Sales containment — IN PROGRESS.** Group 1 (the 10-table Clients/Sales Quote
    ownership graph) implemented — migration 155 (`0d05d03`), §4/§5. Not yet applied.
-2. **Projects, tasks, locations, BOM, and related delivery records — NOT STARTED.**
+2. **Projects, tasks, locations, BOM, and related delivery records — OWNERSHIP HALF DONE.** Migration
+   156 (`df9a6bf`) adds and backfills `projects.workspace_id`/`tasks.workspace_id`, mirroring
+   migration 117's ownership-then-RLS pattern for Clients+Sales. Scope confirmed by direct schema
+   read: `project_locations`/`_images`/`_items`, `project_scope_of_work`, `project_bom_lines`,
+   `project_submittals`, `project_handovers`, `project_stakeholders`, `installed_assets`,
+   `project_conversion_receipts`, `task_hardware_dependencies`, `task_activity_log` inherit ownership
+   through their FK (no new column). Deliberately excluded (topical stage match, not FK-graph
+   inclusion): `project_documents` (Stage 4), the four `project_shipment*`/`_shipping_addresses`
+   tables (Stage 3, "receiving"), `project_schedule_templates`/`_phases` (Stage 5, a global template
+   library with no `project_id` column at all), `project_ref_counters` (Stage 5, a shared counter
+   table). RLS tightening for this group (the Stage-1-style second migration) not yet started. Not
+   applied — item 2 in §5.
 3. **Purchasing, inventory, vendors, warehouses, and receiving — NOT STARTED.**
 4. **Documents, notifications, channels, jobs, share-link records, and storage — NOT STARTED.**
 5. **Workspace-scoped uniqueness, reports, aggregates, functions, triggers, and remaining indirect
