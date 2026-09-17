@@ -394,7 +394,7 @@ here. Only D11/D13/D14/D15 remain genuinely gated on a future E decision.
 |---|---|
 | D5 — bundle-components | **APPROVED, FULLY CLOSED.** Remains reference-only, permanently — see §9. |
 | D6 — `xlsx` → `exceljs` | **APPROVED, FULLY SHIPPED.** See §3/§9 — `13d9979`. |
-| D9 — backup restore checkpointing | **APPROVED, SHIPPED (two parts).** Part 1 (required-vs-optional) fully live in code. Part 2 (durable resumability) implemented, migration 154 is the one remaining manual action (§5 item 3). See §3/§4/§9. |
+| D9 — backup restore checkpointing | **APPROVED, SHIPPED (two parts).** Part 1 (required-vs-optional) fully live in code. Part 2 (durable resumability) implemented, migration 154 is the one remaining manual action (§5 item 2). See §3/§4/§9. |
 | D12 (revised) — e-signature hardening | **APPROVED, FULLY SHIPPED.** See §3/§4/§5 — migration 153. |
 | D18 — frozen proposal PDF | **APPROVED, FULLY SHIPPED.** See §3/§9 — `d92a114`. |
 | D11 — Phase 3 RLS | Still gated — 16-threat design complete, but blocked on the standing "discuss the process first" conversation. Not part of this authorization. |
@@ -425,7 +425,7 @@ were built in this same pass, in this order:
    `67b6cb6`).** Part 1 (required-vs-optional distinction) is pure application logic, no migration,
    already fully live in code: every reference in the restore path except a movement's own sku
    (schema-confirmed NOT NULL) now warns-and-saves-without-it instead of failing the whole section.
-   Part 2 (durable resumability) needs migration 154 (§4/§5 item 3) — `restore_runs`/
+   Part 2 (durable resumability) needs migration 154 (§4/§5 item 2) — `restore_runs`/
    `restore_run_sections` + 4 RPCs, a Resume-vs-Start-Over prompt in `importBackup`. Mid-restore
    cancellation is backend-ready but the UI trigger is deliberately deferred, flagged not hidden.
 
