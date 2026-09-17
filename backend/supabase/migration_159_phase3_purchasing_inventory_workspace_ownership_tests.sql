@@ -89,6 +89,31 @@ begin
 
   raise notice 'TEST PASSED: Section 1 -- zero null workspace_id rows across vendors, locations, inventory_items, purchase_orders, purchase_requests, equipment_types, build_transactions';
 
+  -- Discover a real, existing app_admin who is also an active workspace
+  -- member -- moved ahead of Section 2 (not just Section 3, where this
+  -- lookup conceptually belongs) because Section 2's own purchase_orders
+  -- fixture needs a real caller identity too: guard_workspace_id_mutation()
+  -- is a BEFORE INSERT trigger, not an RLS policy -- switching to the
+  -- 'postgres' role bypasses RLS but does NOT bypass trigger execution,
+  -- so a fixture row still needs a real auth.uid() with a real workspace
+  -- membership behind it, not just an elevated role. is_app_admin() is a
+  -- GLOBAL check, unrelated to which workspace the membership row points
+  -- to -- this admin passes every write policy in this table group
+  -- uniformly (using(true) trivially, is_app_admin()-or-has_role(...) via
+  -- the admin branch), avoiding migration 156's own documented "any
+  -- active member" limitation.
+  select am.user_id, wm.workspace_id, wm.is_workspace_admin
+    into real_user_id, real_workspace_id, real_member_was_admin
+  from public.app_admins am
+  join public.workspace_members wm on wm.user_id = am.user_id
+  join public.workspaces w on w.id = wm.workspace_id
+  where w.status = 'active'
+  limit 1;
+
+  if real_user_id is null then
+    raise exception 'TEST SETUP FAILED: no existing app_admin who is also an active workspace member found -- this script requires at least one real app_admins row that is also present in workspace_members.';
+  end if;
+
   -- ============================================================
   -- Section 2: missing-membership denial on write. A caller with zero
   -- workspace_members rows cannot insert into any of the seven tables --
@@ -141,11 +166,16 @@ begin
   if not caught then raise exception 'TEST FAILED: a caller with zero workspace memberships was able to insert a build_transaction'; end if;
 
   -- purchase_orders needs a real vendor_id to reach the workspace guard
-  -- at all (vendor_id is NOT NULL) -- postgres-role insert of a throwaway
-  -- vendor first, RLS bypassed, exactly like every other fixture setup
-  -- in this test suite.
-  perform set_config('role', 'postgres', true);
-  insert into public.vendors (name, workspace_id) values ('ZZ_TEST_159 Fixture Vendor For PO Guard', (select id from public.workspaces where slug = 'ergon-test')) returning id into new_vendor_id;
+  -- at all (vendor_id is NOT NULL). The fixture vendor is inserted AS
+  -- the real admin discovered above -- not under the 'postgres' role --
+  -- because the ownership trigger fires on every INSERT regardless of
+  -- role; only a caller with a real workspace membership can get past
+  -- it, elevated role or not. The trigger stamps workspace_id itself;
+  -- no explicit value is given.
+  perform set_config('request.jwt.claims', json_build_object('sub', real_user_id::text)::text, true);
+  perform set_config('role', 'authenticated', true);
+  insert into public.vendors (name) values ('ZZ_TEST_159 Fixture Vendor For PO Guard') returning id into new_vendor_id;
+
   perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid()::text)::text, true);
   perform set_config('role', 'authenticated', true);
 
@@ -161,26 +191,12 @@ begin
   -- ============================================================
   -- Section 3: trigger correctly stamps workspace_id on insert
   -- (ignoring/overwriting any client-supplied value), and rejects any
-  -- attempt to change it on update. Uses a real, discovered app_admin
-  -- (is_app_admin() is a GLOBAL check, unrelated to which workspace the
-  -- caller's membership row points to) who is ALSO a real active
-  -- workspace member -- this passes every write policy in this table
-  -- group uniformly (the using(true) ones trivially, and the
+  -- attempt to change it on update. Reuses the real admin discovered
+  -- ahead of Section 2 above -- this passes every write policy in this
+  -- table group uniformly (the using(true) ones trivially, and the
   -- is_app_admin()-or-has_role(...) ones via the admin branch), avoiding
   -- migration 156's own documented "any active member" limitation.
   -- ============================================================
-
-  select am.user_id, wm.workspace_id, wm.is_workspace_admin
-    into real_user_id, real_workspace_id, real_member_was_admin
-  from public.app_admins am
-  join public.workspace_members wm on wm.user_id = am.user_id
-  join public.workspaces w on w.id = wm.workspace_id
-  where w.status = 'active'
-  limit 1;
-
-  if real_user_id is null then
-    raise exception 'TEST SETUP FAILED: no existing app_admin who is also an active workspace member found -- this script requires at least one real app_admins row that is also present in workspace_members.';
-  end if;
 
   perform set_config('request.jwt.claims', json_build_object('sub', real_user_id::text)::text, true);
   perform set_config('role', 'authenticated', true);
