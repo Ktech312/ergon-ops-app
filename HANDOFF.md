@@ -279,15 +279,16 @@ containment work is almost entirely an RLS/column exercise, unlike the RPC-heavy
 Migration 159 also retires `save_equipment_recipe()`'s `active_workspace_id()` guard -- the exact
 retirement migration 158 predicted as pending here -- replacing it with real per-caller workspace
 containment on every lookup the function does. RLS on all seven root tables (and their children) is
-deliberately untouched; that is migration 160, next. **Not yet applied -- implemented locally and
-queued for E's review.**
+deliberately untouched; that is migration 160, next. **Migration 159 CONFIRMED APPLIED and its
+canonical test PASSED in production (2026-09-17, "Success. No rows returned" for both)** -- one
+same-day test-script fix, `e75306a`: the fixture vendor for the purchase_orders no-membership check
+needed a real caller identity, not the `postgres` role, since `guard_workspace_id_mutation()` is a
+trigger and role-switching bypasses RLS but not trigger execution; migration 159 itself was never
+touched. **Stage 3's ownership half is now fully shipped.**
 
-**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 159
-(`backend/supabase/migrations/159_phase3_purchasing_inventory_workspace_ownership.sql`), then run its
-canonical test
-(`backend/supabase/migration_159_phase3_purchasing_inventory_workspace_ownership_tests.sql`).
-Migrations 155, 156, 157, and 158 are all confirmed applied and their canonical tests all passed in
-production, 2026-09-17.
+**Manual-action queue for E, current exact state: EMPTY.** Migrations 155, 156, 157, 158, and 159 are
+all confirmed applied and their canonical tests all passed in production, 2026-09-17. Stage 3's RLS
+half (migration 160) scoping is next.
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
