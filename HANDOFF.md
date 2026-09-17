@@ -251,13 +251,24 @@ fixture-ordering bug where `create_and_send_submittal_version`'s own supersessio
 a token's status before a later section could test it (`ad18ef8`) -- migration 157 itself was never
 touched. **Stage 2 (Projects/Tasks) is now fully shipped end-to-end.**
 
-Deferred to migration 158, next automatic task: retiring `active_workspace_id()` from the RPCs shared
-between Submittals and Proposals (`regenerate_share_link`, `permanently_revoke_share_link`) -- now
-safely fixable since both `projects.workspace_id` and `sales_quotes.workspace_id` are live, but needs
-its own focused pass.
+**Cross-cutting cleanup delivered**: migration 158 (`61706b7`) retires `active_workspace_id()` from
+every RPC now safely fixable (`create_submittal_share_token`, `create_quote_proposal_share_token`,
+`regenerate_share_link`, `create_and_send_quote_proposal_version`) -- deferred from both migrations
+155 and 157, now shippable since both `projects.workspace_id` and `sales_quotes.workspace_id` are
+live. While fixing each, found and fixed a second, more serious gap: all 7 share-link lifecycle RPCs
+checked caller role but never caller workspace -- two (`create_submittal_share_token`,
+`create_quote_proposal_share_token`) were directly callable with zero workspace check at all, even
+though the current frontend no longer calls either. Two new shared helpers
+(`share_link_entity_workspace_id`, `assert_share_link_in_caller_workspace`) close this for all 7.
+`active_workspace_id()` itself remains in use by the legacy admin-role bridge and by
+`save_equipment_recipe()`/`replace_project_bom_lines()` (`equipment_types` has no `workspace_id`
+yet). **Migration 158 CONFIRMED APPLIED and its canonical test PASSED in production (2026-09-17,
+"Both - Success. No rows returned").** Phase 3's cross-cutting cleanup is now fully shipped
+end-to-end.
 
-**Manual-action queue for E, current exact state: EMPTY.** Migrations 155, 156, and 157 are all
-confirmed applied and their canonical tests all passed in production, 2026-09-17.
+**Manual-action queue for E, current exact state: EMPTY.** Migrations 155, 156, 157, and 158 are all
+confirmed applied and their canonical tests all passed in production, 2026-09-17. Stage 3
+(Purchasing/Inventory) scoping is next.
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
