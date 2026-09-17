@@ -347,9 +347,49 @@ begin
   raise notice 'TEST PASSED: Section 6 -- ambiguous membership reads the union correctly for SELECT RLS, and is rejected by resolve_caller_workspace_id()-backed RPCs';
 
   -- ============================================================
-  -- Section 7: create_and_send_submittal_version -- correct workspace
+  -- Section 7: suspended-workspace denial for the two anon/token RPCs.
+  -- Deliberately run BEFORE Section 8's create_and_send_submittal_version
+  -- calls -- that function's own supersession loop marks every OTHER
+  -- active token for the same project_id as 'superseded' whenever a new
+  -- version is created, which would silently flip token_a's own status
+  -- out from under this section if it ran afterward (found on E's first
+  -- live run: get_submittal_by_token(token_a) returned 'superseded'
+  -- instead of reaching the suspended-workspace branch at all, because
+  -- Section 8 -- as originally ordered -- had already superseded it).
+  -- ============================================================
+
+  update public.workspaces set status = 'suspended' where id = real_workspace_id;
+
+  perform set_config('role', 'anon', true);
+
+  select * into token_result from public.get_submittal_by_token(token_a);
+  if token_result.outcome <> 'unavailable' then
+    raise exception 'TEST FAILED: get_submittal_by_token did not treat a suspended workspace as unavailable (got %)', token_result.outcome;
+  end if;
+
+  select * into token_result from public.respond_to_submittal(token_a, 'approved', 'ZZ_TEST_157', '127.0.0.1', null);
+  if token_result.outcome <> 'unavailable' then
+    raise exception 'TEST FAILED: respond_to_submittal did not treat a suspended workspace as unavailable (got %)', token_result.outcome;
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  update public.workspaces set status = 'active' where id = real_workspace_id;
+
+  perform set_config('role', 'anon', true);
+  select * into token_result from public.get_submittal_by_token(token_a);
+  if token_result.outcome <> 'found' then
+    raise exception 'TEST FAILED: get_submittal_by_token did not resolve normally once the workspace was restored to active (got %)', token_result.outcome;
+  end if;
+  perform set_config('role', 'postgres', true);
+
+  raise notice 'TEST PASSED: Section 7 -- get_submittal_by_token and respond_to_submittal both treat a suspended workspace as unavailable, and recover once active again';
+
+  -- ============================================================
+  -- Section 8: create_and_send_submittal_version -- correct workspace
   -- allowed (full completion path, no active_workspace_id() landmine
-  -- here) and another workspace denied.
+  -- here) and another workspace denied. Run after Section 7 on purpose
+  -- -- see that section's header for why (this call's own supersession
+  -- side effect on token_a's status).
   -- ============================================================
 
   perform set_config('request.jwt.claims', json_build_object('sub', real_user_id::text)::text, true);
@@ -383,10 +423,10 @@ begin
   delete from public.workspace_members where user_id = real_user_id and workspace_id = ws_b;
   insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (real_workspace_id, real_user_id, false);
 
-  raise notice 'TEST PASSED: Section 7 -- create_and_send_submittal_version allows the correct workspace (full completion, no landmine) and rejects another workspace';
+  raise notice 'TEST PASSED: Section 8 -- create_and_send_submittal_version allows the correct workspace (full completion, no landmine) and rejects another workspace';
 
   -- ============================================================
-  -- Section 8: role restrictions preserved. Behavioral negative testing
+  -- Section 9: role restrictions preserved. Behavioral negative testing
   -- needs a real, non-pm/admin user, which this environment does not
   -- have. Verified structurally instead.
   -- ============================================================
@@ -395,37 +435,7 @@ begin
   if position('is_app_admin(auth.uid()) or public.has_role(''pm'')' in fn_def) = 0 then
     raise exception 'TEST FAILED: create_and_send_submittal_version no longer contains the expected PM/admin role check';
   end if;
-  raise notice 'TEST PASSED: Section 8 -- create_and_send_submittal_version''s role check confirmed present via source inspection';
-
-  -- ============================================================
-  -- Section 9: suspended-workspace denial for the two anon/token RPCs.
-  -- ============================================================
-
-  update public.workspaces set status = 'suspended' where id = real_workspace_id;
-
-  perform set_config('role', 'anon', true);
-
-  select * into token_result from public.get_submittal_by_token(token_a);
-  if token_result.outcome <> 'unavailable' then
-    raise exception 'TEST FAILED: get_submittal_by_token did not treat a suspended workspace as unavailable (got %)', token_result.outcome;
-  end if;
-
-  select * into token_result from public.respond_to_submittal(token_a, 'approved', 'ZZ_TEST_157', '127.0.0.1', null);
-  if token_result.outcome <> 'unavailable' then
-    raise exception 'TEST FAILED: respond_to_submittal did not treat a suspended workspace as unavailable (got %)', token_result.outcome;
-  end if;
-
-  perform set_config('role', 'postgres', true);
-  update public.workspaces set status = 'active' where id = real_workspace_id;
-
-  perform set_config('role', 'anon', true);
-  select * into token_result from public.get_submittal_by_token(token_a);
-  if token_result.outcome <> 'found' then
-    raise exception 'TEST FAILED: get_submittal_by_token did not resolve normally once the workspace was restored to active (got %)', token_result.outcome;
-  end if;
-  perform set_config('role', 'postgres', true);
-
-  raise notice 'TEST PASSED: Section 9 -- get_submittal_by_token and respond_to_submittal both treat a suspended workspace as unavailable, and recover once active again';
+  raise notice 'TEST PASSED: Section 9 -- create_and_send_submittal_version''s role check confirmed present via source inspection';
 
   -- ============================================================
   -- Section 10: structural policy-shape verification for the seven
