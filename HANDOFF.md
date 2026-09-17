@@ -185,12 +185,55 @@ each item. Delivered, in this order:
   change needed this pass, confirmed still correctly marked that way in both
   `PRODUCT_MASTER_COMPLETION_PLAN.md` §9 and `CONTINUOUS_CODER_HANDOFF.md` §8's own D5 row.
 
-**Manual-action queue for E, current exact state (see `PRODUCT_MASTER_COMPLETION_PLAN.md` §5 for the
-authoritative version): EMPTY.** Migrations 152 (D8), 153 (D12), and 154 (D9) are all confirmed
-applied and their canonical tests all passed in production, 2026-09-16 ("Success. No rows returned"
-confirmed by E for each). Nothing is currently queued for E to run.
+**Manual-action queue for E, as of the batch above: EMPTY.** Migrations 152 (D8), 153 (D12), and 154
+(D9) are all confirmed applied and their canonical tests all passed in production, 2026-09-16
+("Success. No rows returned" confirmed by E for each). **Superseded the same day -- see the Phase 3
+entry immediately below for the live state.**
 
-Billing (D15) and Phase 3 RLS (D11) remain untouched and unstarted, as instructed. See "Current database
+**2026-09-16, later same day: standing authorization given directly by E in chat for the full staged
+Phase 3 tenant-isolation rollout.** This supersedes the prior "discuss first" process gate on D11 --
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §11 is now the authoritative, live tracker for this rollout; this
+entry is a pointer/summary, not the source of truth. Authorized order, one coherent table group at a
+time, without stopping between stages: (1) Clients and Sales containment; (2) Projects, tasks,
+locations, BOM, and related delivery records; (3) Purchasing, inventory, vendors, warehouses, and
+receiving; (4) Documents, notifications, channels, jobs, share-link records, and storage; (5)
+workspace-scoped uniqueness, reports, aggregates, functions, triggers, and remaining indirect access
+paths; (6) full automated cross-workspace isolation suite and final Phase 3 reconciliation (gate: must
+pass before any second real workspace may be created); (7) company onboarding and no-code workspace
+configuration; (8) Support module first release (D13); (9) Engineering module first release (D14).
+
+**Stage 1 (Clients + Sales) delivered**: migration 155 (`0d05d03`) adds workspace-scoped RLS to the
+10-table Clients/Sales Quote ownership graph -- the original 8 tables `PRODUCT_PHASE3_PLAN.md` named
+plus two built after that plan was written and folded into the same group during revalidation
+(`sales_quote_proposal_approval_requests`, `sales_quote_proposal_questions`). Every table/RPC/trigger
+was revalidated against current source (migrations through 154) rather than trusted from the original
+plan verbatim -- that plan predates 35+ migrations of drift. Real drift found and fixed: `sales_quote_
+proposals` has had NO write policy since migration 144 (RPC-only writes already), so this migration
+adds read-only scoping there, not a new write capability; and four security-definer RPCs
+(`request_or_send_quote_proposal_version`, `respond_to_proposal_approval_request`,
+`get_quote_proposal_by_token`, `respond_to_quote_proposal`) had ZERO caller-workspace check at all --
+RLS does nothing to protect them since security-definer bypasses RLS by definition -- all four
+hardened, the latter two also gaining the suspended-workspace check the original plan's own T8 called
+for and confirmed still missing.
+
+**Manual-action queue for E, current exact state: migration 155 is the current, sole item.**
+- File: `backend/supabase/migrations/155_phase3_clients_sales_workspace_rls.sql`
+- Then run its canonical test: `backend/supabase/migration_155_phase3_clients_sales_workspace_rls_tests.sql`
+  -- creates synthetic second/third workspaces only inside a rolled-back transaction, never persisted
+  -- ends with "ALL MIGRATION 155 PHASE 3 CLIENTS SALES WORKSPACE RLS TESTS PASSED -- ZERO SECTIONS
+  SKIPPED" or a hard error.
+- Zero expected visible production change -- exactly one real workspace exists today, so every
+  current user's workspace-membership check evaluates true for exactly the rows they already see.
+
+**Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
+(migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
+the whole database -- used by several RPCs (`save_equipment_recipe`, `replace_project_bom_lines`, the
+legacy `bridge_*` admin-role functions, and the share-link RPCs' SUBMITTAL-side branches) precisely
+because the tables THEY touch (`equipment_types`, `projects`, `project_submittals`) don't have their
+own `workspace_id` yet. Retired incrementally as each later stage ships its own table group's real
+workspace ownership -- see `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 for the full breakdown.
+
+Billing (D15) remains untouched and unstarted, as instructed. See "Current database
 gate" below for Queue C2's own full history, including migration 140's real bug (ambiguous `token`
 reference) and migration 142's real-default-grant follow-up.
 
