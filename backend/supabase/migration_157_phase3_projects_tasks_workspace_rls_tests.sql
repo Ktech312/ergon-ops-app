@@ -439,10 +439,13 @@ begin
     raise exception 'TEST FAILED: project_scope_of_work read policy missing or not using project_owner_workspace_id (got %)', policy_def;
   end if;
 
+  -- Migration 157 creates three SEPARATE insert/update/delete policies
+  -- here (not one combined "for all" policy) -- check the update one
+  -- specifically, since it carries both using and with check.
   select qual into policy_def from pg_policies
-    where schemaname = 'public' and tablename = 'project_scope_of_work' and cmd = 'ALL' and policyname like '%pm and admin%';
+    where schemaname = 'public' and tablename = 'project_scope_of_work' and cmd = 'UPDATE' and policyname like '%pm and admin%';
   if policy_def is null or position('is_app_admin' in policy_def) = 0 or position('has_role' in policy_def) = 0 then
-    raise exception 'TEST FAILED: project_scope_of_work is missing its combined workspace+role write policy (got %)', policy_def;
+    raise exception 'TEST FAILED: project_scope_of_work is missing its combined workspace+role update policy (got %)', policy_def;
   end if;
 
   select qual into policy_def from pg_policies
@@ -499,7 +502,7 @@ begin
   select count(*) into row_count from pg_policies
     where schemaname = 'public' and tablename = 'project_conversion_receipts';
   if row_count <> 0 then
-    raise exception 'TEST FAILED: project_conversion_receipts unexpectedly has a policy (count=%) -- it must remain maximally locked down by permanent design (migration 127), untouched by this migration';
+    raise exception 'TEST FAILED: project_conversion_receipts unexpectedly has a policy (count=%) -- it must remain maximally locked down by permanent design (migration 127), untouched by this migration', row_count;
   end if;
 
   raise notice 'TEST PASSED: Section 10 -- the seven not-behaviorally-tested tables have the correctly-shaped policies, task_activity_log/project_submittals write-posture preserved, and project_conversion_receipts remains untouched';
