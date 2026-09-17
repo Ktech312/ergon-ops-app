@@ -8,11 +8,11 @@
 
 Status: **AUTHORITATIVE, RECONCILED 2026-09-17** (D5/D6/D8/D9/D12/D18 shipped; standing authorization
 given for the full Phase 3 rollout, D11/D13/D14 now approved, see §11 — Stages 1 and 2 (Clients+Sales,
-Projects+Tasks; migrations 155/156/157) all confirmed applied and tested live; migration 158
-(cross-cutting `active_workspace_id()` cleanup) implemented, awaiting application — current
-manual-action-queue item; Stage 3 (Purchasing/Inventory) scoping is next) against `HANDOFF.md`,
-`CONTINUOUS_CODER_HANDOFF.md` §8's full D1-D18 decision register, every applied migration (115
-through 157), and
+Projects+Tasks; migrations 155/156/157) plus the cross-cutting `active_workspace_id()` cleanup
+(migration 158) are all confirmed applied and tested live; manual-action queue empty; Stage 3
+(Purchasing/Inventory) scoping is next) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's
+full D1-D18 decision register, every applied migration (115
+through 158), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
 document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
@@ -125,7 +125,7 @@ Subscription tiers, usage metering, payment processing for Ergon itself (distinc
 own operational Billing/Client Ledger, which Ergon already tracks for the customer). **Do not begin
 design work on this phase without an explicit go-ahead — standing instruction, unchanged.**
 
-## 3. Completed and live — migration range 115 through 150, plus 152 through 157
+## 3. Completed and live — migration range 115 through 150, plus 152 through 158
 
 Everything below is **deployed and production-verified** unless a narrower label is given. Full
 turn-by-turn history lives in `git log` and the relevant design doc, not reproduced here (this
@@ -331,8 +331,6 @@ where `create_and_send_submittal_version`'s own real supersession side effect fl
 out from under a later section (`ad18ef8`) — migration 157 itself was never touched by either fix).
 Stage 2 (Projects/Tasks — ownership + RLS) is now fully shipped end-to-end.*
 
-## 4. Completed locally but not yet migrated/deployed/verified
-
 **Migration 158 — Phase 3 cross-cutting: share-link RPC family workspace containment (D11 approved
 2026-09-16)** (`61706b7`, see §11): retires `active_workspace_id()` from every RPC where both sides'
 real `workspace_id` now make it safely fixable (`create_submittal_share_token`,
@@ -343,24 +341,19 @@ two of the seven were directly callable with zero workspace check at all. Two ne
 (`share_link_entity_workspace_id`, `assert_share_link_in_caller_workspace`) close this for all 7,
 alongside their existing role checks, not instead of them. `active_workspace_id()` itself is
 untouched — still needed by the legacy admin-role bridge and by `save_equipment_recipe()`/
-`replace_project_bom_lines()` (`equipment_types` has no `workspace_id` yet). — *Implemented locally,
-Tests passed (canonical test drafted but NOT YET RUN — requires the migration live first), no deploy
-needed (SQL-only change). **Migration NOT YET APPLIED** — this is item 1 in §5 below.*
+`replace_project_bom_lines()` (`equipment_types` has no `workspace_id` yet). — *Migration applied and
+canonical test PASSED in production (E confirmed, 2026-09-17: "Both - Success. No rows returned").
+Phase 3's cross-cutting cleanup is now fully shipped end-to-end.*
+
+## 4. Completed locally but not yet migrated/deployed/verified
+
+Nothing currently queued here — migration 158 is confirmed applied, tested, and deployed; see §3
+above.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Item 1 (current): apply migration 158 (Phase 3 cross-cutting — share-link RPC family workspace
-containment, D11 approved 2026-09-16).**
-- File: `backend/supabase/migrations/158_phase3_share_link_workspace_containment.sql`
-- Then run its canonical test: `backend/supabase/migration_158_phase3_share_link_workspace_containment_tests.sql`
-  — same transaction-safe pattern, ends with "ALL MIGRATION 158 PHASE 3 SHARE LINK WORKSPACE
-  CONTAINMENT TESTS PASSED -- ZERO SECTIONS SKIPPED" or a hard error.
-- **Zero expected visible change** — same reasoning as migrations 155/156/157 (exactly one real
-  active workspace today).
-- Once confirmed passing, update this section (move to "nothing queued") and move this item from
-  "awaiting migration" to "confirmed live" in §3/§4/§11.
-
-Migrations 155, 156, and 157 are all confirmed applied and their canonical tests all passed already.
+**Nothing queued.** Migrations 155, 156, 157, and 158 are all confirmed applied and their canonical
+tests all passed in production, 2026-09-17. Stage 3 (Purchasing/Inventory) scoping is next.
 Next after migration 158: Stage 3 (Purchasing/Inventory) scoping.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
@@ -538,14 +531,15 @@ between stages:
    library with no `project_id` column at all), `project_ref_counters` (Stage 5, a shared counter
    table).
 
-**Cross-cutting cleanup (deferred from Stages 1/2, its own focused pass) — IMPLEMENTED, NOT YET
-APPLIED.** Migration 158 (`61706b7`) retires `active_workspace_id()` from every share-link RPC now
-safely fixable (`create_submittal_share_token`, `create_quote_proposal_share_token`,
-`regenerate_share_link`, `create_and_send_quote_proposal_version`), and closes a second gap found in
-the same pass: all 7 share-link lifecycle RPCs checked caller role but never caller workspace — two
-were directly callable with zero workspace check at all. See §4/§5. `active_workspace_id()` itself
-remains in use by the legacy admin-role bridge and by `save_equipment_recipe()`/
-`replace_project_bom_lines()` (`equipment_types` has no `workspace_id` yet) — genuinely still needed
+**Cross-cutting cleanup (deferred from Stages 1/2, its own focused pass) — DONE.** Migration 158
+(`61706b7`) retires `active_workspace_id()` from every share-link RPC now safely fixable
+(`create_submittal_share_token`, `create_quote_proposal_share_token`, `regenerate_share_link`,
+`create_and_send_quote_proposal_version`), and closes a second gap found in the same pass: all 7
+share-link lifecycle RPCs checked caller role but never caller workspace — two were directly
+callable with zero workspace check at all. Confirmed applied and its canonical test passed in
+production, 2026-09-17. See §3. `active_workspace_id()` itself remains in use by the legacy
+admin-role bridge and by `save_equipment_recipe()`/`replace_project_bom_lines()` (`equipment_types`
+has no `workspace_id` yet) — genuinely still needed
 there, not an oversight.
 3. **Purchasing, inventory, vendors, warehouses, and receiving — NOT STARTED.**
 4. **Documents, notifications, channels, jobs, share-link records, and storage — NOT STARTED.**
