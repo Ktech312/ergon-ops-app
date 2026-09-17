@@ -359,9 +359,16 @@ against §3 before starting, since this plan is only as trustworthy as its last 
    skipped.
 2. **Inventory pagination — DONE (2026-09-16), see §3.** `loadInventoryItemsPage` wired into the
    Inventory page's own desktop table and mobile card list only, `loadInventoryItems`/
-   `inventoryItems`/`filteredInventoryItems` untouched. The Reports page's own filter (optional per
-   the design) was NOT done — a separate, smaller, later follow-up if wanted, not part of this item's
-   completion.
+   `inventoryItems`/`filteredInventoryItems` untouched. **Reports page investigated under the
+   standing authorization and concluded NOT a pagination candidate**: `Reports`'s `inventoryItems`
+   prop feeds `filteredInventoryItems`, which in turn feeds aggregate calculations across the FULL
+   set — `costHistoryRows` (top price-trend movers), `reorderRows` (every item below its reorder
+   point, not just a visible page), category/vendor spend — every one of which needs the complete
+   dataset, not one cursor page, to be correct. Reports already has its own working client-side
+   search/project/vendor/date filters (`reportFilters`) over that full set. Converting its fetch to
+   server-side cursor pagination would silently break these complete-data calculations — exactly the
+   boundary the standing authorization protects ("preserving exports and complete-data
+   calculations"). No further Inventory-pagination work remains; this closes the item, not defers it.
 3. **Accessibility remediation, mechanical and decision-free** (`PRODUCT_ACCESSIBILITY_MOBILE_PERF_AUDIT.md`
    Part A) — **ALL FIVE ITEMS DONE (2026-09-16), see §3.** A3's remaining scope (generic dual-purpose
    status-message `<div>`s that sometimes show an error, not the class-identified `.error-text`/
