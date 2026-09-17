@@ -6,9 +6,10 @@
 > and exact next task. This document is the authoritative, always-current product roadmap: what's
 > live, what's staged, what's left, in what order, and what's explicitly off-limits without E.
 
-Status: **AUTHORITATIVE, RECONCILED 2026-09-16** (D5/D6/D8/D9/D12/D18 shipped this pass; migrations
-152/153/154 all confirmed applied and tested live — manual-action queue empty) against `HANDOFF.md`,
-`CONTINUOUS_CODER_HANDOFF.md` §8's full D1-D18 decision register, every applied migration (115 through 154), and
+Status: **AUTHORITATIVE, RECONCILED 2026-09-16** (D5/D6/D8/D9/D12/D18 shipped, migrations 152/153/154
+confirmed applied and tested live; standing authorization then given for the full Phase 3 rollout —
+D11/D13/D14 now approved, see §11 — Group 1 implemented as migration 155, awaiting application) against
+`HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's full D1-D18 decision register, every applied migration (115 through 154), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
 document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
@@ -282,22 +283,48 @@ no restore has failed mid-way yet to exercise resume against production.*
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-Nothing currently queued here — everything built this pass (D5/D6/D8/D9/D12/D18, migrations
-152/153/154) is confirmed applied, tested, and deployed; see §3.
+**Migration 155 — Phase 3 Group 1: Clients + Sales Quote workspace RLS (D11 approved 2026-09-16)**
+(`0d05d03`, see §11 for the full staged-rollout tracker): workspace-scoped RLS on the 10-table
+Clients/Sales ownership graph (`clients`, `sales_quotes`, and eight child/related tables), plus
+workspace-containment hardening on four security-definer RPCs that had no caller-workspace check at
+all (`request_or_send_quote_proposal_version`, `respond_to_proposal_approval_request`,
+`get_quote_proposal_by_token`, `respond_to_quote_proposal` — the latter two also gain the
+suspended-workspace check `PRODUCT_PHASE3_PLAN.md`'s own T8 called for). No frontend/API code change
+accompanies this migration — every frontend loader for this table group already relies entirely on
+RLS with no client-side workspace filtering, so scoping the database layer is sufficient by itself;
+confirmed via direct source read, not assumed. — *Implemented locally, Tests passed (canonical test
+drafted but NOT YET RUN — requires the migration live first), no deploy needed (SQL-only change).
+**Migration NOT YET APPLIED** — this is item 1 in §5 below.*
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Nothing queued.** Migrations 152, 153, and 154 are all confirmed applied and their canonical tests
-all passed in production, 2026-09-16 ("Success. No rows returned" confirmed by E for each). Fully
-reconciled into §3 above. The next migration this queue will carry is whatever a future decision or
-audit produces — none exists today.
+**Item 1 (current): apply migration 155 (Phase 3 Group 1 — Clients + Sales Quote workspace RLS, D11
+approved 2026-09-16).**
+- File: `backend/supabase/migrations/155_phase3_clients_sales_workspace_rls.sql`
+- Then run its canonical test: `backend/supabase/migration_155_phase3_clients_sales_workspace_rls_tests.sql`
+  — same transaction-safe pattern (creates synthetic second/third workspaces inside a rolled-back
+  transaction, never persisted), ends with "ALL MIGRATION 155 PHASE 3 CLIENTS SALES WORKSPACE RLS
+  TESTS PASSED -- ZERO SECTIONS SKIPPED" or a hard error.
+- **Zero expected visible change** — with exactly one real active workspace today, every current
+  real user's `is_workspace_member(workspace_id)` check evaluates true for exactly the rows they
+  already see, so this migration should produce no observable behavior difference in production. The
+  test script's own Section 0 confirms it requires at least one real workspace member to exist to run
+  at all.
+- Once confirmed passing, update this section (move to "nothing queued") and move this item from
+  "awaiting migration" to "confirmed live" in §3/§4/§11.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
-- **Phase 3 RLS** (tenant isolation) — no code, no migration, until E has the standing "discuss the
-  process first" conversation. Untouched this pass and every pass before it.
+- **Phase 3 RLS** (tenant isolation) — **APPROVED 2026-09-16, standing authorization for the full
+  staged rollout** (§11 below is now the authoritative tracker; this is no longer a stop boundary).
+  The remaining boundaries in this list, and the authorized order/process §11 records (one coherent
+  table group at a time, synthetic second-workspace fixtures only inside rolled-back test
+  transactions, no persistent second workspace until the isolation suite passes), still govern how
+  this work proceeds.
 - **A second real workspace** — do not create one, seed it, or build onboarding flows that assume
-  one exists, ahead of Phase 3 RLS actually protecting it.
+  one exists, until Phase 3 is complete and its full automated cross-workspace isolation suite
+  (§11 stage 6) passes. Still a hard boundary — the standing authorization explicitly defers this to
+  after Phase 3, not alongside it.
 - **Commercial SaaS subscription billing** (Phase 9) — no design work begins without an explicit
   go-ahead to even start designing it.
 - **Any claim of legal signature weight beyond today's typed-name + IP + content-hash pattern** —
@@ -370,7 +397,8 @@ or audit finding, not guesswork.
 decisions, recorded verbatim in `CONTINUOUS_CODER_HANDOFF.md` §8's register). D12 is fully shipped
 (§3/§4). D5 is fully closed (§9, no code change needed — the interim copy was already the correct
 permanent copy). D6/D9/D18 are approved but not yet fully implemented — tracked in Queue R3 below, not
-here. Only D11/D13/D14/D15 remain genuinely gated on a future E decision.
+here. **D11/D13/D14 are now APPROVED under the 2026-09-16 standing Phase 3 authorization — see §11.**
+Only D15 remains genuinely gated on a future E decision.
 
 | Decision | Status |
 |---|---|
@@ -379,8 +407,8 @@ here. Only D11/D13/D14/D15 remain genuinely gated on a future E decision.
 | D9 — backup restore checkpointing | **APPROVED, FULLY SHIPPED (two parts).** Part 1 (required-vs-optional) and Part 2 (durable resumability, migration 154) both confirmed applied and tested in production 2026-09-16. See §3/§9. |
 | D12 (revised) — e-signature hardening | **APPROVED, FULLY SHIPPED.** Migration 153 confirmed applied and tested in production 2026-09-16. See §3/§9. |
 | D18 — frozen proposal PDF | **APPROVED, FULLY SHIPPED.** See §3/§9 — `d92a114`. |
-| D11 — Phase 3 RLS | Still gated — 16-threat design complete, but blocked on the standing "discuss the process first" conversation. Not part of this authorization. |
-| D13/D14 — Support/Engineering modules | Still gated — placeholder scoping only, "what is this" itself still open. Not part of this authorization. |
+| D11 — Phase 3 RLS | **APPROVED 2026-09-16 — standing authorization for the full staged rollout** (Clients/Sales → Projects/BOM → Purchasing/Inventory → Documents/Notifications/Storage → remaining indirect paths → full isolation suite), in that order, one coherent table group at a time. Group 1 (Clients + Sales) implemented — migration 155, §11. |
+| D13/D14 — Support/Engineering modules | **APPROVED 2026-09-16 — first-release scope authorized**, to be built after Phase 3 completes, using the existing design documents (`PRODUCT_SUPPORT_MODULE_DESIGN.md`, `PRODUCT_ENGINEERING_MODULE_DESIGN.md`) and their recommended first-release boundaries. Not yet started — see §11. |
 | D15 — Commercial SaaS billing | Still gated — explicitly deferred, no design work without an explicit go-ahead. Not part of this authorization. |
 
 ## 8b. Queue R3 — approved decisions (D5/D6/D9/D12/D18) — ALL IMPLEMENTED (2026-09-16)
@@ -435,6 +463,56 @@ decision documents; this table is a status index, not a re-derivation.
 | 14. Optional/alternate BOM lines | D17 | **SHIPPED** — §3 |
 | 15. Real e-signature | D12 (revised) | **APPROVED and SHIPPED as scoped** — typed-name acceptance stays v1; `approval_ip`/`approval_email` hardened (migration 153, §3/§4). No drawn signature/OTP/third-party service — not part of the approved scope. |
 | 16. Server-generated PDF | D18 | **APPROVED and SHIPPED as scoped** — `window.print()` stays v1; three real print gaps fixed (`d92a114`). No server-generated PDF — not part of the approved scope. |
+
+## 11. Phase 3 full-stack rollout (standing authorization, 2026-09-16) — authoritative tracker
+
+E approved the complete staged Phase 3 rollout, superseding the §6 stop boundary that previously
+blocked it. Authorized order, to be executed one coherent stage at a time, without stopping to ask
+between stages:
+
+1. **Clients and Sales containment — IN PROGRESS.** Group 1 (the 10-table Clients/Sales Quote
+   ownership graph) implemented — migration 155 (`0d05d03`), §4/§5. Not yet applied.
+2. **Projects, tasks, locations, BOM, and related delivery records — NOT STARTED.**
+3. **Purchasing, inventory, vendors, warehouses, and receiving — NOT STARTED.**
+4. **Documents, notifications, channels, jobs, share-link records, and storage — NOT STARTED.**
+5. **Workspace-scoped uniqueness, reports, aggregates, functions, triggers, and remaining indirect
+   access paths — NOT STARTED.**
+6. **Full automated cross-workspace isolation suite and final Phase 3 reconciliation — NOT STARTED.**
+   Gate: this must pass before a second real workspace may ever be created (§6).
+7. **Company onboarding and no-code workspace configuration — NOT STARTED.** Blocked on stage 6.
+8. **Support module first release (D13) — NOT STARTED.** Blocked on stage 7 per the authorized order
+   (build after Phase 3 completes). Design doc: `PRODUCT_SUPPORT_MODULE_DESIGN.md`.
+9. **Engineering/Product Development module first release (D14) — NOT STARTED.** Same gating as
+   stage 8. Design doc: `PRODUCT_ENGINEERING_MODULE_DESIGN.md`.
+
+**Cross-cutting finding from Group 1's revalidation, tracked here so it isn't lost across stages**:
+`active_workspace_id()` (migration 124) is a deliberate, tested, fail-closed guard requiring exactly
+one `workspaces` row to exist in the whole database — used by several RPCs precisely because the
+tables THEY touch (`equipment_types`, `projects`, `project_submittals`) don't have their own
+`workspace_id` yet. This is not a bug to fix once; it is retired incrementally, one call site at a
+time, as each table group above gains real per-row workspace ownership:
+- Stage 2 (Projects/BOM) should retire the guard inside `save_equipment_recipe` (migration 130) and
+  `replace_project_bom_lines` (migration 131), once `projects`/`equipment_types` have `workspace_id`.
+- Stage 2 should also retire the guard inside the SUBMITTAL-side branches of the share-link RPCs
+  (`create_and_send_submittal_version`, `regenerate_share_link`, `permanently_revoke_share_link`,
+  and their reissue/expiry paths, migrations 138-140) — these are shared with Proposals, which is why
+  Group 1 deliberately did NOT touch them (a half-fix serving only one entity type adds branching
+  complexity for no real benefit until both sides have real `workspace_id`).
+- Stage 6 (final reconciliation) must confirm every remaining `active_workspace_id()` call site has
+  been retired before stage 7 (onboarding) begins — a second real workspace cannot safely be created
+  while any RPC still depends on "exactly one workspace in the whole database."
+- `bridge_set_primary_role`/`bridge_set_secondary_roles`/`bridge_set_user_allowed_views`/
+  `bridge_grant_admin`/`bridge_revoke_admin` (migration 124) depend on it for a DIFFERENT reason —
+  they operate on the legacy `app_admins`/`app_user_roles` tables, which have no workspace dimension
+  at all. Retiring these requires migrating away from those legacy tables entirely (replacing them
+  with `workspace_members`/`workspace_member_roles`, already partially bridged) — a larger piece of
+  work than any single table group above, tracked here as its own eventual stage-6-adjacent item, not
+  assigned a stage number yet.
+
+**Still deferred, per the standing authorization's own boundaries**: no SaaS subscription billing; no
+persistent second workspace until stage 6 passes; no OTP, drawn-signature, third-party e-signature, or
+regulated-signature claims; no messages to real customers or changes to real operational records for
+testing.
 
 ## 10. What this reconciliation pass changed
 
