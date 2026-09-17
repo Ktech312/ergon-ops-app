@@ -266,9 +266,28 @@ yet). **Migration 158 CONFIRMED APPLIED and its canonical test PASSED in product
 "Both - Success. No rows returned").** Phase 3's cross-cutting cleanup is now fully shipped
 end-to-end.
 
-**Manual-action queue for E, current exact state: EMPTY.** Migrations 155, 156, 157, and 158 are all
-confirmed applied and their canonical tests all passed in production, 2026-09-17. Stage 3
-(Purchasing/Inventory) scoping is next.
+**Stage 3 (Purchasing/Inventory/Vendors/Warehouses) ownership half delivered**: migration 159
+(`f9a5d33`) adds and backfills `workspace_id` on the seven root tables of this domain (`vendors`,
+`locations`, `inventory_items`, `purchase_orders`, `purchase_requests`, `equipment_types`,
+`build_transactions`). `purchase_order_lines`/`_files`/`_receipts`/`_holds`, `inventory_balances`,
+`inventory_movements`, `inventory_transactions`, `project_inventory_allocations`,
+`project_allocation_history`, and `equipment_bom_components` all inherit ownership through their
+required FK (no new column) -- confirmed by a dedicated research pass across all 158 prior migrations,
+which also confirmed this domain has almost no RPC layer at all (every write except
+`save_equipment_recipe()` goes directly through PostgREST, gated only by RLS), so this stage's
+containment work is almost entirely an RLS/column exercise, unlike the RPC-heavy Sales/Clients group.
+Migration 159 also retires `save_equipment_recipe()`'s `active_workspace_id()` guard -- the exact
+retirement migration 158 predicted as pending here -- replacing it with real per-caller workspace
+containment on every lookup the function does. RLS on all seven root tables (and their children) is
+deliberately untouched; that is migration 160, next. **Not yet applied -- implemented locally and
+queued for E's review.**
+
+**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 159
+(`backend/supabase/migrations/159_phase3_purchasing_inventory_workspace_ownership.sql`), then run its
+canonical test
+(`backend/supabase/migration_159_phase3_purchasing_inventory_workspace_ownership_tests.sql`).
+Migrations 155, 156, 157, and 158 are all confirmed applied and their canonical tests all passed in
+production, 2026-09-17.
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
