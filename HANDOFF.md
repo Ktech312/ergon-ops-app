@@ -59,7 +59,7 @@ disclaimer renders correctly, cancelled without saving -- no real catalog data t
 generation/download (D18) and e-signature scope/legal-record/signer-identity/completion-behavior (D12,
 revised). At the time this paragraph was written nothing was implemented; both were approved under a
 standing authorization the next day and are now fully shipped -- D18 via `d92a114` (no migration), D12
-via migration 153 (`eecb8b1`, migration itself not yet applied -- see the manual-action queue below).
+via migration 153 (`eecb8b1`, confirmed applied and tested in production 2026-09-16).
 Reconciles/replaces D12's old one-line placeholder in `CONTINUOUS_CODER_HANDOFF.md` §8; D18's row there
 is also now closed.
 
@@ -148,10 +148,10 @@ each item. Delivered, in this order:
   `restore_runs`/`restore_run_sections` tables + 4 RPCs (start-or-resume, update-section, finalize,
   cancel); `restoreFullBackupSnapshot`'s new `checkpoint` parameter is fully optional and backward
   compatible; `importBackup` hashes the file and offers Resume vs Start Over on a prior incomplete run
-  (`67b6cb6`). 23 new TS-side tests passing. Deployed in degraded-safe mode -- runs as a normal,
-  non-resumable restore until migration 154 is live. A live mid-restore Cancel button is deliberately
+  (`67b6cb6`). 23 new TS-side tests passing. A live mid-restore Cancel button is deliberately
   not built (backend supports cancellation; only the UI trigger is deferred, not a P0). **Migration
-  154 NOT YET APPLIED** -- manual-action-queue item 2 below, do not run until item 1 is confirmed.
+  154 CONFIRMED APPLIED** -- E ran it and its canonical test and both returned "Success. No rows
+  returned" (2026-09-16). D9 is fully shipped end-to-end, no longer in the manual-action queue.
 - **D6 -- `xlsx` -> `exceljs` replacement.** No migration, pure npm/frontend change. Parity-tested via
   a real side-by-side comparison script against synthetic workbooks (blank cells, numeric-looking
   text, header-only file) covering every edge case `PRODUCT_XLSX_REPLACEMENT_EVALUATION.md` named --
@@ -168,8 +168,9 @@ each item. Delivered, in this order:
   Typed-name acceptance remains the v1 signature model -- explicitly not a regulated e-signature
   product, no drawn signature, no third-party integration, no OTP/click-through step. Frontend already
   deployed and is the only path now (`respondToPublicQuoteProposal` no longer calls the RPC directly).
-  11 new/updated TS-side tests passing. **Migration 153 NOT YET APPLIED** -- manual-action-queue item
-  1 below, the current next task.
+  11 new/updated TS-side tests passing. **Migration 153 CONFIRMED APPLIED** -- E ran it and its
+  canonical test and both returned "Success. No rows returned" (2026-09-16). D12 is fully shipped
+  end-to-end, no longer in the manual-action queue.
 - **D18 -- proposal PDF.** No migration, pure frontend (`d92a114`). Kept `window.print()` from the
   frozen proposal snapshot as the v1 approach -- explicitly decided NOT to build a
   server-generated/stored PDF pipeline, since no attachment/storage/integration requirement exists to
@@ -185,29 +186,9 @@ each item. Delivered, in this order:
   `PRODUCT_MASTER_COMPLETION_PLAN.md` §9 and `CONTINUOUS_CODER_HANDOFF.md` §8's own D5 row.
 
 **Manual-action queue for E, current exact state (see `PRODUCT_MASTER_COMPLETION_PLAN.md` §5 for the
-authoritative version):**
-- Migration 152 (D8, System Health alert wiring): **DONE.** Confirmed applied and its canonical test
-  passed in production 2026-09-16. No longer queued.
-- **Item 1 (current, next one-at-a-time Supabase SQL action): apply migration 153** (proposal
-  acceptance hardening -- real `approval_ip`, verified `approval_email`; D12).
-  - File: `backend/supabase/migrations/153_proposal_acceptance_ip_and_email.sql`
-  - Then run its canonical test: `backend/supabase/migration_153_proposal_acceptance_ip_and_email_tests.sql`
-    -- same transaction-safe pattern, ends with "ALL MIGRATION 153 PROPOSAL ACCEPTANCE TESTS PASSED --
-    ZERO SECTIONS SKIPPED" or a hard error.
-  - This migration revokes `anon`'s direct-call grant on `respond_to_quote_proposal`. The frontend
-    (already deployed, `eecb8b1`) already calls the new `api/respond-to-proposal.js` route instead of
-    the RPC directly, so this is safe to apply as soon as E is ready -- there is no window where the
-    live proposal-approval flow would break.
-- **Item 2 (queued next, do not run until item 1 is confirmed): apply migration 154** (resumable
-  backup restore checkpointing; D9).
-  - File: `backend/supabase/migrations/154_backup_restore_checkpointing.sql`
-  - Then run its canonical test: `backend/supabase/migration_154_backup_restore_checkpointing_tests.sql`
-    -- same transaction-safe pattern, ends with "ALL MIGRATION 154 BACKUP RESTORE CHECKPOINTING TESTS
-    PASSED -- ZERO SECTIONS SKIPPED" or a hard error.
-  - No functional dependency on 152/153 -- independent, applied in numeric order per this repo's
-    convention. The frontend (already deployed, `67b6cb6`) degrades safely if this migration isn't
-    live yet -- a restore run before it's applied just runs exactly as it always has, with no
-    resumability, not an error.
+authoritative version): EMPTY.** Migrations 152 (D8), 153 (D12), and 154 (D9) are all confirmed
+applied and their canonical tests all passed in production, 2026-09-16 ("Success. No rows returned"
+confirmed by E for each). Nothing is currently queued for E to run.
 
 Billing (D15) and Phase 3 RLS (D11) remain untouched and unstarted, as instructed. See "Current database
 gate" below for Queue C2's own full history, including migration 140's real bug (ambiguous `token`
