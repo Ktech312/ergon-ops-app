@@ -295,16 +295,13 @@ root tables plus their ten children, via three new owner-resolver helper functio
 three resolvers. Every pre-existing migration-023 role gate is preserved, ANDed with the new
 workspace predicate -- confirmed `vendors`/`locations`/`purchase_orders` and their four immediate
 children never had a role gate at all. No RPC changes needed. `purchase_order_files`' storage.objects
-bucket policies are deliberately untouched (Stage 4). **Not yet applied -- implemented locally and
-queued for E's review.**
+bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED APPLIED and its
+canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
+(Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 160
-(`backend/supabase/migrations/160_phase3_purchasing_inventory_workspace_rls.sql`), then run its
-canonical test
-(`backend/supabase/migration_160_phase3_purchasing_inventory_workspace_rls_tests.sql`). Migrations
-155, 156, 157, 158, and 159 are all confirmed applied and their canonical tests all passed in
-production, 2026-09-17. After 160 is confirmed, Stage 3 is fully shipped end-to-end and Stage 4
-scoping is next.
+**Manual-action queue for E, current exact state: EMPTY.** Migrations 155 through 160 are all
+confirmed applied and their canonical tests all passed in production, 2026-09-17. Stage 4
+(Documents/Notifications/Channels/Jobs/Share-links/Storage) scoping is next.
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
