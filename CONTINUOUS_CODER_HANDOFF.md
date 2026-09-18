@@ -404,11 +404,50 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: EMPTY.** Migrations 155 through 162 are all confirmed
-applied and their canonical tests all passed in production, 2026-09-17. **Phase 3 Stage 4
-(Documents/Notifications/Channels/Jobs/Share-links/Storage) is now fully shipped end-to-end.** Stage 5
-(workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect access
-paths) scoping is next.
+**Manual-action queue, current exact state: ONE ITEM.** Apply migration 163
+(`backend/supabase/migrations/163_phase3_stage5_rpc_workspace_containment_gaps.sql`), then run its
+canonical test
+(`backend/supabase/migration_163_phase3_stage5_rpc_workspace_containment_gaps_tests.sql`). Migrations
+155 through 162 are all confirmed applied and their canonical tests all passed in production,
+2026-09-17. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully
+shipped end-to-end.**
+
+**Stage 5 scoping delivered, first migration implemented locally**: a full scoping pass across all
+162 migrations (full detail in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry) found real,
+confirmed cross-workspace containment gaps -- the same T2/T8 class already fixed elsewhere in Phase 3,
+just missed because the affected code lives outside the file clusters those earlier passes reviewed:
+- **Migration 163 (`88fa65b`) closes three RPC gaps**: `replace_project_bom_lines()` (migration 131,
+  latest def 132) checked the caller's role but never that the target project belongs to the caller's
+  workspace, and its `inventory_items` lookups were entirely workspace-blind; `respond_to_proposal_question()`
+  (migration 149, latest def 150) checked role but never workspace -- any Sales/manager/admin could
+  answer any OTHER workspace's client Q&A by question id, fixed by treating a cross-workspace question
+  identically to a nonexistent one; `submit_proposal_question()` (same file) was missing the
+  suspended-workspace ("T8") check its own sibling RPCs already got in migration 155. All three carried
+  forward verbatim from their current live definitions with only the targeted fixes. Not yet applied
+  -- queued for E's review.
+- **Also found, NOT yet migrated (queued behind 163, see §11 for full detail)**: global `unique`
+  constraints on seven already-workspace-scoped tables never previously flagged (`clients.name`,
+  `projects.project_name`/`project_number`, `vendors.name`, `inventory_items.sku`,
+  `purchase_orders.po_number`, `purchase_requests.request_number`, `project_documents.document_number`)
+  plus two already-flagged ones (`sales_quotes.quote_ref`, `equipment_types.equipment_name`) -- needs
+  to land together with making `sales_quote_ref_counters`/`project_ref_counters` workspace-keyed
+  (currently year-only keyed, confirmed genuinely global). The three report views
+  (`report_inventory_on_hand`/`report_project_inventory_usage`/`report_purchase_order_status`, all from
+  migration 001, never touched since) likely leak cross-workspace aggregate data via Postgres's
+  default view-owner RLS-bypass semantics -- needs a live-database grant check before a fix can be
+  written safely. `deletion_log` (migration 088) is a confirmed live cross-workspace leak (fully open
+  RLS, polymorphic audit table with human-readable labels and actor emails, still actively written to).
+  Storage bucket policies for `purchase_order_files`/`sales-quote-images`/`message-attachments` were
+  each named as "deferred to later" by a different earlier stage but never actually claimed by any of
+  them. `notification_rules`/`standard_install_times`/`project_schedule_templates` are confirmed
+  genuinely global config -- whether they ever need a per-workspace override is a governance decision
+  for E, not blocking anything else. `app_sync_events` looks dead (confirm before dropping);
+  `app_transaction_locks` is low-risk but has a stray anon EXECUTE grant worth revoking.
+- **Correction to the standing plan**: `save_equipment_recipe()` was already retired from
+  `active_workspace_id()` by migration 159 -- any older text still listing it as pending is stale. The
+  confirmed complete remaining `active_workspace_id()` call-site list is the legacy admin-role bridge
+  functions (124/133, permanently out of scope) plus `replace_project_bom_lines()` (now retired by
+  migration 163).
 
 **E resolved both of Stage 4's open product decisions, 2026-09-17**: (1) messaging channels are
 **per-workspace** -- each workspace gets its own copy of the 4 section channels and its own group
