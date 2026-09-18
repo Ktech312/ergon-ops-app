@@ -299,9 +299,39 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: EMPTY.** Migrations 155 through 160 are all
-confirmed applied and their canonical tests all passed in production, 2026-09-17. Stage 4
-(Documents/Notifications/Channels/Jobs/Share-links/Storage) scoping is next.
+**Manual-action queue for E, current exact state: EMPTY (no SQL queued).** Migrations 155 through 160
+are all confirmed applied and their canonical tests all passed in production, 2026-09-17.
+
+**Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) scoping is DONE, not migrated
+yet.** Full research pass across all 160 migrations, confirmed zero tables in this domain have
+`workspace_id` today. Full detail in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 4 entry and
+`CONTINUOUS_CODER_HANDOFF.md`'s matching session-log entry (both just reconciled). Short version:
+
+- Most of the domain is routine, unblocked mechanical work once started: `project_documents`
+  (3-nullable-FK coalesce anchor), `sales_quote_extractions`, the four shipment tables (clean anchor
+  to `projects`), the `purchase-order-files` storage bucket (already named as deferred by migration
+  160), notifications (minus `notification_rules`), and a real gap in the **share-link tables**
+  themselves -- migration 158 hardened the RPC layer, but `public_share_tokens`/`share_link_views`/
+  `share_link_actions` still have zero `workspace_id` and their SELECT policies are bare `using(true)`
+  -- any authenticated user in any workspace can read every other workspace's share-token rows today.
+- **Two open product decisions are the actual next thing to resolve, either with E directly or by
+  making and documenting a routine-default judgment call the way migration 156 did for
+  `tasks.workspace_id`:**
+  1. **Messaging channels** -- `section`/`group`-type channels (the Slack-replacement feature) have no
+     workspace anchor at all. Does every workspace get its own copy of the 4 global section channels,
+     or do all workspaces share one?
+  2. **`conversations`/`direct_messages`** -- should private DMs become workspace-scoped, or stay
+     deliberately cross-workspace (personal messaging, not tenant data)?
+- `notification_rules` is very likely Stage 5's job, not Stage 4's (global config, no per-row tenant
+  data, same shape as tables already excluded from Stage 2 for that reason) -- worth confirming but
+  doesn't block anything else.
+- Confirmed: no "jobs" table/queue/cron/webhook-log exists anywhere in this codebase.
+
+**Recommended next step**: either get E's read on the two channel/DM decisions above, or -- following
+the standing authorization's own "don't stop to ask on routine implementation defaults" spirit --
+proceed with the unblocked majority of Stage 4 (documents, shipments, storage bucket, share-link table
+containment, notifications) as its own migration first, leaving channels/DMs for a second, later Stage
+4 migration once those two decisions land.
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
