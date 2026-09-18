@@ -404,14 +404,10 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: ONE ITEM.** Apply migration 161
-(`backend/supabase/migrations/161_phase3_documents_shipments_sharelinks_workspace_rls.sql`), then run
-its canonical test
-(`backend/supabase/migration_161_phase3_documents_shipments_sharelinks_workspace_rls_tests.sql`).
-Migrations 155 through 160 are all confirmed applied and their canonical tests all passed in
-production, 2026-09-17.
+**Manual-action queue, current exact state: EMPTY.** Migrations 155 through 161 are all confirmed
+applied and their canonical tests all passed in production, 2026-09-17.
 
-**Stage 4 scoping delivered, unblocked portion implemented locally as migration 161**: a full research
+**Stage 4 scoping delivered, unblocked portion FULLY SHIPPED as migration 161**: a full research
 pass across all 160 migrations confirmed **zero tables** in the Documents/Notifications/Channels/Jobs/
 Share-link/Storage domain have `workspace_id` today (only 117/156/159 ever add the column, anywhere in
 the repo). Full detail is in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 4 entry; summary here:
@@ -429,8 +425,8 @@ the repo). Full detail is in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 4 
   could read every OTHER workspace's share-token rows via a raw REST select. Closed by reusing
   migration 158's own `share_link_entity_workspace_id()` helper directly, no new resolver needed.
   `workspace_share_link_settings` (already has `workspace_id` as its PK) had the same unscoped-SELECT
-  gap plus an admin-gated-not-workspace-gated write policy, both fixed. Not yet applied -- queued for
-  E's review.
+  gap plus an admin-gated-not-workspace-gated write policy, both fixed. **CONFIRMED APPLIED and its
+  canonical test PASSED in production (2026-09-17, "both came back - Success. No rows returned").**
 - **Confirmed correctly excluded from this migration** (not a gap): `notifications` (no anchor at all
   -- `recipient_email` is plain text, `related_entity_type`/`related_entity_id` is a polymorphic pair
   with no FK -- already correctly self-scoped by recipient email, INSERT already service-role-only
