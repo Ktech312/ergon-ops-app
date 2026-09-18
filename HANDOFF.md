@@ -299,42 +299,39 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: EMPTY.** Migrations 155 through 162 are all
-confirmed applied and their canonical tests all passed in production, 2026-09-17.
+**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 163
+(`backend/supabase/migrations/163_phase3_stage5_rpc_workspace_containment_gaps.sql`), then run its
+canonical test
+(`backend/supabase/migration_163_phase3_stage5_rpc_workspace_containment_gaps_tests.sql`). Migrations
+155 through 162 are all confirmed applied and their canonical tests all passed in production,
+2026-09-17. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully
+shipped end-to-end** (migrations 161/162, confirmed applied and tested).
 
-**Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is now FULLY SHIPPED
-end-to-end**: migration 161 (`d42190b`, documents/shipments/share-link table containment/
-purchase-order-files storage bucket) and migration 162 (`862aa75`, messaging channels) are both
-confirmed applied and tested, 2026-09-17.
+**Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
+access paths) scoping is done; first migration implemented locally.** Full detail in
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry and `CONTINUOUS_CODER_HANDOFF.md`'s matching
+session-log entry. Summary:
 
-**E resolved both of Stage 4's open product decisions, 2026-09-17**:
-1. **Messaging channels are per-workspace** -- each workspace gets its own copy of the 4 section
-   channels and its own group channels, not a shared global set.
-2. **DMs stay cross-workspace** -- personal messaging, not tenant data. No migration needed for
-   `conversations`/`direct_messages` at all. E separately asked for DMs to support more than two
-   participants (Slack/Teams-style group DMs) -- a real, separate feature needing its own schema
-   redesign (the fixed `participant_a_id`/`participant_b_id` pair would become a real membership
-   table) plus frontend work. NOT a workspace-scoping question, deliberately NOT bundled into this
-   migration -- tracked as its own item in `PRODUCT_MASTER_COMPLETION_PLAN.md` §4, not scoped yet.
+- **Migration 163** (`88fa65b`) closes three real, confirmed cross-workspace RPC containment gaps
+  (same T2/T8 class already fixed elsewhere in Phase 3, missed because these functions live outside
+  the file clusters earlier passes reviewed): `replace_project_bom_lines()` checked role but never
+  that the target project belongs to the caller's workspace, and its `inventory_items` lookups were
+  entirely workspace-blind; `respond_to_proposal_question()` checked role but never workspace;
+  `submit_proposal_question()` was missing the suspended-workspace check its siblings already got in
+  migration 155. Not yet applied -- queued for E's review.
+- **Queued behind 163, not yet migrated**: workspace-scoped uniqueness fixes on 9 tables (must land
+  together with making the ref-counter tables workspace-keyed); the three report views likely leak
+  cross-workspace aggregate data (needs a live-database grant check first); `deletion_log` is a
+  confirmed live cross-workspace leak; storage bucket policies for 3 buckets were each deferred by a
+  different earlier stage but never actually claimed.
+- **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
+  `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
+  per-workspace override eventually?
+- **Correction**: `save_equipment_recipe()` was already retired from `active_workspace_id()` by
+  migration 159 -- older text still listing it as pending is stale.
 
-**Messaging channels implemented as migration 162** (`862aa75`): adds a real, trigger-enforced
-`workspace_id` column to `channels` (`section`/`group` types have no FK anchor at all, so this needs a
-genuine column, unlike every other Stage 4 table). A channel-specific guard trigger derives
-`workspace_id` from the linked project/client for `project`/`client`-type channels, and from the
-caller's own resolved workspace for `section`/`group` types -- never trusting a caller-supplied value.
-`channel_messages`/`channel_members`/`channel_canvas`/`channel_message_reactions`/the
-`message-attachments` storage bucket's channel policies all inherit scoping through `channel_id`.
-Deliberately does NOT auto-seed a new workspace's own section channels (no reviewed
-workspace-provisioning path exists yet -- Stage 7). **CONFIRMED APPLIED and its canonical test PASSED
-in production (2026-09-17, "both came back - Success. No rows returned").**
-
-Also confirmed and intentionally NOT touched: `notifications`/`push_subscriptions` are already
-correctly scoped (recipient-email- and user-scoped, not a workspace gap); `notification_rules` is
-very likely Stage 5's job (global config, no per-row tenant data); no "jobs" table/queue/cron/
-webhook-log exists anywhere in this codebase.
-
-**Recommended next step**: Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions,
-triggers, remaining indirect access paths) scoping is next.
+**Recommended next step**: once migration 163 is confirmed, continue Stage 5 with the
+uniqueness/ref-counter migration next (see §11 for the full table list).
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
