@@ -404,9 +404,52 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: EMPTY.** Migrations 155 through 160 are all confirmed
-applied and their canonical tests all passed in production, 2026-09-17. Stage 4
-(Documents/Notifications/Channels/Jobs/Share-links/Storage) scoping is next.
+**Manual-action queue, current exact state: EMPTY (no SQL queued).** Migrations 155 through 160 are
+all confirmed applied and their canonical tests all passed in production, 2026-09-17.
+
+**Stage 4 scoping delivered**: a full research pass across all 160 migrations confirms **zero tables**
+in the Documents/Notifications/Channels/Jobs/Share-link/Storage domain have `workspace_id` today
+(only 117/156/159 ever add the column, anywhere in the repo). Full detail is in
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 4 entry; summary here:
+- **Not blocked, routine mechanical work once started**: `project_documents` (3-nullable-FK coalesce
+  anchor, same shape as migration 160's `inventory_transactions`), `sales_quote_extractions`
+  (2-hop anchor), the four `project_shipment*`/`_shipping_addresses` tables (clean single anchor to
+  `projects`, correctly re-scoped here from Stage 3 by migrations 159/160's own headers), the
+  `purchase-order-files` storage bucket (migration 160 explicitly deferred this by name),
+  `notifications`/`notification_deliveries`/`push_subscriptions` (the first two have no anchor at all
+  and would need their containment strategy rethought -- `notifications` INSERT is already
+  service-role-only since migration 114 -- `push_subscriptions` needs no workspace scoping, already
+  correctly self-scoped), and **the share-link tables' real containment gap**: migration 158 hardened
+  the RPC layer, but `public_share_tokens`/`share_link_views`/`share_link_actions` themselves still
+  have zero `workspace_id` and their SELECT policies are bare `using(true)` -- any authenticated user
+  in any workspace can currently read every OTHER workspace's share-token rows via a raw REST select.
+  `workspace_share_link_settings` (already has `workspace_id` as its PK) has the same unscoped-SELECT
+  gap plus an admin-gated-not-workspace-gated write policy.
+- **Two genuine product decisions needed from E before those two sub-areas can be migrated** (not
+  implementation defaults -- see §11 for full reasoning):
+  1. **Messaging channels** (`channels`/`channel_messages`/`channel_canvas`/`channel_members`, the
+     Slack-replacement feature from migrations 094/100-105/112/113, distinct from the `channels[]`
+     delivery-method enum on `notification_rules`) -- `project`/`client`-type channels anchor cleanly,
+     but `section` (4 global singletons: inventory/projects/sales/marketing) and `group` (ad-hoc
+     user-created) channels have no anchor of any kind. Does every workspace get its own copy of the
+     section channels, or do all workspaces share one? Two unrelated pre-existing bugs found in
+     passing (not workspace-related, worth their own fix later): `channel_canvas` is fully open
+     rather than membership-gated; `channel_members` is fully open on all three operations.
+  2. **`conversations`/`direct_messages`** (private 1:1 DMs, migrations 094/100) -- both participants
+     are raw `auth.users` references with no workspace concept at all. Workspace-scoped, or
+     deliberately cross-workspace (personal messaging)?
+- **`notification_rules` is very likely Stage 5's job, not Stage 4's** -- a global, admin-configured
+  event-type whitelist with no per-row tenant data, same shape as `standard_install_times`/
+  `project_schedule_templates` (already excluded from Stage 2 for the identical reason). Migration
+  156's own header flagged this overlap. Worth confirming with E, though it doesn't block anything
+  else in Stage 4.
+- **"Jobs" does not exist anywhere in this codebase** -- confirmed via repo-wide grep (no queue, cron
+  table, or webhook log). If any earlier planning doc assumed one, that assumption is now corrected.
+- `active_workspace_id()` confirmed fully retired from this entire domain -- no new call sites.
+- Cross-cutting, not owned by this stage: `deletion_log` (polymorphic audit table, no anchor, logs
+  deletions from several Stage-4-adjacent tables) needs its own decision on which pass fixes it;
+  `app_sync_events`/`app_transaction_locks` are pre-`workspaces`-feature MVP leftovers, a cleanup item
+  not part of containment work.
 
 **Cross-cutting finding, tracked here so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row to
