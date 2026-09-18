@@ -404,12 +404,11 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: ONE ITEM.** Apply migration 162
-(`backend/supabase/migrations/162_phase3_messaging_channels_workspace_scoping.sql`), then run its
-canonical test
-(`backend/supabase/migration_162_phase3_messaging_channels_workspace_scoping_tests.sql`). Migrations
-155 through 161 are all confirmed applied and their canonical tests all passed in production,
-2026-09-17.
+**Manual-action queue, current exact state: EMPTY.** Migrations 155 through 162 are all confirmed
+applied and their canonical tests all passed in production, 2026-09-17. **Phase 3 Stage 4
+(Documents/Notifications/Channels/Jobs/Share-links/Storage) is now fully shipped end-to-end.** Stage 5
+(workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect access
+paths) scoping is next.
 
 **E resolved both of Stage 4's open product decisions, 2026-09-17**: (1) messaging channels are
 **per-workspace** -- each workspace gets its own copy of the 4 section channels and its own group
@@ -437,7 +436,8 @@ workspace's own section channels -- no reviewed workspace-provisioning path exis
 bare trigger on `workspaces` INSERT would have to either trust a caller-supplied `workspace_id` on the
 seeded rows (reopening the exact spoofing gap this migration closes) or invent an unsafe bypass
 mechanism (Postgres does not privilege-gate `set_config()` by default) -- correctly belongs with
-Stage 7's own reviewed provisioning procedure instead. Not yet applied -- queued for E's review.
+Stage 7's own reviewed provisioning procedure instead. **CONFIRMED APPLIED and its canonical test
+PASSED in production (2026-09-17, "both came back - Success. No rows returned").**
 
 **Stage 4 scoping delivered, unblocked portion FULLY SHIPPED as migration 161**: a full research
 pass across all 160 migrations confirmed **zero tables** in the Documents/Notifications/Channels/Jobs/
