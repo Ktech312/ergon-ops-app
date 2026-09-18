@@ -145,7 +145,7 @@ begin
   -- rows are created under the postgres role, same as migration 155's
   -- own test does for this exact table.
   perform set_config('role', 'postgres', true);
-  insert into public.sales_quotes (site_name, client_name, status) values ('ZZ_TEST_163 Site A', 'ZZ_TEST_163 Client A', 'draft') returning id into quote_a_id;
+  insert into public.sales_quotes (site_name, client_name, status) values ('ZZ_TEST_163 Site A', 'ZZ_TEST_163 Client A', 'open') returning id into quote_a_id;
   insert into public.sales_quote_proposals (quote_id, status) values (quote_a_id, 'sent') returning id into proposal_a_id;
   insert into public.sales_quote_proposal_questions (proposal_id, question_text) values (proposal_a_id, 'ZZ_TEST_163 question A') returning id into question_a_id;
   perform set_config('request.jwt.claims', json_build_object('sub', real_user_id::text)::text, true);
@@ -165,7 +165,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', real_user_id::text)::text, true);
   perform set_config('role', 'authenticated', true);
 
-  insert into public.sales_quotes (site_name, client_name, status) values ('ZZ_TEST_163 Site B', 'ZZ_TEST_163 Client B', 'draft') returning id into quote_b_id;
+  insert into public.sales_quotes (site_name, client_name, status) values ('ZZ_TEST_163 Site B', 'ZZ_TEST_163 Client B', 'open') returning id into quote_b_id;
 
   perform set_config('role', 'postgres', true);
   insert into public.sales_quote_proposals (quote_id, status) values (quote_b_id, 'sent') returning id into proposal_b_id;
