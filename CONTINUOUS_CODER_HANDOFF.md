@@ -404,8 +404,40 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: EMPTY.** Migrations 155 through 161 are all confirmed
-applied and their canonical tests all passed in production, 2026-09-17.
+**Manual-action queue, current exact state: ONE ITEM.** Apply migration 162
+(`backend/supabase/migrations/162_phase3_messaging_channels_workspace_scoping.sql`), then run its
+canonical test
+(`backend/supabase/migration_162_phase3_messaging_channels_workspace_scoping_tests.sql`). Migrations
+155 through 161 are all confirmed applied and their canonical tests all passed in production,
+2026-09-17.
+
+**E resolved both of Stage 4's open product decisions, 2026-09-17**: (1) messaging channels are
+**per-workspace** -- each workspace gets its own copy of the 4 section channels and its own group
+channels; (2) `conversations`/`direct_messages` **stay cross-workspace** -- personal messaging, not
+tenant data, no migration needed for that table at all. E also asked, separately, for DMs to support
+more than two participants (Slack/Teams-style group DMs) -- a real, separate feature (the fixed
+`participant_a_id`/`participant_b_id` pair would need to become a real membership table, plus frontend
+work), NOT a workspace-scoping question, and deliberately NOT bundled into migration 162 -- tracked as
+its own item in `PRODUCT_MASTER_COMPLETION_PLAN.md` §4, not scoped or scheduled yet.
+
+**Messaging channels implemented as migration 162** (`862aa75`): adds a real, trigger-enforced
+`workspace_id` column to `channels` (unlike every other Stage 4 table, `section`/`group` channel types
+have no reliable FK anchor at all, so this needs a genuine column -- the Stage 1-3 "root table"
+pattern -- not a resolver). A channel-specific guard trigger (NOT the shared
+`guard_workspace_id_mutation()`) derives `workspace_id` authoritatively from the linked project/client
+for `project`/`client`-type channels, and from the caller's own resolved workspace for
+`section`/`group` types -- never trusting a caller-supplied value either way (this distinction matters:
+the shared guard would have silently mis-stamped `project`/`client` channels the moment a second
+workspace exists, since the CREATOR's resolved workspace isn't guaranteed to match the linked
+project's/client's own workspace in every future scenario, even though they agree today).
+`channel_messages`, `channel_members`, `channel_canvas`, `channel_message_reactions`, and the
+`message-attachments` storage bucket's channel-specific policies all inherit scoping through
+`channel_id`, via a new `channel_owner_workspace_id()` resolver. Deliberately does NOT auto-seed a new
+workspace's own section channels -- no reviewed workspace-provisioning path exists yet (Stage 7); a
+bare trigger on `workspaces` INSERT would have to either trust a caller-supplied `workspace_id` on the
+seeded rows (reopening the exact spoofing gap this migration closes) or invent an unsafe bypass
+mechanism (Postgres does not privilege-gate `set_config()` by default) -- correctly belongs with
+Stage 7's own reviewed provisioning procedure instead. Not yet applied -- queued for E's review.
 
 **Stage 4 scoping delivered, unblocked portion FULLY SHIPPED as migration 161**: a full research
 pass across all 160 migrations confirmed **zero tables** in the Documents/Notifications/Channels/Jobs/
@@ -434,19 +466,11 @@ the repo). Full detail is in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 4 
   concept needed). `notification_deliveries` being fully open (read+insert to any authenticated user)
   IS a real gap, but a general access-control one unrelated to workspace containment -- flagged, not
   fixed here, out of this migration's theme.
-- **Two genuine product decisions needed from E before those two sub-areas can be migrated** (not
-  implementation defaults -- see §11 for full reasoning):
-  1. **Messaging channels** (`channels`/`channel_messages`/`channel_canvas`/`channel_members`, the
-     Slack-replacement feature from migrations 094/100-105/112/113, distinct from the `channels[]`
-     delivery-method enum on `notification_rules`) -- `project`/`client`-type channels anchor cleanly,
-     but `section` (4 global singletons: inventory/projects/sales/marketing) and `group` (ad-hoc
-     user-created) channels have no anchor of any kind. Does every workspace get its own copy of the
-     section channels, or do all workspaces share one? Two unrelated pre-existing bugs found in
-     passing (not workspace-related, worth their own fix later): `channel_canvas` is fully open
-     rather than membership-gated; `channel_members` is fully open on all three operations.
-  2. **`conversations`/`direct_messages`** (private 1:1 DMs, migrations 094/100) -- both participants
-     are raw `auth.users` references with no workspace concept at all. Workspace-scoped, or
-     deliberately cross-workspace (personal messaging)?
+- **Both genuine product decisions RESOLVED by E, 2026-09-17** (see the migration-162 summary above
+  for full detail): (1) messaging channels are per-workspace; (2) DMs stay cross-workspace, plus the
+  new (separate, not-Phase-3) group-DM feature request. Two unrelated pre-existing bugs found while
+  scoping channels, NOT fixed by migration 162 (worth their own review): `channel_canvas` is fully
+  open rather than membership-gated; `channel_members` is fully open on all three operations.
 - **`notification_rules` is very likely Stage 5's job, not Stage 4's** -- a global, admin-configured
   event-type whitelist with no per-row tenant data, same shape as `standard_install_times`/
   `project_schedule_templates` (already excluded from Stage 2 for the identical reason). Migration
