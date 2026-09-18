@@ -10,13 +10,12 @@ Status: **AUTHORITATIVE, RECONCILED 2026-09-17** (D5/D6/D8/D9/D12/D18 shipped; s
 given for the full Phase 3 rollout, D11/D13/D14 now approved, see §11 — Stages 1, 2, and 3
 (Clients+Sales, Projects+Tasks, Purchasing/Inventory/Vendors/Warehouses; migrations 155-160) plus the
 cross-cutting `active_workspace_id()` cleanup (migration 158) are all confirmed applied and tested
-live; manual-action queue empty; Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage)
-scoping is DONE (see §11, Stage 4) and surfaced two real product decisions — messaging-channel
-workspace scope, and whether DMs are workspace-scoped or cross-workspace — that need E's input before
-any Stage 4 migration can be written; the rest of Stage 4's domain has no such blocker and can be
-migrated independently) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's
+live; Stage 4's unblocked portion (documents, shipments, share-link table containment, the
+purchase-order-files storage bucket — migration 161) is implemented locally and queued as the current
+manual-action item, awaiting application; Stage 4's channels/DMs portion remains blocked on two
+product decisions from E, see §11) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's
 full D1-D18 decision register, every applied migration (115
-through 160), and
+through 160, plus 161 pending), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
 document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
@@ -378,18 +377,34 @@ PASSED in production (E confirmed, 2026-09-17: "both ran - Success. No rows retu
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-Nothing currently queued here — migration 160 is confirmed applied, tested, and deployed; see §3
-above.
+**Migration 161**
+(`backend/supabase/migrations/161_phase3_documents_shipments_sharelinks_workspace_rls.sql`, commit
+`d42190b`) — Phase 3 Stage 4, unblocked portion only. Adds workspace-scoped RLS to `project_documents`
+(three-way coalesce anchor across `project_id`/`purchase_order_id`/`purchase_request_id`), its child
+`sales_quote_extractions`, the four `project_shipment*` tables, and closes a real gap in the
+share-link tables themselves: migration 158 hardened the RPC layer, but `public_share_tokens`/
+`share_link_views`/`share_link_actions` still had bare `using(true)` SELECT policies — any
+authenticated user in any workspace could read every other workspace's share-link rows. Also scopes
+the `purchase-order-files` storage bucket, explicitly deferred by migration 160. Three new resolver
+functions (`purchase_request_owner_workspace_id`, `project_shipment_owner_workspace_id`,
+`project_document_owner_workspace_id`); migration 158's `share_link_entity_workspace_id` reused
+directly for the share-link tables. Does NOT cover messaging channels or DMs (blocked on the two
+product decisions below) or `notification_rules`/`notifications`/`notification_deliveries`/
+`push_subscriptions` (confirmed correctly scoped as-is, or likely Stage 5's job — see this migration's
+own header for full reasoning). Canonical test:
+`backend/supabase/migration_161_phase3_documents_shipments_sharelinks_workspace_rls_tests.sql`. Not
+yet applied — queued below.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**No SQL queued.** Migrations 155 through 160 are all confirmed applied and their canonical tests all
-passed in production, 2026-09-17. Stage 4 scoping is done (§11, Stage 4 entry) and surfaced **two
-product decisions that need E's input** before the messaging-channel and DM sub-areas can be migrated
-— everything else in Stage 4 (documents, shipments, the purchase-order-files storage bucket,
-share-link table containment, notifications minus `notification_rules`) is unblocked and can proceed
-independently. See §11, Stage 4 for full detail on both open questions and exactly which sub-areas are
-and are not blocked by them.
+**One item queued: apply migration 161**
+(`backend/supabase/migrations/161_phase3_documents_shipments_sharelinks_workspace_rls.sql`), then run
+its canonical test
+(`backend/supabase/migration_161_phase3_documents_shipments_sharelinks_workspace_rls_tests.sql`).
+Migrations 155 through 160 are all confirmed applied and their canonical tests all passed in
+production, 2026-09-17. Stage 4's remaining two sub-areas (messaging channels, DMs) still need E's
+input — see §11, Stage 4 for both open questions and exactly which sub-areas are and are not blocked
+by them.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
@@ -590,25 +605,34 @@ there, not an oversight.
    inclusion): the four `project_shipment*`/`_shipping_addresses` tables, re-scoped from this stage to
    Stage 4 (Documents/Notifications) after direct read showed they carry no purchasing/inventory data
    of their own; `purchase_order_files`' storage.objects bucket policies (Stage 4 territory, storage).
-4. **Documents, notifications, channels, jobs, share-link records, and storage — SCOPED, NOT YET
-   MIGRATED.** Full research pass complete (repo-wide read of all 160 migrations); confirmed by direct
-   grep that **zero tables in this entire domain have `workspace_id` today** (only 117/156/159 ever add
-   the column, anywhere in the repo). Findings by sub-area:
+4. **Documents, notifications, channels, jobs, share-link records, and storage — IN PROGRESS
+   (unblocked portion implemented locally).** Full research pass complete (repo-wide read of all 160
+   migrations); confirmed by direct grep that **zero tables in this entire domain have `workspace_id`
+   today** (only 117/156/159 ever add the column, anywhere in the repo). Findings by sub-area:
    - **Documents** — `project_documents` has THREE nullable FK anchors (`project_id`,
-     `purchase_order_id`, `purchase_request_id`, no combination guaranteed non-null) — needs a coalesce
-     resolver, same shape as migration 160's `inventory_transactions`. `sales_quote_extractions`
-     anchors two hops out via `project_document_id → project_documents`. Both still fully
-     `using(true)`, no role gate (migration 023 deliberately left `project_documents` un-role-gated).
-     **Not blocked** — routine mechanical work once Stage 4 migrations start.
+     `purchase_order_id`, `purchase_request_id`, no combination guaranteed non-null), resolved via a
+     coalesce resolver, same shape as migration 160's `inventory_transactions`. `sales_quote_extractions`
+     anchors two hops out via `project_document_id → project_documents`, resolved via a new
+     `project_document_owner_workspace_id()` helper. Both still no role gate (migration 023
+     deliberately left `project_documents` un-role-gated), preserved. **Migration 161
+     (`d42190b`) implemented locally, queued for E's review (see §4/§5).**
    - **Shipping/shipments** — `project_shipping_addresses`, `project_shipments`,
      `project_shipment_lines`, `project_shipment_photos` (all from migration 072) were re-scoped from
      Stage 3 to here by migrations 159/160's own headers; confirmed correct by direct read — all four
      anchor cleanly to `projects` (directly or via `project_shipments`), zero purchasing/inventory FKs
-     of their own. **Not blocked.**
+     of their own. **Migration 161, same as above.**
+   - **Share-link table containment** — confirmed a real gap while scoping: migration 158 hardened the
+     RPC layer, but `public_share_tokens`/`share_link_views`/`share_link_actions` themselves still had
+     bare `using(true)` SELECT policies (any authenticated user in any workspace could read every other
+     workspace's share-link rows) and `workspace_share_link_settings` had an unscoped read policy plus
+     an admin-gated-not-workspace-gated write policy. **Migration 161 closes this**, reusing migration
+     158's own `share_link_entity_workspace_id()` helper directly — no new resolver needed.
    - **`purchase_order_files`' storage bucket** — the TABLE got workspace RLS in migration 160, but its
      underlying `purchase-order-files` storage bucket's object policies (`storage.objects`) were
-     explicitly deferred to Stage 4 by migration 160's own header. **Not blocked** — a known, named
-     leftover.
+     explicitly deferred to Stage 4 by migration 160's own header. **Migration 161 closes this** too,
+     joining `storage.objects.name` against the real `purchase_order_files.storage_path` row (confirmed
+     exact-match, not prefix-based, by reading `src/persistence.ts`'s actual upload code before writing
+     the policy).
    - **Notifications** — `notification_rules` is very likely **actually Stage 5's job, not Stage 4's**:
      it's a global, admin-configured event-type whitelist with no per-row tenant data at all (same
      shape as `standard_install_times`/`project_schedule_templates`, both already excluded from
