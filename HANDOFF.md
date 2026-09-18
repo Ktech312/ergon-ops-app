@@ -299,16 +299,13 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 162
-(`backend/supabase/migrations/162_phase3_messaging_channels_workspace_scoping.sql`), then run its
-canonical test
-(`backend/supabase/migration_162_phase3_messaging_channels_workspace_scoping_tests.sql`). Migrations
-155 through 161 are all confirmed applied and their canonical tests all passed in production,
-2026-09-17.
+**Manual-action queue for E, current exact state: EMPTY.** Migrations 155 through 162 are all
+confirmed applied and their canonical tests all passed in production, 2026-09-17.
 
-**Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage), unblocked portion FULLY
-SHIPPED as migration 161** (`d42190b`, confirmed applied and tested 2026-09-17) -- see prior session
-log below for full detail.
+**Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is now FULLY SHIPPED
+end-to-end**: migration 161 (`d42190b`, documents/shipments/share-link table containment/
+purchase-order-files storage bucket) and migration 162 (`862aa75`, messaging channels) are both
+confirmed applied and tested, 2026-09-17.
 
 **E resolved both of Stage 4's open product decisions, 2026-09-17**:
 1. **Messaging channels are per-workspace** -- each workspace gets its own copy of the 4 section
@@ -328,16 +325,16 @@ caller's own resolved workspace for `section`/`group` types -- never trusting a 
 `channel_messages`/`channel_members`/`channel_canvas`/`channel_message_reactions`/the
 `message-attachments` storage bucket's channel policies all inherit scoping through `channel_id`.
 Deliberately does NOT auto-seed a new workspace's own section channels (no reviewed
-workspace-provisioning path exists yet -- Stage 7). Not yet applied -- queued for E's review.
+workspace-provisioning path exists yet -- Stage 7). **CONFIRMED APPLIED and its canonical test PASSED
+in production (2026-09-17, "both came back - Success. No rows returned").**
 
 Also confirmed and intentionally NOT touched: `notifications`/`push_subscriptions` are already
 correctly scoped (recipient-email- and user-scoped, not a workspace gap); `notification_rules` is
 very likely Stage 5's job (global config, no per-row tenant data); no "jobs" table/queue/cron/
 webhook-log exists anywhere in this codebase.
 
-**Recommended next step**: once migration 162 is confirmed, Stage 4 is fully shipped end-to-end --
-Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
-access paths) scoping is next.
+**Recommended next step**: Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions,
+triggers, remaining indirect access paths) scoping is next.
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
