@@ -11,11 +11,13 @@ given for the full Phase 3 rollout, D11/D13/D14 now approved, see §11 — Stage
 (Clients+Sales, Projects+Tasks, Purchasing/Inventory/Vendors/Warehouses; migrations 155-160) plus the
 cross-cutting `active_workspace_id()` cleanup (migration 158) plus Stage 4's unblocked portion
 (documents, shipments, share-link table containment, the purchase-order-files storage bucket —
-migration 161) are all confirmed applied and tested live; manual-action queue empty; Stage 4's
-channels/DMs portion remains blocked on two product decisions from E, see §11) against `HANDOFF.md`,
-`CONTINUOUS_CODER_HANDOFF.md` §8's
+migration 161) are all confirmed applied and tested live; E resolved both of Stage 4's open product
+decisions 2026-09-17 (channels: per-workspace; DMs: stay cross-workspace) — messaging-channel
+workspace scoping is implemented locally as migration 162, queued as the current manual-action item;
+DMs needed no migration at all; a new group-DM feature request from E is tracked separately, not part
+of Phase 3, see §11) against `HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's
 full D1-D18 decision register, every applied migration (115
-through 161), and
+through 161, plus 162 pending), and
 `PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
 three rows were found drifted from confirmed production state during this pass (see §7). The
 document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
@@ -393,15 +395,37 @@ production (E confirmed, 2026-09-17: "both came back - Success. No rows returned
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-Nothing currently queued here — migration 161 is confirmed applied, tested, and deployed; see §3
-above.
+**Migration 162** (`backend/supabase/migrations/162_phase3_messaging_channels_workspace_scoping.sql`,
+commit `862aa75`) — Phase 3 Stage 4, messaging channels. Adds real, trigger-enforced `workspace_id` to
+`channels` (a genuine column, not a resolver — `section`/`group` channel types have no reliable FK
+anchor at all, unlike every other Stage 4 table), per E's 2026-09-17 decision that channels are
+per-workspace, not shared globally. A channel-specific guard trigger derives `workspace_id`
+authoritatively from the linked project/client for those two channel types, and from the caller's own
+resolved workspace for `section`/`group` types — never trusting a caller-supplied value either way.
+`channel_messages`, `channel_members`, `channel_canvas`, `channel_message_reactions`, and the
+`message-attachments` storage bucket's channel-specific policies all inherit scoping through
+`channel_id`. Does NOT auto-seed a new workspace's own section channels (no reviewed
+workspace-provisioning path exists yet — Stage 7) or touch `conversations`/`direct_messages`/
+`direct_message_reactions` (stay cross-workspace per E's other 2026-09-17 decision — see below).
+Canonical test:
+`backend/supabase/migration_162_phase3_messaging_channels_workspace_scoping_tests.sql`. Not yet applied
+— queued below.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Nothing queued.** Migrations 155 through 161 are all confirmed applied and their canonical tests all
-passed in production, 2026-09-17. Stage 4's remaining two sub-areas (messaging channels, DMs) still
-need E's input — see §11, Stage 4 for both open questions and exactly which sub-areas are and are not
-blocked by them.
+**One item queued: apply migration 162**
+(`backend/supabase/migrations/162_phase3_messaging_channels_workspace_scoping.sql`), then run its
+canonical test
+(`backend/supabase/migration_162_phase3_messaging_channels_workspace_scoping_tests.sql`). Migrations
+155 through 161 are all confirmed applied and their canonical tests all passed in production,
+2026-09-17. After 162 is confirmed, **Stage 4 is fully shipped end-to-end** — Stage 5
+(workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect access
+paths) scoping is next.
+
+**Separately, a new feature request from E, NOT part of Phase 3**: `conversations`/`direct_messages`
+should support more than two participants, Slack/Teams-style (currently a fixed
+`participant_a_id`/`participant_b_id` pair). This needs its own schema redesign (a real membership
+table in place of the fixed pair) plus frontend UI work — tracked here, not scoped or scheduled yet.
 
 ## 6. Explicit stop boundaries — do not cross without discussion, regardless of what else this plan authorizes
 
@@ -644,25 +668,24 @@ there, not an oversight.
      before scoping the rest of Notifications** — everything else in this bullet is unblocked either
      way.
    - **Messaging channels ("channels," second meaning — a Slack-replacement feature, migrations
-     094/100-105/112/113)** — **the one real blocker in this domain.** `channels.type` is
-     `section | project | client | group`: `project`/`client` types anchor cleanly (to `projects`/
-     `clients`, both workspace-scoped already); `section` channels (4 seeded global singletons —
-     inventory/projects/sales/marketing) and `group` channels (ad-hoc, user-created) have **no anchor
-     of any kind** — no `project_id`/`client_id`, membership-gated instead. Whether these should get a
-     real `workspace_id` (duplicated per workspace, or left null/global) is a genuine product decision,
-     not a routine implementation default — it changes real behavior the moment a second workspace
-     exists (does every workspace get its own "Inventory" section channel, or do all workspaces share
-     one?). **Needs E's input before this sub-area can be migrated.** Independently, two pre-existing
-     bugs were found in passing (not workspace-related, unrelated to this migration's scope, worth
-     their own fix): `channel_canvas` is fully open (`using(true)`) rather than membership-gated like
+     094/100-105/112/113)** — **RESOLVED, 2026-09-17: E decided per-workspace** (each workspace gets
+     its own copy of the 4 section channels and its own group channels, not a shared global set).
+     `channels.type` is `section | project | client | group`: `project`/`client` types anchor cleanly
+     (to `projects`/`clients`, both workspace-scoped already); `section`/`group` types have no anchor
+     of any kind, so `channels` gets a genuine `workspace_id` column (unlike every other Stage 4
+     table) rather than a resolver. **Migration 162 (`862aa75`) implemented locally, queued for E's
+     review (see §4/§5).** Two pre-existing bugs found in passing, NOT fixed by this migration (a
+     different authorization dimension than workspace containment, need their own review):
+     `channel_canvas` is fully open (`using(true)`) rather than membership-gated like
      `channel_messages` was tightened to be; `channel_members` is fully open on all three operations
      (anyone can add/remove anyone from any channel).
    - **`conversations`/`direct_messages` (private 1:1 DMs, migrations 094/100 — distinct from
-     `channels`)** — **the second real blocker.** Both participants are raw `auth.users` references
-     with no workspace concept in the schema at all. Whether DMs should become workspace-scoped (and
-     what that would even mean for a user who belongs to two workspaces) or deliberately stay
-     cross-workspace (personal messaging, not tenant data) is a genuine product decision. **Needs E's
-     input.** RLS is already correctly participant-scoped and workspace-unrelated either way.
+     `channels`)** — **RESOLVED, 2026-09-17: E decided these stay cross-workspace** (personal
+     messaging, not tenant data) — no migration needed, this table is correctly left exactly as-is.
+     **Separately, E asked for DMs to support more than two participants, Slack/Teams-style** — a real,
+     separate feature (the fixed `participant_a_id`/`participant_b_id` pair on `conversations` would
+     need to become a real membership table, plus frontend UI work), not a workspace-scoping question.
+     Tracked as its own item, not part of Phase 3 — not scoped or scheduled yet.
    - **Share-link records** (`public_share_tokens`, `share_link_views`, `share_link_actions`,
      migrations 025/053/137, RPC containment already added by migration 158) — confirms the gap
      migration 158 always documented as out of scope: the RPC layer has real per-call workspace
