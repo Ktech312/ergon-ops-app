@@ -404,27 +404,40 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: EMPTY (no SQL queued).** Migrations 155 through 160 are
-all confirmed applied and their canonical tests all passed in production, 2026-09-17.
+**Manual-action queue, current exact state: ONE ITEM.** Apply migration 161
+(`backend/supabase/migrations/161_phase3_documents_shipments_sharelinks_workspace_rls.sql`), then run
+its canonical test
+(`backend/supabase/migration_161_phase3_documents_shipments_sharelinks_workspace_rls_tests.sql`).
+Migrations 155 through 160 are all confirmed applied and their canonical tests all passed in
+production, 2026-09-17.
 
-**Stage 4 scoping delivered**: a full research pass across all 160 migrations confirms **zero tables**
-in the Documents/Notifications/Channels/Jobs/Share-link/Storage domain have `workspace_id` today
-(only 117/156/159 ever add the column, anywhere in the repo). Full detail is in
-`PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 4 entry; summary here:
-- **Not blocked, routine mechanical work once started**: `project_documents` (3-nullable-FK coalesce
-  anchor, same shape as migration 160's `inventory_transactions`), `sales_quote_extractions`
-  (2-hop anchor), the four `project_shipment*`/`_shipping_addresses` tables (clean single anchor to
-  `projects`, correctly re-scoped here from Stage 3 by migrations 159/160's own headers), the
-  `purchase-order-files` storage bucket (migration 160 explicitly deferred this by name),
-  `notifications`/`notification_deliveries`/`push_subscriptions` (the first two have no anchor at all
-  and would need their containment strategy rethought -- `notifications` INSERT is already
-  service-role-only since migration 114 -- `push_subscriptions` needs no workspace scoping, already
-  correctly self-scoped), and **the share-link tables' real containment gap**: migration 158 hardened
-  the RPC layer, but `public_share_tokens`/`share_link_views`/`share_link_actions` themselves still
-  have zero `workspace_id` and their SELECT policies are bare `using(true)` -- any authenticated user
-  in any workspace can currently read every OTHER workspace's share-token rows via a raw REST select.
-  `workspace_share_link_settings` (already has `workspace_id` as its PK) has the same unscoped-SELECT
-  gap plus an admin-gated-not-workspace-gated write policy.
+**Stage 4 scoping delivered, unblocked portion implemented locally as migration 161**: a full research
+pass across all 160 migrations confirmed **zero tables** in the Documents/Notifications/Channels/Jobs/
+Share-link/Storage domain have `workspace_id` today (only 117/156/159 ever add the column, anywhere in
+the repo). Full detail is in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 4 entry; summary here:
+- **Migration 161 (`d42190b`) covers**: `project_documents` (3-nullable-FK coalesce anchor, same shape
+  as migration 160's `inventory_transactions`, resolved via a new `project_document_owner_workspace_id()`
+  helper reused by its child `sales_quote_extractions`), the four `project_shipment*`/
+  `_shipping_addresses` tables (clean single anchor to `projects`, correctly re-scoped here from
+  Stage 3 by migrations 159/160's own headers, via a new `project_shipment_owner_workspace_id()`
+  helper), the `purchase-order-files` storage bucket (migration 160 explicitly deferred this by name --
+  scoped by joining `storage.objects.name` against the real `purchase_order_files.storage_path` row,
+  confirmed exact-match by reading the actual upload code in `src/persistence.ts` before writing the
+  policy, not assumed), and **the share-link tables' real containment gap**: migration 158 hardened the
+  RPC layer, but `public_share_tokens`/`share_link_views`/`share_link_actions` themselves still had
+  zero `workspace_id` and bare `using(true)` SELECT policies -- any authenticated user in any workspace
+  could read every OTHER workspace's share-token rows via a raw REST select. Closed by reusing
+  migration 158's own `share_link_entity_workspace_id()` helper directly, no new resolver needed.
+  `workspace_share_link_settings` (already has `workspace_id` as its PK) had the same unscoped-SELECT
+  gap plus an admin-gated-not-workspace-gated write policy, both fixed. Not yet applied -- queued for
+  E's review.
+- **Confirmed correctly excluded from this migration** (not a gap): `notifications` (no anchor at all
+  -- `recipient_email` is plain text, `related_entity_type`/`related_entity_id` is a polymorphic pair
+  with no FK -- already correctly self-scoped by recipient email, INSERT already service-role-only
+  since migration 114) and `push_subscriptions` (correctly self-scoped to `auth.uid()`, no workspace
+  concept needed). `notification_deliveries` being fully open (read+insert to any authenticated user)
+  IS a real gap, but a general access-control one unrelated to workspace containment -- flagged, not
+  fixed here, out of this migration's theme.
 - **Two genuine product decisions needed from E before those two sub-areas can be migrated** (not
   implementation defaults -- see §11 for full reasoning):
   1. **Messaging channels** (`channels`/`channel_messages`/`channel_canvas`/`channel_members`, the
