@@ -299,14 +299,14 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migration 163 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18 -- see below. Migrations 155 through 163 are all
-confirmed applied and their canonical tests all passed in production. **Phase 3 Stage 4
+**Manual-action queue for E, current exact state: NONE.** Migrations 163, 164, and 165 are all
+confirmed applied and their canonical tests all passed in production, 2026-09-18 -- see below.
+Migrations 155 through 165 are all confirmed applied. **Phase 3 Stage 4
 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end** (migrations
 161/162, confirmed applied and tested).
 
 **Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
-access paths) scoping is done; first migration shipped.** Full detail in
+access paths) scoping is done; first two migrations shipped.** Full detail in
 `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry and `CONTINUOUS_CODER_HANDOFF.md`'s matching
 session-log entry. Summary:
 
@@ -321,34 +321,44 @@ session-log entry. Summary:
   `sales_quotes.status`, which is a valid `sales_quote_proposals.status` value, not `sales_quotes.status`
   (constrained to `open`/`closed_won`/`closed_lost` since migration 048) -- corrected to `'open'`,
   migration 163 itself never touched. **Do not run migration 163 or its canonical test again.**
-- **Queued behind 163, next up**: workspace-scoped uniqueness fixes on 9 tables (must land
-  together with making the ref-counter tables workspace-keyed); the three report views likely leak
-  cross-workspace aggregate data (needs a live-database grant check first); `deletion_log` is a
-  confirmed live cross-workspace leak; storage bucket policies for 3 buckets were each deferred by a
-  different earlier stage but never actually claimed.
+- **Migration 164 (`7ed52b2`) — CONFIRMED APPLIED and its canonical test PASSED in production
+  (2026-09-18, "Success. No rows returned" for both).** Workspace-scopes nine flagged columns across
+  seven tables (`clients.name`, `projects.project_name`, `projects.project_number`, `vendors.name`,
+  `inventory_items.sku`, `purchase_orders.po_number`, `purchase_requests.request_number`,
+  `sales_quotes.quote_ref`, `equipment_types.equipment_name`) and re-keys
+  `sales_quote_ref_counters`/`project_ref_counters` from year-only to `(workspace_id, year)`, rewriting
+  `assign_sales_quote_ref()`/`assign_project_ref()` to resolve the caller's own workspace directly (not
+  `new.workspace_id`, since these are BEFORE INSERT triggers that fire alphabetically before their
+  table's own `..._guard_workspace_id` trigger). `save_equipment_recipe()` carried forward verbatim
+  with its two hardcoded constraint-name checks updated to match the renamed `equipment_types` index.
+  **Migration 164's own canonical test's first live run immediately hit a REAL, live-incident-severity
+  bug**: `ERROR: 42501: permission denied for function resolve_caller_workspace_id`, on the very first
+  ordinary project insert -- meaning every real project/sales-quote creation in production (not just the
+  test) was broken the moment migration 164 went live, since neither table's own INSERT ever supplies an
+  explicit ref. Root cause (confirmed directly from migration 117's own header comment):
+  `resolve_caller_workspace_id()` deliberately has EXECUTE revoked from everyone and is only ever meant
+  to be called from inside another `security definer` function; migration 164's rewritten
+  `assign_sales_quote_ref()`/`assign_project_ref()` were the only consumers of it in the whole codebase
+  left as plain invoker-rights functions. **Fixed same-day via migration 165 (`2f5d4f8`)** -- both
+  functions redefined again with `security definer` added (matching every other consumer:
+  `guard_workspace_id_mutation()`, `replace_project_bom_lines()`, `respond_to_proposal_question()`,
+  `submit_proposal_question()`, `save_equipment_recipe()`), no other logic changes, migration 164 itself
+  untouched. **Migration 165 CONFIRMED APPLIED, and migration 164's canonical test re-run PASSED
+  cleanly afterward (2026-09-18, "Success. No rows returned" for both).** Deliberately NOT done by
+  either migration: `project_documents.document_number` (no `workspace_id` column exists on that table
+  -- needs its own reviewed migration) and `equipment_types.equipment_number` (stays deferred, low
+  priority, server-generated, per the master plan). **Do not run migrations 164/165 or migration 164's
+  canonical test again.**
+- **Queued next**: the three report views likely leak cross-workspace aggregate data (needs a
+  live-database grant check first); `deletion_log` is a confirmed live cross-workspace leak; storage
+  bucket policies for 3 buckets were each deferred by a different earlier stage but never actually
+  claimed; `project_documents.document_number` needs its own reviewed migration (add a real
+  `workspace_id` column + backfill + derivation trigger).
 - **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
   `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
   per-workspace override eventually?
 - **Correction**: `save_equipment_recipe()` was already retired from `active_workspace_id()` by
   migration 159 -- older text still listing it as pending is stale.
-
-**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 164
-(`backend/supabase/migrations/164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters.sql`),
-then run its canonical test
-(`backend/supabase/migration_164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters_tests.sql`).
-Workspace-scopes nine flagged columns across seven tables (`clients.name`, `projects.project_name`,
-`projects.project_number`, `vendors.name`, `inventory_items.sku`, `purchase_orders.po_number`,
-`purchase_requests.request_number`, `sales_quotes.quote_ref`, `equipment_types.equipment_name`) and
-re-keys `sales_quote_ref_counters`/`project_ref_counters` from year-only to `(workspace_id, year)`,
-rewriting `assign_sales_quote_ref()`/`assign_project_ref()` to resolve the caller's own workspace
-directly (not `new.workspace_id`, since these are BEFORE INSERT triggers that fire alphabetically
-before their table's own `..._guard_workspace_id` trigger). `save_equipment_recipe()` carried forward
-verbatim with its two hardcoded constraint-name checks updated to match the renamed
-`equipment_types` index. Independently verified end-to-end against a real local PostgreSQL 18 engine
-(PGlite) before being sent -- migration applied cleanly, canonical test passed all 9 sections with
-zero skipped. Deliberately NOT done: `project_documents.document_number` (no `workspace_id` column
-exists on that table -- needs its own reviewed migration) and `equipment_types.equipment_number`
-(stays deferred, low priority, server-generated, per the master plan).
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
