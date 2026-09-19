@@ -429,6 +429,14 @@ never touched. — *Migration applied and canonical test PASSED in production (E
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
+**None currently.**
+
+## 5. Manual-action queue for E — one action at a time, in order
+
+**None currently.** Migrations 155 through 165 are all confirmed applied and their canonical tests all
+passed in production, 2026-09-17/18. See §11, Stage 5 for the full scoping map and what's queued next
+(report views, `deletion_log`, storage bucket policies, `project_documents.document_number`).
+
 **Migration 164**
 (`backend/supabase/migrations/164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters.sql`,
 commit `7ed52b2`) — Phase 3 Stage 5, second migration. Closes the workspace-scoped-uniqueness gap: nine
@@ -445,24 +453,26 @@ fires alphabetically AFTER `..._assign_ref`, so `workspace_id` is not yet set wh
 `save_equipment_recipe()` carried forward verbatim (migration 159) with its two hardcoded
 `unique_violation` constraint-name checks updated to match the renamed `equipment_types` index.
 Canonical test: `backend/supabase/migration_164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters_tests.sql`.
-Independently verified end-to-end against a real local PostgreSQL 18 engine (PGlite) before being
-sent — migration applied cleanly, canonical test passed all 9 sections with zero skipped (one
-test-robustness fix made pre-send: Sections 6b/7's "no collision" pairwise checks replaced with a
-precise sequence-value check, since the original could false-fail if the pre-existing workspace's own
-counter for the current year happened to also still be at its first value). Deliberately NOT done:
-`project_documents.document_number` (no `workspace_id` column exists on that table today — needs its
-own reviewed migration) and `equipment_types.equipment_number` (stays deferred, low priority,
-server-generated). Not yet applied — queued below.
+— *Migration applied and canonical test PASSED in production (E confirmed, 2026-09-18, after migration
+165's same-day fix below).*
 
-## 5. Manual-action queue for E — one action at a time, in order
-
-**One item queued: apply migration 164**
-(`backend/supabase/migrations/164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters.sql`),
-then run its canonical test
-(`backend/supabase/migration_164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters_tests.sql`).
-Migrations 155 through 163 are all confirmed applied and their canonical tests all passed in
-production, 2026-09-17/18. See §11, Stage 5 for the full scoping map and what's queued after 164
-(report views, `deletion_log`, storage bucket policies, `project_documents.document_number`).
+**Migration 165** (`backend/supabase/migrations/165_fix_ref_assign_trigger_grants.sql`, commit
+`2f5d4f8`) — same-day fix for a LIVE INCIDENT migration 164's own canonical test surfaced on its first
+real run: `ERROR: 42501: permission denied for function resolve_caller_workspace_id`, on the test's
+very first ordinary project insert. Since neither `sales_quotes` nor `projects` inserts ever supply an
+explicit ref, this meant every real project/sales-quote creation in production broke the moment
+migration 164 went live, not just the test. Root cause (confirmed directly from migration 117's own
+header comment): `resolve_caller_workspace_id()` deliberately has EXECUTE revoked from everyone and is
+only ever meant to be called from inside another `security definer` function — migration 164's
+rewritten `assign_sales_quote_ref()`/`assign_project_ref()` were the only consumers of it in the whole
+codebase left as plain invoker-rights functions. The PGlite sandbox verification did not catch this
+because its own default-privilege replication does not precisely reproduce this specific revoke
+boundary — the same class of sandbox-vs-production gap already seen once before this session
+(migrations 140/142). Fixed by redefining both functions again with `security definer` added, no other
+logic changes, migration 164 itself untouched. — *Migration applied and migration 164's canonical test,
+re-run afterward, PASSED cleanly (E confirmed, 2026-09-18).* **Phase 3 Stage 5's workspace-scoped
+uniqueness and ref-counter work is now fully shipped end-to-end. Do not run migrations 164/165 or
+migration 164's canonical test again.**
 
 **Separately, a new feature request from E, NOT part of Phase 3**: `conversations`/`direct_messages`
 should support more than two participants, Slack/Teams-style (currently a fixed
@@ -771,22 +781,24 @@ there, not an oversight.
      earlier hardening passes because they live outside those passes' file clusters. **Migration 163
      (`88fa65b`) closes all three — CONFIRMED APPLIED and its canonical test PASSED in production,
      2026-09-18.**
-   - **Workspace-scoped uniqueness — DONE (pending E's review).** Global `unique` constraints on tables
-     that already have real `workspace_id`, never previously flagged: `clients.name`,
-     `projects.project_name`/`project_number`, `vendors.name`, `inventory_items.sku`,
-     `purchase_orders.po_number`, `purchase_requests.request_number`. Plus two already partially
-     flagged: `sales_quotes.quote_ref` and `equipment_types.equipment_name` (both named as "Stage 5's
-     job" by migrations 159/160 at the time). **Migration 164 (`7ed52b2`) closes all nine columns,
-     landed together with the ref-counter fix below** since `quote_ref`/`project_number` are both
-     generated FROM those counters. Implemented locally and independently verified, queued for E's
-     review (see §4/§5). `project_documents.document_number` and `equipment_types.equipment_number`
-     are deliberately excluded — see §4 for why.
-   - **`sales_quote_ref_counters`/`project_ref_counters` (migrations 066/067) — DONE (pending E's
-     review), same migration as above.** Confirmed genuinely global, keyed by calendar year only
-     (`year primary key, next_seq`), consumed by `assign_sales_quote_ref()`/`assign_project_ref()` (the
-     latter redefined in 128). Already flagged as Stage 5's job by migrations 155/156's own
-     "Deliberately NOT done" sections. Migration 164 makes both `(workspace_id, year)` keyed and
-     rewrites both consuming functions to resolve the caller's own workspace directly.
+   - **Workspace-scoped uniqueness — DONE.** Global `unique` constraints on tables that already have
+     real `workspace_id`, never previously flagged: `clients.name`, `projects.project_name`/
+     `project_number`, `vendors.name`, `inventory_items.sku`, `purchase_orders.po_number`,
+     `purchase_requests.request_number`. Plus two already partially flagged: `sales_quotes.quote_ref`
+     and `equipment_types.equipment_name` (both named as "Stage 5's job" by migrations 159/160 at the
+     time). **Migration 164 (`7ed52b2`) closes all nine columns, landed together with the ref-counter
+     fix below** since `quote_ref`/`project_number` are both generated FROM those counters. **CONFIRMED
+     APPLIED and its canonical test PASSED in production, 2026-09-18** (after migration 165's same-day
+     fix for a live incident the test itself surfaced — see §4). `project_documents.document_number` and
+     `equipment_types.equipment_number` are deliberately excluded — see §4 for why.
+   - **`sales_quote_ref_counters`/`project_ref_counters` (migrations 066/067) — DONE, same migration as
+     above.** Confirmed genuinely global, keyed by calendar year only (`year primary key, next_seq`),
+     consumed by `assign_sales_quote_ref()`/`assign_project_ref()` (the latter redefined in 128).
+     Already flagged as Stage 5's job by migrations 155/156's own "Deliberately NOT done" sections.
+     Migration 164 makes both `(workspace_id, year)` keyed and rewrites both consuming functions to
+     resolve the caller's own workspace directly — migration 165 then added `security definer` to both
+     (required for them to call `resolve_caller_workspace_id()` at all, per its own access-control
+     design; missed in migration 164, found immediately by its own canonical test).
    - **`project_documents.document_number` (high priority, still not yet migrated — a real
      schema-design decision, not a mechanical constraint swap)** — this table has NO `workspace_id`
      column at all today (three nullable FK anchors — `project_id`/`purchase_order_id`/
