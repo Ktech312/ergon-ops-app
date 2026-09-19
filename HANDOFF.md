@@ -299,10 +299,25 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migration 168 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 168 are all confirmed
+**Manual-action queue for E, current exact state: NONE.** Migration 169 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 169 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end** (migrations 161/162, confirmed applied and tested).
+
+**Migration 169 (`dfbbba1`) — CONFIRMED APPLIED and its canonical test PASSED in production
+(2026-09-18, "Success. No rows returned" for both).** Closed the last genuine storage-bucket gap:
+`sales-quote-images`' four `storage.objects` policies (migration 033, never touched since) were bare
+`bucket_id = 'sales-quote-images'` with no further predicate -- any authenticated user in any workspace
+could read, insert, update, or delete any object in this bucket. Fixed by matching the storage path's
+leading segment (a `quote_location_id`) against `public.sales_quote_locations` directly -- the PARENT
+entity, which obviously exists before any photo/drawing is uploaded to it -- via
+`sales_quote_location_owner_workspace_id()`, deliberately NOT through the per-file
+`sales_quote_location_images` metadata row (that would repeat migration 161/168's exact chicken-and-egg
+bug, since the real upload code writes bytes before the metadata row). Independently verified
+end-to-end against a real local PostgreSQL 18 engine (PGlite): confirmed the pre-fix policy is
+genuinely fully open, confirmed the fix preserves the real upload order while rejecting cross-workspace/
+nonexistent-location uploads. **All three storage buckets originally flagged for Stage 5 are now
+correctly workspace-scoped. Do not run migration 169 or its canonical test again.**
 
 **Migration 168 (`e4fcbc3`) — URGENT LIVE INCIDENT, CONFIRMED APPLIED and its canonical test PASSED in
 production (2026-09-18, "Success. No rows returned" for both).** Found while scoping the (unrelated)
@@ -357,8 +372,8 @@ same missing-`security definer` bug class that caused the migration 164/165 inci
 migration 166 or its canonical test again.**
 
 **Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
-access paths) scoping is done; first four migrations shipped, plus one urgent same-effort incident
-fix (migration 168).** Full detail in
+access paths) scoping is done; five migrations shipped, plus one urgent same-effort incident fix
+(migration 168).** Full detail in
 `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry and `CONTINUOUS_CODER_HANDOFF.md`'s matching
 session-log entry. Summary:
 
@@ -401,11 +416,11 @@ session-log entry. Summary:
   -- needs its own reviewed migration) and `equipment_types.equipment_number` (stays deferred, low
   priority, server-generated, per the master plan). **Do not run migrations 164/165 or migration 164's
   canonical test again.**
-- **Queued next**: `sales-quote-images` storage bucket policies (the one genuine remaining gap of the
-  three originally flagged -- see the correction above); `project_documents.document_number` needs its
-  own reviewed migration (add a real `workspace_id` column + backfill + derivation trigger); an atomic
-  delete+log RPC for `inventory_item`/`equipment_type` to fully close migration 166's own residual gap;
-  the pre-existing `build_transaction` deletion-log bug migration 166 found but did not fix.
+- **Queued next**: `project_documents.document_number` needs its own reviewed migration (add a real
+  `workspace_id` column + backfill + derivation trigger); an atomic delete+log RPC for
+  `inventory_item`/`equipment_type` to fully close migration 166's own residual gap; the pre-existing
+  `build_transaction` deletion-log bug migration 166 found but did not fix. All storage bucket policy
+  gaps are now closed (migrations 161/162/168/169).
 - **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
   `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
   per-workspace override eventually?
