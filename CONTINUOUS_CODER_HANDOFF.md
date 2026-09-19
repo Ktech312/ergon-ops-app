@@ -404,19 +404,29 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: ONE ITEM.** Apply migration 173
-(`backend/supabase/migrations/173_global_config_workspace_scoping.sql`), then run its canonical test.
-**E's explicit decision, 2026-09-18**: "each company should have its own separate copies, this should
-not be a question" -- `notification_rules`/`standard_install_times`/`project_schedule_templates` (+
-child `project_schedule_template_phases`) get a real `workspace_id` each, having had exactly one
-shared, global copy since migrations 024/025. Also fixes migration 166's stale `'schedule_template_phase'`
-classification (was "genuinely global," no longer true -- a plain lookup fix, this entity type is
-soft-deleted so no atomic RPC needed). Deliberately NOT done: auto-seeding a new workspace's own default
-rows (same reasoning as migration 162's channel-seeding deferral, Stage 7 territory). A companion
-`src/persistence.ts` fix (the `standard_install_times` upsert `on_conflict` target) is prepared but
-deliberately kept UNCOMMITTED (not even `git add`ed) until this migration is confirmed -- learning from
-the migration 172 incident. Migrations 155 through 172 are all confirmed applied. **Phase 3 Stage 4
-(Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end.**
+**Manual-action queue, current exact state: NONE.** Migration 173 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 173 are all confirmed
+applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
+end-to-end. Phase 3 Stage 5 is now fully complete, including the one open governance question.**
+
+**Migration 173 (`f5b8ca4`) — CONFIRMED APPLIED and its canonical test PASSED in production
+(2026-09-18).** **E's explicit decision, 2026-09-18**: "each company should have its own separate
+copies, this should not be a question" -- `notification_rules`/`standard_install_times`/
+`project_schedule_templates` (+ child `project_schedule_template_phases`) get a real `workspace_id`
+each, having had exactly one shared, global copy since migrations 024/025. Also fixes migration 166's
+stale `'schedule_template_phase'` classification (was "genuinely global," no longer true -- a plain
+lookup fix, this entity type is soft-deleted so no atomic RPC needed). Deliberately NOT done:
+auto-seeding a new workspace's own default rows (same reasoning as migration 162's channel-seeding
+deferral, Stage 7 territory). **One test-fixture bug found on E's first live run** (not a migration
+bug): the test assumed `'low_stock_reached'` was a free `event_type`, but migration 024 (and every
+later widening migration) already seeds a real row for every valid value in the one real production
+workspace -- fixed by discovering an existing row's `event_type` dynamically (commit `d2d8047`),
+re-verified against a sandbox seeded with realistic pre-existing data (the original sandbox's empty
+table is why this didn't surface sooner). The companion `src/persistence.ts` fix (`standard_install_times`'s
+upsert `on_conflict` target) was committed and pushed immediately after E confirmed the migration --
+deploy confirmed live via bundle hash within the same turn, closing the breakage window fast this time
+(learned directly from the migration 172 incident above). **Do not run migration 173 or its canonical
+test again.**
 
 **Migration 172 (`0abe68b`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18).** Closes migration 166's one residual gap: `inventory_item`/`equipment_type` are the only
