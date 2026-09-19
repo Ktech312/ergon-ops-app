@@ -299,22 +299,61 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migrations 175 through 179 and their canonical
+**Manual-action queue for E, current exact state: NONE.** Migrations 175 through 185 and their canonical
 tests are all confirmed applied and passed in production, 2026-09-19 ("all came back - Success. No rows
-returned" for all five migration+test pairs, run in order 175→179 as required). Migrations 155 through
-179 are all confirmed applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/
-Storage) is fully shipped end-to-end** (migrations 161/162, confirmed applied and tested). **Phase 3
-Stage 5 is fully complete, including the one open governance question (migration 173). The final Phase 3
-cross-workspace isolation suite is now substantially closed** — see the updated inventory below; only
-the 2 remaining storage buckets and 3 structurally-only-tested RPCs remain open (`user_invites` and
-`company_branding` now have drafted migrations, below — `app_records`/`app_state_snapshots` also drafted
-separately, see migration 183), all genuinely decision-dependent on E rather than further mechanical
-migration work.
+returned" for all five migration+test pairs, run in order 175→179 as required, then 180-185
+individually confirmed). Migrations 155 through 185 are all confirmed applied. **Phase 3 Stage 4
+(Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end** (migrations
+161/162, confirmed applied and tested). **Phase 3 Stage 5 is fully complete, including the one governance
+question (migration 173) and every item this section once carried forward as decision-dependent
+(`user_invites`, `company_branding`, the 2 remaining storage buckets, `app_records`/
+`app_state_snapshots`) — all closed tonight by migrations 180-185, see below. The final Phase 3
+cross-workspace isolation suite is now essentially closed** — only 3 structurally-only-tested RPCs remain
+open, a test-rigor item, not decision-dependent — see the updated inventory below.
+
+**Migration 180** (`backend/supabase/migrations/180_project_documents_and_catalog_datasheets_storage_containment.sql`,
+commit `29acdd1`) — URGENT, same severity class as migrations 165/168/170/174: `storage.objects` RLS for
+`project-documents` (migration 031) and `catalog-datasheets` (migration 052) had never been touched since
+creation — wide open to any authenticated user regardless of workspace. Fixed with a DUAL-MATCH policy
+per bucket, anchored directly to `public.projects`/`public.product_catalog` (never through the per-file
+metadata tables, the same "go straight to the real owning table" pattern as migrations 161→168/179): the
+leading path segment is accepted as EITHER the anchor row's real `id` (what every new upload will produce
+once the companion `src/persistence.ts` path-builder change ships, held back until this migration was
+confirmed live) OR the anchor's sanitized name/catalog-number (the LEGACY branch, kept only so every file
+uploaded before this fix keeps working). **E's explicit decision, flagged and accepted rather than
+silently taken**: do not migrate/rename existing natural-key-path objects — this leaves a dormant residual
+risk (a name/catalog-number collision between two companies could in theory grant cross-company access to
+an OLD file), accepted since exactly one workspace exists today and zero collisions have ever occurred.
+`catalog-datasheets`' pre-existing public (anon) SELECT policy (migration 052) is deliberately left
+completely untouched — a product-visibility decision (datasheets may be intentionally customer-facing),
+not this migration's to make; flagged for E to decide separately. Canonical test:
+`backend/supabase/migration_180_project_documents_and_catalog_datasheets_storage_containment_tests.sql`.
+— *CONFIRMED APPLIED and canonical test PASSED in production (2026-09-19, "Success. No rows returned"
+for both).* **Do not run migration 180 or its canonical test again.**
+
+**Migration 181** (`backend/supabase/migrations/181_user_invites_workspace_scoping.sql`, commit
+`6c00009`) — closes a real, currently-live functional gap, E confirmed "fix it now": a brand-new user who
+accepted an invite was approved into the app but had NO `workspace_members` row, and thus could see no
+workspace-scoped data, until an admin separately performed the unrelated "set primary role" action from
+the Admin UI. Adds `user_invites.workspace_id` (root table, no anchor of its own, backfilled to the one
+real production workspace, same pattern as every other Stage 1-5 root table this session); RLS keeps the
+existing `is_app_admin(auth.uid())` gate ANDed with the new workspace check (never replaced — whether that
+flag means global Ergon staff or per-company admin is a JUDGMENT CALL deliberately left unresolved here,
+since ANDing is correct either way); `accept_invite()` rewritten via `create or replace function`,
+carrying its migration-065 `app_user_roles`/`app_user_status` logic forward byte-for-byte, with one
+addition — a `workspace_members` insert keyed off the invite's OWN `workspace_id` column (`is_workspace_
+admin = false`, matching `bridge_set_primary_role()`'s own default; `on conflict (workspace_id, user_id)
+do nothing` in case an admin already added them some other way). Confirmed no frontend change needed —
+`createInvite`/`acceptInvite` (`src/persistence.ts:1094`/`:1196`) already just pass through to the
+RPC/table whose behavior changes server-side only in this migration. Canonical test:
+`backend/supabase/migration_181_user_invites_workspace_scoping_tests.sql`. — *CONFIRMED APPLIED and
+canonical test PASSED in production (2026-09-19, "Success. No rows returned" for both).* **Do not run
+migration 181 or its canonical test again.**
 
 **Migration 183** (`backend/supabase/migrations/183_app_records_state_snapshots_workspace_scoping.sql`,
-commit `a562817`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18
-engine (PGlite); NOT yet applied, kept local for E's review. Closes the last fully-open table in this
-project: `app_records` (migration 009) and `app_state_snapshots` (migration 003), both still
+commit `a562817`) — CONFIRMED APPLIED and its canonical test PASSED in production (2026-09-19). Closes
+the last fully-open table in this project: `app_records` (migration 009) and `app_state_snapshots`
+(migration 003), both still
 `using(true)`/`with check(true)` (or equivalent) since creation. Real schema differs from what a "keyed
 jsonb store" assumption would predict — `app_records`' primary key is already the COMPOSITE
 `(workspace_key text default 'default', record_key text check(...))`, not a single folded string key.
@@ -338,15 +377,32 @@ PGlite, not just reasoned about. **Coordination risk, same shape as migration 17
 repointing the primary key means `saveRemoteAppState()`'s `on_conflict=workspace_key,record_key` no
 longer names a real constraint the instant this migration applies — the companion `src/persistence.ts`
 diff (dropping the `workspace_key=eq.default` read filters, dropping `workspace_key` from the write
-payload, and changing `on_conflict` to `workspace_id,record_key`) is written and staged locally,
-**deliberately NOT committed** per this repo's standing rule — commit only after E confirms migration
-183 is live. `app_sync_events`/`app_transaction_locks` (a different, already-deferred pair of tables per
-migrations 163/164's own "hygiene items" note) are untouched by this migration and its frontend diff on
-purpose.
+payload, and changing `on_conflict` to `workspace_id,record_key`) shipped in commit `4265f6c`, held back
+until E confirmed migration 183 was live, per this repo's standing rule. `app_sync_events`/
+`app_transaction_locks` (a different, already-deferred pair of tables per migrations 163/164's own
+"hygiene items" note) are untouched by this migration and its frontend diff on purpose. **Do not run
+migration 183 or its canonical test again.**
+
+**Migration 184** (`backend/supabase/migrations/184_fix_missing_catalog_datasheets_bucket.sql`, commit
+`72e1be6`) — URGENT-adjacent fix, discovered while E was applying migration 180. Migration 052 already
+contains the statement to create the `catalog-datasheets` Storage bucket
+(`insert into storage.buckets (id, name, public) values ('catalog-datasheets', 'catalog-datasheets',
+true) on conflict (id) do nothing;`), but that bucket did not actually exist in production storage —
+applying migration 180's real `catalog-datasheets` `storage.objects` RLS and running its own canonical
+test failed with `ERROR: 23503: insert or update on table "objects" violates foreign key constraint
+"objects_bucketId_fkey"`. This means the catalog-datasheet-upload feature has likely never actually
+worked in production — any real attempt to upload a datasheet PDF would have hit this same foreign key
+violation, independent of and unrelated to migration 180's own RLS logic (which is otherwise correct —
+migration 180's `catalog-datasheets` policies passed cleanly for E's already-existing `product_catalog`
+rows before this bucket-creation gap was found). Migration 052 is not edited or rerun — this migration
+simply performs the one statement it was always supposed to have taken effect, using the same idempotent
+`on conflict (id) do nothing`. No dedicated canonical test file — run this BEFORE re-running migration
+180's canonical test (its catalog-datasheets sections would otherwise keep failing on this same
+foreign-key violation). — *CONFIRMED APPLIED in production (2026-09-19, "Success. No rows returned").*
+**Do not run migration 184 again.**
 
 **Migration 185** (`backend/supabase/migrations/185_per_workspace_admin_authorization.sql`, commit
-`bcc48d8`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18
-engine (PGlite, full 001→184 reconstruction); NOT yet applied, kept local for E's review. E was alarmed
+`bcc48d8`) — CONFIRMED APPLIED and its canonical test PASSED in production (2026-09-19). E was alarmed
 that a handful of ADMIN-level actions (inviting a teammate, changing company branding, some
 catalog-pricing writes) checked only the single GLOBAL `is_app_admin(auth.uid())` flag, not a per-company
 one — E's explicit decision: each company's own admin should be able to do these for their own company
@@ -369,18 +425,22 @@ driving the single client-side `isAdmin` flag that gates "Invite a teammate," ca
 company branding UI in `src/main.tsx`) queries ONLY `app_admins` — a real workspace-admin-only user still
 won't see these buttons in the app at all today. A follow-up frontend change (teach `isAdmin`/a new
 `isWorkspaceAdmin` state to also check the caller's own `workspace_members` row) is required to actually
-put this in a workspace admin's hands; deliberately not bundled into this authorization-only migration.
-Canonical test (`backend/supabase/migration_185_per_workspace_admin_authorization_tests.sql`) exercises
-the one scenario no prior migration's test did: a real `workspace_members.is_workspace_admin = true`
+put this in a workspace admin's hands; deliberately not bundled into this authorization-only migration —
+**shipped separately in commit `e0f0932`, after this migration was confirmed live**:
+`loadOwnWorkspaceMembership()` reads the caller's own `workspace_members` row, a new `isWorkspaceAdmin`
+state loads alongside `checkIsAdmin()` at sign-in, and `canReviewApprovals` widens to admit workspace
+admins to the Admin page itself (nav link + route) since several of the 9 actions live there. Canonical
+test (`backend/supabase/migration_185_per_workspace_admin_authorization_tests.sql`) exercises the one
+scenario no prior migration's test did: a real `workspace_members.is_workspace_admin = true`
 member with NO `app_admins` row at all can now do all of the above for their own workspace and still
 cannot touch a second (synthetic) workspace's rows; a real `app_admins` global admin (with their own
 `is_workspace_admin` forced false for the check, so the pass is attributable only to `is_app_admin`)
-still passes every gate exactly as before — zero regression. Backend-only; no frontend commit accompanies
-this migration (see the flagged gap above).
+still passes every gate exactly as before — zero regression. **Do not run migration 185 or its canonical
+test again.**
 
 **Migration 182** (`backend/supabase/migrations/182_company_branding_workspace_scoping.sql`, commit
-`6a1d138`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18 engine
-(PGlite); NOT yet applied, kept local for E's review. Converts `company_branding` (migration 039) from a
+`6a1d138`) — CONFIRMED APPLIED and its canonical test PASSED in production (2026-09-19). Converts
+`company_branding` (migration 039) from a
 global Postgres singleton (`id boolean primary key default true`) to one row per workspace, per E's
 standing "each company should have its own separate copies" default. Backfills the existing singleton
 row's real `company_name`/`logo_storage_path` onto the production workspace (a plain UPDATE, nothing
@@ -398,10 +458,11 @@ immutability, trusting the security-definer seed trigger's explicit `workspace_i
 still constrained by this table's own RLS WITH CHECK for any other insert path). Companion
 `src/persistence.ts` changes (`loadCompanyBranding`/`saveCompanyBranding`/`uploadCompanyLogo`, mirroring
 `loadSalesApprovalSettings`/`saveSalesApprovalSettings`'s existing load-returns-workspace-id /
-save-takes-workspace-id-param shape — no new "get caller's workspace_id" helper needed) are written and
-staged locally, **deliberately NOT committed** per this repo's standing rule (a frontend change must never
-reach production before its migration is confirmed applied) — commit only after E confirms migration 182
-is live.
+save-takes-workspace-id-param shape — no new "get caller's workspace_id" helper needed) shipped in commit
+`4265f6c`, after E confirmed this migration was live, per this repo's standing rule (a frontend change
+must never reach production before its migration is confirmed applied). One test-file bug found and
+fixed afterward: a hardcoded fictional production-data assertion in the canonical test (commit
+`cbd875f`), migration 182 itself untouched. **Do not run migration 182 or its canonical test again.**
 
 **Migrations 175 through 179 — overnight autonomous batch per E's "do all of them" instruction,
 CONFIRMED APPLIED and their canonical tests PASSED in production (2026-09-19, "Success. No rows
@@ -476,29 +537,18 @@ a blocked UPDATE/DELETE rather than raising -- the exact same lesson already doc
 own header from migration 171, just not yet applied to this section when first drafted; fixed via a
 row-count/value check instead. **Do not run migration 174 or its canonical test again.**
 
-**Continuing item, updated 2026-09-19**: migrations 175 through 179 above -- CONFIRMED APPLIED and their
-canonical tests PASSED in production -- close most of what this inventory originally flagged --
-`team_members`, `product_catalog`/`catalog_price_change_requests`, `presales_hardware_rules`/
-`site_hardware_rules`/`form_schemas`/`form_schema_fields`, `one_off_reconciliations`, and 3 of the 6 open
-storage buckets (`project-location-images`/`project-shipment-photos`/`avatars`). **The final Phase 3
-cross-workspace isolation suite is now substantially closed** -- what's left is genuinely
-decision-dependent, not mechanical, and requires E's own decisions rather than further migrations --
-still awaiting E's input:
-- **`user_invites`** -- needs a real `accept_invite()` implementation to create a `workspace_members` row
-  (doesn't exist today) before workspace-scoping the table makes sense; a product/security decision, not
-  a scoping task.
-- **`company_branding`** -- a literal Postgres singleton (`id boolean primary key default true`) needing
-  a primary-key redesign to support multiple workspaces at all, plus its storage bucket has zero per-row
-  path structure to anchor RLS against.
-- **`project-documents`/`catalog-datasheets` storage buckets** -- deliberately excluded from migration
-  179. Their object paths use natural keys (a sanitized project name, a catalog number) as the leading
-  path segment, and migrations 164/176 already made those keys workspace-scoped-unique rather than
-  globally unique, so two workspaces could now generate colliding storage paths -- a real path-scheme
-  redesign, not an RLS-only fix.
-- **`app_records`/`app_state_snapshots`** -- confirmed still alive/in use, but the frontend has a
-  hardcoded `WORKSPACE_KEY="default"` literal -- same deferred-as-"not urgent" class `app_sync_events`/
-  `app_transaction_locks` were in before migration 171 closed those (those were dead code paths; these
-  two are live but low-risk while there's only one production workspace).
+**Continuing item, updated 2026-09-19, later same day**: migrations 175 through 185 above -- ALL
+CONFIRMED APPLIED and their canonical tests PASSED in production -- close everything this inventory
+originally flagged, including every item once listed here as decision-dependent -- `team_members`,
+`product_catalog`/`catalog_price_change_requests`, `presales_hardware_rules`/
+`site_hardware_rules`/`form_schemas`/`form_schema_fields`, `one_off_reconciliations`, all 6 originally
+open storage buckets (`project-location-images`/`project-shipment-photos`/`avatars` via migration 179;
+`project-documents`/`catalog-datasheets` via migration 180, plus its separately-discovered missing-bucket
+fix, migration 184; `company-branding` via migration 182), `user_invites` (migration 181), and
+`app_records`/`app_state_snapshots` (migration 183). **The final Phase 3 cross-workspace isolation suite
+is now essentially closed.** Migration 185 went one step further, additively wiring a real per-workspace
+admin capability into 9 of these same tables' admin gates (frontend companion `e0f0932`). **What's left
+is genuinely just a test-rigor item, not decision-dependent**:
 - **3 RPCs still only structurally tested**: `re_enable_share_link`, `permanently_revoke_share_link`,
   `create_and_send_quote_proposal_version` -- full behavioral cross-workspace coverage is a test-rigor
   opportunity, not urgent.
@@ -506,8 +556,9 @@ still awaiting E's input:
 **Confirmed correctly out of scope, no action needed**: `app_role_modes` (dead/vestigial, zero app code
 references -- corrects this file's own earlier listing of it as an open gap) and the system-health/backup
 RPC family (`record_system_health_event` etc.) -- genuinely platform-admin-gated by design, not workspace
-data. **Not proceeding further on `user_invites`/`company_branding`/the two remaining buckets until E
-weighs in** -- see the full inventory in the session log rather than re-deriving it.
+data. **The formal §11 stage-6 gate** (a consolidated automated cross-workspace isolation suite replaying
+every migration and canonical test together) **is a separate, concurrent piece of work, in progress** --
+see recent commits for current status, not claimed done here.
 
 **Migration 173 (`f5b8ca4`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18, "Success. No rows returned" for both).** **E's explicit decision, 2026-09-18**: "each
