@@ -435,9 +435,11 @@ never touched. — *Migration applied and canonical test PASSED in production (E
 
 **None currently.** Migrations 155 through 172 are all confirmed applied and their canonical tests all
 passed in production, 2026-09-17/18. All storage bucket policy gaps are closed,
-`project_documents.document_number` is closed, and migration 166's residual inventory_item/
-equipment_type gap is closed (migration 172). See §11, Stage 5 for what's left (the build_transaction
-bug, and E's governance call on `notification_rules`/etc.).
+`project_documents.document_number` is closed, migration 166's residual inventory_item/equipment_type
+gap is closed (migration 172), and the `build_transaction` deletion-log bug is fixed (no migration
+needed). **All of Stage 5's scoped items are now closed.** The only thing left is E's own governance
+call on `notification_rules`/`standard_install_times`/`project_schedule_templates` (global forever vs.
+per-workspace override) — see §11.
 
 **Migration 172** (`backend/supabase/migrations/172_inventory_item_equipment_type_atomic_delete_and_log.sql`,
 commit `0abe68b`) — closes migration 166's one residual gap: `inventory_item`/`equipment_type` are the
@@ -463,6 +465,17 @@ live-functionality gap, caught only after the fact by checking the deployed bund
 for the new RPC name. The app is back in a consistent, working state as of 2026-09-18 (migration
 confirmed applied, deployed frontend already matches it). **Do not run migration 172 or its canonical
 test again.**
+
+**`build_transaction`'s deletion-log bug — FIXED, no migration needed (commit `e56c696`).**
+`deleteBuildTransaction()` was sending `build_number` ("BUILD-0001", this table's natural key in the
+app layer, never a raw uuid) as `deletion_log.entity_id`, a `uuid not null` column — PostgREST silently
+rejected every such insert before it reached Postgres, so every `build_transaction` deletion had been
+failing to log at all. Fixed by using the real row `id` already present in the PATCH's own
+`return=representation` response — pure frontend fix, no backend schema change. Side effect: migration
+166's `derive_deletion_log_workspace_id()` already resolves `'build_transaction'` via the row's real
+`id` — that branch was simply unreachable before; with a real id now, this entity type's log rows are
+correctly workspace-scoped automatically. Deployed and confirmed live (bundle hash changed, zero
+console errors on load).
 
 **Migration 171** (`backend/supabase/migrations/171_revoke_stray_anon_grants_mvp_leftovers.sql`, commit
 `96bc949`) — hygiene item, not workspace containment. `app_sync_events`/`app_transaction_locks`
@@ -565,10 +578,11 @@ genuinely global (`schedule_template_phase`, `form_schema_field`, `presales_hard
 `site_hardware_rule`) and stay visible to everyone by design; an unrecognized entity_type is rejected
 outright (fail closed). SELECT policy uses `is_workspace_member()` (migration 115), not
 `resolve_caller_workspace_id()` (unsafe in a bare RLS clause — raises on ambiguous/missing membership).
-**Deliberately NOT closed**: `inventory_item`/`equipment_type` are hard-deleted before the log write
-happens, so a trigger can't resolve their workspace after the fact (needs an atomic delete+log RPC,
-separate design work). Also found, unrelated, pre-existing: `build_transaction` deletion-log writes
-appear to have been silently failing already (non-uuid `entity_id`) — worth E confirming directly.
+**Deliberately NOT closed at the time**: `inventory_item`/`equipment_type` were hard-deleted before the
+log write happened, so a trigger couldn't resolve their workspace after the fact — closed later by
+migration 172 (see §3). Also found, unrelated, pre-existing: `build_transaction` deletion-log writes
+appear to have been silently failing already (non-uuid `entity_id`) — fixed later the same session, no
+migration needed (commit `e56c696`, see §3).
 Canonical test: `backend/supabase/migration_166_deletion_log_workspace_containment_tests.sql`.
 Independently verified end-to-end against a real local PostgreSQL 18 engine (PGlite) before being sent,
 including a deliberate stress-test confirming this migration is NOT exposed to the same
