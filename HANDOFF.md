@@ -306,9 +306,35 @@ returned" for all five migration+test pairs, run in order 175→179 as required)
 Storage) is fully shipped end-to-end** (migrations 161/162, confirmed applied and tested). **Phase 3
 Stage 5 is fully complete, including the one open governance question (migration 173). The final Phase 3
 cross-workspace isolation suite is now substantially closed** — see the updated inventory below; only
-`user_invites`, `company_branding`, the 2 remaining storage buckets, `app_records`/`app_state_snapshots`,
-and 3 structurally-only-tested RPCs remain open, all genuinely decision-dependent on E rather than
-further mechanical migration work.
+the 2 remaining storage buckets and 3 structurally-only-tested RPCs remain open (`user_invites` and
+`company_branding` now have drafted migrations, below — `app_records`/`app_state_snapshots` also drafted
+separately, see migration 183), all genuinely decision-dependent on E rather than further mechanical
+migration work.
+
+**Migration 182** (`backend/supabase/migrations/182_company_branding_workspace_scoping.sql`, commit
+`6a1d138`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18 engine
+(PGlite); NOT yet applied, kept local for E's review. Converts `company_branding` (migration 039) from a
+global Postgres singleton (`id boolean primary key default true`) to one row per workspace, per E's
+standing "each company should have its own separate copies" default. Backfills the existing singleton
+row's real `company_name`/`logo_storage_path` onto the production workspace (a plain UPDATE, nothing
+hardcoded), adds a `workspaces` `after insert` trigger (`workspaces_seed_default_branding`) that seeds a
+default row (`company_name = 'New Company'` placeholder — JUDGMENT CALL, flag for E) for every new
+workspace, scopes RLS to workspace membership with the existing admin-only-write gate preserved (ANDed,
+not replaced), and scopes the `company-branding` storage bucket's WRITE-side policies to the path's
+leading workspace_id segment (read stays public, unchanged from today). **One real design bug caught and
+fixed during PGlite verification**: reusing `guard_workspace_id_mutation()` (migration 117) verbatim for
+this table's ownership trigger broke new-workspace seeding outright (it derives `workspace_id` from the
+*caller's* own active workspace, not the workspace actually being created, so the seed trigger's insert
+failed with "no workspace membership found for current user" the moment a second workspace was created)
+— fixed with a dedicated `guard_company_branding_workspace_id_mutation()` that only enforces UPDATE
+immutability, trusting the security-definer seed trigger's explicit `workspace_id` on INSERT (independently
+still constrained by this table's own RLS WITH CHECK for any other insert path). Companion
+`src/persistence.ts` changes (`loadCompanyBranding`/`saveCompanyBranding`/`uploadCompanyLogo`, mirroring
+`loadSalesApprovalSettings`/`saveSalesApprovalSettings`'s existing load-returns-workspace-id /
+save-takes-workspace-id-param shape — no new "get caller's workspace_id" helper needed) are written and
+staged locally, **deliberately NOT committed** per this repo's standing rule (a frontend change must never
+reach production before its migration is confirmed applied) — commit only after E confirms migration 182
+is live.
 
 **Migrations 175 through 179 — overnight autonomous batch per E's "do all of them" instruction,
 CONFIRMED APPLIED and their canonical tests PASSED in production (2026-09-19, "Success. No rows
