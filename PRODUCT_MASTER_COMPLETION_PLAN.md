@@ -433,10 +433,32 @@ never touched. — *Migration applied and canonical test PASSED in production (E
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**None currently.** Migrations 155 through 167 are all confirmed applied and their canonical tests all
+**None currently.** Migrations 155 through 168 are all confirmed applied and their canonical tests all
 passed in production, 2026-09-17/18. See §11, Stage 5 for the full scoping map and what's queued next
-(storage bucket policies, `project_documents.document_number`, the inventory_item/equipment_type
-residual gap, the build_transaction bug).
+(the `sales-quote-images` storage bucket -- the only genuine remaining gap of the three originally
+flagged, see the correction below -- `project_documents.document_number`, the
+inventory_item/equipment_type residual gap, the build_transaction bug).
+
+**Migration 168** (`backend/supabase/migrations/168_fix_purchase_order_files_storage_upload_bug.sql`,
+commit `e4fcbc3`) — URGENT LIVE INCIDENT, found while scoping the storage-bucket item below. Migration
+161's `purchase-order-files` storage.objects INSERT/UPDATE policies required a matching
+`purchase_order_files` row to already exist (exact match on `storage_path`) before an upload could
+succeed, but the real upload flow (`addPurchaseOrderFile()`, `src/persistence.ts:9931-9960`) uploads
+the file bytes to Storage FIRST and only inserts the metadata row afterward — every purchase order file
+upload attempted since migration 161 went live (2026-09-17) had almost certainly been silently failing.
+Confirmed empirically against a real local PostgreSQL 18 engine (PGlite): reproduced the exact
+rejection under the pre-168 policy, confirmed resolved after the fix. Fixed by matching the
+`purchase_order_id` leading path segment directly against `public.purchase_orders` (same pattern
+already correct in migration 162 for channel message-attachments), not through the per-file metadata
+row. Migration 161 itself not edited or rerun. Canonical test:
+`backend/supabase/migration_168_fix_purchase_order_files_storage_upload_bug_tests.sql`. — *Migration
+applied and canonical test PASSED in production (E confirmed, 2026-09-18, "Success. No rows returned"
+for both).* **Do not run migration 168 or its canonical test again.**
+
+**Correction to the storage-bucket scoping item below**: of the three buckets flagged as "deferred,
+never claimed," only `sales-quote-images` is actually still unaddressed — `purchase-order-files`
+(migration 161) and `message-attachments`'s channel-specific policies (migration 162) were already
+correctly workspace-scoped on direct re-check.
 
 **Migration 167** (`backend/supabase/migrations/167_report_views_workspace_containment.sql`, commit
 `45302d8`) — Phase 3 Stage 5, fourth migration. Closed a CONFIRMED, LIVE, anon-exploitable
@@ -865,14 +887,24 @@ there, not an oversight.
      Two items deliberately NOT closed by this migration: `inventory_item`/`equipment_type` (hard-deleted
      before the log write happens, needs an atomic delete+log RPC) and a separate, pre-existing,
      unrelated bug in `build_transaction` logging (non-uuid `entity_id`) — both tracked, not fixed.
-   - **Storage bucket policies (high priority, real gap, repeatedly deferred by name across three
-     stages, never actually scheduled)** — `purchase_order_files` (deferred by migration 160),
-     `sales-quote-images` (deferred by migration 155), and the `message-attachments` bucket's
-     channel-specific policies (not independently re-verified when migration 162 scoped the metadata
-     tables). The metadata ROWS describing an uploaded file are workspace-scoped; the actual file
-     BYTES in Supabase Storage may still be fetchable by any authenticated user who guesses/enumerates
-     a storage path, since bucket-level RLS is a separate policy surface from table RLS. No stage has
-     claimed this as "its own job" — recommend Stage 5 close it explicitly. Not yet migrated.
+   - **Storage bucket policies — RE-SCOPED, only one of three actually still open.** Direct re-check
+     (2026-09-18) found `purchase_order_files` (migration 160's own deferral) and the
+     `message-attachments` bucket's channel-specific policies (not independently re-verified when
+     migration 162 scoped the metadata tables) were BOTH already correctly workspace-scoped, by
+     migrations 161 and 162 respectively — the earlier "repeatedly deferred, never actually scheduled"
+     framing was stale for those two. **Only `sales-quote-images` (deferred by migration 155) is
+     genuinely still fully open** — bare `bucket_id = 'sales-quote-images'` with no workspace predicate
+     on any of its four policies (migration 033). Real object path convention:
+     `&lt;quote_location_id&gt;/&lt;stamp&gt;-&lt;filename&gt;`
+     (`buildQuoteImageStoragePath()`, `src/persistence.ts:11132-11135`); resolver
+     `sales_quote_location_owner_workspace_id()` (migration 155) is reusable. **Separately, re-checking
+     `purchase_order_files` surfaced a real, unrelated, already-live incident**: its INSERT/UPDATE
+     policies required a metadata row to exist before upload, but the real upload code writes bytes
+     first — breaking every new purchase order file upload since migration 161 shipped. **Fixed by
+     migration 168** (`e4fcbc3`, confirmed applied and tested, 2026-09-18) — see §3. The metadata ROWS
+     describing an uploaded file are workspace-scoped for all three buckets; the point of these fixes is
+     that the actual file BYTES in Supabase Storage are a separate policy surface from table RLS and
+     needed their own explicit scoping.
    - **Governance decision needed from E, not a routine default** — `notification_rules`,
      `standard_install_times`, `project_schedule_templates`/`project_schedule_template_phases` are all
      confirmed genuinely global (admin-configured libraries/config, zero per-row tenant data, no
