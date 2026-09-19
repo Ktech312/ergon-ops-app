@@ -429,30 +429,40 @@ never touched. — *Migration applied and canonical test PASSED in production (E
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-**Migration 172** (`backend/supabase/migrations/172_inventory_item_equipment_type_atomic_delete_and_log.sql`)
-— closes migration 166's one residual gap: `inventory_item`/`equipment_type` are the only two
-`deletion_log` entity types genuinely hard-deleted, so their log row's `workspace_id` stayed null
-forever. Three new atomic RPCs (`delete_inventory_item_and_log`/`force_delete_inventory_item_and_log`/
-`delete_equipment_type_and_log`) capture `workspace_id` from the row before deleting it, in the same
-transaction, preserving every existing client behavior exactly (lookup-miss = silent success, identical
-FK-conflict messages, force-delete's zero-balance-only clearing). Also fixes a load-bearing correctness
-gap the original client code didn't have to worry about: since migration 164 made `sku`/
-`equipment_name` uniqueness workspace-scoped, two workspaces can now share an identical value, so these
-RPCs' internal lookups are explicitly scoped to the caller's own workspace. Canonical test:
-`backend/supabase/migration_172_inventory_item_equipment_type_atomic_delete_and_log_tests.sql`.
-Independently verified end-to-end against a real local PostgreSQL 18 engine (PGlite). **A matching
-`src/persistence.ts` change is committed locally but deliberately NOT pushed** — deploying it before
-this migration exists in production would break every inventory-item/equipment-type delete live; it
-will be pushed and verified via the usual Vercel bundle-hash check once the migration is confirmed.
+**None currently.**
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**One item queued: apply migration 172**
-(`backend/supabase/migrations/172_inventory_item_equipment_type_atomic_delete_and_log.sql`), then run
-its canonical test. Migrations 155 through 171 are all confirmed applied and their canonical tests all
-passed in production, 2026-09-17/18. All storage bucket policy gaps are closed, and
-`project_documents.document_number` is closed. See §11, Stage 5 for what's queued after 172 (the
-build_transaction bug, and E's governance call on `notification_rules`/etc.).
+**None currently.** Migrations 155 through 172 are all confirmed applied and their canonical tests all
+passed in production, 2026-09-17/18. All storage bucket policy gaps are closed,
+`project_documents.document_number` is closed, and migration 166's residual inventory_item/
+equipment_type gap is closed (migration 172). See §11, Stage 5 for what's left (the build_transaction
+bug, and E's governance call on `notification_rules`/etc.).
+
+**Migration 172** (`backend/supabase/migrations/172_inventory_item_equipment_type_atomic_delete_and_log.sql`,
+commit `0abe68b`) — closes migration 166's one residual gap: `inventory_item`/`equipment_type` are the
+only two `deletion_log` entity types genuinely hard-deleted, so their log row's `workspace_id` stayed
+null forever. Three new atomic RPCs (`delete_inventory_item_and_log`/`force_delete_inventory_item_and_log`/
+`delete_equipment_type_and_log`) capture `workspace_id` from the row before deleting it, in the same
+transaction, preserving every existing client behavior exactly. Also fixes a load-bearing correctness
+gap: since migration 164 made `sku`/`equipment_name` uniqueness workspace-scoped, two workspaces can
+now share an identical value, so these RPCs' internal lookups are explicitly scoped to the caller's own
+workspace. Canonical test:
+`backend/supabase/migration_172_inventory_item_equipment_type_atomic_delete_and_log_tests.sql`.
+Independently verified end-to-end against a real local PostgreSQL 18 engine (PGlite). — *Migration
+applied and canonical test PASSED in production (E confirmed, 2026-09-18, "Success. No rows returned"
+for both).*
+
+**Real process mistake this session, worth recording**: the matching `src/persistence.ts` commit
+(`5a5f919`) was committed with the explicit intent to hold it back until this migration was confirmed
+applied — but `git push` sends every commit ahead of `origin/main`, not just the one just created, so it
+went out anyway with a later, unrelated doc-reconciliation push, deploying it BEFORE E had run migration
+172. This meant a real window where every inventory-item/equipment-type delete attempt in the live app
+would have failed (the RPC didn't exist yet in the database) — no data was corrupted, but it's a genuine
+live-functionality gap, caught only after the fact by checking the deployed bundle hash and grepping it
+for the new RPC name. The app is back in a consistent, working state as of 2026-09-18 (migration
+confirmed applied, deployed frontend already matches it). **Do not run migration 172 or its canonical
+test again.**
 
 **Migration 171** (`backend/supabase/migrations/171_revoke_stray_anon_grants_mvp_leftovers.sql`, commit
 `96bc949`) — hygiene item, not workspace containment. `app_sync_events`/`app_transaction_locks`
