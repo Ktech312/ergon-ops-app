@@ -345,7 +345,7 @@ migrations 163/164's own "hygiene items" note) are untouched by this migration a
 purpose.
 
 **Migration 185** (`backend/supabase/migrations/185_per_workspace_admin_authorization.sql`, commit
-`(pending commit)`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18
+`bcc48d8`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18
 engine (PGlite, full 001→184 reconstruction); NOT yet applied, kept local for E's review. E was alarmed
 that a handful of ADMIN-level actions (inviting a teammate, changing company branding, some
 catalog-pricing writes) checked only the single GLOBAL `is_app_admin(auth.uid())` flag, not a per-company
