@@ -299,10 +299,34 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migration 169 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 169 are all confirmed
+**Manual-action queue for E, current exact state: NONE.** Migration 170 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 170 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end** (migrations 161/162, confirmed applied and tested).
+
+**Migration 170 (`9a1ff1e`) — URGENT LIVE INCIDENT, CONFIRMED APPLIED and its canonical test PASSED in
+production (2026-09-18, "Success. No rows returned" for both).** Found while continuing the original
+`project_documents.document_number` workspace-scoped-uniqueness task (the one column migration 164
+deliberately excluded, since this table has no `workspace_id` at all). `project_documents` has three
+nullable anchors (`project_id`, `purchase_order_id`, `purchase_request_id`) and was scoped only
+indirectly via a three-way coalesce (migration 161). Two facts, confirmed directly from
+`src/persistence.ts`: `project_id` is effectively dead for new rows (neither real write path ever sets
+it), and a plain "general project document" (migration 080's own header: "most documents ... link to
+neither") sets neither PO nor PR either -- so for the app's own most common document-upload case, the
+coalesce resolves to null, and migration 161's INSERT policy rejects the insert outright. **Every
+general project document upload attempted since migration 161 went live (2026-09-17) had almost
+certainly been failing.** Confirmed empirically against a real local PostgreSQL 18 engine (PGlite) --
+reproduced the exact rejection under the pre-170 policy using the identical no-anchor payload the app
+actually sends, confirmed resolved afterward. Fixed by giving `project_documents` a real `workspace_id`
+column (like every other Stage 1-4 table) with a derivation trigger modeled on migration 162's
+`guard_channel_workspace_id_mutation()`: prefer whichever of the three anchors is set (same priority
+order as the existing coalesce), falling back to the caller's own resolved workspace when none are set
+-- the one behavioral change, and exactly what fixes the incident. RLS switched from the inline
+coalesce to a plain `workspace_id` check; a cross-workspace anchor reference is still correctly
+rejected (the caller must actually be an active member of whatever workspace the row resolves to). Also
+closes the original goal: `document_number`'s global unique constraint is now workspace-scoped, same
+pattern as migration 164's other nine columns. **Do not run migration 170 or its canonical test
+again.**
 
 **Migration 169 (`dfbbba1`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18, "Success. No rows returned" for both).** Closed the last genuine storage-bucket gap:
@@ -372,8 +396,8 @@ same missing-`security definer` bug class that caused the migration 164/165 inci
 migration 166 or its canonical test again.**
 
 **Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
-access paths) scoping is done; five migrations shipped, plus one urgent same-effort incident fix
-(migration 168).** Full detail in
+access paths) scoping is done; six migrations shipped, plus two urgent same-effort incident fixes
+(migrations 165 and 168).** Full detail in
 `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry and `CONTINUOUS_CODER_HANDOFF.md`'s matching
 session-log entry. Summary:
 
@@ -416,11 +440,11 @@ session-log entry. Summary:
   -- needs its own reviewed migration) and `equipment_types.equipment_number` (stays deferred, low
   priority, server-generated, per the master plan). **Do not run migrations 164/165 or migration 164's
   canonical test again.**
-- **Queued next**: `project_documents.document_number` needs its own reviewed migration (add a real
-  `workspace_id` column + backfill + derivation trigger); an atomic delete+log RPC for
-  `inventory_item`/`equipment_type` to fully close migration 166's own residual gap; the pre-existing
-  `build_transaction` deletion-log bug migration 166 found but did not fix. All storage bucket policy
-  gaps are now closed (migrations 161/162/168/169).
+- **Queued next**: an atomic delete+log RPC for `inventory_item`/`equipment_type` to fully close
+  migration 166's own residual gap; the pre-existing `build_transaction` deletion-log bug migration 166
+  found but did not fix. All storage bucket policy gaps are now closed (migrations 161/162/168/169);
+  `project_documents.document_number` and its real upload-blocking incident are both closed (migration
+  170).
 - **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
   `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
   per-workspace override eventually?
