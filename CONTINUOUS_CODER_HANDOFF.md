@@ -404,10 +404,28 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migration 170 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 170 are all confirmed
+**Manual-action queue, current exact state: NONE.** Migration 171 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 171 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end.**
+
+**Migration 171 (`96bc949`) — CONFIRMED APPLIED and its canonical test PASSED in production
+(2026-09-18).** Hygiene item (not workspace containment): `app_sync_events`/`app_transaction_locks`
+(migration 008) both had a full-access `anon` policy pair each, "during no-login MVP" -- any
+unauthenticated caller could read/write/delete arbitrary rows in both, with no legitimate caller for as
+long as this app has had real authentication. Migration 069 separately granted `anon` EXECUTE on
+`acquire_transaction_lock()` -- same fix. **Correction to the master plan's "looks dead, confirm before
+dropping" note**: `app_sync_events` is NOT dead -- still written on every `roleMode` change, just
+carrying a single trivial UI preference now (Phase 10f moved real data to normalized tables); not
+dropped. Independently verified against a real local PostgreSQL 18 engine (PGlite), and the
+verification itself caught two real bugs worth remembering as a pattern: (1) testing read-denial via
+"did an exception get raised" is wrong for a bare SELECT under RLS -- a blocked SELECT silently returns
+zero rows, it never raises; only INSERT/UPDATE/DELETE's WITH CHECK failures actually throw. Fixed by
+checking a row-count against a real fixture row instead. (2) Postgres grants EXECUTE to the `PUBLIC`
+pseudo-role automatically on function creation -- migration 069 never revoked that default, so
+revoking `anon`'s own grant on `acquire_transaction_lock()` alone left it still callable via `PUBLIC`
+(every role is implicitly a member of it). Fixed by revoking from `PUBLIC` outright, then restoring
+`authenticated`'s own explicit grant. **Do not run migration 171 or its canonical test again.**
 
 **Migration 170 (`9a1ff1e`) — URGENT LIVE INCIDENT, CONFIRMED APPLIED and its canonical test PASSED in
 production (2026-09-18).** Found while continuing the original `project_documents.document_number`
@@ -578,8 +596,8 @@ just missed because the affected code lives outside the file clusters those earl
   remaining gap, closed by migration 169 (`dfbbba1`, confirmed applied and tested, 2026-09-18).
   `notification_rules`/`standard_install_times`/`project_schedule_templates` are confirmed
   genuinely global config -- whether they ever need a per-workspace override is a governance decision
-  for E, not blocking anything else. `app_sync_events` looks dead (confirm before dropping);
-  `app_transaction_locks` is low-risk but has a stray anon EXECUTE grant worth revoking.
+  for E, not blocking anything else. `app_sync_events`/`app_transaction_locks`'s stray anon access is
+  now closed (migration 171 -- `app_sync_events` turned out NOT dead, see migration 171's own entry).
 - **Correction to the standing plan**: `save_equipment_recipe()` was already retired from
   `active_workspace_id()` by migration 159 -- any older text still listing it as pending is stale. The
   confirmed complete remaining `active_workspace_id()` call-site list is the legacy admin-role bridge
