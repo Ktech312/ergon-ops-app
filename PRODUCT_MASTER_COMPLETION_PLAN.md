@@ -429,13 +429,35 @@ never touched. — *Migration applied and canonical test PASSED in production (E
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-**None currently.**
+**Migration 166** (`backend/supabase/migrations/166_deletion_log_workspace_containment.sql`, commit
+`df4bed6`) — Phase 3 Stage 5, third migration. Closes `deletion_log`'s confirmed live cross-workspace
+leak (no `workspace_id`, fully open `using(true)` SELECT policy). Adds `workspace_id` (nullable by
+design, not transitional) plus a BEFORE INSERT trigger dispatching across the 21 real `entity_type`
+literals actually written by `src/persistence.ts` (verified by direct grep, not the migration 088
+comment's own incomplete summary): 17 resolve via existing resolvers/direct columns; 4 are confirmed
+genuinely global (`schedule_template_phase`, `form_schema_field`, `presales_hardware_rule`,
+`site_hardware_rule`) and stay visible to everyone by design; an unrecognized entity_type is rejected
+outright (fail closed). SELECT policy uses `is_workspace_member()` (migration 115), not
+`resolve_caller_workspace_id()` (unsafe in a bare RLS clause — raises on ambiguous/missing membership).
+**Deliberately NOT closed**: `inventory_item`/`equipment_type` are hard-deleted before the log write
+happens, so a trigger can't resolve their workspace after the fact (needs an atomic delete+log RPC,
+separate design work). Also found, unrelated, pre-existing: `build_transaction` deletion-log writes
+appear to have been silently failing already (non-uuid `entity_id`) — worth E confirming directly.
+Canonical test: `backend/supabase/migration_166_deletion_log_workspace_containment_tests.sql`.
+Independently verified end-to-end against a real local PostgreSQL 18 engine (PGlite) before being sent,
+including a deliberate stress-test confirming this migration is NOT exposed to the same
+missing-`security definer` bug class that caused the migration 164/165 incident. Not yet applied —
+queued below.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**None currently.** Migrations 155 through 165 are all confirmed applied and their canonical tests all
-passed in production, 2026-09-17/18. See §11, Stage 5 for the full scoping map and what's queued next
-(report views, `deletion_log`, storage bucket policies, `project_documents.document_number`).
+**One item queued: apply migration 166**
+(`backend/supabase/migrations/166_deletion_log_workspace_containment.sql`), then run its canonical test
+(`backend/supabase/migration_166_deletion_log_workspace_containment_tests.sql`). Migrations 155 through
+165 are all confirmed applied and their canonical tests all passed in production, 2026-09-17/18. See
+§11, Stage 5 for the full scoping map and what's queued after 166 (report views, storage bucket
+policies, `project_documents.document_number`, the inventory_item/equipment_type residual gap, the
+build_transaction bug).
 
 **Migration 164**
 (`backend/supabase/migrations/164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters.sql`,
