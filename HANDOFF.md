@@ -40,7 +40,7 @@ migration:
   total-workspace-count guard, which migration 164 deliberately replaced with per-caller
   `resolve_caller_workspace_id()` resolution — already noted as "DONE" in this file's own §11 tracker,
   so this was confirmation, not news).
-- **Correction (2026-09-19, `(pending commit)`): the one remaining failure from the suite's first run was a
+- **Correction (2026-09-19, `cec88e5`): the one remaining failure from the suite's first run was a
   FALSE POSITIVE in the suite's own test harness, not a genuine production bug — the initial writeup
   here and in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 6 claiming "a real, currently-live
   cross-workspace disclosure in the deletion audit trail" was wrong and has been corrected.** Root
