@@ -299,27 +299,31 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 172
-(`backend/supabase/migrations/172_inventory_item_equipment_type_atomic_delete_and_log.sql`), then run
-its canonical test
-(`backend/supabase/migration_172_inventory_item_equipment_type_atomic_delete_and_log_tests.sql`). Three
-new atomic RPCs (`delete_inventory_item_and_log`/`force_delete_inventory_item_and_log`/
-`delete_equipment_type_and_log`) close the one residual gap migration 166 left open: `inventory_item`/
-`equipment_type` are the only two `deletion_log` entity types that are genuinely hard-deleted, so their
-log entry's `workspace_id` used to stay null forever (the source row was already gone by the time the
-log write happened). Each RPC captures `workspace_id` from the row before deleting it, in the same
-transaction. Every existing client behavior is preserved exactly (lookup-miss = silent success, the
-same friendly FK-conflict messages, force-delete's zero-balance-only clearing). Independently verified
-end-to-end against a real local PostgreSQL 18 engine (PGlite), including a workspace-scoped-sku
-ambiguity scenario (two workspaces can now legitimately share an identical sku since migration 164 --
-the RPCs' internal lookups are explicitly scoped to the caller's own workspace to avoid resolving the
-wrong one). **The matching frontend change (routing `deleteInventoryItem()`/`forceDeleteInventoryItem()`/
-`deleteEquipmentType()` through these RPCs) is committed locally but deliberately NOT pushed/deployed
-yet** -- it would break every such delete in the live app if deployed before this migration exists in
-production. Once this migration and its test are confirmed, that commit will be pushed and verified via
-the usual Vercel bundle-hash check. Migrations 155 through 171 are all confirmed applied. **Phase 3
-Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end**
-(migrations 161/162, confirmed applied and tested).
+**Manual-action queue for E, current exact state: NONE.** Migration 172 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 172 are all confirmed
+applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
+end-to-end** (migrations 161/162, confirmed applied and tested).
+
+**Migration 172 (`0abe68b`) — CONFIRMED APPLIED and its canonical test PASSED in production
+(2026-09-18, "Success. No rows returned" for both).** Three new atomic RPCs
+(`delete_inventory_item_and_log`/`force_delete_inventory_item_and_log`/`delete_equipment_type_and_log`)
+close the one residual gap migration 166 left open: `inventory_item`/`equipment_type` are the only two
+`deletion_log` entity types that are genuinely hard-deleted, so their log entry's `workspace_id` used to
+stay null forever. Each RPC captures `workspace_id` from the row before deleting it, in the same
+transaction. Every existing client behavior is preserved exactly. Independently verified end-to-end
+against a real local PostgreSQL 18 engine (PGlite), including a workspace-scoped-sku ambiguity scenario
+(two workspaces can now legitimately share an identical sku since migration 164). **Process note, an
+actual mistake this session**: the matching `src/persistence.ts` commit (`5a5f919`, routing
+`deleteInventoryItem()`/`forceDeleteInventoryItem()`/`deleteEquipmentType()` through these RPCs) was
+committed locally with the explicit intent to hold it back until this migration was confirmed -- but
+`git push` sends every commit ahead of `origin/main`, not just the one just created, so it went out
+anyway with a later, unrelated doc-reconciliation push, deploying it BEFORE E had run migration 172.
+This means there was a real window where every inventory-item/equipment-type delete attempt in the live
+app would have failed (the RPC didn't exist in the database yet) -- no data was corrupted (a failed
+delete just leaves the row in place), but it's a real live-functionality gap, caught only after the
+fact by checking the deployed bundle hash and grepping it for the new RPC call name. Migration 172 is
+now confirmed applied, so the app is back in a consistent, working state as of 2026-09-18. **Do not run
+migration 172 or its canonical test again.**
 
 **Migration 171 (`96bc949`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18, "Success. No rows returned" for both).** Hygiene item, not workspace containment:
@@ -476,13 +480,14 @@ session-log entry. Summary:
   -- needs its own reviewed migration) and `equipment_types.equipment_number` (stays deferred, low
   priority, server-generated, per the master plan). **Do not run migrations 164/165 or migration 164's
   canonical test again.**
-- **Queued next**: an atomic delete+log RPC for `inventory_item`/`equipment_type` to fully close
-  migration 166's own residual gap; the pre-existing `build_transaction` deletion-log bug migration 166
-  found but did not fix. Everything else scoped so far is closed: all storage bucket policy gaps
-  (migrations 161/162/168/169), `project_documents.document_number` and its upload-blocking incident
-  (migration 170), and the `app_sync_events`/`app_transaction_locks` stray anon access (migration 171).
-  Remaining: E's governance call on `notification_rules`/`standard_install_times`/
-  `project_schedule_templates` (global forever vs. per-workspace override).
+- **Everything scoped so far is closed**: migrations 163-172 cover all RPC containment gaps,
+  workspace-scoped uniqueness, `deletion_log` (including its residual inventory_item/equipment_type
+  gap, migration 172), the report-views leak, all storage bucket policy gaps, `project_documents.
+  document_number` and its upload-blocking incident, and the `app_sync_events`/`app_transaction_locks`
+  stray anon access. **Remaining, not yet scheduled**: the pre-existing `build_transaction`
+  deletion-log bug (found, not fixed -- non-uuid `entity_id`); E's governance call on
+  `notification_rules`/`standard_install_times`/`project_schedule_templates` (global forever vs.
+  per-workspace override).
 - **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
   `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
   per-workspace override eventually?
