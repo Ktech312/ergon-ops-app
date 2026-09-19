@@ -344,6 +344,40 @@ payload, and changing `on_conflict` to `workspace_id,record_key`) is written and
 migrations 163/164's own "hygiene items" note) are untouched by this migration and its frontend diff on
 purpose.
 
+**Migration 185** (`backend/supabase/migrations/185_per_workspace_admin_authorization.sql`, commit
+`(pending commit)`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18
+engine (PGlite, full 001→184 reconstruction); NOT yet applied, kept local for E's review. E was alarmed
+that a handful of ADMIN-level actions (inviting a teammate, changing company branding, some
+catalog-pricing writes) checked only the single GLOBAL `is_app_admin(auth.uid())` flag, not a per-company
+one — E's explicit decision: each company's own admin should be able to do these for their own company
+without going through E. Good news: `workspace_members.is_workspace_admin` +
+`public.is_workspace_admin(workspace_id)` (migration 115:121-134) already existed and needed no new
+schema — this migration purely ORs it into the existing admin gate (never replaces anything) on 9
+policies across `user_invites` (181), `company_branding` table + its `company-branding` storage bucket
+(182), `product_catalog` + `catalog_price_change_requests` (176), and
+`presales_hardware_rules`/`site_hardware_rules`/`form_schemas`/`form_schema_fields` (177). **JUDGMENT
+CALL 1**: `catalog_price_change_requests`' read policy also got the OR (not just its update/review
+policy) — a workspace admin who could approve/reject a request but not read the list to review it would
+be a functionally broken grant. **JUDGMENT CALL 2**: the `company-branding` storage policies needed a
+new small helper, `safe_workspace_id_from_object_path()`, to cast the path's leading segment to uuid for
+`is_workspace_admin()` without breaking 182's own "malformed path segment fails cleanly, never a raw cast
+error" property (catches `invalid_text_representation`, returns null) — computed once, reused by both the
+membership check and the new admin check. **Real, material finding, flagged prominently in the migration's
+own header rather than buried**: this migration alone does NOT achieve E's stated goal end-to-end. The
+database side is genuinely RLS-only and correct, but `checkIsAdmin()` (`src/persistence.ts:1252-1267`,
+driving the single client-side `isAdmin` flag that gates "Invite a teammate," catalog management, and
+company branding UI in `src/main.tsx`) queries ONLY `app_admins` — a real workspace-admin-only user still
+won't see these buttons in the app at all today. A follow-up frontend change (teach `isAdmin`/a new
+`isWorkspaceAdmin` state to also check the caller's own `workspace_members` row) is required to actually
+put this in a workspace admin's hands; deliberately not bundled into this authorization-only migration.
+Canonical test (`backend/supabase/migration_185_per_workspace_admin_authorization_tests.sql`) exercises
+the one scenario no prior migration's test did: a real `workspace_members.is_workspace_admin = true`
+member with NO `app_admins` row at all can now do all of the above for their own workspace and still
+cannot touch a second (synthetic) workspace's rows; a real `app_admins` global admin (with their own
+`is_workspace_admin` forced false for the check, so the pass is attributable only to `is_app_admin`)
+still passes every gate exactly as before — zero regression. Backend-only; no frontend commit accompanies
+this migration (see the flagged gap above).
+
 **Migration 182** (`backend/supabase/migrations/182_company_branding_workspace_scoping.sql`, commit
 `6a1d138`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18 engine
 (PGlite); NOT yet applied, kept local for E's review. Converts `company_branding` (migration 039) from a

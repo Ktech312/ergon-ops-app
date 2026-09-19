@@ -1,6 +1,7 @@
 # Local scratch/source dumps
 tmp/
 scratch/
+scratchpad/
 
 # Environment and secrets
 .env
