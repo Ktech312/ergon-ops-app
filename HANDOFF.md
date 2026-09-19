@@ -299,10 +299,28 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migration 172 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 172 are all confirmed
-applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
-end-to-end** (migrations 161/162, confirmed applied and tested).
+**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 173
+(`backend/supabase/migrations/173_global_config_workspace_scoping.sql`), then run its canonical test.
+**E's explicit decision, 2026-09-18**: "each company should have its own separate copies, this should
+not be a question" -- `notification_rules`/`standard_install_times`/`project_schedule_templates` (+
+child `project_schedule_template_phases`) have had exactly ONE shared, global copy each since
+migrations 024/025, meaning every workspace was silently reading/writing the SAME notification toggles,
+labor-time estimates, and schedule templates as every other workspace. This migration adds a real
+`workspace_id` to all four tables. Also fixes a real gap this uncovered: migration 166 classified
+`'schedule_template_phase'` as genuinely global for `deletion_log` purposes -- no longer true, fixed via
+a plain lookup (this entity type is soft-deleted, unlike `inventory_item`/`equipment_type`, so no atomic
+RPC needed). Deliberately NOT done: auto-seeding a brand-new workspace's own default rows -- same
+reasoning as migration 162's deferral of default-channel seeding (no reviewed workspace-provisioning
+path exists yet, Stage 7) -- a new workspace will have every notification silently off until seeded, a
+known/accepted consequence, not a technical blocker. **A companion `src/persistence.ts` fix (updating
+`standard_install_times`'s upsert `on_conflict` target to the new composite index) is prepared locally
+but deliberately NOT committed yet** -- learning from the migration 172 incident, it stays uncommitted
+(not even `git add`ed) until this migration is confirmed, then gets committed and pushed immediately,
+since this migration alone temporarily breaks that one save path until the fix ships. Independently
+verified end-to-end against a real local PostgreSQL 18 engine (PGlite), reproduced on two separate runs.
+Migrations 155 through 172 are all confirmed applied. **Phase 3 Stage 4
+(Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end** (migrations
+161/162, confirmed applied and tested).
 
 **Migration 172 (`0abe68b`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18, "Success. No rows returned" for both).** Three new atomic RPCs
