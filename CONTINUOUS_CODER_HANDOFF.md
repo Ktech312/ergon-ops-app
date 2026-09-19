@@ -404,10 +404,23 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migration 168 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 168 are all confirmed
+**Manual-action queue, current exact state: NONE.** Migration 169 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 169 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end.**
+
+**Migration 169 (`dfbbba1`) — CONFIRMED APPLIED and its canonical test PASSED in production
+(2026-09-18).** Closed the last genuine storage-bucket gap: `sales-quote-images`' four
+`storage.objects` policies (migration 033) were bare `bucket_id = 'sales-quote-images'` with no further
+predicate -- fully open to any authenticated user in any workspace. Fixed by matching the storage
+path's leading segment (`quote_location_id`) against `public.sales_quote_locations` directly (the
+PARENT entity, existing before any upload) via `sales_quote_location_owner_workspace_id()`,
+deliberately NOT through the per-file `sales_quote_location_images` row -- avoiding a repeat of
+migration 161/168's exact chicken-and-egg bug. Independently verified end-to-end against a real local
+PostgreSQL 18 engine (PGlite): confirmed the pre-fix policy is genuinely fully open, confirmed the fix
+preserves the real upload order while rejecting cross-workspace/nonexistent-location uploads. **All
+three storage buckets originally flagged for Stage 5 are now correctly workspace-scoped. Do not run
+migration 169 or its canonical test again.**
 
 **Migration 168 (`e4fcbc3`) — URGENT LIVE INCIDENT, CONFIRMED APPLIED and its canonical test PASSED in
 production (2026-09-18).** Found while scoping the storage-bucket item below (`sales-quote-images`):
@@ -534,11 +547,12 @@ just missed because the affected code lives outside the file clusters those earl
   row-level leakage pre-fix. **CONFIRMED APPLIED and its canonical test PASSED in production
   (2026-09-18, "Success. No rows returned" for both). Do not run migration 167 or its canonical test
   again.**
-- Storage bucket policy for `sales-quote-images` is the one genuine remaining gap of the three
-  originally named as "deferred to later" -- `purchase-order-files` (migration 161) and
-  `message-attachments`'s channel-specific policies (migration 162) turned out to already be correctly
-  workspace-scoped on direct re-check; that finding also surfaced migration 168's urgent incident fix
-  (above). `notification_rules`/`standard_install_times`/`project_schedule_templates` are confirmed
+- All storage bucket policy gaps are now closed. Of the three buckets originally named as "deferred to
+  later," `purchase-order-files` (migration 161) and `message-attachments`'s channel-specific policies
+  (migration 162) turned out to already be correctly workspace-scoped on direct re-check (that finding
+  also surfaced migration 168's urgent incident fix, above); `sales-quote-images` was the one genuine
+  remaining gap, closed by migration 169 (`dfbbba1`, confirmed applied and tested, 2026-09-18).
+  `notification_rules`/`standard_install_times`/`project_schedule_templates` are confirmed
   genuinely global config -- whether they ever need a per-workspace override is a governance decision
   for E, not blocking anything else. `app_sync_events` looks dead (confirm before dropping);
   `app_transaction_locks` is low-risk but has a stray anon EXECUTE grant worth revoking.
