@@ -130,7 +130,7 @@ Subscription tiers, usage metering, payment processing for Ergon itself (distinc
 own operational Billing/Client Ledger, which Ergon already tracks for the customer). **Do not begin
 design work on this phase without an explicit go-ahead — standing instruction, unchanged.**
 
-## 3. Completed and live — migration range 115 through 150, plus 152 through 162
+## 3. Completed and live — migration range 115 through 150, plus 152 through 163
 
 Everything below is **deployed and production-verified** unless a narrower label is given. Full
 turn-by-turn history lives in `git log` and the relevant design doc, not reproduced here (this
@@ -409,8 +409,6 @@ all inherit scoping through `channel_id`. Does NOT auto-seed a new workspace's o
 back - Success. No rows returned").* **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/
 Share-links/Storage) is now fully shipped end-to-end.**
 
-## 4. Completed locally but not yet migrated/deployed/verified
-
 **Migration 163**
 (`backend/supabase/migrations/163_phase3_stage5_rpc_workspace_containment_gaps.sql`, commit
 `88fa65b`) — Phase 3 Stage 5, first migration. Closes three real, confirmed cross-workspace
@@ -422,17 +420,22 @@ belongs to the caller's workspace (and its `inventory_items` lookups were entire
 answer any other workspace's client Q&A by question id); `submit_proposal_question()` was missing the
 suspended-workspace ("T8") check its own sibling RPCs already got in migration 155. All three carried
 forward verbatim from their current live definitions with only the targeted fixes. Canonical test:
-`backend/supabase/migration_163_phase3_stage5_rpc_workspace_containment_gaps_tests.sql`. Not yet
-applied — queued below.
+`backend/supabase/migration_163_phase3_stage5_rpc_workspace_containment_gaps_tests.sql`. One same-day
+test-script fix, `9f342d4`: Section 2's fixture used `'draft'` for `sales_quotes.status` (a valid
+`sales_quote_proposals.status` value, not `sales_quotes.status`, constrained to
+`open`/`closed_won`/`closed_lost` since migration 048) — corrected to `'open'`, migration 163 itself
+never touched. — *Migration applied and canonical test PASSED in production (E confirmed, 2026-09-18:
+"Success. No rows returned" for both).* **Phase 3 Stage 5's first migration is now fully shipped.**
+
+## 4. Completed locally but not yet migrated/deployed/verified
+
+**None currently.**
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**One item queued: apply migration 163**
-(`backend/supabase/migrations/163_phase3_stage5_rpc_workspace_containment_gaps.sql`), then run its
-canonical test
-(`backend/supabase/migration_163_phase3_stage5_rpc_workspace_containment_gaps_tests.sql`). Migrations
-155 through 162 are all confirmed applied and their canonical tests all passed in production,
-2026-09-17. See §11, Stage 5 for the full scoping map and what's queued after 163.
+**None currently.** Migrations 155 through 163 are all confirmed applied and their canonical tests all
+passed in production, 2026-09-17/18. See §11, Stage 5 for the full scoping map and what's queued next
+(workspace-scoped uniqueness/ref-counter migration).
 
 **Separately, a new feature request from E, NOT part of Phase 3**: `conversations`/`direct_messages`
 should support more than two participants, Slack/Teams-style (currently a fixed
@@ -736,11 +739,11 @@ there, not an oversight.
    access paths — IN PROGRESS.** Full scoping pass complete (repo-wide read of all 162 migrations,
    tracing every table/function to its current live definition, not just its origin migration).
    Findings, in priority order:
-   - **RPC containment gaps (high priority, security bugs, not structural cleanup)** —
-     `replace_project_bom_lines()`, `respond_to_proposal_question()`, `submit_proposal_question()`, all
-     three real, confirmed cross-workspace access gaps missed by earlier hardening passes because they
-     live outside those passes' file clusters. **Migration 163 (`88fa65b`) closes all three,
-     implemented locally, queued for E's review (see §4/§5).**
+   - **RPC containment gaps — DONE.** `replace_project_bom_lines()`, `respond_to_proposal_question()`,
+     `submit_proposal_question()`, all three real, confirmed cross-workspace access gaps missed by
+     earlier hardening passes because they live outside those passes' file clusters. **Migration 163
+     (`88fa65b`) closes all three — CONFIRMED APPLIED and its canonical test PASSED in production,
+     2026-09-18.**
    - **Workspace-scoped uniqueness (high priority, real bug once workspace #2 exists, not yet a live
      incident with one workspace)** — global `unique` constraints on tables that already have real
      `workspace_id`, never previously flagged: `clients.name`, `projects.project_name`/
