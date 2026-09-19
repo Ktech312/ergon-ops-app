@@ -30,6 +30,7 @@ declare
   seen_workspace_id uuid;
   log_id uuid;
   item_a_id uuid;
+  existing_event_type text;
 begin
   -- ============================================================
   -- Discover a real, existing app_admin who is also an active workspace
@@ -60,13 +61,25 @@ begin
   -- Section 1: notification_rules -- same-event_type duplicate still
   -- rejected within a workspace, an identical event_type in a
   -- DIFFERENT workspace now accepted.
+  -- Migration 024 (and every later widening migration) seeds a real row
+  -- for every valid event_type in the one real production workspace, so
+  -- there is no "free" event_type left to insert fresh -- discover one
+  -- of the real, already-existing rows instead of assuming any specific
+  -- literal is unused.
   -- ============================================================
 
-  insert into public.notification_rules (event_type, is_active) values ('low_stock_reached', true);
+  select event_type into existing_event_type
+  from public.notification_rules
+  where workspace_id = real_workspace_id
+  limit 1;
+
+  if existing_event_type is null then
+    raise exception 'TEST SETUP FAILED: no existing notification_rules row found for the real workspace -- expected at least one seeded row from migration 024 onward.';
+  end if;
 
   caught := false;
   begin
-    insert into public.notification_rules (event_type, is_active) values ('low_stock_reached', false);
+    insert into public.notification_rules (event_type, is_active) values (existing_event_type, false);
   exception when unique_violation then
     caught := true;
   end;
@@ -80,7 +93,7 @@ begin
 
   caught := false;
   begin
-    insert into public.notification_rules (event_type, is_active) values ('low_stock_reached', true);
+    insert into public.notification_rules (event_type, is_active) values (existing_event_type, true);
   exception when unique_violation then
     caught := true;
   end;
