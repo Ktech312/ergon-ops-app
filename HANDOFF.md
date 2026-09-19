@@ -299,10 +299,29 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migration 170 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 170 are all confirmed
+**Manual-action queue for E, current exact state: NONE.** Migration 171 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 171 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end** (migrations 161/162, confirmed applied and tested).
+
+**Migration 171 (`96bc949`) — CONFIRMED APPLIED and its canonical test PASSED in production
+(2026-09-18, "Success. No rows returned" for both).** Hygiene item, not workspace containment:
+`app_sync_events`/`app_transaction_locks` (migration 008) both had a full-access `anon` policy pair
+each, explicitly labeled "during no-login MVP" -- letting any unauthenticated caller read/write/delete
+arbitrary rows in both tables, with no legitimate caller for as long as this app has had real
+authentication. Migration 069 separately granted `anon` EXECUTE on `acquire_transaction_lock()` --
+same leftover, same fix. **Correction to the master plan's "looks dead, confirm before dropping"
+note**: `app_sync_events` is NOT dead -- still written on every `roleMode` change
+(`saveRemoteAppState()`), just carrying a single trivial UI preference now that real business data
+moved to normalized tables ("Phase 10f"); not dropped. Independently verified against a real local
+PostgreSQL 18 engine (PGlite), and the verification itself caught two real bugs: the test's own
+read-denial check was initially wrong (RLS blocks a SELECT by silently returning zero rows, not by
+raising -- fixed via a row-count check against a real fixture row), and the migration's first draft
+only revoked `anon`'s own EXECUTE grant on `acquire_transaction_lock()` without revoking the `PUBLIC`
+pseudo-role grant Postgres adds automatically on function creation (which migration 069 never revoked)
+-- every role is implicitly a member of `PUBLIC`, so the function remained callable regardless of the
+anon-specific revoke until `PUBLIC` itself was also revoked. **Do not run migration 171 or its
+canonical test again.**
 
 **Migration 170 (`9a1ff1e`) — URGENT LIVE INCIDENT, CONFIRMED APPLIED and its canonical test PASSED in
 production (2026-09-18, "Success. No rows returned" for both).** Found while continuing the original
@@ -396,8 +415,8 @@ same missing-`security definer` bug class that caused the migration 164/165 inci
 migration 166 or its canonical test again.**
 
 **Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
-access paths) scoping is done; six migrations shipped, plus two urgent same-effort incident fixes
-(migrations 165 and 168).** Full detail in
+access paths) scoping is done; seven migrations shipped, plus three urgent same-effort incident fixes
+(migrations 165, 168, and 170).** Full detail in
 `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry and `CONTINUOUS_CODER_HANDOFF.md`'s matching
 session-log entry. Summary:
 
@@ -442,9 +461,11 @@ session-log entry. Summary:
   canonical test again.**
 - **Queued next**: an atomic delete+log RPC for `inventory_item`/`equipment_type` to fully close
   migration 166's own residual gap; the pre-existing `build_transaction` deletion-log bug migration 166
-  found but did not fix. All storage bucket policy gaps are now closed (migrations 161/162/168/169);
-  `project_documents.document_number` and its real upload-blocking incident are both closed (migration
-  170).
+  found but did not fix. Everything else scoped so far is closed: all storage bucket policy gaps
+  (migrations 161/162/168/169), `project_documents.document_number` and its upload-blocking incident
+  (migration 170), and the `app_sync_events`/`app_transaction_locks` stray anon access (migration 171).
+  Remaining: E's governance call on `notification_rules`/`standard_install_times`/
+  `project_schedule_templates` (global forever vs. per-workspace override).
 - **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
   `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
   per-workspace override eventually?
