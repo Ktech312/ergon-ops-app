@@ -3848,7 +3848,12 @@ export async function upsertStandardInstallTime(entry: Omit<StandardInstallTime,
   if (!isRemotePersistenceConfigured() || !accessToken) {
     throw new Error("Supabase is not configured.");
   }
-  const response = await fetch(supabaseUrl("standard_install_times?on_conflict=category"), {
+  // Migration 173: standard_install_times.category's unique index became
+  // composite (workspace_id, category) -- on_conflict must name both
+  // columns to still match a real constraint. workspace_id itself is
+  // never sent in the body; the table's own guard trigger stamps it from
+  // the caller's resolved workspace before the conflict check runs.
+  const response = await fetch(supabaseUrl("standard_install_times?on_conflict=workspace_id,category"), {
     method: "POST",
     headers: {
       ...supabaseHeaders(accessToken),
