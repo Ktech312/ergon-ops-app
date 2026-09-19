@@ -1282,7 +1282,7 @@ function App() {
   const [userRoleMap, setUserRoleMap] = useState<Record<string, UserRoles>>({});
   const [ownRoleKeys, setOwnRoleKeys] = useState<string[]>([]);
   const [adminIds, setAdminIds] = useState<string[]>([]);
-  const [branding, setBranding] = useState<CompanyBranding>({ companyName: "Ergon", logoStoragePath: "" });
+  const [branding, setBranding] = useState<CompanyBranding>({ workspaceId: "", companyName: "Ergon", logoStoragePath: "" });
   const [brandingStatus, setBrandingStatus] = useState("");
   const [invites, setInvites] = useState<UserInvite[]>([]);
   const [inviteStatus, setInviteStatus] = useState("");
@@ -2334,18 +2334,23 @@ function App() {
   // bytes get uploaded to the private "project-documents" Storage bucket
   // before the row is created, so the document record actually points at a
   // retrievable file instead of only a name and size.
-  async function handleCreateProjectDocuments(entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) {
+  async function handleCreateProjectDocuments(entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File; projectId?: string }>) {
     if (!authSession) {
       return;
     }
     try {
       const docs = await Promise.all(
-        entries.map(async ({ doc, file }) => {
+        entries.map(async ({ doc, file, projectId }) => {
           const stampedDoc = { ...doc, uploadedByEmail: doc.uploadedByEmail ?? authSession.email };
           if (!file) {
             return stampedDoc;
           }
-          const storagePath = buildDocumentStoragePath(doc.project, doc.name);
+          // Migration 180: prefer the real project id (new, collision-safe
+          // path scheme) -- projectId is only absent for the narrow edge
+          // case of a brand-new draft project whose first debounced save
+          // (projectSiteSaveQueueRef) hasn't returned a real id yet, which
+          // falls back to the old sanitized-name path on purpose.
+          const storagePath = buildDocumentStoragePath(projectId, doc.project, doc.name);
           const uploaded = await uploadDocumentFile(file, storagePath, authSession.accessToken);
           return uploaded ? { ...stampedDoc, storage: "Supabase Storage" as const, storagePath } : stampedDoc;
         }),
@@ -2448,11 +2453,11 @@ function App() {
   }, [authSession]);
 
   async function handleSaveCompanyName(name: string) {
-    if (!authSession) {
+    if (!authSession || !branding.workspaceId) {
       return;
     }
     try {
-      await saveCompanyBranding({ companyName: name }, authSession.accessToken);
+      await saveCompanyBranding(branding.workspaceId, { companyName: name }, authSession.accessToken);
       setBranding((current) => ({ ...current, companyName: name }));
       setBrandingStatus("Company name updated.");
     } catch (error) {
@@ -2461,16 +2466,16 @@ function App() {
   }
 
   async function handleUploadCompanyLogo(file: File) {
-    if (!authSession) {
+    if (!authSession || !branding.workspaceId) {
       return;
     }
-    const path = await uploadCompanyLogo(file, authSession.accessToken);
+    const path = await uploadCompanyLogo(branding.workspaceId, file, authSession.accessToken);
     if (!path) {
       setBrandingStatus("Could not upload logo.");
       return;
     }
     try {
-      await saveCompanyBranding({ logoStoragePath: path }, authSession.accessToken);
+      await saveCompanyBranding(branding.workspaceId, { logoStoragePath: path }, authSession.accessToken);
       setBranding((current) => ({ ...current, logoStoragePath: path }));
       setBrandingStatus("Logo updated.");
     } catch (error) {
@@ -3085,7 +3090,7 @@ function App() {
     if (!item) {
       return null;
     }
-    const storagePath = buildCatalogDatasheetStoragePath(item.catalogNumber, file.name);
+    const storagePath = buildCatalogDatasheetStoragePath(catalogItemId, file.name);
     const uploaded = await uploadCatalogDatasheetFile(file, storagePath, authSession.accessToken);
     if (!uploaded) {
       setCatalogStatus("Could not upload that datasheet.");
@@ -12592,7 +12597,7 @@ function Projects({
   onAddProjectStakeholder: (projectId: string, stakeholder: { role: string; name: string; phone: string; email: string; address: string; notes: string }) => Promise<boolean>;
   onUpdateProjectStakeholder: (id: string, updates: Partial<{ role: string; name: string; phone: string; email: string; address: string; notes: string }>) => void;
   onDeleteProjectStakeholder: (id: string) => void;
-  onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
+  onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File; projectId?: string }>) => void;
   onUpdateDocumentStatus: (id: UploadedDoc["id"], status: UploadedDoc["status"]) => void;
   onDownloadDocument: (doc: UploadedDoc) => void;
   onInventoryPull: (itemName: string, qty: number, projectName?: string, notes?: string) => void;
@@ -13261,6 +13266,7 @@ function Projects({
           uploadedAt: new Date().toISOString(),
         },
         file,
+        projectId: selectedProject.id,
       },
     ]);
     setIsExtractingQuote(true);
@@ -13349,6 +13355,7 @@ function Projects({
         uploadedAt: new Date(Date.now() + index).toISOString(),
       },
       file,
+      projectId: selectedProject.id,
     }));
     onCreateDocuments(entries);
     setActionStatus(
@@ -14797,7 +14804,7 @@ function ClientLedger({
   ) => Promise<boolean>;
   onDeleteInstalledAsset: (id: string) => void;
   projectDocuments: UploadedDoc[];
-  onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File }>) => void;
+  onCreateDocuments: (entries: Array<{ doc: Omit<UploadedDoc, "id">; file?: File; projectId?: string }>) => void;
   onDownloadDocument: (doc: UploadedDoc) => void;
   currentUserEmail: string;
 }) {
@@ -14895,6 +14902,7 @@ function ClientLedger({
           uploadedByEmail: currentUserEmail,
         },
         file,
+        projectId: selectedProject.id,
       })),
     );
     event.target.value = "";

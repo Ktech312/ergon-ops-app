@@ -2317,12 +2317,18 @@ export async function revokeAdmin(userId: string, accessToken?: string) {
   }
 }
 
-// Company branding (migration 039) -- a singleton row so this same app can
-// be reused for a different company by changing the name and logo here,
-// with no code/text hardcoded to "Ergon" left anywhere else. Everyone
-// signed in can read it (it renders in the top nav); only an admin can
-// write it.
+// Company branding (migration 039, workspace-scoped by migration 182) --
+// one row PER WORKSPACE (was a global singleton before migration 182) so
+// each company gets its own name/logo. Everyone signed in can read their
+// own workspace's row (it renders in the top nav); only an admin of that
+// workspace can write it. `workspaceId` mirrors loadSalesApprovalSettings/
+// saveSalesApprovalSettings's own existing shape (migration 147, below):
+// the load has no explicit workspace filter (RLS already restricts the
+// result to the caller's own row), and the returned workspace_id is threaded
+// back into save/upload calls, exactly like that precedent -- no new
+// "get caller's workspace_id" helper was needed.
 export type CompanyBranding = {
+  workspaceId: string;
   companyName: string;
   logoStoragePath: string;
 };
@@ -2337,12 +2343,15 @@ export function companyLogoUrl(logoStoragePath: string): string | null {
 }
 
 export async function loadCompanyBranding(accessToken?: string): Promise<CompanyBranding> {
-  const fallback: CompanyBranding = { companyName: "Ergon", logoStoragePath: "" };
+  const fallback: CompanyBranding = { workspaceId: "", companyName: "Ergon", logoStoragePath: "" };
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return fallback;
   }
 
-  const response = await fetch(supabaseUrl("company_branding?select=company_name,logo_storage_path&id=eq.true"), {
+  // No id/workspace filter here -- migration 182's RLS ("workspace members
+  // read company_branding") already restricts this to the caller's own
+  // workspace's row.
+  const response = await fetch(supabaseUrl("company_branding?select=workspace_id,company_name,logo_storage_path&limit=1"), {
     headers: supabaseHeaders(accessToken),
   });
 
@@ -2350,15 +2359,23 @@ export async function loadCompanyBranding(accessToken?: string): Promise<Company
     return fallback;
   }
 
-  const rows = (await response.json()) as Array<{ company_name: string; logo_storage_path: string | null }>;
+  const rows = (await response.json()) as Array<{ workspace_id: string; company_name: string; logo_storage_path: string | null }>;
   if (!rows[0]) {
     return fallback;
   }
-  return { companyName: rows[0].company_name || "Ergon", logoStoragePath: rows[0].logo_storage_path ?? "" };
+  return {
+    workspaceId: rows[0].workspace_id,
+    companyName: rows[0].company_name || "Ergon",
+    logoStoragePath: rows[0].logo_storage_path ?? "",
+  };
 }
 
-export async function saveCompanyBranding(updates: Partial<CompanyBranding>, accessToken?: string) {
-  if (!isRemotePersistenceConfigured() || !accessToken) {
+export async function saveCompanyBranding(
+  workspaceId: string,
+  updates: Partial<Pick<CompanyBranding, "companyName" | "logoStoragePath">>,
+  accessToken?: string,
+) {
+  if (!isRemotePersistenceConfigured() || !accessToken || !workspaceId) {
     return;
   }
 
@@ -2366,7 +2383,11 @@ export async function saveCompanyBranding(updates: Partial<CompanyBranding>, acc
   if (updates.companyName !== undefined) payload.company_name = updates.companyName;
   if (updates.logoStoragePath !== undefined) payload.logo_storage_path = updates.logoStoragePath || null;
 
-  const response = await fetch(supabaseUrl("company_branding?id=eq.true"), {
+  // Filter replaces the old `id=eq.true` singleton filter -- migration 182
+  // made workspace_id the real primary key, and this table's write RLS
+  // policy already confines the match to a row the caller is an active
+  // admin member of, so this can never touch another workspace's row.
+  const response = await fetch(supabaseUrl(`company_branding?workspace_id=eq.${workspaceId}`), {
     method: "PATCH",
     headers: supabaseHeaders(accessToken),
     body: JSON.stringify(payload),
@@ -2377,12 +2398,16 @@ export async function saveCompanyBranding(updates: Partial<CompanyBranding>, acc
   }
 }
 
-export async function uploadCompanyLogo(file: File, accessToken?: string): Promise<string | null> {
-  if (!isRemotePersistenceConfigured() || !accessToken) {
+export async function uploadCompanyLogo(workspaceId: string, file: File, accessToken?: string): Promise<string | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !workspaceId) {
     return null;
   }
   const anonKey = envValue("VITE_SUPABASE_ANON_KEY");
-  const storagePath = `logo-${Date.now().toString(36)}-${sanitizeStoragePathSegment(file.name)}`;
+  // Prefixed with the caller's own workspace_id (migration 182) so two
+  // companies' logos can never collide in this bucket's flat namespace --
+  // also the leading path segment migration 182's storage.objects write
+  // policies match against.
+  const storagePath = `${workspaceId}/logo-${Date.now().toString(36)}-${sanitizeStoragePathSegment(file.name)}`;
   const response = await fetch(
     `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1/object/${COMPANY_BRANDING_BUCKET}/${storagePath}`,
     {
@@ -2567,9 +2592,19 @@ export function makeCatalogNumber() {
 // client-facing Quotes/Submittals down the line.
 const CATALOG_DATASHEET_BUCKET = "catalog-datasheets";
 
-export function buildCatalogDatasheetStoragePath(catalogNumber: string, fileName: string): string {
+// Migration 180: the leading path segment is now the real
+// product_catalog.id (uuid) rather than the sanitized catalog NUMBER --
+// migration 176 only enforces catalog_number uniqueness per workspace,
+// so a natural key like catalog_number could collide between two
+// different companies once a second workspace exists, exactly the same
+// collision risk buildDocumentStoragePath's own comment describes. The
+// caller only ever has a real, already-saved catalogItemId at this call
+// site (the datasheet-upload control only renders once an existing
+// catalog item is being edited), so there is no id-not-yet-assigned
+// fallback needed here the way there is for a brand-new draft project.
+export function buildCatalogDatasheetStoragePath(catalogItemId: string, fileName: string): string {
   const stamp = Date.now().toString(36);
-  return `${sanitizeStoragePathSegment(catalogNumber || "item")}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
+  return `${catalogItemId}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
 }
 
 export async function uploadCatalogDatasheetFile(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
@@ -5284,9 +5319,21 @@ function sanitizeStoragePathSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]+/g, "_").slice(0, 120) || "file";
 }
 
-export function buildDocumentStoragePath(projectName: string, fileName: string): string {
+// Migration 180: the leading path segment is now the real projects.id
+// (uuid) rather than the sanitized project NAME -- a natural key like a
+// project name could collide between two different companies once a
+// second workspace exists, which the id-based RLS migration 180 added
+// closes for every NEW upload. `projectId` is optional only for the
+// narrow, real edge case where a brand-new draft project hasn't finished
+// its first debounced save yet (see addDraftProject/
+// projectSiteSaveQueueRef in main.tsx) and so has no real id assigned
+// yet -- that case falls back to the old sanitized-name path, which
+// migration 180's LEGACY match branch was deliberately kept around to
+// still serve.
+export function buildDocumentStoragePath(projectId: string | undefined, projectName: string, fileName: string): string {
   const stamp = Date.now().toString(36);
-  return `${sanitizeStoragePathSegment(projectName || "unassigned")}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
+  const leadingSegment = projectId || sanitizeStoragePathSegment(projectName || "unassigned");
+  return `${leadingSegment}/${stamp}-${sanitizeStoragePathSegment(fileName)}`;
 }
 
 export async function uploadDocumentFile(file: File, storagePath: string, accessToken?: string): Promise<boolean> {
@@ -8625,7 +8672,16 @@ export async function loadRemoteAppState(accessToken?: string): Promise<Persiste
     return null;
   }
 
-  const recordsResponse = await fetch(supabaseUrl(`app_records?workspace_key=eq.${WORKSPACE_KEY}&select=record_key,data`), {
+  // Migration 183: app_records/app_state_snapshots are now real
+  // workspace-scoped tables (RLS via is_workspace_member(workspace_id)) --
+  // no client-side workspace filter is needed or correct any more. The
+  // old `workspace_key=eq.default` filter is intentionally removed
+  // rather than replaced with a real workspace_id (the client has no
+  // reliable way to know its own workspace_id here, and doesn't need
+  // one): RLS alone now restricts every row returned to the caller's own
+  // workspace, the same principle already used for other tables this
+  // session.
+  const recordsResponse = await fetch(supabaseUrl(`app_records?select=record_key,data`), {
     headers: supabaseHeaders(accessToken),
   });
 
@@ -8639,7 +8695,7 @@ export async function loadRemoteAppState(accessToken?: string): Promise<Persiste
     throw new Error(`Supabase load failed: ${recordsResponse.status}`);
   }
 
-  const response = await fetch(supabaseUrl(`app_state_snapshots?workspace_key=eq.${WORKSPACE_KEY}&select=state&limit=1`), {
+  const response = await fetch(supabaseUrl(`app_state_snapshots?select=state&limit=1`), {
     headers: supabaseHeaders(accessToken),
   });
 
@@ -8656,14 +8712,29 @@ export async function saveRemoteAppState(state: PersistedAppState, accessToken?:
     return;
   }
 
+  // Migration 183: workspace_id is no longer client-supplied -- it's
+  // derived server-side from the caller on INSERT by
+  // guard_workspace_id_mutation() (same pattern as every other
+  // root-table fix this session). `workspace_key` is left off the
+  // payload entirely (its column default, 'default', is harmless
+  // vestigial data now that workspace_id is the real scoping column --
+  // see migration 183's own header for why that column was kept rather
+  // than dropped).
   const rows = STATE_KEYS.map((key) => ({
-    workspace_key: WORKSPACE_KEY,
     record_key: key,
     data: state[key],
     updated_at: new Date().toISOString(),
   }));
 
-  const response = await fetch(supabaseUrl("app_records?on_conflict=workspace_key,record_key"), {
+  // IMPORTANT: this on_conflict target MUST match migration 183's real
+  // primary key exactly -- (workspace_key, record_key) stopped being a
+  // real constraint the moment that migration applied. Do not deploy
+  // this change before migration 183 is confirmed live (see this repo's
+  // "git push sends the whole branch" rule) -- and do not deploy
+  // migration 183 without this change immediately after, or every
+  // roleMode save starts failing with a PostgREST "no unique or
+  // exclusion constraint matching the ON CONFLICT specification" error.
+  const response = await fetch(supabaseUrl("app_records?on_conflict=workspace_id,record_key"), {
     method: "POST",
     headers: {
       ...supabaseHeaders(accessToken),
@@ -8676,6 +8747,10 @@ export async function saveRemoteAppState(state: PersistedAppState, accessToken?:
     throw new Error(`Supabase save failed: ${response.status}`);
   }
 
+  // app_sync_events/app_transaction_locks are a separate, already
+  // deliberately-deferred workspace-scoping item (see migrations
+  // 163/164's own "hygiene items" note) -- WORKSPACE_KEY is left
+  // unchanged here on purpose, out of scope for migration 183.
   void fetch(supabaseUrl("app_sync_events"), {
     method: "POST",
     headers: supabaseHeaders(accessToken),
