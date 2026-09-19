@@ -433,10 +433,30 @@ never touched. — *Migration applied and canonical test PASSED in production (E
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**None currently.** Migrations 155 through 170 are all confirmed applied and their canonical tests all
+**None currently.** Migrations 155 through 171 are all confirmed applied and their canonical tests all
 passed in production, 2026-09-17/18. All storage bucket policy gaps are closed, and
 `project_documents.document_number` is closed. See §11, Stage 5 for what's queued next (the
-inventory_item/equipment_type residual gap, the build_transaction bug).
+inventory_item/equipment_type residual gap, the build_transaction bug, and E's governance call on
+`notification_rules`/etc.).
+
+**Migration 171** (`backend/supabase/migrations/171_revoke_stray_anon_grants_mvp_leftovers.sql`, commit
+`96bc949`) — hygiene item, not workspace containment. `app_sync_events`/`app_transaction_locks`
+(migration 008) both had a full-access `anon` policy pair each, "during no-login MVP" — any
+unauthenticated caller could read/write/delete arbitrary rows in both, with no legitimate caller for as
+long as this app has had real authentication. Migration 069 separately granted `anon` EXECUTE on
+`acquire_transaction_lock()` — same fix. **Correction to this doc's own earlier "looks dead, confirm
+before dropping" note (§11)**: `app_sync_events` is NOT dead — still written on every `roleMode`
+change, just carrying a single trivial UI preference now that real business data moved to normalized
+tables ("Phase 10f"); not dropped. Canonical test:
+`backend/supabase/migration_171_revoke_stray_anon_grants_mvp_leftovers_tests.sql`. Independently
+verified against a real local PostgreSQL 18 engine (PGlite), and the verification itself caught two
+real bugs: testing read-denial via "did an exception get raised" is wrong for a bare SELECT under RLS
+(a blocked SELECT silently returns zero rows, never raises — fixed via a row-count check against a real
+fixture row); and Postgres grants EXECUTE to the `PUBLIC` pseudo-role automatically on function
+creation, so revoking `anon`'s own grant alone left `acquire_transaction_lock()` still callable via
+`PUBLIC` (migration 069 never revoked that default) — fixed by revoking from `PUBLIC` outright. — *Migration
+applied and canonical test PASSED in production (E confirmed, 2026-09-18, "Success. No rows returned"
+for both).* **Do not run migration 171 or its canonical test again.**
 
 **Migration 170** (`backend/supabase/migrations/170_fix_project_documents_upload_and_workspace_containment.sql`,
 commit `9a1ff1e`) — URGENT LIVE INCIDENT, found while continuing the `project_documents.document_number`
@@ -947,12 +967,16 @@ there, not an oversight.
      anchor of any kind). The open question is whether they stay global-forever (one shared config for
      every workspace) or eventually need a per-workspace override capability — a product decision, not
      an implementation default. Recommend confirming with E; doesn't block anything else in Stage 5.
-   - **Minor hygiene, not core Stage 5 work** — `app_sync_events` (migration 008) appears genuinely
-     dead (no reference anywhere after its own migration; confirm with the app layer before dropping);
-     `app_transaction_locks` is still live (used by `acquire_transaction_lock()`, migration 069) but
-     has no real tenant data (an ephemeral, self-expiring lock row) and is low-risk — its one real
-     issue is a stray `EXECUTE` grant to `anon` on `acquire_transaction_lock()` worth revoking
-     separately.
+   - **Minor hygiene — DONE.** `app_sync_events` turned out NOT dead on direct re-check — still written
+     on every `roleMode` change (`saveRemoteAppState()`, `src/main.tsx:1577`), just carrying a single
+     trivial UI preference now that real business data moved to normalized tables ("Phase 10f"); the
+     earlier "appears genuinely dead" note was wrong, corrected here. Both it and
+     `app_transaction_locks` had a full-access `anon` policy pair each, "during no-login MVP" — bigger
+     than the "stray EXECUTE grant" this doc originally flagged (that grant, on
+     `acquire_transaction_lock()`, migration 069, was real too). **Migration 171 (`96bc949`) closes
+     both** — CONFIRMED APPLIED and its canonical test PASSED in production, 2026-09-18. Neither table
+     was dropped or redesigned (`workspace_key text`, not a real `workspace_id`, stays as-is — tracked
+     separately, not urgent).
    - **Confirmed NOT Stage 5 work**: `channels`/DMs (migration 162, already resolved);
      `public_share_tokens`/`workspace_share_link_settings` (already reviewed, workspace-agnostic by
      design or already scoped, migrations 155/161).
