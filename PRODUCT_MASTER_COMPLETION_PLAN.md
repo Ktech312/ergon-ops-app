@@ -433,10 +433,30 @@ never touched. — *Migration applied and canonical test PASSED in production (E
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**None currently.** Migrations 155 through 169 are all confirmed applied and their canonical tests all
-passed in production, 2026-09-17/18. All storage bucket policy gaps are now closed. See §11, Stage 5
-for the full scoping map and what's queued next (`project_documents.document_number`, the
+**None currently.** Migrations 155 through 170 are all confirmed applied and their canonical tests all
+passed in production, 2026-09-17/18. All storage bucket policy gaps are closed, and
+`project_documents.document_number` is closed. See §11, Stage 5 for what's queued next (the
 inventory_item/equipment_type residual gap, the build_transaction bug).
+
+**Migration 170** (`backend/supabase/migrations/170_fix_project_documents_upload_and_workspace_containment.sql`,
+commit `9a1ff1e`) — URGENT LIVE INCIDENT, found while continuing the `project_documents.document_number`
+task (the one column migration 164 deliberately excluded, no `workspace_id` on this table at all).
+`project_documents` has three nullable anchors (`project_id`/`purchase_order_id`/`purchase_request_id`)
+scoped only indirectly via a three-way coalesce (migration 161). Confirmed from `src/persistence.ts`:
+`project_id` is effectively dead for new rows, and a plain "general project document" (migration 080's
+own header: "most documents ... link to neither") sets neither PO nor PR — so the app's own MOST COMMON
+document-upload case made the coalesce resolve to null, and migration 161's INSERT policy rejected the
+insert outright. **Every general project document upload attempted since migration 161 went live
+(2026-09-17) had almost certainly been failing.** Confirmed empirically against a real local PostgreSQL
+18 engine (PGlite): reproduced the exact rejection under the pre-170 policy, confirmed resolved
+afterward. Fixed by giving `project_documents` a real `workspace_id` column with a derivation trigger
+modeled on migration 162's `guard_channel_workspace_id_mutation()` — prefer whichever anchor is set,
+fall back to the caller's own resolved workspace when none are set. RLS switched to a plain
+`workspace_id` check; a cross-workspace anchor reference is still correctly rejected. Also closes the
+original goal: `document_number`'s global unique constraint is now `(workspace_id, document_number)`.
+Canonical test: `backend/supabase/migration_170_fix_project_documents_upload_and_workspace_containment_tests.sql`.
+— *Migration applied and canonical test PASSED in production (E confirmed, 2026-09-18, "Success. No
+rows returned" for both).* **Do not run migration 170 or its canonical test again.**
 
 **Migration 169** (`backend/supabase/migrations/169_sales_quote_images_storage_containment.sql`, commit
 `dfbbba1`) — Phase 3 Stage 5, fifth migration. Closed the last genuine storage-bucket gap:
@@ -873,16 +893,18 @@ there, not an oversight.
      resolve the caller's own workspace directly — migration 165 then added `security definer` to both
      (required for them to call `resolve_caller_workspace_id()` at all, per its own access-control
      design; missed in migration 164, found immediately by its own canonical test).
-   - **`project_documents.document_number` (high priority, still not yet migrated — a real
-     schema-design decision, not a mechanical constraint swap)** — this table has NO `workspace_id`
-     column at all today (three nullable FK anchors — `project_id`/`purchase_order_id`/
+   - **`project_documents.document_number` — DONE, and surfaced a live incident.** This table had NO
+     `workspace_id` column at all (three nullable FK anchors — `project_id`/`purchase_order_id`/
      `purchase_request_id` — scoped only indirectly, at query time, via
-     `project_document_owner_workspace_id()`, migration 161). A composite unique constraint needs a
-     real, stored column to key on, which that stateless resolver cannot provide (Postgres requires an
-     index expression to be IMMUTABLE; the resolver is not, since it depends on other tables' current,
-     mutable state). Deliberately excluded from migration 164 for this reason — needs its own reviewed
-     migration (add the column, backfill, and a derivation trigger — which anchor wins when more than
-     one is set is itself a real product question).
+     `project_document_owner_workspace_id()`, migration 161). Scoping this properly found that
+     migration 161's own INSERT policy rejected the app's own most common document-upload case (a
+     general project document with no PO/PR link) outright, since all three anchors resolve to null for
+     that case — **every such upload attempted since migration 161 went live (2026-09-17) had almost
+     certainly been failing.** **Migration 170 (`9a1ff1e`) closes both** — a real `workspace_id` column
+     with a derivation trigger (prefer whichever anchor is set, fall back to the caller's own resolved
+     workspace when none are set) fixes the incident and makes `document_number`'s uniqueness
+     constraint composite `(workspace_id, document_number)`. CONFIRMED APPLIED and its canonical test
+     PASSED in production, 2026-09-18.
    - **Report views — DONE.** `report_inventory_on_hand`, `report_project_inventory_usage`,
      `report_purchase_order_status` (all three from migration 001, never touched since). The suspected
      leak was **confirmed live and worse than expected** via a live-database diagnostic E ran directly
