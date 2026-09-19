@@ -404,10 +404,34 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migration 173 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 173 are all confirmed
-applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
-end-to-end. Phase 3 Stage 5 is now fully complete, including the one open governance question.**
+**Manual-action queue, current exact state: NONE.** Migration 174 and its canonical test are both
+confirmed applied and passed in production, 2026-09-19. Migrations 155 through 174 are all confirmed
+applied. **Phase 3 Stage 4 is fully shipped end-to-end. Phase 3 Stage 5 is fully complete, including the
+governance question (migration 173).**
+
+**Migration 174 (`1608ad8`) — URGENT LIVE GAP, CONFIRMED APPLIED and its canonical test PASSED in
+production (2026-09-19).** Found while inventorying the schema for the final Phase 3 cross-workspace
+isolation suite. Migration 164 (this session) gave `sales_quote_ref_counters`/`project_ref_counters` a
+real `workspace_id` but never touched their RLS policy -- still the original fully-open
+`using(true)/with check(true)` from migrations 066/067. Any authenticated user, any workspace, could
+read/insert/update/delete any other workspace's ref-counter row. Fixed by scoping SELECT to workspace
+membership and removing the write policy entirely (the only legitimate writers,
+`assign_sales_quote_ref()`/`assign_project_ref()`, are `security definer` and bypass RLS anyway).
+Independently verified against a real local PostgreSQL 18 engine (PGlite): reproduced all four
+exploitable operations pre-fix, confirmed closed post-fix. One test-script bug found during
+verification (not a migration bug): Section 2's UPDATE/DELETE checks used exception-catching, but RLS's
+USING clause silently returns zero rows on a blocked UPDATE/DELETE rather than raising -- the exact same
+lesson already documented in this file from migration 171, just not yet applied there when first
+drafted. **Do not run migration 174 or its canonical test again.**
+
+**The same schema inventory surfaced a much larger, genuinely decision-dependent scope** for "the full
+automated cross-workspace isolation suite and final Phase 3 reconciliation" (the master plan's next
+milestone, the formal gate before a second real workspace may ever exist): 6 of 9 storage buckets still
+fully open, 12+ tables with no workspace awareness and no prior review (including `team_members` --
+readable company-wide roster -- and `company_branding`, structurally a Postgres singleton that can't
+even hold two companies' data), and a few RPCs verified only structurally, not behaviorally. This
+requires E's input on scope/priority before continuing -- presented to E, awaiting response as of
+2026-09-19.
 
 **Migration 173 (`f5b8ca4`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18).** **E's explicit decision, 2026-09-18**: "each company should have its own separate
