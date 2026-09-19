@@ -404,15 +404,12 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: ONE ITEM.** Apply migration 164
-(`backend/supabase/migrations/164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters.sql`),
-then run its canonical test
-(`backend/supabase/migration_164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters_tests.sql`).
-Migrations 155 through 163 are all confirmed applied and their canonical tests all passed in
-production. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully
-shipped end-to-end.**
+**Manual-action queue, current exact state: NONE.** Migrations 164 and 165 are both confirmed applied
+and migration 164's canonical test passed in production, 2026-09-18. Migrations 155 through 165 are all
+confirmed applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is
+fully shipped end-to-end.**
 
-**Stage 5 scoping delivered, first migration shipped**: a full scoping pass across all
+**Stage 5 scoping delivered, first two migrations shipped**: a full scoping pass across all
 162 migrations (full detail in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry) found real,
 confirmed cross-workspace containment gaps -- the same T2/T8 class already fixed elsewhere in Phase 3,
 just missed because the affected code lives outside the file clusters those earlier passes reviewed:
@@ -429,9 +426,10 @@ just missed because the affected code lives outside the file clusters those earl
   (a valid `sales_quote_proposals.status` value, not `sales_quotes.status`, constrained to
   `open`/`closed_won`/`closed_lost` since migration 048) -- corrected to `'open'`, migration 163 itself
   never touched. **Do not run migration 163 or its canonical test again.**
-- **Migration 164 (`7ed52b2`) closes the workspace-scoped-uniqueness gap** -- global `unique`
-  constraints on seven already-workspace-scoped tables never previously flagged (`clients.name`,
-  `projects.project_name`/`project_number`, `vendors.name`, `inventory_items.sku`,
+- **Migration 164 (`7ed52b2`) — CONFIRMED APPLIED and its canonical test PASSED in production
+  (2026-09-18, after migration 165's same-day fix -- see below). Closes the workspace-scoped-uniqueness
+  gap** -- global `unique` constraints on seven already-workspace-scoped tables never previously flagged
+  (`clients.name`, `projects.project_name`/`project_number`, `vendors.name`, `inventory_items.sku`,
   `purchase_orders.po_number`, `purchase_requests.request_number`) plus two already-flagged ones
   (`sales_quotes.quote_ref`, `equipment_types.equipment_name`), nine columns total, each swapped for a
   composite `(workspace_id, <column>)` equivalent -- no backfill or trigger work needed, every table's
@@ -445,17 +443,36 @@ just missed because the affected code lives outside the file clusters those earl
   hardcoded `unique_violation` constraint-name checks updated to match the renamed `equipment_types`
   index, in the same migration that renames it. Independently verified end-to-end against a real local
   PostgreSQL 18 engine (PGlite) before being sent -- migration applied cleanly, canonical test passed
-  all 9 sections with zero skipped (one test-robustness fix made before sending: Sections 6b/7's
-  "no collision" pairwise-inequality checks were replaced with a precise sequence-value check, since the
-  original form could produce a false failure in a database where the pre-existing workspace's own
-  counter for the current calendar year happened to still be at its first value -- not true of real
-  production today, but not a safe assumption for a canonical test to outlive). **Deliberately NOT
-  done**: `project_documents.document_number` -- this table has NO `workspace_id` column at all today
-  (three nullable FK anchors, scoped only indirectly at query time via
+  all 9 sections with zero skipped in the sandbox (one test-robustness fix made before sending: Sections
+  6b/7's "no collision" pairwise-inequality checks were replaced with a precise sequence-value check,
+  since the original form could produce a false failure in a database where the pre-existing
+  workspace's own counter for the current calendar year happened to still be at its first value -- not
+  true of real production today, but not a safe assumption for a canonical test to outlive).
+  **Deliberately NOT done**: `project_documents.document_number` -- this table has NO `workspace_id`
+  column at all today (three nullable FK anchors, scoped only indirectly at query time via
   `project_document_owner_workspace_id()`) -- adding one is a real schema-design decision, not a
   mechanical constraint swap, left for its own reviewed migration. `equipment_types.equipment_number`
-  stays deferred (low priority, server-generated, per the master plan). Not yet applied -- queued for
-  E's review. The three report views
+  stays deferred (low priority, server-generated, per the master plan).
+- **Migration 165 (`2f5d4f8`) — CONFIRMED APPLIED, same-day fix for a LIVE INCIDENT migration 164's own
+  canonical test surfaced on its first real run.** E hit `ERROR: 42501: permission denied for function
+  resolve_caller_workspace_id` on the test's very first ordinary project insert -- since neither
+  `sales_quotes` nor `projects` inserts ever supply an explicit ref, this meant EVERY real project/quote
+  creation in production broke the moment migration 164 went live, not just the test. Root cause
+  (confirmed directly from migration 117's own header comment, 117:118-145):
+  `resolve_caller_workspace_id()` deliberately has EXECUTE revoked from everyone and is only ever meant
+  to be called from inside another `security definer` function -- migration 164's rewritten
+  `assign_sales_quote_ref()`/`assign_project_ref()` were the only consumers of it anywhere in this
+  codebase left as plain invoker-rights functions (their pre-164 bodies never needed to call it at all).
+  The sandbox verification above did not catch this because its own default-privilege replication does
+  not precisely reproduce this specific revoke boundary -- a known class of sandbox-vs-production gap
+  already seen once before this session (migrations 140/142). Fixed by redefining both functions again
+  with `security definer` added, no other logic changes, migration 164 itself untouched -- exactly
+  matching the security context every other consumer of `resolve_caller_workspace_id()` already uses
+  successfully in this same production database (`guard_workspace_id_mutation()`,
+  `replace_project_bom_lines()`, `respond_to_proposal_question()`, `submit_proposal_question()`,
+  `save_equipment_recipe()`). E applied it and migration 164's canonical test, re-run afterward, passed
+  cleanly. **Do not run migrations 164/165 or migration 164's canonical test again.** The three report
+  views
   (`report_inventory_on_hand`/`report_project_inventory_usage`/`report_purchase_order_status`, all from
   migration 001, never touched since) likely leak cross-workspace aggregate data via Postgres's
   default view-owner RLS-bypass semantics -- needs a live-database grant check before a fix can be
