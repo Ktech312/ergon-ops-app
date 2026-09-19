@@ -299,14 +299,27 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migrations 163, 164, and 165 are all
-confirmed applied and their canonical tests all passed in production, 2026-09-18 -- see below.
-Migrations 155 through 165 are all confirmed applied. **Phase 3 Stage 4
+**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 166
+(`backend/supabase/migrations/166_deletion_log_workspace_containment.sql`), then run its canonical test
+(`backend/supabase/migration_166_deletion_log_workspace_containment_tests.sql`). Closes `deletion_log`'s
+confirmed live cross-workspace leak (no `workspace_id`, fully open `using(true)` SELECT policy) -- adds
+a `workspace_id` column and a BEFORE INSERT trigger dispatching across the 21 real `entity_type`
+literals actually written by `src/persistence.ts` (verified by direct grep, not the migration 088
+comment's own incomplete summary): 17 resolve via existing resolvers/direct columns, 4 are confirmed
+genuinely global and stay visible to everyone by design, an unrecognized entity_type is rejected
+outright (fail closed). Two items deliberately NOT closed, flagged not silently accepted:
+`inventory_item`/`equipment_type` are hard-deleted before the log write happens so a trigger can't
+resolve their workspace after the fact (needs an atomic delete+log RPC, separate design work); a
+pre-existing, unrelated bug was also found -- `build_transaction` deletion-log writes appear to have
+been silently failing already (non-uuid `entity_id`). Independently verified end-to-end against a real
+local PostgreSQL 18 engine (PGlite) before being sent, including a deliberate stress-test confirming
+this migration is NOT exposed to the same missing-`security definer` bug class that caused the
+migration 164/165 incident. Migrations 155 through 165 are all confirmed applied. **Phase 3 Stage 4
 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end** (migrations
 161/162, confirmed applied and tested).
 
 **Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
-access paths) scoping is done; first two migrations shipped.** Full detail in
+access paths) scoping is done; first two migrations shipped, third queued.** Full detail in
 `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry and `CONTINUOUS_CODER_HANDOFF.md`'s matching
 session-log entry. Summary:
 
@@ -349,11 +362,14 @@ session-log entry. Summary:
   -- needs its own reviewed migration) and `equipment_types.equipment_number` (stays deferred, low
   priority, server-generated, per the master plan). **Do not run migrations 164/165 or migration 164's
   canonical test again.**
-- **Queued next**: the three report views likely leak cross-workspace aggregate data (needs a
-  live-database grant check first); `deletion_log` is a confirmed live cross-workspace leak; storage
-  bucket policies for 3 buckets were each deferred by a different earlier stage but never actually
-  claimed; `project_documents.document_number` needs its own reviewed migration (add a real
-  `workspace_id` column + backfill + derivation trigger).
+- **Migration 166 (`df4bed6`) closes `deletion_log`'s cross-workspace leak** -- not yet applied, see
+  the manual-action queue above for full detail.
+- **Queued after 166**: the three report views likely leak cross-workspace aggregate data (needs a
+  live-database grant check first); storage bucket policies for 3 buckets were each deferred by a
+  different earlier stage but never actually claimed; `project_documents.document_number` needs its own
+  reviewed migration (add a real `workspace_id` column + backfill + derivation trigger); an atomic
+  delete+log RPC for `inventory_item`/`equipment_type` to fully close migration 166's own residual gap;
+  the pre-existing `build_transaction` deletion-log bug migration 166 found but did not fix.
 - **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
   `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
   per-workspace override eventually?
