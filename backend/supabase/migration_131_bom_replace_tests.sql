@@ -152,7 +152,22 @@ begin
 
     -- ============================================================
     -- Catalog + project fixtures.
+    --
+    -- CONSOLIDATED-SUITE FINDING (found running the full 001-185 replay,
+    -- not visible to migration 131's own isolated verification): later
+    -- migrations (159 for inventory_items, 156 for projects) added
+    -- BEFORE INSERT triggers that stamp workspace_id via
+    -- active_workspace_id()/resolve_caller_workspace_id(), which needs a
+    -- real, resolvable auth.uid() with a workspace membership. Neither
+    -- table had such a trigger when this file was written, so these
+    -- plain, unauthenticated fixture inserts worked then and fail now
+    -- with "no workspace membership found for current user" under the
+    -- full migration history. Fixed the same way as migration 130's own
+    -- test: run fixture setup as the real admin.
     -- ============================================================
+    perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+    perform set_config('role', 'authenticated', true);
+
     insert into public.inventory_items (sku, item_name, category)
       values (item_a_sku, item_a_name, 'Base') returning id into item_a_id;
     insert into public.inventory_items (sku, item_name, category)
@@ -176,6 +191,8 @@ begin
     insert into public.project_bom_lines (project_id, item_name, qty, status, request_speed, line_sort)
       values (project_b_id, 'ZZ_TEST_OTHER_PROJECT_LINE', 1, 'Not started', 'Standard', 0)
       returning id into other_project_line_id;
+
+    perform set_config('role', original_role, true);
 
     raise notice 'FIXTURES READY: workspace=%, admin=%, pm=% (preexisted role: %), non_privileged=%, project_a=%, project_b=%',
       v_workspace_id, admin_user_id, pm_user_id, pm_role_preexisted, non_privileged_user_id, project_a_id, project_b_id;
@@ -214,6 +231,23 @@ begin
         select coalesce(jsonb_agg(row_to_json(pbl.*) order by pbl.line_sort), '[]'::jsonb) into bom_snapshot_before
           from public.project_bom_lines pbl where pbl.project_id = project_a_id;
 
+        -- CONSOLIDATED-SUITE FINDING (found running the full 001-185
+        -- replay): this call site set only the non-existent
+        -- `request.jwt.claim.sub` GUC (missing the 's' -- compare every
+        -- other sibling test in this same family, e.g.
+        -- migration_138/139/140's own tests, which always set BOTH
+        -- `request.jwt.claims` and `request.jwt.claim.sub` together at
+        -- every caller switch). auth.uid() reads `request.jwt.claims`
+        -- only, so this call never actually impersonated
+        -- non_privileged_user_id -- it silently ran as whichever caller
+        -- was last set (the admin, from fixture setup), which IS
+        -- authorized, masking a real authorization gap in this test
+        -- itself. Individual per-migration verification never caught
+        -- this because it never got this far (blocked earlier by the
+        -- inventory_items/projects trigger-ordering issue documented
+        -- above) -- a genuinely new finding from running the full
+        -- history. Fixed by setting the real claims GUC too.
+        perform set_config('request.jwt.claims', json_build_object('sub', non_privileged_user_id::text)::text, true);
         perform set_config('request.jwt.claim.sub', non_privileged_user_id::text, true);
         begin
           perform public.replace_project_bom_lines(project_a_id, jsonb_build_array(jsonb_build_object('item_name', 'ZZ_TEST_SHOULD_NOT_SAVE', 'qty', 1, 'status', 'Not started', 'request_speed', 'Standard')));
@@ -258,6 +292,10 @@ begin
     -- From here on, act as the real PM fixture for every "should succeed"
     -- and "PM-authorized but data-invalid" section.
     if pm_user_id is not null then
+      -- CONSOLIDATED-SUITE FINDING: same missing-`request.jwt.claims`
+      -- bug documented above -- every section from here on was silently
+      -- running as whatever caller Section 2 last set, not the real PM.
+      perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
       perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
 
       -- ============================================================
@@ -529,12 +567,16 @@ begin
       -- Section 15: workspace-admin caller (not a PM) is also authorized.
       -- ============================================================
       if admin_user_id is not null then
+        -- CONSOLIDATED-SUITE FINDING: same missing-`request.jwt.claims`
+        -- bug documented above.
+        perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
         perform set_config('request.jwt.claim.sub', admin_user_id::text, true);
         select public.replace_project_bom_lines(project_b_id, (
           select coalesce(jsonb_agg(jsonb_build_object('id', pbl.id, 'item_name', pbl.item_name, 'qty', pbl.qty, 'status', pbl.status, 'request_speed', pbl.request_speed)), '[]'::jsonb)
           from public.project_bom_lines pbl where pbl.project_id = project_b_id
         )) into result_json;
         raise notice 'TEST PASSED (Section 15): a workspace-admin caller (not a PM) is authorized -- result: %', result_json;
+        perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
         perform set_config('request.jwt.claim.sub', pm_user_id::text, true);
       else
         skipped_count := skipped_count + 1;

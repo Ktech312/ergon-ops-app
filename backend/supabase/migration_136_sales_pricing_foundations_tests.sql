@@ -261,11 +261,22 @@ begin
       insert into public.sales_quotes (client_name, site_name, status, client_id)
         values ('ZZ Test Client', site_name, 'closed_won', v_client_id)
         returning id into test_quote_id;
+      -- CONSOLIDATED-SUITE FINDING (found running the full 001-185
+      -- replay, not visible to migration 136's own isolated
+      -- verification): migration 144 (eight migrations later) drops
+      -- sales_quote_proposals' write policy entirely, by design -- see
+      -- 144's own header -- so create_and_send_quote_proposal_version()
+      -- becomes the only write path. A raw `insert ... as authenticated`
+      -- into sales_quote_proposals, which worked when this file was
+      -- written, is rejected outright under the full migration history.
+      -- Pure fixture setup here (not the behavior under test), so fixed
+      -- by inserting as the real table-owner role (bypasses RLS), same
+      -- fix applied to migration 138's own test.
+      perform set_config('role', original_role, true);
       insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
         values (test_quote_id, 1, 'sent', jsonb_build_object('grandTotal', 999.00), 'ZZ Test Client', 'zz-test@example.com');
       insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
         values (test_quote_id, 2, 'approved', jsonb_build_object('grandTotal', 1234.56), 'ZZ Test Client', 'zz-test@example.com');
-      perform set_config('role', original_role, true);
 
       perform set_config('request.jwt.claims', json_build_object('sub', pm_user_id::text)::text, true);
       perform set_config('role', 'authenticated', true);
@@ -323,9 +334,11 @@ begin
       insert into public.sales_quotes (client_name, site_name, status, client_id)
         values ('ZZ Test Client', site_name_old_snapshot, 'closed_won', v_client_id)
         returning id into test_quote_old_snapshot_id;
+      -- See the consolidated-suite finding above (migration 144 drops
+      -- sales_quote_proposals' write policy) -- same fix.
+      perform set_config('role', original_role, true);
       insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
         values (test_quote_old_snapshot_id, 1, 'approved', jsonb_build_object('siteName', 'Old Format Snapshot'), 'ZZ Test Client', 'zz-test@example.com');
-      perform set_config('role', original_role, true);
 
       caught := false;
       begin

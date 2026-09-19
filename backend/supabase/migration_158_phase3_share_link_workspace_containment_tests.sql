@@ -63,10 +63,17 @@ begin
   -- share tokens for the disable/regenerate tests.
   -- ============================================================
 
+  -- CONSOLIDATED-SUITE FINDING (found running the full 001-185 replay):
+  -- same fixture-discovery ambiguity documented in migration 156's own
+  -- test -- this file needs a caller who can actually write a `projects`
+  -- row (admin or 'pm'-gated since migration 157), and with more than one
+  -- real workspace member present an unordered `limit 1` can pick a
+  -- member who is neither. Made deterministic the same way.
   select wm.user_id, wm.workspace_id into real_user_id, real_workspace_id
   from public.workspace_members wm
   join public.workspaces w on w.id = wm.workspace_id
   where w.status = 'active'
+  order by wm.is_workspace_admin desc
   limit 1;
 
   if real_user_id is null then

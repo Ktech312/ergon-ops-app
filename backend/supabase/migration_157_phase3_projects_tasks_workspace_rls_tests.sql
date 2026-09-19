@@ -69,10 +69,17 @@ begin
   -- Project/Task fixtures (all owned by the real workspace).
   -- ============================================================
 
+  -- CONSOLIDATED-SUITE FINDING (found running the full 001-185 replay):
+  -- same fixture-discovery ambiguity documented in migration 156's own
+  -- test (this file's role-gated projects insert policy requires the
+  -- discovered real_user_id to be admin or hold 'pm') -- with more than
+  -- one real workspace member present, an unordered `limit 1` can pick a
+  -- member who is neither. Made deterministic the same way.
   select wm.user_id, wm.workspace_id into real_user_id, real_workspace_id
   from public.workspace_members wm
   join public.workspaces w on w.id = wm.workspace_id
   where w.status = 'active'
+  order by wm.is_workspace_admin desc
   limit 1;
 
   if real_user_id is null then

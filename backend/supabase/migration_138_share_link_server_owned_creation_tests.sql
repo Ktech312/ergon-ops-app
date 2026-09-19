@@ -123,18 +123,36 @@ begin
       insert into public.projects (project_name, customer_name, site_type, app_status)
         values ('ZZ_TEST_PROJECT_' || substr(md5(random()::text), 1, 10), 'ZZ Test Client', 'Parking Garage', 'Draft')
         returning id into test_project_id;
+
+      -- CONSOLIDATED-SUITE FINDING (found running the full 001-185
+      -- replay, not visible to migration 138's own isolated
+      -- verification): migration 144 (six migrations later) drops
+      -- project_submittals' and sales_quote_proposals' write policies
+      -- entirely -- by design, its own header says so explicitly -- so
+      -- that create_and_send_submittal_version()/
+      -- create_and_send_quote_proposal_version() become the ONLY write
+      -- path for either table. A raw `insert ... as authenticated` into
+      -- either table, which worked when this file was written, is
+      -- rejected outright under the full migration history. This is
+      -- pure fixture setup (not the behavior migration 138 tests), so
+      -- fixed by inserting as the real table-owner role (bypasses RLS
+      -- entirely, same as how a security-definer RPC's own writes are
+      -- unaffected by this policy change per 144's own header) rather
+      -- than routing fixture setup through a later migration's RPC.
+      perform set_config('role', original_role, true);
       insert into public.project_submittals (project_id, version, status, content_snapshot)
         values (test_project_id, 1, 'draft', '{}'::jsonb)
         returning id into test_submittal_id;
+      perform set_config('role', 'authenticated', true);
 
       insert into public.sales_quotes (client_name, site_name, status)
         values ('ZZ Test Client', 'ZZ_TEST_QUOTE_' || substr(md5(random()::text), 1, 10), 'open')
         returning id into test_quote_id;
+
+      perform set_config('role', original_role, true);
       insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot)
         values (test_quote_id, 1, 'draft', '{}'::jsonb)
         returning id into test_proposal_id;
-
-      perform set_config('role', original_role, true);
 
       -- Section 1: a real PM can create a submittal share token; it's
       -- entity-correct, has an expires_at matching the workspace default,

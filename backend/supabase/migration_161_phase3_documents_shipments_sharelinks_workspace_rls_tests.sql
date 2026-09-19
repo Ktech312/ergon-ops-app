@@ -177,12 +177,33 @@ begin
   -- count.
   -- ============================================================
 
+  -- CONSOLIDATED-SUITE FINDING (found running the full 001-185 replay,
+  -- not visible to migration 161's own isolated verification): migration
+  -- 170 is a documented, already-known LIVE INCIDENT FIX (see 170's own
+  -- header) that deliberately drops this exact three-way coalesce policy
+  -- -- it made the app's own most common "general project document"
+  -- upload case always resolve to a null workspace and get rejected by
+  -- RLS -- and replaces it with a direct `workspace_id` column read.
+  -- This is not a new regression; it is migration 161's own
+  -- known-superseded policy shape. Made supersession-aware (same
+  -- discipline as migrations 156/159's own tests) so this check still
+  -- guards migration 161's original shape when run standalone against a
+  -- 161-only bootstrap, but defers to migration 170's own test for the
+  -- final, current shape under the full migration history.
   select count(*) into row_count from pg_policies
     where schemaname = 'public' and tablename = 'project_documents' and cmd = 'SELECT'
-      and position('project_owner_workspace_id' in coalesce(qual, '')) > 0
-      and position('purchase_order_owner_workspace_id' in coalesce(qual, '')) > 0
-      and position('purchase_request_owner_workspace_id' in coalesce(qual, '')) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: project_documents SELECT policy does not reference all three coalesced resolvers'; end if;
+      and position('workspace_id' in coalesce(qual, '')) > 0
+      and position('is_workspace_member' in coalesce(qual, '')) > 0;
+  if row_count > 0 then
+    raise notice 'project_documents SELECT policy already superseded by migration 170''s direct-workspace_id-column fix (expected under the full migration history) -- skipping migration-161-era three-coalesce-resolver check, covered instead by migration 170''s own test.';
+  else
+    select count(*) into row_count from pg_policies
+      where schemaname = 'public' and tablename = 'project_documents' and cmd = 'SELECT'
+        and position('project_owner_workspace_id' in coalesce(qual, '')) > 0
+        and position('purchase_order_owner_workspace_id' in coalesce(qual, '')) > 0
+        and position('purchase_request_owner_workspace_id' in coalesce(qual, '')) > 0;
+    if row_count = 0 then raise exception 'TEST FAILED: project_documents SELECT policy does not reference all three coalesced resolvers'; end if;
+  end if;
 
   select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'sales_quote_extractions' and cmd = 'SELECT' and position('project_document_owner_workspace_id' in coalesce(qual, '')) > 0;
   if row_count = 0 then raise exception 'TEST FAILED: sales_quote_extractions SELECT policy does not reference project_document_owner_workspace_id'; end if;

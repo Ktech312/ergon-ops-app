@@ -247,12 +247,30 @@ begin
 
       -- Section 6: the equivalent proposal flow -- first version, second
       -- version supersedes the first, server-computed version numbers.
+      -- CONSOLIDATED-SUITE FINDING (found running the full 001-185
+      -- replay, not visible to migration 140's own isolated
+      -- verification): migration 147 (seven migrations later) revokes
+      -- EXECUTE on this exact function from `authenticated` entirely, by
+      -- design -- see 147's own header -- so that
+      -- request_or_send_quote_proposal_version() (its own new
+      -- discount-approval gate) becomes the only reachable path; 158's
+      -- header confirms this function is "defense-in-depth only, not
+      -- currently reachable except through" that wrapper. Calling it
+      -- directly as `authenticated`, which worked when this file was
+      -- written, is now rejected at the grant layer before its own
+      -- internal role check (is_app_admin/has_role('sales')/
+      -- has_role('manager')) ever runs. This section is testing THIS
+      -- function's own supersession/cascade logic, not the later
+      -- discount-approval gate (which has its own dedicated tests in
+      -- migrations 147/155), so fixed by calling as the real table-owner
+      -- role (bypasses the grant-level check only -- auth.uid() and the
+      -- function's own internal role check still apply normally via the
+      -- claims set below).
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
       perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
-      perform set_config('role', 'authenticated', true);
+      perform set_config('role', original_role, true);
       select t.proposal_id, t.token into p1_proposal_id, p1_token
         from public.create_and_send_quote_proposal_version(test_quote_id, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') t;
-      perform set_config('role', original_role, true);
 
       if p1_proposal_id is null or p1_token is null then
         raise exception 'TEST FAILED: create_and_send_quote_proposal_version did not return a real proposal id and token for the first version.';
@@ -261,12 +279,13 @@ begin
         raise exception 'TEST FAILED: the first proposal version was not created with version=1, status=sent.';
       end if;
 
+      -- Same consolidated-suite finding as the first proposal version
+      -- above (migration 147 revokes authenticated's EXECUTE here).
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
       perform set_config('request.jwt.claim.sub', sales_user_id::text, true);
-      perform set_config('role', 'authenticated', true);
+      perform set_config('role', original_role, true);
       select t.proposal_id, t.token into p2_proposal_id, p2_token
         from public.create_and_send_quote_proposal_version(test_quote_id, '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com') t;
-      perform set_config('role', original_role, true);
 
       if not exists (select 1 from public.sales_quote_proposals where id = p2_proposal_id and version = 2) then
         raise exception 'TEST FAILED: the second proposal version was not computed as version=2 server-side.';

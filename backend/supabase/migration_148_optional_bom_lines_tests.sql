@@ -256,13 +256,27 @@ begin
   if old_signature_still_exists then
     raise exception 'TEST FAILED: the old 5-argument respond_to_quote_proposal signature still exists -- expected it to have been dropped.';
   end if;
+  -- CONSOLIDATED-SUITE FINDING (found running the full 001-185 replay,
+  -- not visible to migration 148's own isolated verification): migration
+  -- 153 (five migrations later) -- and 155 again, redundantly --
+  -- `revoke all ... from public, anon, authenticated` on this exact
+  -- signature, by design (153's own header: needed real server-side
+  -- IP/email capture that only a service-role-only posture allows;
+  -- migration 157's own comment later calls this "respond_to_quote_
+  -- proposal's service-role-only posture"). So the anon-only grant shape
+  -- asserted below only ever holds in the window between migration 148
+  -- and 153. Made supersession-aware: if anon no longer has execute
+  -- either (the service-role-only posture), skip this grant-shape
+  -- assertion -- covered instead by migration 153/155's own tests --
+  -- rather than failing on a legitimately superseded grant.
   select has_function_privilege('anon', 'public.respond_to_quote_proposal(text, text, text, text, text, uuid[])', 'execute') into anon_can_execute;
   if not anon_can_execute then
-    raise exception 'TEST FAILED: anon does not have execute privilege on the new respond_to_quote_proposal signature -- expected anon-only.';
-  end if;
-  select has_function_privilege('authenticated', 'public.respond_to_quote_proposal(text, text, text, text, text, uuid[])', 'execute') into authenticated_can_execute;
-  if authenticated_can_execute then
-    raise exception 'TEST FAILED: authenticated has execute privilege on respond_to_quote_proposal -- expected anon-only, unchanged from before this migration.';
+    raise notice 'Section 5 -- respond_to_quote_proposal grants already superseded by migration 153''s service-role-only posture (expected under the full migration history) -- skipping migration-148-era anon-only grant-shape check, covered instead by migration 153/155''s own tests.';
+  else
+    select has_function_privilege('authenticated', 'public.respond_to_quote_proposal(text, text, text, text, text, uuid[])', 'execute') into authenticated_can_execute;
+    if authenticated_can_execute then
+      raise exception 'TEST FAILED: authenticated has execute privilege on respond_to_quote_proposal -- expected anon-only, unchanged from before this migration.';
+    end if;
   end if;
 
   if skipped_count > 0 then

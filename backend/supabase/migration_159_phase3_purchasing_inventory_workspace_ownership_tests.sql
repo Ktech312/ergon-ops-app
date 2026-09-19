@@ -258,45 +258,63 @@ begin
   raise notice 'TEST PASSED: Section 3 -- all seven triggers correctly stamp workspace_id on insert and reject mutation on update';
 
   -- ============================================================
-  -- Section 4: RLS on all seven tables is UNCHANGED by this migration.
-  -- Structural check only, matching migration 156's own Section 4
-  -- precedent -- not a behavioral re-test of migration 023's role gates.
+  -- Section 4: RLS on all seven tables is UNCHANGED by THIS migration's
+  -- OWN diff. Structural check only, matching migration 156's own
+  -- Section 4 precedent -- not a behavioral re-test of migration 023's
+  -- role gates.
+  --
+  -- CONSOLIDATED-SUITE FINDING (found running the full 001-185 replay,
+  -- not visible to migration 159's own isolated verification): migration
+  -- 160 -- the very next migration, same documented two-part
+  -- ownership-then-RLS phase -- legitimately drops and replaces every
+  -- one of these seven tables' policies with workspace-scoped versions,
+  -- by design (confirmed in 160's own header and its own passing test
+  -- file). The legacy shapes asserted below only ever hold in the narrow
+  -- window between migration 159 and 160. Made supersession-aware below
+  -- (same discipline already applied to migration 156's and 173's own
+  -- tests), so this section still catches a real regression run
+  -- standalone against a 159-only bootstrap.
   -- ============================================================
 
-  -- vendors, locations, purchase_orders: still fully using(true) on both
-  -- read and write (migration 023 never touched these three).
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'vendors' and position('true' in lower(coalesce(qual, ''))) > 0;
-  if row_count < 2 then raise exception 'TEST FAILED: vendors no longer has both its using(true) read and write policies (found %)', row_count; end if;
+  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'vendors' and policyname = 'workspace members read vendors';
+  if row_count > 0 then
+    raise notice 'Section 4 -- vendors/locations/purchase_orders/inventory_items/purchase_requests/equipment_types/build_transactions RLS already superseded by migration 160''s workspace-scoped policies (expected under the full migration history) -- skipping migration-159-era legacy-shape checks, covered instead by migration 160''s own test.';
+  else
+    -- vendors, locations, purchase_orders: still fully using(true) on both
+    -- read and write (migration 023 never touched these three).
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'vendors' and position('true' in lower(coalesce(qual, ''))) > 0;
+    if row_count < 2 then raise exception 'TEST FAILED: vendors no longer has both its using(true) read and write policies (found %)', row_count; end if;
 
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'locations' and position('true' in lower(coalesce(qual, ''))) > 0;
-  if row_count < 2 then raise exception 'TEST FAILED: locations no longer has both its using(true) read and write policies (found %)', row_count; end if;
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'locations' and position('true' in lower(coalesce(qual, ''))) > 0;
+    if row_count < 2 then raise exception 'TEST FAILED: locations no longer has both its using(true) read and write policies (found %)', row_count; end if;
 
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'purchase_orders' and position('true' in lower(coalesce(qual, ''))) > 0;
-  if row_count < 2 then raise exception 'TEST FAILED: purchase_orders no longer has both its using(true) read and write policies (found %)', row_count; end if;
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'purchase_orders' and position('true' in lower(coalesce(qual, ''))) > 0;
+    if row_count < 2 then raise exception 'TEST FAILED: purchase_orders no longer has both its using(true) read and write policies (found %)', row_count; end if;
 
-  -- inventory_items, purchase_requests, equipment_types, build_transactions:
-  -- read stays using(true); write stays role-gated (is_app_admin/has_role).
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'inventory_items' and cmd = 'SELECT' and position('true' in lower(coalesce(qual, ''))) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: inventory_items no longer has a using(true) SELECT policy'; end if;
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'inventory_items' and cmd = 'ALL' and position('is_app_admin' in coalesce(qual, '')) > 0 and position('has_role' in coalesce(qual, '')) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: inventory_items no longer has its pre-existing role-gated write policy'; end if;
+    -- inventory_items, purchase_requests, equipment_types, build_transactions:
+    -- read stays using(true); write stays role-gated (is_app_admin/has_role).
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'inventory_items' and cmd = 'SELECT' and position('true' in lower(coalesce(qual, ''))) > 0;
+    if row_count = 0 then raise exception 'TEST FAILED: inventory_items no longer has a using(true) SELECT policy'; end if;
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'inventory_items' and cmd = 'ALL' and position('is_app_admin' in coalesce(qual, '')) > 0 and position('has_role' in coalesce(qual, '')) > 0;
+    if row_count = 0 then raise exception 'TEST FAILED: inventory_items no longer has its pre-existing role-gated write policy'; end if;
 
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'purchase_requests' and cmd = 'SELECT' and position('true' in lower(coalesce(qual, ''))) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: purchase_requests no longer has a using(true) SELECT policy'; end if;
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'purchase_requests' and cmd = 'ALL' and position('is_app_admin' in coalesce(qual, '')) > 0 and position('has_role' in coalesce(qual, '')) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: purchase_requests no longer has its pre-existing role-gated write policy'; end if;
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'purchase_requests' and cmd = 'SELECT' and position('true' in lower(coalesce(qual, ''))) > 0;
+    if row_count = 0 then raise exception 'TEST FAILED: purchase_requests no longer has a using(true) SELECT policy'; end if;
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'purchase_requests' and cmd = 'ALL' and position('is_app_admin' in coalesce(qual, '')) > 0 and position('has_role' in coalesce(qual, '')) > 0;
+    if row_count = 0 then raise exception 'TEST FAILED: purchase_requests no longer has its pre-existing role-gated write policy'; end if;
 
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'equipment_types' and cmd = 'SELECT' and position('true' in lower(coalesce(qual, ''))) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: equipment_types no longer has a using(true) SELECT policy'; end if;
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'equipment_types' and cmd = 'ALL' and position('is_app_admin' in coalesce(qual, '')) > 0 and position('has_role' in coalesce(qual, '')) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: equipment_types no longer has its pre-existing role-gated write policy'; end if;
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'equipment_types' and cmd = 'SELECT' and position('true' in lower(coalesce(qual, ''))) > 0;
+    if row_count = 0 then raise exception 'TEST FAILED: equipment_types no longer has a using(true) SELECT policy'; end if;
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'equipment_types' and cmd = 'ALL' and position('is_app_admin' in coalesce(qual, '')) > 0 and position('has_role' in coalesce(qual, '')) > 0;
+    if row_count = 0 then raise exception 'TEST FAILED: equipment_types no longer has its pre-existing role-gated write policy'; end if;
 
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'build_transactions' and cmd = 'SELECT' and position('true' in lower(coalesce(qual, ''))) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: build_transactions no longer has a using(true) SELECT policy'; end if;
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'build_transactions' and cmd = 'ALL' and position('is_app_admin' in coalesce(qual, '')) > 0 and position('has_role' in coalesce(qual, '')) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: build_transactions no longer has its pre-existing role-gated write policy'; end if;
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'build_transactions' and cmd = 'SELECT' and position('true' in lower(coalesce(qual, ''))) > 0;
+    if row_count = 0 then raise exception 'TEST FAILED: build_transactions no longer has a using(true) SELECT policy'; end if;
+    select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'build_transactions' and cmd = 'ALL' and position('is_app_admin' in coalesce(qual, '')) > 0 and position('has_role' in coalesce(qual, '')) > 0;
+    if row_count = 0 then raise exception 'TEST FAILED: build_transactions no longer has its pre-existing role-gated write policy'; end if;
+  end if;
 
-  raise notice 'TEST PASSED: Section 4 -- RLS on all seven tables confirmed unchanged (using(true) for vendors/locations/purchase_orders, role-gated for inventory_items/purchase_requests/equipment_types/build_transactions)';
+  raise notice 'TEST PASSED: Section 4 -- RLS on all seven tables confirmed either unchanged (159-only bootstrap) or correctly superseded by migration 160 (full-history run)';
 
   -- ============================================================
   -- Section 5: save_equipment_recipe() workspace containment (this

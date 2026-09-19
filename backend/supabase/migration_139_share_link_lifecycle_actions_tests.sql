@@ -108,18 +108,29 @@ begin
       insert into public.sales_quotes (client_name, site_name, status)
         values ('ZZ Test Client', 'ZZ_TEST_QUOTE_' || substr(md5(random()::text), 1, 10), 'open')
         returning id into test_quote_id;
-      insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
-        values (test_quote_id, 1, 'sent', '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com')
-        returning id into test_proposal_id;
 
       insert into public.projects (project_name, customer_name, site_type, app_status)
         values ('ZZ_TEST_PROJECT_' || substr(md5(random()::text), 1, 10), 'ZZ Test Client', 'Parking Garage', 'Draft')
         returning id into test_project_id;
+
+      -- CONSOLIDATED-SUITE FINDING (found running the full 001-185
+      -- replay, not visible to migration 139's own isolated
+      -- verification): migration 144 (five migrations later) drops both
+      -- sales_quote_proposals' and project_submittals' write policies
+      -- entirely, by design -- see 144's own header -- so the
+      -- create_and_send_*_version() RPCs become the only write path for
+      -- either table. A raw `insert ... as authenticated`, which worked
+      -- when this file was written, is rejected outright under the full
+      -- migration history. Pure fixture setup here (not the behavior
+      -- under test), so fixed the same way as migrations 136/138's own
+      -- tests: insert as the real table-owner role (bypasses RLS).
+      perform set_config('role', original_role, true);
+      insert into public.sales_quote_proposals (quote_id, version, status, content_snapshot, client_name, client_email)
+        values (test_quote_id, 1, 'sent', '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com')
+        returning id into test_proposal_id;
       insert into public.project_submittals (project_id, version, status, content_snapshot, client_name, client_email)
         values (test_project_id, 1, 'sent', '{}'::jsonb, 'ZZ Test Client', 'zz-test@example.com')
         returning id into test_submittal_id;
-
-      perform set_config('role', original_role, true);
 
       perform set_config('request.jwt.claims', json_build_object('sub', sales_user_id::text)::text, true);
       perform set_config('request.jwt.claim.sub', sales_user_id::text, true);

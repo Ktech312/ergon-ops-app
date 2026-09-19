@@ -71,7 +71,18 @@ begin
 
   if admin_user_id is null or non_admin_user_id is null then
     skipped_count := skipped_count + 1;
-    skipped_names := skipped_names || 'all-sections (no admin+non-admin user pair found)';
+    -- CONSOLIDATED-SUITE FINDING (found running the full 001-185 replay):
+    -- `text[] || 'literal'` on an EMPTY array resolves to the array
+    -- concatenation overload, not array-append, and tries to PARSE the
+    -- plain string as an array literal (expects a leading '{'), throwing
+    -- "malformed array literal" instead of appending it as one element.
+    -- This is the exact same bug migration_133's own test file already
+    -- documents finding and fixing (see its "array_append(), not ||"
+    -- comment) -- it was never backported to this earlier file. Only
+    -- surfaces when this specific skip branch is actually taken (i.e.
+    -- when no admin+non-admin pair exists), which individual per-
+    -- migration verification apparently never hit. Fixed the same way.
+    skipped_names := array_append(skipped_names, 'all-sections (no admin+non-admin user pair found)');
   else
 
     -- ============================================================
@@ -567,12 +578,12 @@ begin
     -- ============================================================
     if real_workspace_id is null then
       skipped_count := skipped_count + 1;
-      skipped_names := skipped_names || 'allowed-views workspace-guard tests (no workspace row found)';
+      skipped_names := array_append(skipped_names, 'allowed-views workspace-guard tests (no workspace row found)');
     else
       select count(*) into row_count from public.workspaces where status = 'active';
       if row_count <> 1 or (select count(*) from public.workspaces) <> 1 then
         skipped_count := skipped_count + 1;
-        skipped_names := skipped_names || format('allowed-views workspace-guard tests (expected a clean one-active-workspace baseline, found %s active of %s total)', row_count, (select count(*) from public.workspaces));
+        skipped_names := array_append(skipped_names, format('allowed-views workspace-guard tests (expected a clean one-active-workspace baseline, found %s active of %s total)', row_count, (select count(*) from public.workspaces)));
       else
         select allowed_views into allowed_views_before from public.app_user_roles where user_id = non_admin_user_id and is_primary;
 
@@ -599,6 +610,17 @@ begin
         end if;
         raise notice 'TEST PASSED: bridge_set_user_allowed_views rejected with a second active workspace, no write occurred';
 
+        -- CONSOLIDATED-SUITE FINDING (found running the full 001-185
+        -- replay, not visible to migration 124's own isolated
+        -- verification): migration 182 added a trigger that auto-seeds a
+        -- company_branding row for every newly-created workspace, with a
+        -- plain (non-cascading) FK back to workspaces. That trigger did
+        -- not exist when this file was written, so this synthetic
+        -- workspace now has a company_branding row referencing it that
+        -- must be cleaned up first, same "never assume nothing
+        -- references a row" discipline this file's own header already
+        -- applies to `real_workspace_id`.
+        delete from public.company_branding where workspace_id = test_workspace_id;
         delete from public.workspaces where id = test_workspace_id;
 
         -- Second suspended workspace.
@@ -624,6 +646,9 @@ begin
         end if;
         raise notice 'TEST PASSED: bridge_set_user_allowed_views rejected with a second (suspended) workspace, no write occurred';
 
+        -- See the company_branding cleanup comment above (consolidated-
+        -- suite finding re: migration 182's auto-seed trigger).
+        delete from public.company_branding where workspace_id = test_workspace_id;
         delete from public.workspaces where id = test_workspace_id;
 
         -- Sole workspace suspended.
@@ -772,7 +797,7 @@ begin
       raise notice 'TEST PASSED: self-revocation of the last remaining admin is rejected, both systems unchanged';
     else
       skipped_count := skipped_count + 1;
-      skipped_names := skipped_names || format('final-admin self-revocation rejection (expected exactly one existing global admin, found %s)', admin_count_before);
+      skipped_names := array_append(skipped_names, format('final-admin self-revocation rejection (expected exactly one existing global admin, found %s)', admin_count_before));
     end if;
 
     -- Revoke one of multiple succeeds.
@@ -840,12 +865,12 @@ begin
   select id into real_workspace_id from public.workspaces limit 1;
   if real_workspace_id is null then
     skipped_count := skipped_count + 1;
-    skipped_names := skipped_names || 'active_workspace_id guard tests (no workspace row found at all)';
+    skipped_names := array_append(skipped_names, 'active_workspace_id guard tests (no workspace row found at all)');
   else
     select count(*) into row_count from public.workspaces where status = 'active';
     if row_count <> 1 or (select count(*) from public.workspaces) <> 1 then
       skipped_count := skipped_count + 1;
-      skipped_names := skipped_names || format('active_workspace_id guard tests (expected a clean one-active-workspace baseline, found %s active of %s total)', row_count, (select count(*) from public.workspaces));
+      skipped_names := array_append(skipped_names, format('active_workspace_id guard tests (expected a clean one-active-workspace baseline, found %s active of %s total)', row_count, (select count(*) from public.workspaces)));
     else
       select public.active_workspace_id() into resolved_id;
       if resolved_id is distinct from real_workspace_id then
@@ -868,6 +893,10 @@ begin
       end if;
       raise notice 'TEST PASSED: active_workspace_id() rejects a second active workspace';
 
+      -- See the company_branding cleanup comment further up this file
+      -- (consolidated-suite finding re: migration 182's auto-seed
+      -- trigger on workspace creation).
+      delete from public.company_branding where workspace_id = test_workspace_id;
       delete from public.workspaces where id = test_workspace_id;
 
       insert into public.workspaces (name, slug, status)
@@ -885,6 +914,10 @@ begin
       end if;
       raise notice 'TEST PASSED: active_workspace_id() rejects a second workspace even when it is merely suspended';
 
+      -- See the company_branding cleanup comment further up this file
+      -- (consolidated-suite finding re: migration 182's auto-seed
+      -- trigger on workspace creation).
+      delete from public.company_branding where workspace_id = test_workspace_id;
       delete from public.workspaces where id = test_workspace_id;
     end if;
   end if;

@@ -174,7 +174,25 @@ begin
     -- ============================================================
     -- Catalog fixtures -- real, synthetic inventory_items rows, clearly
     -- named, created fresh in this transaction.
+    --
+    -- CONSOLIDATED-SUITE FINDING (found running the full 001-185 replay,
+    -- not visible to migration 130's own isolated verification):
+    -- migration 159 (29 migrations later) added a BEFORE INSERT trigger
+    -- to inventory_items that stamps workspace_id via
+    -- active_workspace_id()/resolve_caller_workspace_id(), which requires
+    -- a real, resolvable auth.uid() with at least one workspace
+    -- membership. inventory_items had no such trigger when this file was
+    -- written, so these plain, unauthenticated fixture inserts worked
+    -- then and fail now with "no workspace membership found for current
+    -- user" under the full migration history -- not a rejection this
+    -- test is trying to prove, just its own setup step tripping a much
+    -- later migration's guard. Fixed by running fixture setup as the
+    -- real admin (already confirmed a real workspace member above),
+    -- matching how every other write in this file authenticates first.
     -- ============================================================
+    perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+    perform set_config('role', 'authenticated', true);
+
     insert into public.inventory_items (sku, item_name, category)
       values ('ZZ-TEST-A-' || substr(md5(random()::text), 1, 8), 'ZZ_TEST_ITEM_A_' || substr(md5(random()::text), 1, 8), 'Base')
       returning id into item_a_id;
@@ -190,6 +208,8 @@ begin
     insert into public.inventory_items (sku, item_name, category)
       values ('ZZ-TEST-AMBIG-2-' || substr(md5(random()::text), 1, 8), ambiguous_item_name, 'Base')
       returning id into ambiguous_item_2_id;
+
+    perform set_config('role', original_role, true);
 
     -- A single combined snapshot (the equipment_types row AND its complete
     -- component collection in one call) used by Section 9 to compare
@@ -463,6 +483,23 @@ begin
     -- workspace suspended-then-restored are all exercised live; "zero
     -- workspaces" is proven structurally (never destructively tested by
     -- deleting the real workspace row).
+    --
+    -- CONSOLIDATED-SUITE FINDING (found running the full 001-185 replay,
+    -- not visible to migration 130's own isolated verification):
+    -- migration 164 (34 migrations later) rewrites save_equipment_recipe()
+    -- to resolve the caller's workspace via resolve_caller_workspace_id()
+    -- (per-caller real membership, migration 117) instead of the old
+    -- active_workspace_id() global "total workspace row count must be
+    -- exactly 1" guard -- by design, documented in 164's own header ("the
+    -- active_workspace_id() fail-closed guard is removed"). So creating
+    -- an unrelated second workspace no longer rejects a caller whose OWN
+    -- membership is unambiguous -- correct, intended multi-tenant
+    -- behavior, not a regression. Made supersession-aware below: if the
+    -- current function source shows the new per-caller guard, this
+    -- section instead confirms a second workspace does NOT wrongly
+    -- affect an unambiguous caller (the new guard's own dedicated
+    -- coverage lives in migration 164's own test file); otherwise it
+    -- runs the original EC008-based checks unchanged.
     -- ============================================================
     if admin_user_id is null then
       skipped_count := skipped_count + 1;
@@ -471,7 +508,11 @@ begin
       declare
         second_workspace_id uuid;
         wcount_before integer;
+        guard_superseded boolean;
       begin
+        select pg_get_functiondef('public.save_equipment_recipe(uuid,text,text,text,boolean,uuid,text,jsonb)'::regprocedure) into func_def;
+        guard_superseded := position('resolve_caller_workspace_id' in func_def) > 0;
+
         select count(*) into wcount_before from public.equipment_types where equipment_name = recipe_a_name || '_WSTEST';
 
         -- Second ACTIVE workspace.
@@ -479,93 +520,110 @@ begin
           values ('ZZ Test Second Workspace -- ACTIVE (never committed)', 'zz-test-second-workspace-active-' || substr(md5(random()::text), 1, 8), 'active')
           returning id into second_workspace_id;
 
-        perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
-        perform set_config('role', 'authenticated', true);
-        caught := false;
-        caught_sqlstate := null;
-        begin
-          perform public.save_equipment_recipe(null, recipe_a_name || '_WSTEST', null, null, false, null, null, '[]'::jsonb);
-        exception when others then
-          caught := true;
-          get stacked diagnostics caught_sqlstate = returned_sqlstate;
-        end;
-        perform set_config('role', original_role, true);
-        if not caught then
-          raise exception 'TEST FAILED: save_equipment_recipe should reject with a second ACTIVE workspace present';
-        end if;
-        if caught_sqlstate is distinct from 'EC008' then
-          raise exception 'TEST FAILED: expected SQLSTATE EC008 (workspace guard) with a second active workspace, got %', caught_sqlstate;
-        end if;
-        raise notice 'TEST PASSED: save_equipment_recipe rejects (SQLSTATE EC008) with a second ACTIVE workspace present';
+        if guard_superseded then
+          perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+          perform set_config('role', 'authenticated', true);
+          select public.save_equipment_recipe(null, recipe_a_name || '_WSTEST', null, null, false, null, null, '[]'::jsonb) into result_json;
+          perform set_config('role', original_role, true);
+          if result_json->>'equipmentTypeId' is null then
+            raise exception 'TEST FAILED: an unambiguous caller (real admin, single real membership) should still be able to save a recipe with an UNRELATED second active workspace present -- resolve_caller_workspace_id() should resolve their own membership regardless of other workspaces'' existence.';
+          end if;
+          delete from public.equipment_types where id = (result_json->>'equipmentTypeId')::uuid;
+          -- Cleanup mirrors migration 124's own consolidated-suite finding:
+          -- migration 182's auto-seed trigger gives every new workspace a
+          -- company_branding row with a non-cascading FK.
+          delete from public.company_branding where workspace_id = second_workspace_id;
+          delete from public.workspaces where id = second_workspace_id;
+          raise notice 'TEST PASSED: Section 4 -- save_equipment_recipe() now resolves the caller''s own real workspace membership via resolve_caller_workspace_id() (migration 164) and correctly ignores an unrelated second active workspace -- the old global active_workspace_id() total-row-count guard this section originally tested was deliberately removed, per migration 164''s own header; that migration''s own test file covers the new per-caller guard''s rejection cases.';
+        else
+          perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+          perform set_config('role', 'authenticated', true);
+          caught := false;
+          caught_sqlstate := null;
+          begin
+            perform public.save_equipment_recipe(null, recipe_a_name || '_WSTEST', null, null, false, null, null, '[]'::jsonb);
+          exception when others then
+            caught := true;
+            get stacked diagnostics caught_sqlstate = returned_sqlstate;
+          end;
+          perform set_config('role', original_role, true);
+          if not caught then
+            raise exception 'TEST FAILED: save_equipment_recipe should reject with a second ACTIVE workspace present';
+          end if;
+          if caught_sqlstate is distinct from 'EC008' then
+            raise exception 'TEST FAILED: expected SQLSTATE EC008 (workspace guard) with a second active workspace, got %', caught_sqlstate;
+          end if;
+          raise notice 'TEST PASSED: save_equipment_recipe rejects (SQLSTATE EC008) with a second ACTIVE workspace present';
 
-        -- Second SUSPENDED workspace -- total row count matters, not just
-        -- active count.
-        update public.workspaces set status = 'suspended' where id = second_workspace_id;
-        perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
-        perform set_config('role', 'authenticated', true);
-        caught := false;
-        caught_sqlstate := null;
-        begin
-          perform public.save_equipment_recipe(null, recipe_a_name || '_WSTEST', null, null, false, null, null, '[]'::jsonb);
-        exception when others then
-          caught := true;
-          get stacked diagnostics caught_sqlstate = returned_sqlstate;
-        end;
-        perform set_config('role', original_role, true);
-        if not caught then
-          raise exception 'TEST FAILED: save_equipment_recipe should reject with a second SUSPENDED workspace present';
-        end if;
-        if caught_sqlstate is distinct from 'EC008' then
-          raise exception 'TEST FAILED: expected SQLSTATE EC008 with a second suspended workspace, got %', caught_sqlstate;
-        end if;
-        raise notice 'TEST PASSED: save_equipment_recipe rejects (SQLSTATE EC008) with a second (merely suspended) workspace present';
+          -- Second SUSPENDED workspace -- total row count matters, not just
+          -- active count.
+          update public.workspaces set status = 'suspended' where id = second_workspace_id;
+          perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+          perform set_config('role', 'authenticated', true);
+          caught := false;
+          caught_sqlstate := null;
+          begin
+            perform public.save_equipment_recipe(null, recipe_a_name || '_WSTEST', null, null, false, null, null, '[]'::jsonb);
+          exception when others then
+            caught := true;
+            get stacked diagnostics caught_sqlstate = returned_sqlstate;
+          end;
+          perform set_config('role', original_role, true);
+          if not caught then
+            raise exception 'TEST FAILED: save_equipment_recipe should reject with a second SUSPENDED workspace present';
+          end if;
+          if caught_sqlstate is distinct from 'EC008' then
+            raise exception 'TEST FAILED: expected SQLSTATE EC008 with a second suspended workspace, got %', caught_sqlstate;
+          end if;
+          raise notice 'TEST PASSED: save_equipment_recipe rejects (SQLSTATE EC008) with a second (merely suspended) workspace present';
 
-        delete from public.workspaces where id = second_workspace_id;
+          delete from public.workspaces where id = second_workspace_id;
 
-        -- Sole workspace suspended, then restored.
-        update public.workspaces set status = 'suspended' where id = v_workspace_id;
-        perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
-        perform set_config('role', 'authenticated', true);
-        caught := false;
-        caught_sqlstate := null;
-        begin
-          perform public.save_equipment_recipe(null, recipe_a_name || '_WSTEST', null, null, false, null, null, '[]'::jsonb);
-        exception when others then
-          caught := true;
-          get stacked diagnostics caught_sqlstate = returned_sqlstate;
-        end;
-        perform set_config('role', original_role, true);
-        update public.workspaces set status = 'active' where id = v_workspace_id;
+          -- Sole workspace suspended, then restored.
+          update public.workspaces set status = 'suspended' where id = v_workspace_id;
+          perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
+          perform set_config('role', 'authenticated', true);
+          caught := false;
+          caught_sqlstate := null;
+          begin
+            perform public.save_equipment_recipe(null, recipe_a_name || '_WSTEST', null, null, false, null, null, '[]'::jsonb);
+          exception when others then
+            caught := true;
+            get stacked diagnostics caught_sqlstate = returned_sqlstate;
+          end;
+          perform set_config('role', original_role, true);
+          update public.workspaces set status = 'active' where id = v_workspace_id;
 
-        if not caught then
-          raise exception 'TEST FAILED: save_equipment_recipe should reject when the sole workspace is suspended';
-        end if;
-        if caught_sqlstate is distinct from 'EC008' then
-          raise exception 'TEST FAILED: expected SQLSTATE EC008 with the sole workspace suspended, got %', caught_sqlstate;
-        end if;
-        raise notice 'TEST PASSED: save_equipment_recipe rejects (SQLSTATE EC008) when the sole workspace is suspended -- restored to active immediately after';
+          if not caught then
+            raise exception 'TEST FAILED: save_equipment_recipe should reject when the sole workspace is suspended';
+          end if;
+          if caught_sqlstate is distinct from 'EC008' then
+            raise exception 'TEST FAILED: expected SQLSTATE EC008 with the sole workspace suspended, got %', caught_sqlstate;
+          end if;
+          raise notice 'TEST PASSED: save_equipment_recipe rejects (SQLSTATE EC008) when the sole workspace is suspended -- restored to active immediately after';
 
-        select count(*) into row_count from public.equipment_types where equipment_name = recipe_a_name || '_WSTEST';
-        if row_count is distinct from wcount_before then
-          raise exception 'TEST FAILED: one of the workspace-guard rejections above created a recipe row';
-        end if;
+          select count(*) into row_count from public.equipment_types where equipment_name = recipe_a_name || '_WSTEST';
+          if row_count is distinct from wcount_before then
+            raise exception 'TEST FAILED: one of the workspace-guard rejections above created a recipe row';
+          end if;
 
-        -- Zero-workspace case: proven structurally, never live-tested
-        -- (would require deleting the real workspace row). This mirrors
-        -- migration 124's own test script's exact technique for the same
-        -- underlying active_workspace_id() guard.
-        select pg_get_functiondef('public.active_workspace_id()'::regprocedure) into func_def;
-        if position('from public.workspaces' in func_def) = 0 then
-          raise exception 'TEST FAILED: active_workspace_id() source no longer counts from public.workspaces -- cannot verify the zero-workspace case structurally';
+          -- Zero-workspace case: proven structurally, never live-tested
+          -- (would require deleting the real workspace row). This mirrors
+          -- migration 124's own test script's exact technique for the same
+          -- underlying active_workspace_id() guard.
+          select pg_get_functiondef('public.active_workspace_id()'::regprocedure) into func_def;
+          if position('from public.workspaces' in func_def) = 0 then
+            raise exception 'TEST FAILED: active_workspace_id() source no longer counts from public.workspaces -- cannot verify the zero-workspace case structurally';
+          end if;
+          if position('total_count' in func_def) = 0 or position('<> 1' in func_def) = 0 then
+            raise exception 'TEST FAILED: active_workspace_id() source does not contain the expected total-row-count guard -- the zero-workspace case is no longer provably covered';
+          end if;
+          select pg_get_functiondef('public.save_equipment_recipe(uuid,text,text,text,boolean,uuid,text,jsonb)'::regprocedure) into func_def;
+          if position('active_workspace_id' in func_def) = 0 then
+            raise exception 'TEST FAILED: save_equipment_recipe() no longer calls active_workspace_id() at all -- the workspace guard has been removed';
+          end if;
+          raise notice 'TEST PASSED: active_workspace_id() source confirmed (via pg_get_functiondef) to count ALL workspace rows and reject on total_count <> 1, and save_equipment_recipe() confirmed to call it -- combined with the two live-tested cases above, this proves the zero-workspace case is rejected by the same code path, without ever deleting the real workspace row';
         end if;
-        if position('total_count' in func_def) = 0 or position('<> 1' in func_def) = 0 then
-          raise exception 'TEST FAILED: active_workspace_id() source does not contain the expected total-row-count guard -- the zero-workspace case is no longer provably covered';
-        end if;
-        select pg_get_functiondef('public.save_equipment_recipe(uuid,text,text,text,boolean,uuid,text,jsonb)'::regprocedure) into func_def;
-        if position('active_workspace_id' in func_def) = 0 then
-          raise exception 'TEST FAILED: save_equipment_recipe() no longer calls active_workspace_id() at all -- the workspace guard has been removed';
-        end if;
-        raise notice 'TEST PASSED: active_workspace_id() source confirmed (via pg_get_functiondef) to count ALL workspace rows and reject on total_count <> 1, and save_equipment_recipe() confirmed to call it -- combined with the two live-tested cases above, this proves the zero-workspace case is rejected by the same code path, without ever deleting the real workspace row';
       end;
     end if;
 

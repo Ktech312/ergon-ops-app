@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "playwright test",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:isolation": "node backend/supabase/consolidated_isolation_suite/run_all.mjs"
   },
   "dependencies": {
     "@upstash/redis": "^1.38.4",
@@ -33,6 +34,7 @@
     }
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
     "@types/react": "^19.2.17",
