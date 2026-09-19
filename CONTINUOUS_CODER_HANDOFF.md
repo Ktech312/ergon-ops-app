@@ -404,13 +404,12 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: ONE ITEM.** Apply migration 166
-(`backend/supabase/migrations/166_deletion_log_workspace_containment.sql`), then run its canonical test
-(`backend/supabase/migration_166_deletion_log_workspace_containment_tests.sql`). Migrations 155 through
-165 are all confirmed applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/
-Storage) is fully shipped end-to-end.**
+**Manual-action queue, current exact state: NONE.** Migration 166 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 166 are all confirmed
+applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
+end-to-end.**
 
-**Stage 5 scoping delivered, first two migrations shipped, third queued**: a full scoping pass across all
+**Stage 5 scoping delivered, first three migrations shipped**: a full scoping pass across all
 162 migrations (full detail in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry) found real,
 confirmed cross-workspace containment gaps -- the same T2/T8 class already fixed elsewhere in Phase 3,
 just missed because the affected code lives outside the file clusters those earlier passes reviewed:
@@ -495,8 +494,9 @@ just missed because the affected code lives outside the file clusters those earl
   end-to-end against a real local PostgreSQL 18 engine (PGlite) before being sent, including a
   deliberate stress-test (revoking direct grants on the resolvers it calls, confirming its own
   `security definer` alone is sufficient) confirming this migration is NOT exposed to the same
-  missing-`security definer` bug class that caused the migration 164/165 incident. Not yet applied --
-  queued for E's review. The three report views
+  missing-`security definer` bug class that caused the migration 164/165 incident. **CONFIRMED APPLIED
+  and its canonical test PASSED in production (2026-09-18, "Success. No rows returned" for both). Do
+  not run migration 166 or its canonical test again.** The three report views
   (`report_inventory_on_hand`/`report_project_inventory_usage`/`report_purchase_order_status`, all from
   migration 001, never touched since) likely leak cross-workspace aggregate data via Postgres's
   default view-owner RLS-bypass semantics -- needs a live-database grant check before a fix can be
