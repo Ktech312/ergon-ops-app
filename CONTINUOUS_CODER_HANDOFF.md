@@ -404,10 +404,16 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migration 171 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 171 are all confirmed
-applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
-end-to-end.**
+**Manual-action queue, current exact state: ONE ITEM.** Apply migration 172
+(`backend/supabase/migrations/172_inventory_item_equipment_type_atomic_delete_and_log.sql`), then run
+its canonical test. Closes migration 166's one residual gap: `inventory_item`/`equipment_type` are the
+only two `deletion_log` entity types that are genuinely hard-deleted, so their `workspace_id` used to
+stay null forever. Three new atomic RPCs capture `workspace_id` before deleting the row, in the same
+transaction, preserving every existing client behavior exactly. A matching `src/persistence.ts` change
+(routing the three delete functions through these RPCs) is committed locally but deliberately NOT
+pushed yet -- deploying it before this migration exists in production would break every such delete
+live. Migrations 155 through 171 are all confirmed applied. **Phase 3 Stage 4
+(Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end.**
 
 **Migration 171 (`96bc949`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18).** Hygiene item (not workspace containment): `app_sync_events`/`app_transaction_locks`
