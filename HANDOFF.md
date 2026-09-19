@@ -299,10 +299,33 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migration 167 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 167 are all confirmed
+**Manual-action queue for E, current exact state: NONE.** Migration 168 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 168 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end** (migrations 161/162, confirmed applied and tested).
+
+**Migration 168 (`e4fcbc3`) — URGENT LIVE INCIDENT, CONFIRMED APPLIED and its canonical test PASSED in
+production (2026-09-18, "Success. No rows returned" for both).** Found while scoping the (unrelated)
+`sales-quote-images` storage bucket gap: migration 161's `purchase-order-files` storage.objects
+INSERT/UPDATE policies required a matching `purchase_order_files` metadata row to already exist (exact
+match on `storage_path`) before an upload could succeed -- but the real upload flow
+(`addPurchaseOrderFile()`, `src/persistence.ts:9931-9960`) uploads the file BYTES to Storage first, and
+only inserts the matching metadata row afterward. **Every purchase order file upload attempted since
+migration 161 went live (2026-09-17) had almost certainly been silently failing** (logged to the
+browser console, not surfaced as an obvious crash). Confirmed empirically against a real local
+PostgreSQL 18 engine (PGlite) -- reproduced the exact rejection before applying the fix, confirmed
+resolved afterward. Fixed by matching the `purchase_order_id` leading path segment directly against
+`public.purchase_orders` (same pattern already proven correct in migration 162 for channel
+message-attachments), instead of through the per-file metadata row -- no chicken-and-egg problem, since
+a purchase order obviously exists before any file is uploaded to it. Migration 161 itself not edited or
+rerun. **Do not run migration 168 or its canonical test again.**
+
+**Correction to earlier storage-bucket scoping (found during the same scoping pass)**: of the three
+buckets `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 listed as still needing workspace-scoped storage
+policies, only `sales-quote-images` is actually still unaddressed. `purchase-order-files` and the
+`message-attachments` channel-specific policies were already correctly workspace-scoped by migrations
+161 and 162 respectively (the planning doc's "deferred, never claimed" note was stale for those two) --
+still queued below is only the genuine `sales-quote-images` fix.
 
 **Migration 167 (`45302d8`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18, "Success. No rows returned" for both).** Closed a CONFIRMED, LIVE, and actively
@@ -334,7 +357,8 @@ same missing-`security definer` bug class that caused the migration 164/165 inci
 migration 166 or its canonical test again.**
 
 **Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
-access paths) scoping is done; first four migrations shipped.** Full detail in
+access paths) scoping is done; first four migrations shipped, plus one urgent same-effort incident
+fix (migration 168).** Full detail in
 `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry and `CONTINUOUS_CODER_HANDOFF.md`'s matching
 session-log entry. Summary:
 
@@ -377,10 +401,10 @@ session-log entry. Summary:
   -- needs its own reviewed migration) and `equipment_types.equipment_number` (stays deferred, low
   priority, server-generated, per the master plan). **Do not run migrations 164/165 or migration 164's
   canonical test again.**
-- **Queued next**: storage bucket policies for 3 buckets were each deferred by a different earlier
-  stage but never actually claimed; `project_documents.document_number` needs its own reviewed
-  migration (add a real `workspace_id` column + backfill + derivation trigger); an atomic delete+log
-  RPC for `inventory_item`/`equipment_type` to fully close migration 166's own residual gap;
+- **Queued next**: `sales-quote-images` storage bucket policies (the one genuine remaining gap of the
+  three originally flagged -- see the correction above); `project_documents.document_number` needs its
+  own reviewed migration (add a real `workspace_id` column + backfill + derivation trigger); an atomic
+  delete+log RPC for `inventory_item`/`equipment_type` to fully close migration 166's own residual gap;
   the pre-existing `build_transaction` deletion-log bug migration 166 found but did not fix.
 - **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
   `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
