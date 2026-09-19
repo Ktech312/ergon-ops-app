@@ -429,17 +429,35 @@ never touched. — *Migration applied and canonical test PASSED in production (E
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-**None currently.**
+**Migration 173** (`backend/supabase/migrations/173_global_config_workspace_scoping.sql`) — **E's
+governance call resolved, 2026-09-18: "each company should have its own separate copies, this should
+not be a question."** `notification_rules`/`standard_install_times`/`project_schedule_templates` (+
+child `project_schedule_template_phases`) get a real `workspace_id` each — they've had exactly one
+shared, global copy since migrations 024/025, meaning every workspace was silently reading/writing the
+SAME notification toggles, labor-time estimates, and schedule templates as every other workspace.
+Existing role-gated write policies (`is_app_admin`/`is_app_manager`/`has_role('pm')`) are ANDed with a
+new workspace-membership check, not replaced (confirmed these role checks are, and remain, completely
+workspace-unaware on their own). Also fixes a real gap this uncovered: migration 166 classified
+`'schedule_template_phase'` as genuinely global for `deletion_log` purposes — no longer true, fixed via
+a plain lookup (this entity type is soft-deleted, so no atomic RPC needed, unlike migration 172's
+`inventory_item`/`equipment_type`). Deliberately NOT done: auto-seeding a brand-new workspace's own
+default rows — same reasoning as migration 162's deferral of default-channel seeding (no reviewed
+workspace-provisioning path exists yet, Stage 7) — a new workspace will have every notification
+silently off until seeded, a known/accepted consequence, not a technical blocker. Canonical test:
+`backend/supabase/migration_173_global_config_workspace_scoping_tests.sql`. Independently verified
+end-to-end against a real local PostgreSQL 18 engine (PGlite), reproduced on two separate runs. **A
+companion `src/persistence.ts` fix is prepared but deliberately kept UNCOMMITTED** (not even `git
+add`ed) until this migration is confirmed applied — learning directly from the migration 172 incident
+(§3): this migration alone temporarily breaks `standard_install_times`'s upsert save path (its
+`on_conflict` target must also change) until that fix ships, so it goes out immediately after
+confirmation this time, not held back indefinitely.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**None currently.** Migrations 155 through 172 are all confirmed applied and their canonical tests all
-passed in production, 2026-09-17/18. All storage bucket policy gaps are closed,
-`project_documents.document_number` is closed, migration 166's residual inventory_item/equipment_type
-gap is closed (migration 172), and the `build_transaction` deletion-log bug is fixed (no migration
-needed). **All of Stage 5's scoped items are now closed.** The only thing left is E's own governance
-call on `notification_rules`/`standard_install_times`/`project_schedule_templates` (global forever vs.
-per-workspace override) — see §11.
+**One item queued: apply migration 173**
+(`backend/supabase/migrations/173_global_config_workspace_scoping.sql`), then run its canonical test.
+Migrations 155 through 172 are all confirmed applied and their canonical tests all passed in
+production, 2026-09-17/18.
 
 **Migration 172** (`backend/supabase/migrations/172_inventory_item_equipment_type_atomic_delete_and_log.sql`,
 commit `0abe68b`) — closes migration 166's one residual gap: `inventory_item`/`equipment_type` are the
@@ -1000,12 +1018,12 @@ there, not an oversight.
      The metadata ROWS describing an uploaded file are workspace-scoped for all three buckets; the point
      of these fixes is that the actual file BYTES in Supabase Storage are a separate policy surface from
      table RLS and needed their own explicit scoping.
-   - **Governance decision needed from E, not a routine default** — `notification_rules`,
-     `standard_install_times`, `project_schedule_templates`/`project_schedule_template_phases` are all
-     confirmed genuinely global (admin-configured libraries/config, zero per-row tenant data, no
-     anchor of any kind). The open question is whether they stay global-forever (one shared config for
-     every workspace) or eventually need a per-workspace override capability — a product decision, not
-     an implementation default. Recommend confirming with E; doesn't block anything else in Stage 5.
+   - **Governance decision — RESOLVED, 2026-09-18.** `notification_rules`, `standard_install_times`,
+     `project_schedule_templates`/`project_schedule_template_phases` were confirmed genuinely global
+     (admin-configured libraries/config, zero per-row tenant data, no anchor of any kind) but E rejected
+     the framing that this was even an open question: "each company should have its own separate
+     copies, this should not be a question... Would you tell Google they have to use everything the way
+     Apple does it?" **Migration 173 closes this** — see §3/§4.
    - **Minor hygiene — DONE.** `app_sync_events` turned out NOT dead on direct re-check — still written
      on every `roleMode` change (`saveRemoteAppState()`, `src/main.tsx:1577`), just carrying a single
      trivial UI preference now that real business data moved to normalized tables ("Phase 10f"); the
