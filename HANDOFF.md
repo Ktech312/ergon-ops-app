@@ -332,8 +332,23 @@ session-log entry. Summary:
 - **Correction**: `save_equipment_recipe()` was already retired from `active_workspace_id()` by
   migration 159 -- older text still listing it as pending is stale.
 
-**Recommended next step (now active)**: continue Stage 5 with the uniqueness/ref-counter migration
-next (see §11 for the full table list).
+**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 164
+(`backend/supabase/migrations/164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters.sql`),
+then run its canonical test
+(`backend/supabase/migration_164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters_tests.sql`).
+Workspace-scopes nine flagged columns across seven tables (`clients.name`, `projects.project_name`,
+`projects.project_number`, `vendors.name`, `inventory_items.sku`, `purchase_orders.po_number`,
+`purchase_requests.request_number`, `sales_quotes.quote_ref`, `equipment_types.equipment_name`) and
+re-keys `sales_quote_ref_counters`/`project_ref_counters` from year-only to `(workspace_id, year)`,
+rewriting `assign_sales_quote_ref()`/`assign_project_ref()` to resolve the caller's own workspace
+directly (not `new.workspace_id`, since these are BEFORE INSERT triggers that fire alphabetically
+before their table's own `..._guard_workspace_id` trigger). `save_equipment_recipe()` carried forward
+verbatim with its two hardcoded constraint-name checks updated to match the renamed
+`equipment_types` index. Independently verified end-to-end against a real local PostgreSQL 18 engine
+(PGlite) before being sent -- migration applied cleanly, canonical test passed all 9 sections with
+zero skipped. Deliberately NOT done: `project_documents.document_number` (no `workspace_id` column
+exists on that table -- needs its own reviewed migration) and `equipment_types.equipment_number`
+(stays deferred, low priority, server-generated, per the master plan).
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in

@@ -404,10 +404,13 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migration 163 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 163 are all confirmed
-applied and their canonical tests all passed in production. **Phase 3 Stage 4
-(Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end.**
+**Manual-action queue, current exact state: ONE ITEM.** Apply migration 164
+(`backend/supabase/migrations/164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters.sql`),
+then run its canonical test
+(`backend/supabase/migration_164_phase3_stage5_workspace_scoped_uniqueness_and_ref_counters_tests.sql`).
+Migrations 155 through 163 are all confirmed applied and their canonical tests all passed in
+production. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully
+shipped end-to-end.**
 
 **Stage 5 scoping delivered, first migration shipped**: a full scoping pass across all
 162 migrations (full detail in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry) found real,
@@ -426,13 +429,33 @@ just missed because the affected code lives outside the file clusters those earl
   (a valid `sales_quote_proposals.status` value, not `sales_quotes.status`, constrained to
   `open`/`closed_won`/`closed_lost` since migration 048) -- corrected to `'open'`, migration 163 itself
   never touched. **Do not run migration 163 or its canonical test again.**
-- **Also found, NOT yet migrated (queued behind 163, see §11 for full detail)**: global `unique`
+- **Migration 164 (`7ed52b2`) closes the workspace-scoped-uniqueness gap** -- global `unique`
   constraints on seven already-workspace-scoped tables never previously flagged (`clients.name`,
   `projects.project_name`/`project_number`, `vendors.name`, `inventory_items.sku`,
-  `purchase_orders.po_number`, `purchase_requests.request_number`, `project_documents.document_number`)
-  plus two already-flagged ones (`sales_quotes.quote_ref`, `equipment_types.equipment_name`) -- needs
-  to land together with making `sales_quote_ref_counters`/`project_ref_counters` workspace-keyed
-  (currently year-only keyed, confirmed genuinely global). The three report views
+  `purchase_orders.po_number`, `purchase_requests.request_number`) plus two already-flagged ones
+  (`sales_quotes.quote_ref`, `equipment_types.equipment_name`), nine columns total, each swapped for a
+  composite `(workspace_id, <column>)` equivalent -- no backfill or trigger work needed, every table's
+  `workspace_id` is already NOT NULL and trigger-protected (migrations 117/156/159). Lands together with
+  re-keying `sales_quote_ref_counters`/`project_ref_counters` from year-only to `(workspace_id, year)`
+  and rewriting `assign_sales_quote_ref()`/`assign_project_ref()` to resolve the caller's own workspace
+  directly rather than trust `new.workspace_id` (these are BEFORE INSERT triggers on the same table as
+  `guard_workspace_id_mutation()`, and same-timing triggers fire alphabetically by name --
+  `..._assign_ref` sorts before `..._guard_workspace_id`, so `workspace_id` is not yet set when
+  `assign_ref` runs). `save_equipment_recipe()` carried forward verbatim (migration 159) with its two
+  hardcoded `unique_violation` constraint-name checks updated to match the renamed `equipment_types`
+  index, in the same migration that renames it. Independently verified end-to-end against a real local
+  PostgreSQL 18 engine (PGlite) before being sent -- migration applied cleanly, canonical test passed
+  all 9 sections with zero skipped (one test-robustness fix made before sending: Sections 6b/7's
+  "no collision" pairwise-inequality checks were replaced with a precise sequence-value check, since the
+  original form could produce a false failure in a database where the pre-existing workspace's own
+  counter for the current calendar year happened to still be at its first value -- not true of real
+  production today, but not a safe assumption for a canonical test to outlive). **Deliberately NOT
+  done**: `project_documents.document_number` -- this table has NO `workspace_id` column at all today
+  (three nullable FK anchors, scoped only indirectly at query time via
+  `project_document_owner_workspace_id()`) -- adding one is a real schema-design decision, not a
+  mechanical constraint swap, left for its own reviewed migration. `equipment_types.equipment_number`
+  stays deferred (low priority, server-generated, per the master plan). Not yet applied -- queued for
+  E's review. The three report views
   (`report_inventory_on_hand`/`report_project_inventory_usage`/`report_purchase_order_status`, all from
   migration 001, never touched since) likely leak cross-workspace aggregate data via Postgres's
   default view-owner RLS-bypass semantics -- needs a live-database grant check before a fix can be
