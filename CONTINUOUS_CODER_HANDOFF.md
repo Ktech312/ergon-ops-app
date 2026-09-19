@@ -427,6 +427,18 @@ committed to `main` at all until that dependency is confirmed -- "committed but 
 a safe hold, since any later push for any reason sends it too. **Do not run migration 172 or its
 canonical test again.**
 
+**`build_transaction`'s deletion-log bug — FIXED, no migration needed (`e56c696`).**
+`deleteBuildTransaction()` was sending `build_number` ("BUILD-0001", this table's natural key in the
+app layer, never a raw uuid) as `deletion_log.entity_id`, a `uuid not null` column -- PostgREST silently
+rejected every such insert before it ever reached Postgres, so every `build_transaction` deletion had
+been failing to log at all. Fixed by using the real row `id` already present in `deleteBuildTransaction()`'s
+own PATCH `return=representation` response -- no extra request, no backend change. Confirmed side
+effect: migration 166's `derive_deletion_log_workspace_id()` already resolves `'build_transaction'` via
+`select workspace_id from build_transactions where id = new.entity_id` -- that branch was simply
+unreachable before (no row ever inserted successfully); with a real id now, this entity type's log rows
+are correctly workspace-scoped automatically, no migration required. Deployed and confirmed live
+(bundle hash changed `DjFjIgo5` -> `Csz39HGc`, zero console errors on load).
+
 **Migration 171 (`96bc949`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18).** Hygiene item (not workspace containment): `app_sync_events`/`app_transaction_locks`
 (migration 008) both had a full-access `anon` policy pair each, "during no-login MVP" -- any
@@ -584,7 +596,9 @@ just missed because the affected code lives outside the file clusters those earl
   work). Also found, unrelated, pre-existing, NOT fixed here: `build_transaction` deletion-log writes
   appear to have been silently failing already (`entity_id` populated with a non-uuid `build_number`
   string against a `uuid not null` column) -- worth E confirming directly
-  (`select count(*) from deletion_log where entity_type = 'build_transaction'`). Independently verified
+  (`select count(*) from deletion_log where entity_type = 'build_transaction'`). **Fixed later the same
+  session, no migration needed (`e56c696`)** -- see the note right after migration 172's own entry
+  below. Independently verified
   end-to-end against a real local PostgreSQL 18 engine (PGlite) before being sent, including a
   deliberate stress-test (revoking direct grants on the resolvers it calls, confirming its own
   `security definer` alone is sufficient) confirming this migration is NOT exposed to the same
