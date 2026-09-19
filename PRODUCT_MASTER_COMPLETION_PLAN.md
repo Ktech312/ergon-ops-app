@@ -433,10 +433,25 @@ never touched. — *Migration applied and canonical test PASSED in production (E
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**None currently.** Migrations 155 through 166 are all confirmed applied and their canonical tests all
+**None currently.** Migrations 155 through 167 are all confirmed applied and their canonical tests all
 passed in production, 2026-09-17/18. See §11, Stage 5 for the full scoping map and what's queued next
-(report views, storage bucket policies, `project_documents.document_number`, the
-inventory_item/equipment_type residual gap, the build_transaction bug).
+(storage bucket policies, `project_documents.document_number`, the inventory_item/equipment_type
+residual gap, the build_transaction bug).
+
+**Migration 167** (`backend/supabase/migrations/167_report_views_workspace_containment.sql`, commit
+`45302d8`) — Phase 3 Stage 5, fourth migration. Closed a CONFIRMED, LIVE, anon-exploitable
+cross-workspace data leak in the three report views (`report_inventory_on_hand`/
+`report_project_inventory_usage`/`report_purchase_order_status`, migration 001, never touched since):
+owned by `postgres` with no `security_invoker`, bypassing RLS entirely, and `anon` (fully
+unauthenticated) had SELECT on all three — confirmed directly against production via a live-database
+diagnostic query, 2026-09-18. Fixed with `security_invoker = true` on all three plus revoking `anon`
+SELECT outright, no view-body rewrite needed (each view INNER JOINs at least one already
+workspace-scoped table, which alone forces containment). Canonical test:
+`backend/supabase/migration_167_report_views_workspace_containment_tests.sql`. Independently verified
+end-to-end against a real local PostgreSQL 18 engine (PGlite), including a negative control and a
+deeper read-only probe confirming genuine row-level leakage pre-fix. — *Migration applied and canonical
+test PASSED in production (E confirmed, 2026-09-18, "Success. No rows returned" for both).* **Do not
+run migration 167 or its canonical test again.**
 
 **Migration 166** (`backend/supabase/migrations/166_deletion_log_workspace_containment.sql`, commit
 `df4bed6`) — Phase 3 Stage 5, third migration. Closes `deletion_log`'s confirmed live cross-workspace
@@ -831,27 +846,25 @@ there, not an oversight.
      mutable state). Deliberately excluded from migration 164 for this reason — needs its own reviewed
      migration (add the column, backfill, and a derivation trigger — which anchor wins when more than
      one is set is itself a real product question).
-   - **Report views (high priority, likely a live cross-workspace data leak, needs a live-database
-     check before fixing)** — `report_inventory_on_hand`, `report_project_inventory_usage`,
-     `report_purchase_order_status` (all three from migration 001, never touched since). None has a
-     `security_invoker` option or any `workspace_id` filter — under Postgres's default
-     pre-security_invoker view semantics, a view evaluates its underlying tables' RLS using the VIEW
-     OWNER's privileges, not the querying user's, which would mean **every authenticated user
-     currently sees unfiltered, cross-workspace aggregate data** through all three views. This could
-     not be fully confirmed from migration text alone (depends on the live view owner's role and
-     actual grants) — **needs a live-database check (view owner + `information_schema` grants) before
-     a fix is written**, then either explicit workspace filtering in the view definition or
-     `security_invoker=true` (PG15+) now that every underlying table's RLS is workspace-correct. Not
-     yet migrated.
-   - **`deletion_log` (migration 088, high priority, confirmed live leak)** — polymorphic audit table
-     (`entity_type text, entity_id uuid`, no FK, no anchor), fully open RLS
-     (`using(true)`/`with check(true)` for both read and insert), confirmed still actively written to
-     (migrations 098/112 both extend the same soft-delete-logging pattern). Logs deletes/restores for
-     numerous now-workspace-scoped entities (`sales_quotes`, `project_locations`, `purchase_order_files`,
-     etc.) including human-readable labels and actor emails — **any authenticated user in any
-     workspace can currently read every other workspace's full deletion audit trail.** Needs a
-     `workspace_id` column (resolved per-entity-type, same pattern as
-     `project_document_owner_workspace_id()`) and a scoped read policy. Not yet migrated.
+   - **Report views — DONE.** `report_inventory_on_hand`, `report_project_inventory_usage`,
+     `report_purchase_order_status` (all three from migration 001, never touched since). The suspected
+     leak was **confirmed live and worse than expected** via a live-database diagnostic E ran directly
+     against production, 2026-09-18: all three owned by `postgres` with no `security_invoker`
+     (bypassing RLS entirely), and `anon` (fully unauthenticated) had SELECT on all three, not just
+     `authenticated` — genuinely exploitable without logging in. **Migration 167 (`45302d8`) closes
+     this — CONFIRMED APPLIED and its canonical test PASSED in production, 2026-09-18.** Fixed with
+     `security_invoker = true` (no view-body rewrite needed, each view INNER JOINs an already
+     workspace-scoped table) plus revoking `anon` SELECT outright.
+   - **`deletion_log` — DONE.** Polymorphic audit table (`entity_type text, entity_id uuid`, no FK, no
+     anchor), previously fully open RLS (`using(true)`/`with check(true)` for both read and insert),
+     confirmed still actively written to (migrations 098/112 both extend the same soft-delete-logging
+     pattern) across 21 real entity types (verified by grep of every `logDeletionEvent()` call site).
+     **Migration 166 (`df4bed6`) closes this — CONFIRMED APPLIED and its canonical test PASSED in
+     production, 2026-09-18.** Adds a `workspace_id` column derived server-side per entity_type (17
+     resolvable, 4 genuinely global, unrecognized types rejected outright) and a scoped read policy.
+     Two items deliberately NOT closed by this migration: `inventory_item`/`equipment_type` (hard-deleted
+     before the log write happens, needs an atomic delete+log RPC) and a separate, pre-existing,
+     unrelated bug in `build_transaction` logging (non-uuid `entity_id`) — both tracked, not fixed.
    - **Storage bucket policies (high priority, real gap, repeatedly deferred by name across three
      stages, never actually scheduled)** — `purchase_order_files` (deferred by migration 160),
      `sales-quote-images` (deferred by migration 155), and the `message-attachments` bucket's
