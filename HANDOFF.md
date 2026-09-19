@@ -8,6 +8,51 @@ defines the morning report and the one-file Supabase handoff. Then use
 `CONTINUOUS_CODER_HANDOFF.md` → **Next-session launchpad** for the detailed queue history and decision
 register (§8).
 
+**Consolidated cross-workspace isolation suite landed (2026-09-19, `021d935`)** — Stage 6 of
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §11. `backend/supabase/consolidated_isolation_suite/` is a
+permanent, reusable PGlite harness (`node backend/supabase/consolidated_isolation_suite/run_all.mjs`,
+or `npm run test:isolation`) that applies all 185 real migrations verbatim to one fresh instance once,
+then runs all 51 existing canonical `migration_N_..._tests.sql` files against that SAME fully-migrated
+schema in one pass — something no individual per-migration verification had ever done (each only ever
+proved its own migration against a hand-built partial bootstrap, or against real production one at a
+time). Consolidated from `scratchpad/pgtest/init.sql`/`run.mjs`, which this session's own individual
+migration verifications had already built up piecemeal and validated through a full 001-185 replay.
+**Result: 50/51 pass.** Running the full history for the first time surfaced several bugs invisible to
+per-migration testing:
+- **Test-file-only bugs (fixed freely, real migration files never touched)** — migration 124 (an old
+  `text[] || literal` array-append bug, same class migration 133's own test already documents fixing
+  once; also a missing `company_branding` cleanup delete before dropping a synthetic workspace, since
+  migration 182 added an auto-seed trigger long after 124 was written); migrations 130/131 (fixture
+  inserts into `inventory_items`/`projects` predated workspace-stamping triggers added by migrations
+  156/159; 131 also had a `request.jwt.claim.sub` typo — missing the actual auth-bearing
+  `request.jwt.claims` GUC — that silently defeated several caller-impersonation checks); migrations
+  136/138/139 (fixture inserts into `sales_quote_proposals`/`project_submittals` predated migration 144
+  closing all direct writes to those tables); migration 140 (called
+  `create_and_send_quote_proposal_version()` directly as `authenticated`, predating migration 147
+  revoking that grant for its new discount-approval-gated wrapper); migration 148 (asserted an
+  anon-only grant shape migration 153 later replaced with a service-role-only posture); migrations
+  156/159/161/155 (asserted RLS/fixture-discovery shapes correctly superseded by the very next
+  migration in the same documented phase — 157/160/170 — made supersession-aware instead of just
+  updated, so each still guards correctly if ever run standalone; 155's and 156-158's fixture discovery
+  also needed `order by is_workspace_admin desc` to stay deterministic now that the suite's fixture has
+  more than one real member); migration 130 (asserted the old global `active_workspace_id()`
+  total-workspace-count guard, which migration 164 deliberately replaced with per-caller
+  `resolve_caller_workspace_id()` resolution — already noted as "DONE" in this file's own §11 tracker,
+  so this was confirmation, not news).
+- **One genuine, real, pre-existing bug found in an already-applied MIGRATION — left unfixed, flagged
+  here per this session's own standing discipline of never silently patching an applied migration.**
+  Migration 166's `derive_deletion_log_workspace_id()` hardcodes `schedule_template_phase`'s
+  `workspace_id` to NULL ("genuinely global, no workspace concept"). Migration 173 (seven migrations
+  later) made `project_schedule_template_phases` genuinely workspace-scoped (`workspace_id` NOT NULL)
+  but never updated migration 166's trigger function to match. **Today, in production, a
+  `schedule_template_phase` deletion logs a `deletion_log` row with `workspace_id = NULL`, which
+  migration 166's own design makes visible to every workspace — a real cross-workspace disclosure in
+  the deletion audit trail.** Needs its own reviewed migration (likely: have that branch read
+  `project_schedule_template_phases.workspace_id` the same way the `channel`/`build_transaction`
+  branches already do a live lookup, instead of hardcoding NULL) before this stays failing on purpose
+  in the suite — not blocking anything else, but should not be forgotten.
+- See `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 6 for the updated gate status.
+
 **Completed and verified (2026-09-15 session):** migrations 134-150 (137+141, 140+142, 149+150 as
 corrective pairs) are all applied in production, **every one with a passing canonical test.** Queue C1,
 Queue C2 (share-link lifecycle, server-owned Create & Send, direct-write closure), Batch 4b (D3),
