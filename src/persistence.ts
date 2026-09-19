@@ -1266,6 +1266,28 @@ export async function checkIsAdmin(userId: string, accessToken?: string): Promis
   return rows.length > 0;
 }
 
+// Per-workspace admin flag (migration 185, is_workspace_admin(workspace_id))
+// -- an additive companion to checkIsAdmin's global flag, never a
+// replacement. Reads the caller's own workspace_members row for their
+// active workspace; RLS already restricts this to rows the caller can see,
+// so there's no need to pass or filter by workspace_id here.
+export async function loadOwnWorkspaceMembership(userId: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+
+  const response = await fetch(supabaseUrl(`workspace_members?select=is_workspace_admin&user_id=eq.${userId}&limit=1`), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return false;
+  }
+
+  const rows = (await response.json()) as Array<{ is_workspace_admin?: boolean }>;
+  return rows.length > 0 && rows[0].is_workspace_admin === true;
+}
+
 export async function loadAllKnownUsers(accessToken?: string): Promise<KnownUser[]> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];

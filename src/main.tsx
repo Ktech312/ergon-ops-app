@@ -62,6 +62,7 @@ import {
   buildCatalogDatasheetStoragePath,
   buildDocumentStoragePath,
   checkIsAdmin,
+  loadOwnWorkspaceMembership,
   consumeOAuthRedirectSession,
   bulkCreateCatalogItems,
   createCatalogItem,
@@ -1278,6 +1279,15 @@ function App() {
     });
   }
   const [isAdmin, setIsAdmin] = useState(false);
+  // Per-workspace admin (migration 185) -- additive alongside the global
+  // isAdmin flag above, never a replacement. Gates only the specific
+  // actions migration 185's RLS actually grants a workspace admin for
+  // their OWN company: inviting a teammate, company branding, and
+  // product catalog / presales_hardware_rules / site_hardware_rules /
+  // form_schemas / form_schema_fields management. Every other isAdmin-only
+  // affordance (granting/revoking global admin, System Health, approving
+  // sign-ins, etc.) stays isAdmin-only, unchanged.
+  const [isWorkspaceAdmin, setIsWorkspaceAdmin] = useState(false);
   const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
   const [userRoleMap, setUserRoleMap] = useState<Record<string, UserRoles>>({});
   const [ownRoleKeys, setOwnRoleKeys] = useState<string[]>([]);
@@ -2504,6 +2514,14 @@ function App() {
         setAllowedViewsMap(allowedViews);
       })
       .catch(() => setAdminStatus("Could not load the user directory."));
+    reloadInvites(accessToken);
+  }
+
+  // Split out of reloadAdminDirectory (still called from there for global
+  // admins) so a workspace-admin-only user (migration 185) can load their
+  // own workspace's user_invites without also pulling the global-admin-only
+  // roles/adminIds/allowedViews directory data above.
+  function reloadInvites(accessToken: string) {
     loadInvites(accessToken)
       .then(setInvites)
       .catch(() => setInviteStatus("Could not load invites."));
@@ -2784,6 +2802,7 @@ function App() {
 
     Promise.all([
       checkIsAdmin(authSession.userId, authSession.accessToken),
+      loadOwnWorkspaceMembership(authSession.userId, authSession.accessToken),
       loadUserRoleMode(authSession.userId, authSession.accessToken),
       loadOwnRoleKeys(authSession.userId, authSession.accessToken),
       loadOwnAllowedViews(authSession.userId, authSession.accessToken),
@@ -2799,11 +2818,12 @@ function App() {
         }
         return loadOwnApprovalStatus(authSession.userId, authSession.accessToken);
       }),
-    ]).then(([adminFlag, savedRole, roleKeys, allowedViews, status]) => {
+    ]).then(([adminFlag, workspaceAdminFlag, savedRole, roleKeys, allowedViews, status]) => {
       if (cancelled) {
         return;
       }
       setIsAdmin(adminFlag);
+      setIsWorkspaceAdmin(workspaceAdminFlag);
       const resolvedRole = savedRole && (ALL_ROLE_KEYS as string[]).includes(savedRole) ? (savedRole as RoleMode) : null;
       if (resolvedRole) {
         setRoleMode(resolvedRole);
@@ -2815,6 +2835,16 @@ function App() {
       hasCompletedInitialAuthCheckRef.current = true;
       if (adminFlag) {
         reloadAdminDirectory(authSession.accessToken);
+      }
+      // Team Roster's invite status/resend/revoke needs the user_invites
+      // rows themselves -- previously only fetched as part of the
+      // (global-admin-only) reloadAdminDirectory above (which already
+      // covers adminFlag). A workspace-admin-only user (migration 185) can
+      // now see and act on their own workspace's invites too, so fetch
+      // them here independently of the admin-only roles/adminIds/
+      // allowedViews directory data reloadAdminDirectory also loads.
+      if (!adminFlag && workspaceAdminFlag) {
+        reloadInvites(authSession.accessToken);
       }
       if (adminFlag || resolvedRole === "manager") {
         reloadApprovalQueue(authSession.accessToken);
@@ -7532,7 +7562,16 @@ function App() {
     ? ALL_TABS
     : ((ownAllowedViews && ownAllowedViews.length > 0 ? ownAllowedViews : effectiveRoleDefaultTabs) as View[]);
   const isManagerRole = authChecksReady && (roleMode === "manager" || ownRoleKeys.includes("manager"));
-  const canReviewApprovals = isAdmin || isManagerRole;
+  // Widened for migration 185: this is the sole gate for reaching the
+  // Admin page at all (nav link + route render below), and a workspace
+  // admin needs to reach it for Team Roster invites, Company Branding, and
+  // catalog/presales/site-hardware/form-schema management. Despite the
+  // name, it does NOT by itself grant approval-review actions -- the
+  // Pending Approvals / Proposal Approval Requests sections inside
+  // AdminPage are separately re-gated to (isAdmin || isManagerRole) so a
+  // workspace-admin-only visitor reaching the page doesn't also pick up
+  // that unrelated capability.
+  const canReviewApprovals = isAdmin || isManagerRole || isWorkspaceAdmin;
   // Mirrors assert_can_manage_share_link()'s own two branches (migration
   // 139) exactly -- kept in sync deliberately, not derived from it, since
   // the RPC is still the authoritative check either way.
@@ -8091,7 +8130,7 @@ function App() {
             catalogItems={catalogItems}
             catalogStatus={catalogStatus}
             isConfigured={isRemotePersistenceConfigured()}
-            canManageCatalog={isAdmin || isManagerRole}
+            canManageCatalog={isAdmin || isWorkspaceAdmin || isManagerRole}
             onCreateCatalogItem={handleCreateCatalogItem}
             onUpdateCatalogItem={handleUpdateCatalogItem}
             onSetCatalogItemRetired={handleSetCatalogItemRetired}
@@ -8283,6 +8322,7 @@ function App() {
           <AdminPage
             currentUserId={authSession?.userId ?? ""}
             isAdmin={isAdmin}
+            isWorkspaceAdmin={isWorkspaceAdmin}
             isManagerRole={isManagerRole}
             knownUsers={knownUsers}
             userRoleMap={userRoleMap}
@@ -18305,6 +18345,7 @@ function WelcomeSlideshow({
 function AdminPage({
   currentUserId,
   isAdmin,
+  isWorkspaceAdmin,
   isManagerRole,
   knownUsers,
   userRoleMap,
@@ -18388,6 +18429,7 @@ function AdminPage({
 }: {
   currentUserId: string;
   isAdmin: boolean;
+  isWorkspaceAdmin: boolean;
   isManagerRole: boolean;
   knownUsers: KnownUser[];
   userRoleMap: Record<string, UserRoles>;
@@ -18749,7 +18791,7 @@ function AdminPage({
         </section>
       )}
 
-      {isAdmin && (
+      {(isAdmin || isWorkspaceAdmin) && (
         <section className="panel wide">
           <PanelHeader title="Company Branding" label="Shown in the top nav -- change these to reuse this app for a different company" />
           <div className="branding-editor-row">
@@ -18818,6 +18860,7 @@ function AdminPage({
         </section>
       )}
 
+      {(isAdmin || isManagerRole) && (
       <section className="panel wide">
         <PanelHeader
           title="Proposal Approval Requests"
@@ -18849,7 +18892,9 @@ function AdminPage({
           </table>
         )}
       </section>
+      )}
 
+      {(isAdmin || isManagerRole) && (
       <section className="panel wide">
         <PanelHeader title="Pending Approvals" label="New sign-ins wait here until a Manager or Admin lets them in" />
         <div className="report-filter-row">
@@ -18906,8 +18951,9 @@ function AdminPage({
           </tbody>
         </table>
       </section>
+      )}
 
-      {(isAdmin || isManagerRole) && (
+      {(isAdmin || isManagerRole || isWorkspaceAdmin) && (
         <>
         <section className="panel wide">
           <PanelHeader title="Team Roster" label="Invite teammates by email -- they must confirm before they can sign in. Click a row to assign their group(s)." />
@@ -18915,7 +18961,7 @@ function AdminPage({
             {teamMemberStatus && <span className="muted">{teamMemberStatus}</span>}
             {inviteStatus && <span className="muted">{inviteStatus}</span>}
           </div>
-          {isAdmin && (
+          {(isAdmin || isWorkspaceAdmin) && (
             <>
               <div className="roster-add-row">
                 <input value={rosterDraft.fullName} onChange={(event) => setRosterDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name (optional)" />
@@ -19003,7 +19049,7 @@ function AdminPage({
                       <td>{inviteStatusLabel}</td>
                       <td>{member.isActive ? "Active" : "Inactive"}</td>
                       <td onClick={(event) => event.stopPropagation()}>
-                        {isAdmin && matchingInvite && matchingInvite.status === "pending" && (
+                        {(isAdmin || isWorkspaceAdmin) && matchingInvite && matchingInvite.status === "pending" && (
                           <>
                             <button className="secondary-action mini-action" type="button" onClick={() => onResendInvite(matchingInvite)}>Resend</button>
                             <button
@@ -19021,7 +19067,7 @@ function AdminPage({
                             <button className="secondary-action mini-action" type="button" onClick={() => onRevokeInvite(matchingInvite.id)}>Revoke</button>
                           </>
                         )}
-                        {isAdmin && !matchingInvite && !isLoggedIn && (
+                        {(isAdmin || isWorkspaceAdmin) && !matchingInvite && !isLoggedIn && (
                           // Roster members added before this invite system existed
                           // (or an invite that got revoked) have no invite record at
                           // all -- give the admin a way to send one retroactively
@@ -19155,6 +19201,7 @@ function AdminPage({
           </div>
         </section>
 
+        {(isAdmin || isManagerRole) && (
         <section className="panel wide">
           <PanelHeader title="Notification Rules" label="Which channel(s) fire for each event -- programmable, no code change needed" />
           <table className="stack-table-mobile">
@@ -19187,7 +19234,9 @@ function AdminPage({
             </tbody>
           </table>
         </section>
+        )}
 
+        {(isAdmin || isManagerRole) && (
         <section className="panel wide">
           <PanelHeader title="Standard Install Times" label="Hours per unit, by inventory category -- powers schedule generation" />
           <div className="roster-add-row">
@@ -19214,7 +19263,9 @@ function AdminPage({
             </tbody>
           </table>
         </section>
+        )}
 
+        {(isAdmin || isManagerRole) && (
         <section className="panel wide">
           <PanelHeader title="Project Schedule Templates" label="Ordered phases a PM can apply to a project to auto-draft a schedule" />
           <div className="roster-add-row">
@@ -19290,6 +19341,7 @@ function AdminPage({
           })}
           {scheduleTemplates.length === 0 && <div className="empty-compact-state">No templates yet. Create one above, then add phases to it.</div>}
         </section>
+        )}
 
         <FormBuilderPanel
           title="Form Builder - After-Sales Handover"
@@ -19446,6 +19498,7 @@ function AdminPage({
           </div>
         </section>
 
+        {(isAdmin || isManagerRole) && (
         <section className="panel wide">
           <PanelHeader title="Proposal Template" label="Shared boilerplate sent with every Quote Proposal -- Assumptions, Warranty, Payment Terms, etc. Seeded from EnSight's real proposal wording; edit here and every future proposal picks up the change." />
           <div className="proposal-template-list">
@@ -19480,10 +19533,11 @@ function AdminPage({
             {proposalTemplateSections.length === 0 && <p className="empty-compact-state">No template sections yet -- run migration 053.</p>}
           </div>
         </section>
+        )}
         </>
       )}
 
-      {(isAdmin || isManagerRole) && (
+      {(isAdmin || isManagerRole || isWorkspaceAdmin) && (
         <section className="panel wide">
           <PanelHeader title="Catalog Price Change Requests" label="Sales reps have no direct write access to the catalog -- their cost/markup/price edits land here for approval, then get applied automatically once approved." />
           {catalogPriceChangeStatus && <small className="muted">{catalogPriceChangeStatus}</small>}
