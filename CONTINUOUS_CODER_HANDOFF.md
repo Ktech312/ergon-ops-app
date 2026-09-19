@@ -404,27 +404,28 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: ONE ITEM.** Apply migration 163
-(`backend/supabase/migrations/163_phase3_stage5_rpc_workspace_containment_gaps.sql`), then run its
-canonical test
-(`backend/supabase/migration_163_phase3_stage5_rpc_workspace_containment_gaps_tests.sql`). Migrations
-155 through 162 are all confirmed applied and their canonical tests all passed in production,
-2026-09-17. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully
-shipped end-to-end.**
+**Manual-action queue, current exact state: NONE.** Migration 163 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 163 are all confirmed
+applied and their canonical tests all passed in production. **Phase 3 Stage 4
+(Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end.**
 
-**Stage 5 scoping delivered, first migration implemented locally**: a full scoping pass across all
+**Stage 5 scoping delivered, first migration shipped**: a full scoping pass across all
 162 migrations (full detail in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry) found real,
 confirmed cross-workspace containment gaps -- the same T2/T8 class already fixed elsewhere in Phase 3,
 just missed because the affected code lives outside the file clusters those earlier passes reviewed:
-- **Migration 163 (`88fa65b`) closes three RPC gaps**: `replace_project_bom_lines()` (migration 131,
-  latest def 132) checked the caller's role but never that the target project belongs to the caller's
-  workspace, and its `inventory_items` lookups were entirely workspace-blind; `respond_to_proposal_question()`
-  (migration 149, latest def 150) checked role but never workspace -- any Sales/manager/admin could
-  answer any OTHER workspace's client Q&A by question id, fixed by treating a cross-workspace question
-  identically to a nonexistent one; `submit_proposal_question()` (same file) was missing the
-  suspended-workspace ("T8") check its own sibling RPCs already got in migration 155. All three carried
-  forward verbatim from their current live definitions with only the targeted fixes. Not yet applied
-  -- queued for E's review.
+- **Migration 163 (`88fa65b`) — CONFIRMED APPLIED and its canonical test PASSED in production
+  (2026-09-18, "Success. No rows returned" for both). Closes three RPC gaps**: `replace_project_bom_lines()`
+  (migration 131, latest def 132) checked the caller's role but never that the target project belongs to
+  the caller's workspace, and its `inventory_items` lookups were entirely workspace-blind;
+  `respond_to_proposal_question()` (migration 149, latest def 150) checked role but never workspace --
+  any Sales/manager/admin could answer any OTHER workspace's client Q&A by question id, fixed by treating
+  a cross-workspace question identically to a nonexistent one; `submit_proposal_question()` (same file)
+  was missing the suspended-workspace ("T8") check its own sibling RPCs already got in migration 155. All
+  three carried forward verbatim from their current live definitions with only the targeted fixes. One
+  same-day test-script fix, `9f342d4`: Section 2's fixture used `'draft'` for `sales_quotes.status`
+  (a valid `sales_quote_proposals.status` value, not `sales_quotes.status`, constrained to
+  `open`/`closed_won`/`closed_lost` since migration 048) -- corrected to `'open'`, migration 163 itself
+  never touched. **Do not run migration 163 or its canonical test again.**
 - **Also found, NOT yet migrated (queued behind 163, see §11 for full detail)**: global `unique`
   constraints on seven already-workspace-scoped tables never previously flagged (`clients.name`,
   `projects.project_name`/`project_number`, `vendors.name`, `inventory_items.sku`,
