@@ -299,10 +299,27 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migration 171 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 171 are all confirmed
-applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
-end-to-end** (migrations 161/162, confirmed applied and tested).
+**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 172
+(`backend/supabase/migrations/172_inventory_item_equipment_type_atomic_delete_and_log.sql`), then run
+its canonical test
+(`backend/supabase/migration_172_inventory_item_equipment_type_atomic_delete_and_log_tests.sql`). Three
+new atomic RPCs (`delete_inventory_item_and_log`/`force_delete_inventory_item_and_log`/
+`delete_equipment_type_and_log`) close the one residual gap migration 166 left open: `inventory_item`/
+`equipment_type` are the only two `deletion_log` entity types that are genuinely hard-deleted, so their
+log entry's `workspace_id` used to stay null forever (the source row was already gone by the time the
+log write happened). Each RPC captures `workspace_id` from the row before deleting it, in the same
+transaction. Every existing client behavior is preserved exactly (lookup-miss = silent success, the
+same friendly FK-conflict messages, force-delete's zero-balance-only clearing). Independently verified
+end-to-end against a real local PostgreSQL 18 engine (PGlite), including a workspace-scoped-sku
+ambiguity scenario (two workspaces can now legitimately share an identical sku since migration 164 --
+the RPCs' internal lookups are explicitly scoped to the caller's own workspace to avoid resolving the
+wrong one). **The matching frontend change (routing `deleteInventoryItem()`/`forceDeleteInventoryItem()`/
+`deleteEquipmentType()` through these RPCs) is committed locally but deliberately NOT pushed/deployed
+yet** -- it would break every such delete in the live app if deployed before this migration exists in
+production. Once this migration and its test are confirmed, that commit will be pushed and verified via
+the usual Vercel bundle-hash check. Migrations 155 through 171 are all confirmed applied. **Phase 3
+Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end**
+(migrations 161/162, confirmed applied and tested).
 
 **Migration 171 (`96bc949`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18, "Success. No rows returned" for both).** Hygiene item, not workspace containment:
