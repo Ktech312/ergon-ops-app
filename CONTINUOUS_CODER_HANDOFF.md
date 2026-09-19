@@ -404,10 +404,31 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migration 167 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 167 are all confirmed
+**Manual-action queue, current exact state: NONE.** Migration 168 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 168 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end.**
+
+**Migration 168 (`e4fcbc3`) — URGENT LIVE INCIDENT, CONFIRMED APPLIED and its canonical test PASSED in
+production (2026-09-18).** Found while scoping the storage-bucket item below (`sales-quote-images`):
+migration 161's `purchase-order-files` storage.objects INSERT/UPDATE policies required a matching
+`purchase_order_files` row to already exist (exact match on `storage_path`) before an upload could
+succeed, but the real upload flow (`addPurchaseOrderFile()`, `src/persistence.ts:9931-9960`) uploads
+the file bytes to Storage FIRST and only inserts the metadata row afterward -- meaning every purchase
+order file upload attempted since migration 161 went live (2026-09-17) had almost certainly been
+silently failing. Confirmed empirically against a real local PostgreSQL 18 engine (PGlite): reproduced
+the exact rejection under the pre-168 policy, confirmed resolved after applying the fix. Fixed by
+matching the `purchase_order_id` leading path segment directly against `public.purchase_orders` (same
+pattern already correct in migration 162 for channel message-attachments), not through the per-file
+metadata row -- no chicken-and-egg problem, a purchase order obviously exists before any file is
+uploaded to it. Migration 161 itself not edited or rerun. **Do not run migration 168 or its canonical
+test again.**
+
+**Correction to the Stage 5 storage-bucket scoping item below**: of the three buckets flagged as
+"deferred, never claimed," only `sales-quote-images` is actually still unaddressed --
+`purchase-order-files` (migration 161) and the `message-attachments` channel-specific policies
+(migration 162) were already correctly workspace-scoped. The planning doc's earlier note was stale for
+those two; corrected here and in `PRODUCT_MASTER_COMPLETION_PLAN.md`.
 
 **Stage 5 scoping delivered, first three migrations shipped**: a full scoping pass across all
 162 migrations (full detail in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry) found real,
@@ -513,9 +534,11 @@ just missed because the affected code lives outside the file clusters those earl
   row-level leakage pre-fix. **CONFIRMED APPLIED and its canonical test PASSED in production
   (2026-09-18, "Success. No rows returned" for both). Do not run migration 167 or its canonical test
   again.**
-- Storage bucket policies for `purchase_order_files`/`sales-quote-images`/`message-attachments` were
-  each named as "deferred to later" by a different earlier stage but never actually claimed by any of
-  them. `notification_rules`/`standard_install_times`/`project_schedule_templates` are confirmed
+- Storage bucket policy for `sales-quote-images` is the one genuine remaining gap of the three
+  originally named as "deferred to later" -- `purchase-order-files` (migration 161) and
+  `message-attachments`'s channel-specific policies (migration 162) turned out to already be correctly
+  workspace-scoped on direct re-check; that finding also surfaced migration 168's urgent incident fix
+  (above). `notification_rules`/`standard_install_times`/`project_schedule_templates` are confirmed
   genuinely global config -- whether they ever need a per-workspace override is a governance decision
   for E, not blocking anything else. `app_sync_events` looks dead (confirm before dropping);
   `app_transaction_locks` is low-risk but has a stray anon EXECUTE grant worth revoking.
