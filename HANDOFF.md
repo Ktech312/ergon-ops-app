@@ -299,27 +299,29 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: ONE ITEM.** Apply migration 163
-(`backend/supabase/migrations/163_phase3_stage5_rpc_workspace_containment_gaps.sql`), then run its
-canonical test
-(`backend/supabase/migration_163_phase3_stage5_rpc_workspace_containment_gaps_tests.sql`). Migrations
-155 through 162 are all confirmed applied and their canonical tests all passed in production,
-2026-09-17. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully
-shipped end-to-end** (migrations 161/162, confirmed applied and tested).
+**Manual-action queue for E, current exact state: NONE.** Migration 163 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18 -- see below. Migrations 155 through 163 are all
+confirmed applied and their canonical tests all passed in production. **Phase 3 Stage 4
+(Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end** (migrations
+161/162, confirmed applied and tested).
 
 **Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
-access paths) scoping is done; first migration implemented locally.** Full detail in
+access paths) scoping is done; first migration shipped.** Full detail in
 `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry and `CONTINUOUS_CODER_HANDOFF.md`'s matching
 session-log entry. Summary:
 
-- **Migration 163** (`88fa65b`) closes three real, confirmed cross-workspace RPC containment gaps
-  (same T2/T8 class already fixed elsewhere in Phase 3, missed because these functions live outside
-  the file clusters earlier passes reviewed): `replace_project_bom_lines()` checked role but never
-  that the target project belongs to the caller's workspace, and its `inventory_items` lookups were
+- **Migration 163 (`88fa65b`) — CONFIRMED APPLIED and its canonical test PASSED in production
+  (2026-09-18, "Success. No rows returned" for both).** Closes three real, confirmed cross-workspace RPC
+  containment gaps (same T2/T8 class already fixed elsewhere in Phase 3, missed because these functions
+  live outside the file clusters earlier passes reviewed): `replace_project_bom_lines()` checked role but
+  never that the target project belongs to the caller's workspace, and its `inventory_items` lookups were
   entirely workspace-blind; `respond_to_proposal_question()` checked role but never workspace;
   `submit_proposal_question()` was missing the suspended-workspace check its siblings already got in
-  migration 155. Not yet applied -- queued for E's review.
-- **Queued behind 163, not yet migrated**: workspace-scoped uniqueness fixes on 9 tables (must land
+  migration 155. One same-day test-script fix, `9f342d4`: the Section 2 fixture used `'draft'` for
+  `sales_quotes.status`, which is a valid `sales_quote_proposals.status` value, not `sales_quotes.status`
+  (constrained to `open`/`closed_won`/`closed_lost` since migration 048) -- corrected to `'open'`,
+  migration 163 itself never touched. **Do not run migration 163 or its canonical test again.**
+- **Queued behind 163, next up**: workspace-scoped uniqueness fixes on 9 tables (must land
   together with making the ref-counter tables workspace-keyed); the three report views likely leak
   cross-workspace aggregate data (needs a live-database grant check first); `deletion_log` is a
   confirmed live cross-workspace leak; storage bucket policies for 3 buckets were each deferred by a
@@ -330,8 +332,8 @@ session-log entry. Summary:
 - **Correction**: `save_equipment_recipe()` was already retired from `active_workspace_id()` by
   migration 159 -- older text still listing it as pending is stale.
 
-**Recommended next step**: once migration 163 is confirmed, continue Stage 5 with the
-uniqueness/ref-counter migration next (see §11 for the full table list).
+**Recommended next step (now active)**: continue Stage 5 with the uniqueness/ref-counter migration
+next (see §11 for the full table list).
 
 **Cross-cutting finding, tracked so it isn't lost across later stages**: `active_workspace_id()`
 (migration 124) is a deliberate, tested, fail-closed guard requiring exactly one `workspaces` row in
