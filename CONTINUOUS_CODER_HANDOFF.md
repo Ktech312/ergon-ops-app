@@ -404,8 +404,8 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migration 166 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 166 are all confirmed
+**Manual-action queue, current exact state: NONE.** Migration 167 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 167 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end.**
 
@@ -496,13 +496,24 @@ just missed because the affected code lives outside the file clusters those earl
   `security definer` alone is sufficient) confirming this migration is NOT exposed to the same
   missing-`security definer` bug class that caused the migration 164/165 incident. **CONFIRMED APPLIED
   and its canonical test PASSED in production (2026-09-18, "Success. No rows returned" for both). Do
-  not run migration 166 or its canonical test again.** The three report views
-  (`report_inventory_on_hand`/`report_project_inventory_usage`/`report_purchase_order_status`, all from
-  migration 001, never touched since) likely leak cross-workspace aggregate data via Postgres's
-  default view-owner RLS-bypass semantics -- needs a live-database grant check before a fix can be
-  written safely. `deletion_log` (migration 088) is a confirmed live cross-workspace leak (fully open
-  RLS, polymorphic audit table with human-readable labels and actor emails, still actively written to).
-  Storage bucket policies for `purchase_order_files`/`sales-quote-images`/`message-attachments` were
+  not run migration 166 or its canonical test again.**
+- **Migration 167 (`45302d8`) closed a CONFIRMED, LIVE, anon-exploitable cross-workspace data leak** in
+  the three report views (`report_inventory_on_hand`/`report_project_inventory_usage`/
+  `report_purchase_order_status`, migration 001, never touched since): owned by `postgres` with no
+  `security_invoker`, bypassing RLS entirely, and `anon` (fully unauthenticated) had SELECT on all
+  three, confirmed by E running a live-database diagnostic query directly against production,
+  2026-09-18 (`select relname, pg_get_userbyid(relowner), reloptions, has_table_privilege('anon', ...),
+  has_table_privilege('authenticated', ...) from pg_class where relkind='v' and relname in (...)` --
+  every row came back `postgres | NULL | true | true`). Fixed with `security_invoker = true` on all
+  three plus revoking `anon` SELECT outright -- no view-body rewrite needed, since each view INNER
+  JOINs at least one already workspace-scoped table (migrations 156/159/160), which alone forces
+  containment regardless of any other joined table's own RLS state. Independently verified end-to-end
+  against a real local PostgreSQL 18 engine (PGlite), including a negative control (the same test fails
+  at Section 0 without this migration applied) and a deeper read-only probe confirming genuine
+  row-level leakage pre-fix. **CONFIRMED APPLIED and its canonical test PASSED in production
+  (2026-09-18, "Success. No rows returned" for both). Do not run migration 167 or its canonical test
+  again.**
+- Storage bucket policies for `purchase_order_files`/`sales-quote-images`/`message-attachments` were
   each named as "deferred to later" by a different earlier stage but never actually claimed by any of
   them. `notification_rules`/`standard_install_times`/`project_schedule_templates` are confirmed
   genuinely global config -- whether they ever need a per-workspace override is a governance decision
