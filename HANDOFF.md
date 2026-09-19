@@ -299,10 +299,23 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migration 166 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 166 are all confirmed
+**Manual-action queue for E, current exact state: NONE.** Migration 167 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 167 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end** (migrations 161/162, confirmed applied and tested).
+
+**Migration 167 (`45302d8`) — CONFIRMED APPLIED and its canonical test PASSED in production
+(2026-09-18, "Success. No rows returned" for both).** Closed a CONFIRMED, LIVE, and actively
+exploitable cross-workspace data leak: `report_inventory_on_hand`/`report_project_inventory_usage`/
+`report_purchase_order_status` (migration 001, never touched since) were owned by `postgres` with no
+`security_invoker`, bypassing RLS entirely -- E confirmed directly against production that `anon`
+(fully unauthenticated) ALSO had SELECT on all three, not just `authenticated`. Fixed with
+`security_invoker = true` on all three plus revoking `anon` SELECT outright -- no view-body rewrite
+needed, since each view INNER JOINs at least one already workspace-scoped table (migrations
+156/159/160), which alone forces containment. Independently verified end-to-end against a real local
+PostgreSQL 18 engine (PGlite), including a negative control (the same test fails at Section 0 without
+this migration applied) and a deeper read-only probe confirming genuine row-level leakage pre-fix, not
+just a missing flag. **Do not run migration 167 or its canonical test again.**
 
 **Migration 166 (`df4bed6`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18, "Success. No rows returned" for both).** Closes `deletion_log`'s confirmed live
@@ -321,7 +334,7 @@ same missing-`security definer` bug class that caused the migration 164/165 inci
 migration 166 or its canonical test again.**
 
 **Stage 5 (workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect
-access paths) scoping is done; first three migrations shipped.** Full detail in
+access paths) scoping is done; first four migrations shipped.** Full detail in
 `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry and `CONTINUOUS_CODER_HANDOFF.md`'s matching
 session-log entry. Summary:
 
@@ -364,11 +377,10 @@ session-log entry. Summary:
   -- needs its own reviewed migration) and `equipment_types.equipment_number` (stays deferred, low
   priority, server-generated, per the master plan). **Do not run migrations 164/165 or migration 164's
   canonical test again.**
-- **Queued next**: the three report views likely leak cross-workspace aggregate data (needs a
-  live-database grant check first); storage bucket policies for 3 buckets were each deferred by a
-  different earlier stage but never actually claimed; `project_documents.document_number` needs its own
-  reviewed migration (add a real `workspace_id` column + backfill + derivation trigger); an atomic
-  delete+log RPC for `inventory_item`/`equipment_type` to fully close migration 166's own residual gap;
+- **Queued next**: storage bucket policies for 3 buckets were each deferred by a different earlier
+  stage but never actually claimed; `project_documents.document_number` needs its own reviewed
+  migration (add a real `workspace_id` column + backfill + derivation trigger); an atomic delete+log
+  RPC for `inventory_item`/`equipment_type` to fully close migration 166's own residual gap;
   the pre-existing `build_transaction` deletion-log bug migration 166 found but did not fix.
 - **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
   `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
