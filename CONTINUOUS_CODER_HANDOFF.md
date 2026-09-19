@@ -404,10 +404,34 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migration 169 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 169 are all confirmed
+**Manual-action queue, current exact state: NONE.** Migration 170 and its canonical test are both
+confirmed applied and passed in production, 2026-09-18. Migrations 155 through 170 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
 end-to-end.**
+
+**Migration 170 (`9a1ff1e`) — URGENT LIVE INCIDENT, CONFIRMED APPLIED and its canonical test PASSED in
+production (2026-09-18).** Found while continuing the original `project_documents.document_number`
+task (the one column migration 164 deliberately excluded, no `workspace_id` on this table at all).
+`project_documents` has three nullable anchors (`project_id`/`purchase_order_id`/`purchase_request_id`)
+scoped only indirectly via a three-way coalesce (migration 161). Confirmed from `src/persistence.ts`:
+`project_id` is effectively dead for new rows (neither real write path ever sets it -- the
+`ProjectDocument` type has no `projectId` field at all), and a plain "general project document"
+(migration 080's own header: "most documents ... link to neither") sets neither PO nor PR -- so the
+app's own MOST COMMON document-upload case makes the coalesce resolve to null, and migration 161's
+INSERT policy rejects the insert outright. **Every general project document upload attempted since
+migration 161 went live (2026-09-17) had almost certainly been failing.** Confirmed empirically against
+a real local PostgreSQL 18 engine (PGlite): reproduced the exact rejection under the pre-170 policy
+using the identical no-anchor payload the app actually sends, confirmed resolved afterward. Fixed by
+giving `project_documents` a real `workspace_id` column with a derivation trigger modeled on migration
+162's `guard_channel_workspace_id_mutation()` -- prefer whichever anchor is set (same priority order as
+the existing coalesce), fall back to the caller's own resolved workspace when none are set (the one
+behavioral change, and exactly what fixes the incident). RLS switched to a plain `workspace_id` check; a
+cross-workspace anchor reference is still correctly rejected (the caller must be an active member of
+whatever workspace the row resolves to, regardless of how it was derived -- no explicit comparison
+logic needed in the trigger itself). Also closes the original goal: `document_number`'s global unique
+constraint is now `(workspace_id, document_number)`, same pattern as migration 164's other nine
+columns. `project_document_owner_workspace_id()` (still used by `sales_quote_extractions`) simplified
+to read the new direct column. **Do not run migration 170 or its canonical test again.**
 
 **Migration 169 (`dfbbba1`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18).** Closed the last genuine storage-bucket gap: `sales-quote-images`' four
