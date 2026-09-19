@@ -484,10 +484,21 @@ session-log entry. Summary:
   workspace-scoped uniqueness, `deletion_log` (including its residual inventory_item/equipment_type
   gap, migration 172), the report-views leak, all storage bucket policy gaps, `project_documents.
   document_number` and its upload-blocking incident, and the `app_sync_events`/`app_transaction_locks`
-  stray anon access. **Remaining, not yet scheduled**: the pre-existing `build_transaction`
-  deletion-log bug (found, not fixed -- non-uuid `entity_id`); E's governance call on
-  `notification_rules`/`standard_install_times`/`project_schedule_templates` (global forever vs.
-  per-workspace override).
+  stray anon access.
+- **`build_transaction`'s deletion-log bug -- FIXED, no migration needed (`e56c696`).**
+  `deleteBuildTransaction()` was sending `build_number` ("BUILD-0001", this table's natural key in the
+  app layer, never a raw uuid) as `deletion_log.entity_id`, a `uuid not null` column -- PostgREST
+  silently rejected every such insert before it ever reached Postgres, and `logDeletionEvent()` never
+  inspects the fetch response, so every `build_transaction` deletion had been failing to log at all.
+  Fixed by using the real row `id` already present in the PATCH's own `return=representation` response
+  (no extra request needed) -- pure frontend fix, no backend schema change. Side effect, confirmed no
+  migration required: migration 166's `derive_deletion_log_workspace_id()` already resolves
+  `'build_transaction'` via `select workspace_id from build_transactions where id = new.entity_id` --
+  that lookup was simply never reachable before, since no row ever successfully inserted; with a real
+  id now, this entity type's log rows will be correctly workspace-scoped going forward automatically.
+  Deployed and confirmed live (bundle hash changed, zero console errors on load).
+- **Remaining, not yet scheduled**: E's governance call on `notification_rules`/
+  `standard_install_times`/`project_schedule_templates` (global forever vs. per-workspace override).
 - **Governance decision for E, not blocking**: `notification_rules`/`standard_install_times`/
   `project_schedule_templates` are confirmed genuinely global config -- stay global forever, or add a
   per-workspace override eventually?
