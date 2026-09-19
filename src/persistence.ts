@@ -6807,11 +6807,19 @@ export async function deleteBuildTransaction(buildNumber: string, actorEmail: st
   if (!response.ok) {
     return { ok: false, error: await readSupabaseError(response, "Could not delete build") };
   }
-  const deletedRows = (await response.json().catch(() => [])) as Array<{ build_number: string }>;
+  // `deletion_log.entity_id` is a real `uuid` column -- build_number
+  // ("BUILD-0001") is this table's natural key in the app layer, but it is
+  // NOT the row's real id, so it can't be used as entity_id directly (a
+  // prior version of this function tried to, and PostgREST silently
+  // rejected every such insert with a uuid-cast error before it ever
+  // reached deletion_log -- confirmed via migration 166's own scoping
+  // pass). `return=representation` already returns the full updated row,
+  // so the real id is available here with no extra request.
+  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string; build_number: string }>;
   if (deletedRows.length === 0) {
     return { ok: false, error: "Delete didn't affect anything -- you may not have permission." };
   }
-  await logDeletionEvent("build_transaction", buildNumber, buildNumber, "deleted", actorEmail, accessToken);
+  await logDeletionEvent("build_transaction", deletedRows[0].id, buildNumber, "deleted", actorEmail, accessToken);
   return { ok: true };
 }
 
