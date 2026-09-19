@@ -427,8 +427,6 @@ test-script fix, `9f342d4`: Section 2's fixture used `'draft'` for `sales_quotes
 never touched. — *Migration applied and canonical test PASSED in production (E confirmed, 2026-09-18:
 "Success. No rows returned" for both).* **Phase 3 Stage 5's first migration is now fully shipped.**
 
-## 4. Completed locally but not yet migrated/deployed/verified
-
 **Migration 173** (`backend/supabase/migrations/173_global_config_workspace_scoping.sql`) — **E's
 governance call resolved, 2026-09-18: "each company should have its own separate copies, this should
 not be a question."** `notification_rules`/`standard_install_times`/`project_schedule_templates` (+
@@ -445,19 +443,28 @@ default rows — same reasoning as migration 162's deferral of default-channel s
 workspace-provisioning path exists yet, Stage 7) — a new workspace will have every notification
 silently off until seeded, a known/accepted consequence, not a technical blocker. Canonical test:
 `backend/supabase/migration_173_global_config_workspace_scoping_tests.sql`. Independently verified
-end-to-end against a real local PostgreSQL 18 engine (PGlite), reproduced on two separate runs. **A
-companion `src/persistence.ts` fix is prepared but deliberately kept UNCOMMITTED** (not even `git
-add`ed) until this migration is confirmed applied — learning directly from the migration 172 incident
-(§3): this migration alone temporarily breaks `standard_install_times`'s upsert save path (its
-`on_conflict` target must also change) until that fix ships, so it goes out immediately after
-confirmation this time, not held back indefinitely.
+end-to-end against a real local PostgreSQL 18 engine (PGlite), reproduced on two separate runs. **One
+test-fixture bug found on E's first live run** (not a migration bug): the test assumed
+`'low_stock_reached'` was a free `event_type` to insert fresh, but migration 024 (and every later
+widening migration) already seeds a real row for every valid value in the one real production
+workspace — fixed by discovering an existing row's `event_type` dynamically (commit `d2d8047`),
+re-verified against a sandbox seeded with realistic pre-existing data this time (the original sandbox's
+empty table is why this didn't surface sooner). The companion `src/persistence.ts` fix
+(`standard_install_times`'s upsert `on_conflict` target) was committed and pushed immediately after E
+confirmed the migration, learning directly from the migration 172 incident (§3) — deploy confirmed live
+via bundle hash within the same turn. — *Migration applied and canonical test PASSED in production (E
+confirmed, 2026-09-18, "Success. No rows returned" for both).* **Do not run migration 173 or its
+canonical test again.**
+
+## 4. Completed locally but not yet migrated/deployed/verified
+
+**None currently.**
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**One item queued: apply migration 173**
-(`backend/supabase/migrations/173_global_config_workspace_scoping.sql`), then run its canonical test.
-Migrations 155 through 172 are all confirmed applied and their canonical tests all passed in
-production, 2026-09-17/18.
+**None currently.** Migrations 155 through 173 are all confirmed applied and their canonical tests all
+passed in production, 2026-09-17/18. **Phase 3 Stage 5 is now fully complete**, including the
+governance decision on global config tables.
 
 **Migration 172** (`backend/supabase/migrations/172_inventory_item_equipment_type_atomic_delete_and_log.sql`,
 commit `0abe68b`) — closes migration 166's one residual gap: `inventory_item`/`equipment_type` are the
