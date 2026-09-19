@@ -5914,34 +5914,28 @@ async function getMainWarehouseLocationId(accessToken: string): Promise<string |
 // purchase_order_lines, equipment_bom_components, and more), so an item
 // with any real stock/movement/BOM history will legitimately fail with a
 // 409 -- Retire is the correct action for those, not a bug to work around.
+//
+// Migration 172: routed through the delete_inventory_item_and_log() RPC
+// instead of a separate lookup + DELETE + logDeletionEvent() -- inventory_
+// item is one of only two deletion_log entity types that are genuinely
+// hard-deleted, so the log write used to happen after the row (and its
+// workspace_id) was already gone, leaving that log entry permanently
+// unscoped. The RPC captures workspace_id from the row before deleting it,
+// in the same transaction. Every existing behavior (lookup-miss is a
+// silent success, the friendly message on a real FK conflict, the
+// affected-row check) is preserved server-side now, not client-side.
 export async function deleteInventoryItem(sku: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return { ok: false, error: "Not configured." };
   }
-  const lookupResponse = await fetch(supabaseUrl(`inventory_items?sku=eq.${encodeURIComponent(sku)}&select=id,item_name`), {
+  const response = await fetch(supabaseUrl("rpc/delete_inventory_item_and_log"), {
+    method: "POST",
     headers: supabaseHeaders(accessToken),
-  });
-  const lookupRows = lookupResponse.ok ? ((await lookupResponse.json()) as Array<{ id: string; item_name: string }>) : [];
-  const item = lookupRows[0];
-  if (!item) {
-    // Nothing remote to delete -- either never synced yet or already gone.
-    return { ok: true };
-  }
-  const response = await fetch(supabaseUrl(`inventory_items?id=eq.${item.id}`), {
-    method: "DELETE",
-    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ p_sku: sku, p_actor_email: actorEmail || null }),
   });
   if (!response.ok) {
-    if (response.status === 409) {
-      return { ok: false, error: "Can't delete -- this item has stock, movement, or build-BOM history. Use Retire instead to keep it out of the picker without losing that history." };
-    }
     return { ok: false, error: await readSupabaseError(response, "Could not delete inventory item") };
   }
-  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
-  if (deletedRows.length === 0) {
-    return { ok: false, error: "Delete didn't remove anything -- you may not have permission." };
-  }
-  await logDeletionEvent("inventory_item", item.id, item.item_name || sku, "deleted", actorEmail, accessToken);
   return { ok: true };
 }
 
@@ -5960,37 +5954,23 @@ export async function deleteInventoryItem(sku: string, actorEmail: string, acces
 // still fails -- even for an admin, on purpose -- since that's real
 // business/audit history, not demo clutter, and destroying it would be a
 // much bigger decision than "let admin clean up test data."
+//
+// Migration 172: routed through force_delete_inventory_item_and_log(),
+// same reasoning as deleteInventoryItem() above -- the zero-balance
+// clearing, the delete, and the log write (with the "(admin force-delete)"
+// label suffix) all happen server-side in one transaction now.
 export async function forceDeleteInventoryItem(sku: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return { ok: false, error: "Not configured." };
   }
-  const lookupResponse = await fetch(supabaseUrl(`inventory_items?sku=eq.${encodeURIComponent(sku)}&select=id,item_name`), {
+  const response = await fetch(supabaseUrl("rpc/force_delete_inventory_item_and_log"), {
+    method: "POST",
     headers: supabaseHeaders(accessToken),
-  });
-  const lookupRows = lookupResponse.ok ? ((await lookupResponse.json()) as Array<{ id: string; item_name: string }>) : [];
-  const item = lookupRows[0];
-  if (!item) {
-    return { ok: true };
-  }
-  await fetch(supabaseUrl(`inventory_balances?inventory_item_id=eq.${item.id}&quantity_on_hand=eq.0&quantity_reserved=eq.0`), {
-    method: "DELETE",
-    headers: supabaseHeaders(accessToken),
-  });
-  const response = await fetch(supabaseUrl(`inventory_items?id=eq.${item.id}`), {
-    method: "DELETE",
-    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ p_sku: sku, p_actor_email: actorEmail || null }),
   });
   if (!response.ok) {
-    if (response.status === 409) {
-      return { ok: false, error: "Still can't delete -- this item has real movement, build-BOM, or purchase order history, not just an empty stock record. Use Retire instead." };
-    }
     return { ok: false, error: await readSupabaseError(response, "Could not delete inventory item") };
   }
-  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
-  if (deletedRows.length === 0) {
-    return { ok: false, error: "Delete didn't remove anything -- you may not have permission." };
-  }
-  await logDeletionEvent("inventory_item", item.id, `${item.item_name || sku} (admin force-delete)`, "deleted", actorEmail, accessToken);
   return { ok: true };
 }
 
@@ -6443,48 +6423,23 @@ export function createDeviceRecipeSaveQueue(
 // "hide but keep for history" path -- this is for recipes the user
 // actually wants gone, so a real DB delete (not soft) is correct here;
 // still logged to deletion_log for accountability.
+// Migration 172: routed through the delete_equipment_type_and_log() RPC --
+// same reasoning as deleteInventoryItem() above (equipment_type is the
+// other of the two deletion_log entity types that are genuinely
+// hard-deleted). The lookup-miss success, the FK-conflict friendly
+// message, and the affected-row check are all preserved server-side now.
 export async function deleteEquipmentType(name: string, actorEmail: string, accessToken?: string): Promise<{ ok: boolean; error?: string }> {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return { ok: false, error: "Not configured." };
   }
-  const lookupResponse = await fetch(supabaseUrl(`equipment_types?equipment_name=eq.${encodeURIComponent(name)}&select=id`), {
+  const response = await fetch(supabaseUrl("rpc/delete_equipment_type_and_log"), {
+    method: "POST",
     headers: supabaseHeaders(accessToken),
-  });
-  const lookupRows = lookupResponse.ok ? ((await lookupResponse.json()) as Array<{ id: string }>) : [];
-  const equipmentTypeId = lookupRows[0]?.id;
-  if (!equipmentTypeId) {
-    // A recipe created this session only exists in local React state until
-    // the debounced whole-array save (saveDeviceRecipes, up to 650ms behind)
-    // writes it to equipment_types -- deleting it right after creating it
-    // used to hit this lookup before that write landed, come back empty,
-    // and fail with an error the caller had no visible way to show. Nothing
-    // real exists yet to delete or log, so this is a success, not a failure.
-    return { ok: true };
-  }
-  const response = await fetch(supabaseUrl(`equipment_types?id=eq.${equipmentTypeId}`), {
-    method: "DELETE",
-    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ p_equipment_name: name, p_actor_email: actorEmail || null }),
   });
   if (!response.ok) {
-    // build_transactions.equipment_type_id has no ON DELETE clause (defaults
-    // to RESTRICT), so this fails with a real FK-violation error whenever
-    // the recipe has ever actually been built -- surface that plainly
-    // rather than a raw Postgres error.
-    if (response.status === 409) {
-      return { ok: false, error: "Can't delete -- this equipment type has build history. Use Retire instead to keep it out of the picker without losing that history." };
-    }
     return { ok: false, error: await readSupabaseError(response, "Could not delete equipment type") };
   }
-  // `return=representation` so a DELETE that matched 0 rows (e.g. blocked by
-  // an RLS policy) can be told apart from a real delete -- PostgREST returns
-  // 200/204 either way, so response.ok alone can't tell a silent no-op from
-  // an actual row removal, and logging the former as "deleted" would be a
-  // false audit entry.
-  const deletedRows = (await response.json().catch(() => [])) as Array<{ id: string }>;
-  if (deletedRows.length === 0) {
-    return { ok: false, error: "Delete didn't remove anything -- you may not have permission to delete equipment types." };
-  }
-  await logDeletionEvent("equipment_type", equipmentTypeId, name, "deleted", actorEmail, accessToken);
   return { ok: true };
 }
 
