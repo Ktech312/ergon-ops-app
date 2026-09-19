@@ -404,12 +404,13 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migrations 164 and 165 are both confirmed applied
-and migration 164's canonical test passed in production, 2026-09-18. Migrations 155 through 165 are all
-confirmed applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is
-fully shipped end-to-end.**
+**Manual-action queue, current exact state: ONE ITEM.** Apply migration 166
+(`backend/supabase/migrations/166_deletion_log_workspace_containment.sql`), then run its canonical test
+(`backend/supabase/migration_166_deletion_log_workspace_containment_tests.sql`). Migrations 155 through
+165 are all confirmed applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/
+Storage) is fully shipped end-to-end.**
 
-**Stage 5 scoping delivered, first two migrations shipped**: a full scoping pass across all
+**Stage 5 scoping delivered, first two migrations shipped, third queued**: a full scoping pass across all
 162 migrations (full detail in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11's Stage 5 entry) found real,
 confirmed cross-workspace containment gaps -- the same T2/T8 class already fixed elsewhere in Phase 3,
 just missed because the affected code lives outside the file clusters those earlier passes reviewed:
@@ -471,8 +472,31 @@ just missed because the affected code lives outside the file clusters those earl
   successfully in this same production database (`guard_workspace_id_mutation()`,
   `replace_project_bom_lines()`, `respond_to_proposal_question()`, `submit_proposal_question()`,
   `save_equipment_recipe()`). E applied it and migration 164's canonical test, re-run afterward, passed
-  cleanly. **Do not run migrations 164/165 or migration 164's canonical test again.** The three report
-  views
+  cleanly. **Do not run migrations 164/165 or migration 164's canonical test again.**
+- **Migration 166 (`df4bed6`) closes `deletion_log`'s confirmed live cross-workspace leak** -- no
+  `workspace_id`, fully open `using(true)` SELECT policy. Adds `workspace_id` (nullable by design, not
+  transitional) plus a BEFORE INSERT trigger, `derive_deletion_log_workspace_id()`, dispatching across
+  the 21 real `entity_type` literals actually written by `src/persistence.ts`'s single shared writer
+  (verified by direct grep of every `logDeletionEvent(...)` call site, not the migration 088 comment's
+  own summary, which turned out incomplete and used different literal strings): 17 resolve via existing
+  `*_owner_workspace_id()` resolvers or a direct column; 4 are confirmed genuinely global
+  (`schedule_template_phase`, `form_schema_field`, `presales_hardware_rule`, `site_hardware_rule`) and
+  stay `workspace_id = null`/visible-to-everyone by design, not a regression; an unrecognized
+  entity_type is rejected outright (fail closed). SELECT policy rewritten to use `is_workspace_member()`
+  (migration 115), never `resolve_caller_workspace_id()` in a bare RLS USING clause (the latter raises
+  on ambiguous/missing membership, unsafe there). **Deliberately NOT closed, flagged not silently
+  accepted**: `inventory_item`/`equipment_type` are the only two entity types genuinely hard-deleted
+  before the log write happens, so a trigger cannot resolve their workspace after the fact (same
+  residual exposure as today, not worsened -- needs an atomic delete+log RPC, real separate design
+  work). Also found, unrelated, pre-existing, NOT fixed here: `build_transaction` deletion-log writes
+  appear to have been silently failing already (`entity_id` populated with a non-uuid `build_number`
+  string against a `uuid not null` column) -- worth E confirming directly
+  (`select count(*) from deletion_log where entity_type = 'build_transaction'`). Independently verified
+  end-to-end against a real local PostgreSQL 18 engine (PGlite) before being sent, including a
+  deliberate stress-test (revoking direct grants on the resolvers it calls, confirming its own
+  `security definer` alone is sufficient) confirming this migration is NOT exposed to the same
+  missing-`security definer` bug class that caused the migration 164/165 incident. Not yet applied --
+  queued for E's review. The three report views
   (`report_inventory_on_hand`/`report_project_inventory_usage`/`report_purchase_order_status`, all from
   migration 001, never touched since) likely leak cross-workspace aggregate data via Postgres's
   default view-owner RLS-bypass semantics -- needs a live-database grant check before a fix can be
