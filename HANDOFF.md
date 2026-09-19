@@ -311,6 +311,39 @@ the 2 remaining storage buckets and 3 structurally-only-tested RPCs remain open 
 separately, see migration 183), all genuinely decision-dependent on E rather than further mechanical
 migration work.
 
+**Migration 183** (`backend/supabase/migrations/183_app_records_state_snapshots_workspace_scoping.sql`,
+commit `a562817`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18
+engine (PGlite); NOT yet applied, kept local for E's review. Closes the last fully-open table in this
+project: `app_records` (migration 009) and `app_state_snapshots` (migration 003), both still
+`using(true)`/`with check(true)` (or equivalent) since creation. Real schema differs from what a "keyed
+jsonb store" assumption would predict — `app_records`' primary key is already the COMPOSITE
+`(workspace_key text default 'default', record_key text check(...))`, not a single folded string key.
+**JUDGMENT CALL (flagged for E)**: since `workspace_key` was already its own column (just holding a
+hardcoded literal, never a real `workspaces.id`, for this table's entire history — confirmed every
+Phase-10-era row and the still-live `roleMode` row all share the one literal value), this migration adds
+a real `workspace_id uuid` column and REPOINTS the primary key to `(workspace_id, record_key)` rather
+than folding anything into a composite string; the old `workspace_key` column is kept (not dropped, no
+column-drop precedent exists anywhere else in this repo) and becomes fully vestigial, same accepted
+status as `app_role_modes`. `app_state_snapshots`' own separate `unique(workspace_key)` constraint is
+repointed to `unique(workspace_id)` the same way; its `id` primary key is untouched, and it stays
+read-only (its `authenticated` write policy has been gone since migration 009:64). **JUDGMENT CALL 2**:
+backfills ALL existing rows (not just live `roleMode` rows) to the one real production workspace — safe
+because there has only ever been one physical `workspace_key` value in either table's history, so this
+is a restatement of an already-true fact, not a guess. `workspace_id` derives automatically via
+`guard_workspace_id_mutation()` (migration 117) on INSERT, verified correct even through
+`saveRemoteAppState()`'s real `INSERT ... ON CONFLICT DO UPDATE` upsert path (the BEFORE INSERT trigger
+still stamps `workspace_id` before Postgres checks the conflict target; the UPDATE branch never receives
+`workspace_id` in the payload, so its immutability check trivially passes) — confirmed empirically in
+PGlite, not just reasoned about. **Coordination risk, same shape as migration 173's Section 5 point 5**:
+repointing the primary key means `saveRemoteAppState()`'s `on_conflict=workspace_key,record_key` no
+longer names a real constraint the instant this migration applies — the companion `src/persistence.ts`
+diff (dropping the `workspace_key=eq.default` read filters, dropping `workspace_key` from the write
+payload, and changing `on_conflict` to `workspace_id,record_key`) is written and staged locally,
+**deliberately NOT committed** per this repo's standing rule — commit only after E confirms migration
+183 is live. `app_sync_events`/`app_transaction_locks` (a different, already-deferred pair of tables per
+migrations 163/164's own "hygiene items" note) are untouched by this migration and its frontend diff on
+purpose.
+
 **Migration 182** (`backend/supabase/migrations/182_company_branding_workspace_scoping.sql`, commit
 `6a1d138`) — DRAFTED and independently verified end-to-end against a real local PostgreSQL 18 engine
 (PGlite); NOT yet applied, kept local for E's review. Converts `company_branding` (migration 039) from a
