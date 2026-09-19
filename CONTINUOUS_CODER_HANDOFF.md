@@ -404,10 +404,19 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: NONE.** Migration 172 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 172 are all confirmed
-applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
-end-to-end.**
+**Manual-action queue, current exact state: ONE ITEM.** Apply migration 173
+(`backend/supabase/migrations/173_global_config_workspace_scoping.sql`), then run its canonical test.
+**E's explicit decision, 2026-09-18**: "each company should have its own separate copies, this should
+not be a question" -- `notification_rules`/`standard_install_times`/`project_schedule_templates` (+
+child `project_schedule_template_phases`) get a real `workspace_id` each, having had exactly one
+shared, global copy since migrations 024/025. Also fixes migration 166's stale `'schedule_template_phase'`
+classification (was "genuinely global," no longer true -- a plain lookup fix, this entity type is
+soft-deleted so no atomic RPC needed). Deliberately NOT done: auto-seeding a new workspace's own default
+rows (same reasoning as migration 162's channel-seeding deferral, Stage 7 territory). A companion
+`src/persistence.ts` fix (the `standard_install_times` upsert `on_conflict` target) is prepared but
+deliberately kept UNCOMMITTED (not even `git add`ed) until this migration is confirmed -- learning from
+the migration 172 incident. Migrations 155 through 172 are all confirmed applied. **Phase 3 Stage 4
+(Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end.**
 
 **Migration 172 (`0abe68b`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18).** Closes migration 166's one residual gap: `inventory_item`/`equipment_type` are the only
