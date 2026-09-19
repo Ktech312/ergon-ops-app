@@ -404,16 +404,19 @@ untouched -- Stage 4 territory (storage). **Migration 160 CONFIRMED APPLIED and 
 PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue, current exact state: FIVE ITEMS.** Apply migrations 175 through 179 in order
-(**179 depends on 175 being applied first**), then run each one's canonical test. Migrations 155 through
-174 are all confirmed applied. **Phase 3 Stage 4 is fully shipped end-to-end. Phase 3 Stage 5 is fully
-complete, including the governance question (migration 173).**
+**Manual-action queue, current exact state: NONE.** Migrations 175 through 179 and their canonical tests
+are all confirmed applied and passed in production, 2026-09-19 ("all came back - Success. No rows
+returned" for all five migration+test pairs, run in order 175→179 as required). Migrations 155 through
+179 are all confirmed applied. **Phase 3 Stage 4 is fully shipped end-to-end. Phase 3 Stage 5 is fully
+complete, including the governance question (migration 173). The final Phase 3 cross-workspace isolation
+suite is now substantially closed** -- only decision-dependent items remain, see below.
 
-**Migrations 175-179 — overnight autonomous batch per E's "do all of them" instruction, committed to
-`main` and pushed; NONE applied to production yet.** Covers the gaps migration 174's schema inventory
-flagged as open. Each independently verified end-to-end against a reconstructed pre-migration schema in
-PGlite with its own canonical test; all five migrations needed zero changes (two test files had bugs,
-found and fixed during verification).
+**Migrations 175-179 — overnight autonomous batch per E's "do all of them" instruction, CONFIRMED
+APPLIED and their canonical tests PASSED in production (2026-09-19, "Success. No rows returned" for all
+five).** Covers the gaps migration 174's schema inventory flagged as open. Each independently verified
+end-to-end against a reconstructed pre-migration schema in PGlite with its own canonical test before
+being handed to E; all five migrations needed zero changes (two test files had bugs, found and fixed
+during verification). **Do not run migrations 175-179 or their canonical tests again.**
 
 - **175** (`6db3148`) -- `team_members` (root staff-directory table, no FK anywhere) gets a real
   `workspace_id`, email uniqueness becomes per-workspace, RLS gated on workspace membership.
@@ -429,8 +432,8 @@ found and fixed during verification).
   readable/writable by any authenticated user) gets a real `workspace_id`.
 - **179** (`2be689d`) -- closes 3 of 6 open storage buckets (`project-location-images`,
   `project-shipment-photos`, `avatars`) via the resolver pattern already proven safe by migrations
-  161/162/169. **Depends on migration 175.** The other 3 open buckets (`project-documents`,
-  `catalog-datasheets`, `company-branding`) are deliberately excluded -- see below.
+  161/162/169. **Depended on migration 175** (E ran 175 before 179 as required). The other 3 open buckets
+  (`project-documents`, `catalog-datasheets`, `company-branding`) are deliberately excluded -- see below.
 
 **Migration 174 (`1608ad8`) — URGENT LIVE GAP, CONFIRMED APPLIED and its canonical test PASSED in
 production (2026-09-19).** Found while inventorying the schema for the final Phase 3 cross-workspace
@@ -447,8 +450,10 @@ USING clause silently returns zero rows on a blocked UPDATE/DELETE rather than r
 lesson already documented in this file from migration 171, just not yet applied there when first
 drafted. **Do not run migration 174 or its canonical test again.**
 
-**Updated 2026-09-19**: migrations 175-179 above close most of what that inventory flagged. What's left
-is genuinely decision-dependent, not mechanical -- `user_invites` (needs a real `accept_invite()` that
+**Updated 2026-09-19**: migrations 175-179 above -- CONFIRMED APPLIED and their canonical tests PASSED
+in production -- close most of what that inventory flagged. **The final Phase 3 cross-workspace
+isolation suite is now substantially closed.** What's left is genuinely decision-dependent, not
+mechanical -- `user_invites` (needs a real `accept_invite()` that
 creates a `workspace_members` row, which doesn't exist today, before scoping makes sense),
 `company_branding` (a literal Postgres singleton, `id boolean primary key default true` -- needs a
 primary-key redesign, plus its storage bucket has no per-row path to anchor RLS against),

@@ -299,56 +299,67 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: FIVE ITEMS.** Apply migrations 175 through 179 in
-order (`176`/`177`/`178` are independent of each other, but **179 depends on 175 being applied first**),
-then run each one's canonical test. Migrations 155 through 174 are all confirmed applied. **Phase 3
-Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped end-to-end**
-(migrations 161/162, confirmed applied and tested). **Phase 3 Stage 5 is fully complete, including the
-one open governance question (migration 173).**
+**Manual-action queue for E, current exact state: NONE.** Migrations 175 through 179 and their canonical
+tests are all confirmed applied and passed in production, 2026-09-19 ("all came back - Success. No rows
+returned" for all five migration+test pairs, run in order 175→179 as required). Migrations 155 through
+179 are all confirmed applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/
+Storage) is fully shipped end-to-end** (migrations 161/162, confirmed applied and tested). **Phase 3
+Stage 5 is fully complete, including the one open governance question (migration 173). The final Phase 3
+cross-workspace isolation suite is now substantially closed** — see the updated inventory below; only
+`user_invites`, `company_branding`, the 2 remaining storage buckets, `app_records`/`app_state_snapshots`,
+and 3 structurally-only-tested RPCs remain open, all genuinely decision-dependent on E rather than
+further mechanical migration work.
 
 **Migrations 175 through 179 — overnight autonomous batch per E's "do all of them" instruction,
-committed to `main` and pushed; NONE applied to production yet.** Covers the tables/buckets migration
-174's schema inventory (below) flagged as open. All five independently verified end-to-end against a
-reconstructed pre-migration schema in a real local PostgreSQL 18 engine (PGlite), each with its own
-canonical test; all five migrations themselves needed zero changes (two test files had bugs, both found
-and fixed during verification, noted below).
+CONFIRMED APPLIED and their canonical tests PASSED in production (2026-09-19, "Success. No rows
+returned" for all five).** Covers the tables/buckets migration 174's schema inventory (below) flagged as
+open. All five independently verified end-to-end against a reconstructed pre-migration schema in a real
+local PostgreSQL 18 engine (PGlite) before being handed to E, each with its own canonical test; all five
+migrations themselves needed zero changes (two test files had bugs, both found and fixed during
+verification, noted below).
 
 **Migration 179** (`backend/supabase/migrations/179_safe_storage_buckets_workspace_containment.sql`,
-commit `2be689d`) — closes 3 of the 6 storage buckets flagged open below: `project-location-images`,
-`project-shipment-photos`, `avatars`, chosen because each anchors to a real, non-colliding UUID path
-segment with a workspace-resolver pattern already proven safe by migrations 161/162/169. The other 3
-open buckets (`project-documents`, `catalog-datasheets`, `company-branding`) are deliberately NOT
-included — see the updated inventory below for why. **Depends on migration 175 being applied first**
-(`team_members.workspace_id`). Verified with a mocked `storage.objects` in PGlite, migration 175 applied
-first in the reconstructed schema.
+commit `2be689d`) — CONFIRMED APPLIED and its canonical test PASSED in production (2026-09-19). Closes 3
+of the 6 storage buckets flagged open below: `project-location-images`, `project-shipment-photos`,
+`avatars`, chosen because each anchors to a real, non-colliding UUID path segment with a
+workspace-resolver pattern already proven safe by migrations 161/162/169. The other 3 open buckets
+(`project-documents`, `catalog-datasheets`, `company-branding`) are deliberately NOT included — see the
+updated inventory below for why. **Depended on migration 175 being applied first**
+(`team_members.workspace_id`) — E ran 175 before 179 as required. Verified with a mocked
+`storage.objects` in PGlite, migration 175 applied first in the reconstructed schema. **Do not run
+migration 179 or its canonical test again.**
 
-**Migration 178** (`178_one_off_reconciliations_workspace_scoping.sql`, commit `bbe014d`) — adds
-`workspace_id` to `one_off_reconciliations` (a flat, anchor-less inventory-merge audit log, previously
-readable/writable by any authenticated user regardless of company). Verification exercised the backfill
-UPDATE against a real pre-existing null-workspace row.
+**Migration 178** (`178_one_off_reconciliations_workspace_scoping.sql`, commit `bbe014d`) — CONFIRMED
+APPLIED and its canonical test PASSED in production (2026-09-19). Adds `workspace_id` to
+`one_off_reconciliations` (a flat, anchor-less inventory-merge audit log, previously readable/writable by
+any authenticated user regardless of company). Verification exercised the backfill UPDATE against a real
+pre-existing null-workspace row. **Do not run migration 178 or its canonical test again.**
 
-**Migration 177** (`177_remaining_global_config_workspace_scoping.sql`, commit `7e99325`) — extends E's
-migration-173 ruling ("each company should have its own separate copies, this should not be a question")
-to `presales_hardware_rules`, `site_hardware_rules`, `form_schemas` + mandatory child
-`form_schema_fields` — the exact reconsideration flagged for these three below. Also fixes
+**Migration 177** (`177_remaining_global_config_workspace_scoping.sql`, commit `7e99325`) — CONFIRMED
+APPLIED and its canonical test PASSED in production (2026-09-19). Extends E's migration-173 ruling ("each
+company should have its own separate copies, this should not be a question") to
+`presales_hardware_rules`, `site_hardware_rules`, `form_schemas` + mandatory child `form_schema_fields` —
+the exact reconsideration flagged for these three below. Also fixes
 `derive_deletion_log_workspace_id()`'s stale "genuinely global" classification of these entity types, the
 same class of gap migration 173 fixed for `schedule_template_phase`. **Two test-file bugs found and
 fixed during verification** (not migration bugs): `site_hardware_rules.metric`'s real CHECK constraint
 rejected the test's placeholder value; `form_schemas`/`form_schema_fields` column names in the test
 didn't match the real schema (`name` vs `title`, `label`/`sequence_order` vs `field_label`/
-`display_order`).
+`display_order`). **Do not run migration 177 or its canonical test again.**
 
-**Migration 176** (`176_product_catalog_workspace_scoping.sql`, commit `3912b92`) — workspace-scopes
-`product_catalog` (`catalog_number` uniqueness becomes per-workspace, same pattern as migration 164's
-uniqueness batch) and derives `catalog_price_change_requests.workspace_id` from its mandatory parent via
-a new dedicated guard trigger. **One test-file bug found and fixed during verification**: the simulated
-JWT was missing the email claim the table's own RLS policies check.
+**Migration 176** (`176_product_catalog_workspace_scoping.sql`, commit `3912b92`) — CONFIRMED APPLIED and
+its canonical test PASSED in production (2026-09-19). Workspace-scopes `product_catalog`
+(`catalog_number` uniqueness becomes per-workspace, same pattern as migration 164's uniqueness batch) and
+derives `catalog_price_change_requests.workspace_id` from its mandatory parent via a new dedicated guard
+trigger. **One test-file bug found and fixed during verification**: the simulated JWT was missing the
+email claim the table's own RLS policies check. **Do not run migration 176 or its canonical test again.**
 
-**Migration 175** (`175_team_members_workspace_scoping.sql`, commit `6db3148`) — adds a real
-`workspace_id` to `team_members` (root staff-directory table, no FK anywhere — the table named below as a
-real, unreviewed gap: any future second-workspace user could read every other company's entire staff
-list), converts the email-uniqueness index to per-workspace, rewrites RLS to gate read/write on
-workspace membership.
+**Migration 175** (`175_team_members_workspace_scoping.sql`, commit `6db3148`) — CONFIRMED APPLIED and
+its canonical test PASSED in production (2026-09-19). Adds a real `workspace_id` to `team_members` (root
+staff-directory table, no FK anywhere — the table named below as a real, unreviewed gap: any future
+second-workspace user could read every other company's entire staff list), converts the email-uniqueness
+index to per-workspace, rewrites RLS to gate read/write on workspace membership. **Do not run migration
+175 or its canonical test again.**
 
 **Migration 174 (`1608ad8`) — URGENT LIVE GAP, CONFIRMED APPLIED and its canonical test PASSED in
 production (2026-09-19, "Success. No rows returned" for both).** Found while inventorying the schema
@@ -372,12 +383,14 @@ a blocked UPDATE/DELETE rather than raising -- the exact same lesson already doc
 own header from migration 171, just not yet applied to this section when first drafted; fixed via a
 row-count/value check instead. **Do not run migration 174 or its canonical test again.**
 
-**Continuing item, updated 2026-09-19**: migrations 175 through 179 above (drafted, verified, committed
-and pushed, not yet applied) close most of what this inventory originally flagged -- `team_members`,
-`product_catalog`/`catalog_price_change_requests`, `presales_hardware_rules`/`site_hardware_rules`/
-`form_schemas`/`form_schema_fields`, `one_off_reconciliations`, and 3 of the 6 open storage buckets
-(`project-location-images`/`project-shipment-photos`/`avatars`). What's left is genuinely
-decision-dependent, not mechanical -- still awaiting E's input:
+**Continuing item, updated 2026-09-19**: migrations 175 through 179 above -- CONFIRMED APPLIED and their
+canonical tests PASSED in production -- close most of what this inventory originally flagged --
+`team_members`, `product_catalog`/`catalog_price_change_requests`, `presales_hardware_rules`/
+`site_hardware_rules`/`form_schemas`/`form_schema_fields`, `one_off_reconciliations`, and 3 of the 6 open
+storage buckets (`project-location-images`/`project-shipment-photos`/`avatars`). **The final Phase 3
+cross-workspace isolation suite is now substantially closed** -- what's left is genuinely
+decision-dependent, not mechanical, and requires E's own decisions rather than further migrations --
+still awaiting E's input:
 - **`user_invites`** -- needs a real `accept_invite()` implementation to create a `workspace_members` row
   (doesn't exist today) before workspace-scoping the table makes sense; a product/security decision, not
   a scoping task.
