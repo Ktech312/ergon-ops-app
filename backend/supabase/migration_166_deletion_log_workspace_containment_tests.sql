@@ -7,13 +7,21 @@
 -- Does not exhaustively exercise all 21 entity_type dispatch branches
 -- (that would mean fabricating fixtures across nearly every table in
 -- the app) -- instead exercises one representative case of each of the
--- four DISTINCT resolution shapes this migration introduces (direct
--- column, one-hop, two-hop, genuinely-global), plus the two behaviors
--- that are the actual point of this migration's design: a known
--- residual-gap entity type logs with workspace_id null BY DESIGN (not a
--- bug to "fix" in this test), and an unrecognized entity_type is
--- rejected outright (fail closed). The SELECT policy itself is checked
--- against both a real scoped row and a real null (global) row.
+-- resolution shapes migration 166 introduced (direct column, one-hop,
+-- two-hop), plus the two behaviors that are the actual point of this
+-- migration's design: a known residual-gap entity type logs with
+-- workspace_id null BY DESIGN (not a bug to "fix" in this test), and an
+-- unrecognized entity_type is rejected outright (fail closed). The
+-- SELECT policy itself is checked against both a real scoped row and a
+-- real null (global) row.
+--
+-- Section 4 originally exercised migration 166's fourth resolution
+-- shape, "genuinely-global" (schedule_template_phase, workspace_id
+-- always null). Migration 173 later gave that entity type a real
+-- workspace_id and a one-hop lookup, so it is no longer an example of
+-- that shape -- Section 4 now exercises it as a second one-hop case and
+-- confirms the cross-workspace leak migration 173 closed stays closed.
+-- See Section 4's own header comment for the full history.
 --
 -- A production-acceptance run of this script ends in exactly one of two
 -- ways: the final notice reading "ALL MIGRATION 166 DELETION LOG
@@ -137,10 +145,24 @@ begin
   raise notice 'TEST PASSED: Section 3 -- two-hop entity_type (sales_quote_location_item) is derived correctly';
 
   -- ============================================================
-  -- Section 4: genuinely-global entity_type (schedule_template_phase)
-  -- -- workspace_id must be null, and the row must still be visible to
-  -- BOTH workspace A and workspace B (not a leak -- the deliberate,
-  -- documented behavior this migration preserves).
+  -- Section 4: schedule_template_phase -- at the time migration 166 was
+  -- written this was one of four entity types with "no workspace
+  -- concept", so this section originally asserted a NULL, globally-
+  -- visible workspace_id here. Migration 173 (Section 6 of that file)
+  -- gave project_schedule_template_phases a real workspace_id column and
+  -- replaced this exact CASE branch in derive_deletion_log_workspace_id()
+  -- with a real one-hop lookup (`select workspace_id from
+  -- project_schedule_template_phases where id = new.entity_id`), carried
+  -- forward unchanged by migration 177. This entity type has NOT been
+  -- genuinely global since 173 landed. The consolidated isolation suite's
+  -- first full run (see HANDOFF.md) caught this file still asserting the
+  -- pre-173 behavior against the post-173 schema and mis-flagged it as a
+  -- live production bug; direct verification against production's actual
+  -- function body proved production already has 173/177's fix, so the
+  -- bug was in this assertion, not in production. Updated below to match
+  -- the current, correct, already-applied behavior: a real derived
+  -- workspace_id, and NO cross-workspace visibility (the very leak
+  -- migration 173 closed). Migration 166 itself is not edited or rerun.
   -- ============================================================
 
   perform set_config('role', 'postgres', true);
@@ -153,13 +175,13 @@ begin
     values ('schedule_template_phase', phase_id, 'ZZ_TEST_166 Phase A', 'deleted', 'zz-test-166@example.com')
     returning id, workspace_id into log_row_id, seen_workspace_id;
 
-  if seen_workspace_id is not null then
-    raise exception 'TEST FAILED: schedule_template_phase should derive a NULL workspace_id (genuinely global), got %', seen_workspace_id;
+  if seen_workspace_id is distinct from real_workspace_id then
+    raise exception 'TEST FAILED: deletion_log did not derive the correct workspace_id for schedule_template_phase (workspace-scoped since migration 173): got %, expected %', seen_workspace_id, real_workspace_id;
   end if;
 
   select count(*) into visible_count from public.deletion_log where id = log_row_id;
   if visible_count <> 1 then
-    raise exception 'TEST FAILED: workspace A caller could not see the global schedule_template_phase deletion_log row';
+    raise exception 'TEST FAILED: workspace A caller could not see its own schedule_template_phase deletion_log row';
   end if;
 
   perform set_config('role', 'postgres', true);
@@ -169,8 +191,8 @@ begin
   perform set_config('role', 'authenticated', true);
 
   select count(*) into visible_count from public.deletion_log where id = log_row_id;
-  if visible_count <> 1 then
-    raise exception 'TEST FAILED: a workspace-B caller could not see the global schedule_template_phase deletion_log row -- global entity types must remain visible to everyone';
+  if visible_count <> 0 then
+    raise exception 'TEST FAILED: a workspace-B caller could see workspace A''s schedule_template_phase deletion_log row -- this entity type has been workspace-scoped since migration 173 and must not leak cross-workspace';
   end if;
 
   perform set_config('role', 'postgres', true);
@@ -179,7 +201,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', real_user_id::text)::text, true);
   perform set_config('role', 'authenticated', true);
 
-  raise notice 'TEST PASSED: Section 4 -- genuinely-global entity_type (schedule_template_phase) derives NULL and stays visible to every workspace';
+  raise notice 'TEST PASSED: Section 4 -- schedule_template_phase (workspace-scoped since migration 173) derives the real workspace_id and is no longer visible cross-workspace';
 
   -- ============================================================
   -- Section 5: known residual-gap entity_type (inventory_item) -- must

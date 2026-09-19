@@ -17,8 +17,9 @@ schema in one pass — something no individual per-migration verification had ev
 proved its own migration against a hand-built partial bootstrap, or against real production one at a
 time). Consolidated from `scratchpad/pgtest/init.sql`/`run.mjs`, which this session's own individual
 migration verifications had already built up piecemeal and validated through a full 001-185 replay.
-**Result: 50/51 pass.** Running the full history for the first time surfaced several bugs invisible to
-per-migration testing:
+**Result: 51/51 pass, zero findings.** Running the full history for the first time surfaced several
+bugs invisible to per-migration testing, every one of them in a test file, never in an applied
+migration:
 - **Test-file-only bugs (fixed freely, real migration files never touched)** — migration 124 (an old
   `text[] || literal` array-append bug, same class migration 133's own test already documents fixing
   once; also a missing `company_branding` cleanup delete before dropping a synthetic workspace, since
@@ -39,19 +40,29 @@ per-migration testing:
   total-workspace-count guard, which migration 164 deliberately replaced with per-caller
   `resolve_caller_workspace_id()` resolution — already noted as "DONE" in this file's own §11 tracker,
   so this was confirmation, not news).
-- **One genuine, real, pre-existing bug found in an already-applied MIGRATION — left unfixed, flagged
-  here per this session's own standing discipline of never silently patching an applied migration.**
-  Migration 166's `derive_deletion_log_workspace_id()` hardcodes `schedule_template_phase`'s
-  `workspace_id` to NULL ("genuinely global, no workspace concept"). Migration 173 (seven migrations
-  later) made `project_schedule_template_phases` genuinely workspace-scoped (`workspace_id` NOT NULL)
-  but never updated migration 166's trigger function to match. **Today, in production, a
-  `schedule_template_phase` deletion logs a `deletion_log` row with `workspace_id = NULL`, which
-  migration 166's own design makes visible to every workspace — a real cross-workspace disclosure in
-  the deletion audit trail.** Needs its own reviewed migration (likely: have that branch read
-  `project_schedule_template_phases.workspace_id` the same way the `channel`/`build_transaction`
-  branches already do a live lookup, instead of hardcoding NULL) before this stays failing on purpose
-  in the suite — not blocking anything else, but should not be forgotten.
-- See `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 6 for the updated gate status.
+- **Correction (2026-09-19, `(pending commit)`): the one remaining failure from the suite's first run was a
+  FALSE POSITIVE in the suite's own test harness, not a genuine production bug — the initial writeup
+  here and in `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 6 claiming "a real, currently-live
+  cross-workspace disclosure in the deletion audit trail" was wrong and has been corrected.** Root
+  cause: migration 166's own canonical test file
+  (`migration_166_deletion_log_workspace_containment_tests.sql`, Section 4) still asserted its
+  ORIGINAL, pre-173 expectation that `schedule_template_phase` derives a NULL, globally-visible
+  `workspace_id` — an assertion written before migration 173 (carried forward unchanged by migration
+  177) replaced that exact CASE branch in `derive_deletion_log_workspace_id()` with a real one-hop
+  lookup into `project_schedule_template_phases.workspace_id`. This is the identical class of bug as
+  every test-file fix listed above (an assertion written against an earlier migration's behavior,
+  superseded by a later, legitimate migration change) — it was simply mis-classified as a real
+  migration bug instead of a stale test-file assertion. **Direct verification against real
+  production** (`select proname, prosrc from pg_proc where proname =
+  'derive_deletion_log_workspace_id'`, run in the Supabase SQL editor) disproved the original claim:
+  production's live function already contains migration 173/177's fix, byte-for-byte, matching
+  `173_global_config_workspace_scoping.sql:324-325` and
+  `177_remaining_global_config_workspace_scoping.sql:293-294` exactly. **Fixed** by updating Section 4
+  of the test file to assert the current, correct, already-live behavior (a real derived
+  `workspace_id`, and no cross-workspace visibility — the exact leak migration 173 closed); migration
+  166 itself was never edited or rerun. The suite now runs clean end-to-end: **51/51 canonical tests
+  pass, zero findings.**
+- See `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 6 for the updated, now-GREEN gate status.
 
 **Completed and verified (2026-09-15 session):** migrations 134-150 (137+141, 140+142, 149+150 as
 corrective pairs) are all applied in production, **every one with a passing canonical test.** Queue C1,

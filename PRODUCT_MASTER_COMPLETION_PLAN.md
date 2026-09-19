@@ -1317,27 +1317,32 @@ there, not an oversight.
      full writeup. **Stage 5 is now fully shipped end-to-end.** Only the 3 structurally-only-tested RPCs
      flagged in §5a remain, a test-rigor item, not a blocker.
 6. **Full automated cross-workspace isolation suite and final Phase 3 reconciliation — SUITE LANDED,
-   GATE NOT YET GREEN.** Gate: this must pass before a second real workspace may ever be created (§6).
+   GATE GREEN.** Gate: this must pass before a second real workspace may ever be created (§6).
    `backend/supabase/consolidated_isolation_suite/` (`021d935`) is a permanent, reusable PGlite harness
    that applies all 185 real migrations verbatim to one fresh instance once, then runs all 51 existing
    canonical `migration_N_..._tests.sql` files against that same fully-migrated schema in one pass —
    `node backend/supabase/consolidated_isolation_suite/run_all.mjs` (or `npm run test:isolation`).
    Running the full history for the first time surfaced several test-file-only bugs (fixed freely, per
-   this session's own standing discipline — see the commit message for the full list) and exactly one
-   genuine, real, PRE-EXISTING production bug that individual per-migration testing could never have
-   caught: **migration 166's `derive_deletion_log_workspace_id()` hardcodes `schedule_template_phase`'s
-   `workspace_id` to NULL ("genuinely global"), but migration 173 later made
-   `project_schedule_template_phases` genuinely workspace-scoped (`workspace_id` NOT NULL) without
-   updating that trigger function.** Result: today, in production, a `schedule_template_phase` deletion
-   logs a `deletion_log` row with `workspace_id = NULL`, which migration 166's own design makes visible
-   to every workspace — a real cross-workspace disclosure in the deletion audit trail for whichever
-   workspace owns that template. Not fixed here, per this session's standing discipline of never
-   silently patching an applied migration — needs its own reviewed migration (likely: have
-   `derive_deletion_log_workspace_id()`'s `schedule_template_phase` branch read
-   `project_schedule_template_phases.workspace_id` the same way `channel`/`build_transaction` already
-   do, instead of hardcoding NULL) before this gate can turn green. Current suite result: 50/51 canonical
-   tests pass; the one failure is this finding, left failing on purpose so the suite doesn't silently
-   report green over a real gap.
+   this session's own standing discipline — see the commit message for the full list). Its first run
+   also produced **one false positive, since traced and fixed, that this section and HANDOFF.md
+   originally, incorrectly, wrote up as a genuine PRE-EXISTING production bug**: migration 166's own
+   canonical test file (`migration_166_deletion_log_workspace_containment_tests.sql`, Section 4) still
+   asserted its ORIGINAL pre-173 expectation — that `schedule_template_phase` derives a NULL,
+   globally-visible `workspace_id` — an assertion written before migration 173 (carried forward
+   unchanged by migration 177) replaced that exact CASE branch in `derive_deletion_log_workspace_id()`
+   with a real one-hop lookup into `project_schedule_template_phases.workspace_id`. That produced a
+   `TEST FAILED` that was misread as evidence of a live disclosure bug in production. **Direct
+   verification against real production** (`select proname, prosrc from pg_proc where proname =
+   'derive_deletion_log_workspace_id'` in the Supabase SQL editor) disproved this: production's live
+   function already contains migration 173/177's fix, byte-for-byte, matching
+   `173_global_config_workspace_scoping.sql:324-325` and
+   `177_remaining_global_config_workspace_scoping.sql:293-294` exactly. The bug was in the test file's
+   stale assertion, not in any applied migration — migration 166 itself was never edited or rerun, per
+   this session's standing discipline. **Fixed** by updating Section 4 of the test file to assert the
+   current, correct, already-live behavior (a real derived `workspace_id`, and no cross-workspace
+   visibility — the exact leak migration 173 closed); see that file's own Section 4 header comment for
+   the full history. **Suite now passes 51/51 with zero findings — the gate is GREEN**, and a second
+   real workspace may now be created per §6, subject to any other still-open items in this section.
 7. **Company onboarding and no-code workspace configuration — NOT STARTED.** Blocked on stage 6.
 8. **Support module first release (D13) — NOT STARTED.** Blocked on stage 7 per the authorized order
    (build after Phase 3 completes). Design doc: `PRODUCT_SUPPORT_MODULE_DESIGN.md`.
