@@ -299,11 +299,45 @@ bucket policies are deliberately untouched (Stage 4). **Migration 160 CONFIRMED 
 canonical test PASSED in production (2026-09-17, "both ran - Success. No rows returned").** **Stage 3
 (Purchasing/Inventory/Vendors/Warehouses) is now fully shipped end-to-end.**
 
-**Manual-action queue for E, current exact state: NONE.** Migration 173 and its canonical test are both
-confirmed applied and passed in production, 2026-09-18. Migrations 155 through 173 are all confirmed
+**Manual-action queue for E, current exact state: NONE.** Migration 174 and its canonical test are both
+confirmed applied and passed in production, 2026-09-19. Migrations 155 through 174 are all confirmed
 applied. **Phase 3 Stage 4 (Documents/Notifications/Channels/Jobs/Share-links/Storage) is fully shipped
-end-to-end** (migrations 161/162, confirmed applied and tested). **Phase 3 Stage 5 is now fully
-complete, including the one open governance question.**
+end-to-end** (migrations 161/162, confirmed applied and tested). **Phase 3 Stage 5 is fully complete,
+including the one open governance question (migration 173).**
+
+**Migration 174 (`1608ad8`) — URGENT LIVE GAP, CONFIRMED APPLIED and its canonical test PASSED in
+production (2026-09-19, "Success. No rows returned" for both).** Found while inventorying the schema
+for the final Phase 3 cross-workspace isolation suite (not yet built -- this fix stands on its own, see
+below). Migration 164 (this session, 2026-09-18) gave `sales_quote_ref_counters`/`project_ref_counters`
+a real `workspace_id` and a composite `(workspace_id, year)` primary key, but never touched their RLS
+policy -- it was still the original, fully-open `using(true) with check(true) for all` from migrations
+066/067. **Any authenticated user, in any workspace, could read AND directly INSERT/UPDATE/DELETE any
+other workspace's counter row**, including forging another workspace's `next_seq` (corrupting its next
+`SQ-.../PRJ-...` reference number) or deleting it outright. Confirmed via direct grep of
+`src/persistence.ts`: the app never writes to either table directly -- the only legitimate writers are
+`assign_sales_quote_ref()`/`assign_project_ref()` themselves (both `security definer`, migration
+164/165), which bypass RLS entirely regardless of this policy. Fixed by scoping SELECT to workspace
+membership and removing the write policy entirely (no legitimate direct-write path exists at all).
+Independently verified end-to-end against a real local PostgreSQL 18 engine (PGlite): reproduced all
+four exploitable operations (read/insert/update/delete) under the pre-174 policy before applying the
+fix, confirmed all four closed afterward, confirmed the real security-definer write path is completely
+unaffected. **One test-script bug found and fixed during verification** (not a migration bug): Section
+2's UPDATE/DELETE checks used exception-catching, but RLS's USING clause silently affects zero rows on
+a blocked UPDATE/DELETE rather than raising -- the exact same lesson already documented in this file's
+own header from migration 171, just not yet applied to this section when first drafted; fixed via a
+row-count/value check instead. **Do not run migration 174 or its canonical test again.**
+
+**Continuing item, not yet resolved**: the same schema inventory that found this gap also surfaced a
+much larger, genuinely decision-dependent scope for "the full automated cross-workspace isolation suite
+and final Phase 3 reconciliation" (the master plan's next milestone, and the formal gate before a
+second real workspace may ever be created) -- 6 of 9 storage buckets still fully open
+(`project-documents`/`catalog-datasheets`/`company-branding`/`project-location-images`/
+`project-shipment-photos`/`avatars`), 12+ tables with no workspace awareness and no prior review
+(`team_members`, `user_invites`, `company_branding`, `product_catalog`,
+`catalog_price_change_requests`, `one_off_reconciliations`, `presales_hardware_rules`,
+`site_hardware_rules`, `form_schema_fields`, `app_records`, `app_state_snapshots`, `app_role_modes`),
+and a handful of RPCs verified only structurally rather than behaviorally. Awaiting E's input on scope
+and priority before continuing -- see the full inventory in the session log rather than re-deriving it.
 
 **Migration 173 (`f5b8ca4`) — CONFIRMED APPLIED and its canonical test PASSED in production
 (2026-09-18, "Success. No rows returned" for both).** **E's explicit decision, 2026-09-18**: "each
