@@ -477,14 +477,17 @@ canonical test again.**
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**None currently.** Migrations 155 through 185 are all confirmed applied and their canonical tests all
-passed in production, 2026-09-17/19. Migrations 175 through 179 — the overnight autonomous batch drafted
-per E's "do all of them" instruction — were run in required order (175 first, since 179 depends on it,
-through 179 last); E confirmed "all came back - Success. No rows returned" for all five migration+test
-pairs. Migrations 180 through 185 — this session's closing batch, closing every remaining item §5a had
-flagged as decision-dependent plus one separately-discovered bug (184) — are likewise all confirmed
-applied and tested in production. **The final Phase 3 cross-workspace isolation suite (§5a) is now
-essentially closed** — only genuine test-rigor items remain open.
+**Migration 186 only.** Migrations 155 through 185 and 187 are all confirmed applied and their canonical
+tests all passed in production, 2026-09-17/19. Migrations 175 through 179 — the overnight autonomous
+batch drafted per E's "do all of them" instruction — were run in required order (175 first, since 179
+depends on it, through 179 last); E confirmed "all came back - Success. No rows returned" for all five
+migration+test pairs. Migrations 180 through 185 — this session's closing batch, closing every remaining
+item §5a had flagged as decision-dependent plus one separately-discovered bug (184) — are likewise all
+confirmed applied and tested in production. Migration 187 (DM/directory workspace scoping) is also
+confirmed applied and tested. **Migration 186** (a low-severity `is_app_manager()` grant fix found via an
+autonomous audit) is drafted, PGlite-verified, and pushed, but not yet applied — the one remaining item
+in this queue. **The final Phase 3 cross-workspace isolation suite (§5a) is now essentially closed** —
+only genuine test-rigor items remain open.
 
 **Migration 180** (`backend/supabase/migrations/180_project_documents_and_catalog_datasheets_storage_containment.sql`,
 commit `29acdd1`) — URGENT, same severity class as migrations 165/168/170/174: `storage.objects` RLS for
@@ -602,6 +605,54 @@ workspace-admin-only member (no `app_admins` row) succeeding for their own works
 rejected for a second, synthetic workspace; a global admin still passes every gate exactly as before. —
 *Migration applied and canonical test PASSED in production (E confirmed, 2026-09-19, "Success. No rows
 returned" for both).* **Do not run migration 185 or its canonical test again.**
+
+**Migration 186** (`backend/supabase/migrations/186_fix_is_app_manager_missing_grants.sql`, commit
+`627b946`) — found via an autonomous security-grant audit (Queue R1-class, no business decision
+involved). `is_app_manager(uuid)` (migration 014) never had any grant/revoke statement applied to it,
+in 014 or any later migration — migration 124 flagged this as a deferred twin of `is_app_admin()`/
+`has_role()`, migration 125 closed the identical gap for those, but `is_app_manager()` fell through
+both passes. Since it's a plain SQL function (not a trigger), any fully unauthenticated caller could
+pass an arbitrary user id and learn whether that user holds the manager role — low severity (boolean
+role-probe, no write path), but real and live. Verified via PGlite with a negative control confirming
+the sandbox genuinely reproduces Postgres' default PUBLIC-grant behavior pre-fix. Canonical test:
+`backend/supabase/migration_186_fix_is_app_manager_missing_grants_tests.sql`. — *Implemented locally,
+Tests passed. Not applied to production yet — kept local for E's review.*
+
+**Migration 187** (`backend/supabase/migrations/187_dm_and_directory_workspace_scoping.sql`, commit
+`c961482`) — reverses migration 162's own recorded decision after E, alarmed by an audit finding
+tonight, decided direct messages and the user directory should be scoped per company after all, not
+global across the platform. Closes two things: `app_known_users`' wide-open `"authenticated read
+app_known_users for messaging"` policy (migration 094, `using(true)`) — any authenticated user could
+read every user's name/email across every company — replaced with self-or-global-admin-or-
+shares-a-workspace, via a new `shares_workspace_with()` security-definer helper (an inline `exists`
+query against `workspace_members` doesn't work here, since that table's own RLS restricts a plain
+member to their own row — found and fixed during verification). `conversations`/`direct_messages` gain
+real workspace containment: `conversations.workspace_id` derives from the two participants' shared
+active workspace at creation time via a new guard trigger, rejecting creation outright if they share
+none; `direct_messages` inherits via `conversation_id`, same pattern as `channel_messages`/`channel_id`
+(migration 162). No frontend change needed — confirmed by reading the real query code, not assumed.
+Canonical test: `backend/supabase/migration_187_dm_and_directory_workspace_scoping_tests.sql`. —
+*Migration applied and canonical test PASSED in production (E confirmed, 2026-09-19, "Success. No rows
+returned" for both).* **Do not run migration 187 or its canonical test again.** Deliberately NOT part
+of this migration: the separate, larger future feature of inviting an external subcontractor into one
+project channel only — E confirmed this should build on the proven share-link/token pattern (proposal
+Q&A, migrations 025/053/137/149/158) rather than `channel_members`/workspace-membership, since
+`channel_members` isn't currently wired into project/section/client channel visibility at all and
+there is no "authenticated but not a full member" tier anywhere in this app today. Not designed or
+scheduled yet.
+
+**Two broader security audits run tonight (Queue R1-class, no business decision), both came back
+essentially clean.** A systemic sweep of every `drop policy if exists` across all 185 migrations for
+stale-policy-survives-a-typo'd-drop bugs (the exact concern raised about migration 176's
+`product_catalog` policy) found that concern was itself a false alarm — migration 033 had already
+correctly renamed the policy before 176 ever touched it — and found zero real instances of this bug
+class anywhere in the whole history; confirmed against real production `pg_policies` via a read-only
+diagnostic (`backend/supabase/diagnostic_stale_rls_policies_flagged_only.sql`), which returned exactly
+one row, the already-known `app_known_users` finding closed by migration 187 above. A parallel sweep of
+every `security definer` function for a missing PUBLIC-grant revoke (the migration 171/186 bug class)
+found only `is_app_manager()` (closed by 186) and one purely cosmetic, non-exploitable inconsistency
+(`create_client_channel()`, a trigger function Postgres cannot invoke directly regardless of its
+grants).
 
 **Migration 175** (`backend/supabase/migrations/175_team_members_workspace_scoping.sql`, commit
 `6db3148`) — adds a real `workspace_id` to `team_members` (root staff-directory table, no FK anywhere —
