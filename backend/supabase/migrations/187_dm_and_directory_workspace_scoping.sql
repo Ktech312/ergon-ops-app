@@ -77,6 +77,9 @@
 --     larger schema-redesign item (migration 162's header) -- not
 --     attempted here.
 --   - The future single-channel external-guest feature is untouched.
+--
+-- Confirm 187 is still the next free migration number at execution
+-- time. Not applied. Kept local for E's review.
 
 begin;
 
