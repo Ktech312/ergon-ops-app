@@ -29,14 +29,18 @@ second-level pick of which folder inside that project (Images or Files) the copy
    where it was; a copy lands at the destination too. Mirrors the existing "file promotion" design's own
    copy semantics (guest-channels doc §4: "This is a copy, not a move — the original room message/
    attachment stays exactly where it was for the room's own history").
-2. **Permission — gated only when the source channel has (or had) a guest**: "Restricted only when the
-   source has a guest." In an ordinary internal channel or chat between employees, ANY regular member
-   can forward a file freely — no creator/admin gate. The creator-or-admin restriction from the guest-
-   channels design (§5 item 1: "Owner of the channel is the person who created it or a site Admin") only
-   applies when forwarding OUT of a channel that has (or ever had) an external guest in it — that's the
-   one place content needs a gatekeeper, since a guest's own content shouldn't be freely redistributable
-   by just any employee without oversight. A plain project/client/group channel between employees, or a
-   DM, has no such restriction.
+2. **Permission — corrected, 2026-09-21, simpler than originally drafted**: E's actual rule is not about
+   the SOURCE channel at all — it's governed entirely by whether the caller already has real access to
+   the DESTINATION. E, verbatim: "Anyone internal can move it to any place that they have Access to.
+   Example: Admin can move it anywhere. PM: Can move it to Projects, Sales but maybe not Marketing if
+   they don't have access to it. No guest can move files anywhere, they can only download and upload
+   Files, images and links." This means: no special "has this channel ever had a guest" gate is needed at
+   all (an earlier draft of this doc proposed one — removed, see the superseded §3c/§4 note below). The
+   ONLY gate is the destination's own already-existing RLS: can this caller write to that channel/DM/
+   project? If yes, they can forward there; if not (a PM without Marketing access, for example), the
+   normal RLS on that destination already rejects it, exactly like any other write attempt. This is a
+   real simplification — the forward action needs no NEW authorization concept, only a correctly-scoped
+   destination write.
 3. **Chat Groups destination includes both group channels and DMs**: "Group channels and DMs both" — the
    "Chat Groups" picker in the Forward dialog lists both `channels` rows of `type = 'group'` the caller
    can see AND `conversations` (1:1 DMs) the caller is a participant in, as one combined list (or two
@@ -110,27 +114,21 @@ Directly read both candidate tables rather than guessing:
   a shared object living under the SOURCE's prefix would never satisfy a DESTINATION channel's own
   read policy.
 
-### 3c. Detecting "this channel has/had a guest"
+### 3c. Superseded: "detecting this channel has/had a guest" — no longer needed
 
-- **`channel_guests`** (migration 188) is the real table. A channel "has a guest" (per the gating rule
-  in §2 item 2) via `exists (select 1 from channel_guests where channel_id = X)` — **with no `revoked_at`
-  or `expires_at` filter**, deliberately. See the open question below — this is E's own rule ("has a
-  guest," not "has an ACTIVE guest"), interpreted here as "ever had," and flagged for confirmation rather
-  than silently assumed.
+An earlier draft of this doc proposed a `channel_has_or_had_guest()` helper and a source-side gating
+rule, and flagged an open question about "ever had" vs "currently has" a guest. **E resolved this
+directly, 2026-09-21**: the permission model isn't about the source at all (see §2 item 2's corrected
+text) — it's governed entirely by the destination's own existing access rules. No guest-detection helper
+function is needed anywhere in this feature. The only place `channel_guests` still matters here is the
+already-decided, unrelated fact that a guest session never renders or can execute the Forward action at
+all (§2 item 4) — a guest's own destination options are always empty (they have no channel/project/DM
+access beyond their one room), so even without a special check, they have nowhere to forward TO.
 
-## 4. Open question — flagging, not guessing
+## 4. Open question — resolved, 2026-09-21
 
-**Does "has a guest" mean *currently has an active guest*, or *has ever had a guest, even after revoke/
-expiry*?** E's own wording ("Restricted only when the source has a guest") doesn't specify. This design
-defaults to **"ever had a guest, active or not"** — `exists (select 1 from channel_guests where
-channel_id = X)`, ignoring `revoked_at`/`expires_at` entirely — because the content itself (files/
-messages posted while the guest had access) was already exposed to that outsider, and revoking the
-guest's own access doesn't retroactively un-expose what they already saw or uploaded; a channel that
-once had outside content in it seems like it should stay gated going forward, not silently reopen to
-unrestricted forwarding the moment the guest's access lapses. **This is a judgment call, not a confirmed
-decision — flagged for E to confirm before implementation.** If E instead wants "currently active guest
-only," the predicate changes to add `and revoked_at is null and (expires_at is null or expires_at > now())`
-— a one-line change to the same helper function, no schema impact either way.
+*(Section retained for history — the file-promotion permission question this section originally posed is
+now resolved; see §2 item 2 and §3c above.)*
 
 ## 5. Proposed schema (illustrative — not a migration)
 
@@ -162,23 +160,10 @@ alter table project_documents add column if not exists forwarded_from_kind text
 alter table project_location_images add column if not exists forwarded_from_kind text
   check (forwarded_from_kind is null or forwarded_from_kind in ('channel_message', 'direct_message', 'project_document', 'project_location_image'));
 
--- The permission gate itself: does the SOURCE channel have (or ever have
--- had) an external guest? Only meaningful for channel_messages sources --
--- direct_messages/project_documents/project_location_images have no guest
--- concept at all, so forwarding FROM those is never gated by this rule.
--- Judgment call on "ever had" vs "currently has" -- see §4.
-create or replace function public.channel_has_or_had_guest(check_channel_id uuid)
-returns boolean
-language sql
-security definer
-stable
-set search_path = ''
-as $$
-  select exists (select 1 from public.channel_guests where channel_id = check_channel_id);
-$$;
-
-revoke all on function public.channel_has_or_had_guest(uuid) from public;
-grant execute on function public.channel_has_or_had_guest(uuid) to authenticated;
+-- No special guest-detection helper is needed (see §3c) -- the permission
+-- model is entirely "can the caller already write to the destination,"
+-- which the destination table's own existing RLS INSERT policy already
+-- enforces. A guest never has this RPC granted at all (see §6, step 0).
 ```
 
 **Why a lineage column and not a new `file_forwards` join table**: this app's own established
@@ -192,8 +177,10 @@ feature and isn't proposed here — flagged as a possible later addition, not pa
 ## 6. The forward action itself — RPC shape
 
 A single `security definer` RPC, `forward_attachment`, is the one path that performs a forward — never a
-plain client-side storage copy + plain insert, so the guest-gating rule (§2 item 2) and both source/
-destination access checks are enforced server-side, not trusted to the frontend.
+plain client-side storage copy + plain insert, so both source/destination access checks are enforced
+server-side, not trusted to the frontend. Granted to `authenticated` only, never `anon` — and, per §2
+item 4, a guest session never has any real destination to forward to anyway, so no separate guest check
+is needed inside the RPC itself; the destination-access check in step 3 already fails closed for them.
 
 ```sql
 create or replace function public.forward_attachment(
@@ -234,26 +221,12 @@ begin
   --    api/_lib/notificationEvents.js for the same four-way message-kind
   --    dispatch idea)
 
-  -- 2. Guest-gating check (§2 item 2 / §4): only applies when
-  --    p_source_kind = 'channel_message'. Uses the SAME authorization
-  --    shape as channel_guest_manage_authorized() (migration 188) when
-  --    gated, but a plain is_active_workspace_member() check (any regular
-  --    member, not owner-only) when the source channel has never had a
-  --    guest.
-  if p_source_kind = 'channel_message' then
-    if public.channel_has_or_had_guest(v_source_channel_id) then
-      if not public.channel_guest_manage_authorized(v_source_channel_id) then
-        raise exception 'This channel has (or had) an external guest -- only the channel creator, an admin, or a PM may forward files out of it.' using errcode = 'EC001';
-      end if;
-    else
-      if not public.is_active_workspace_member(public.channel_owner_workspace_id(v_source_channel_id)) then
-        raise exception 'Not authorized to forward from this channel';
-      end if;
-    end if;
-  end if;
-  -- direct_message / project_document / project_location_image sources
-  -- have no guest concept -- gated only by the source table's own RLS
-  -- (step 1), same as any other read.
+  -- 2. No source-side gating beyond step 1's read check (§3c) -- any
+  --    regular workspace member who can already see the source message/
+  --    document may forward it, full stop. This intentionally applies the
+  --    same rule to a channel that has (or had) a guest in it as to any
+  --    other channel -- E's own correction, 2026-09-21: the source is
+  --    never special-cased, only the destination is checked (step 3).
 
   -- 3. Destination access check -- the caller must be able to WRITE to
   --    the destination (send a channel_messages/direct_messages row, or
@@ -323,7 +296,7 @@ schema).
 
 Forward a channel-message attachment to another channel or a DM the caller is a participant in (the
 "Chats Group" half, both branches), inserting a new message row with `forwarded_from_message_id`/
-`forwarded_from_kind` set, gated by the guest-aware permission rule in §2 item 2 / §6. No Project
+`forwarded_from_kind` set, gated only by the destination's own normal write access (§2 item 2 / §6). No Project
 destination yet (that needs the location-picking UX flagged in §7, and touches two different tables
 depending on folder), no forwarding FROM a project document/image (only channel/DM messages as sources),
 no forwarding history view. This is deliberately smaller than the full three-destination picker E
