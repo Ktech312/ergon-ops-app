@@ -7759,6 +7759,35 @@ body:has(.modal-backdrop) .install-banner {
   margin-bottom: 8px;
 }
 
+/* "External guests have access to this channel" banner (migration 192) --
+   E: "a small message on top of the chat that tells/warns employees...".
+   Visible to every employee in the channel, not just guest-management-
+   authorized people. Informational, not alarming -- a soft blue tint,
+   distinct from .source-file's warmer/error-adjacent tone used elsewhere,
+   and pinned above everything else in the panel so it stays visible for
+   as long as the channel is open, not tied to any one tab. */
+.channel-guest-banner {
+  align-items: center;
+  background: #eef4fb;
+  border: 1px solid #cddcef;
+  border-radius: 8px;
+  color: #2c5285;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+}
+
+.channel-guest-banner svg {
+  color: #4d7cb8;
+  flex-shrink: 0;
+}
+
+.channel-guest-banner span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .channel-guest-panel {
   background: #fffdf9;
   border: 1px solid #e8e1d5;
@@ -8216,6 +8245,40 @@ body:has(.modal-backdrop) .install-banner {
   padding: 0 6px;
 }
 
+/* Sidebar unread highlight (migration 191, PRODUCT_CHANNEL_UNREAD_
+   MENTIONS_DESIGN.md) -- E: "a general highlight of a channel if there
+   is a new message in there, then once that channel is viewed it
+   un-highlights," matching Slack's own lighter-weight "new activity"
+   treatment (bold row text), clearing the moment the row is opened.
+   Applies to both the channel list and the DM list (E: "Both channels
+   and DMs"). */
+.messages-conversation-row.has-unread .messages-conversation-name {
+  color: #2b2620;
+  font-weight: 700;
+}
+
+/* Stronger, visually distinct marker for "you were specifically
+   @mentioned" -- Slack's own convention (a plain unread highlight for
+   new activity, a colored badge for a mention), layered ON TOP OF
+   has-unread above, never instead of it. A different color from
+   .messages-unread-badge (that one is the older, DM-only numeric
+   read-count badge) so the two are never visually confused. Judgment
+   call, flagged: the design doc didn't fully specify the mention
+   marker's exact visual shape -- this reuses the AtSign glyph the
+   mention-autocomplete compose UI already uses elsewhere in this file,
+   in a small solid badge. */
+.messages-mention-badge {
+  align-items: center;
+  background: #b5680f;
+  border-radius: 999px;
+  color: white;
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+
 .messages-thread-header {
   align-items: center;
   border-bottom: 1px solid #e8e1d5;
@@ -8380,6 +8443,96 @@ body:has(.modal-backdrop) .install-banner {
 
 .messages-emoji-option:hover {
   background: #f8f5ef;
+}
+
+/* Forward-an-attachment (migration 190,
+   PRODUCT_CHANNEL_FILE_FORWARDING_DESIGN.md §8) -- same small-popover
+   shape as .messages-emoji-picker above, just wider (destination names
+   run longer than one emoji) and anchored top-left instead of
+   bottom-left, since the trigger sits right after the attachment near
+   the top of a bubble rather than at the very bottom. */
+.messages-forward-wrap {
+  display: inline-flex;
+  position: relative;
+}
+
+.messages-forward-button {
+  margin-left: 2px;
+}
+
+.messages-forward-picker {
+  background: white;
+  border: 1px solid #ded7cb;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(107, 50, 18, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  left: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 8px;
+  position: absolute;
+  top: calc(100% + 4px);
+  width: 240px;
+  z-index: 20;
+}
+
+.messages-forward-picker-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.messages-forward-picker-section-label {
+  color: #a9a08f;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 6px 2px 2px;
+  text-transform: uppercase;
+}
+
+.messages-forward-picker-row {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  gap: 6px;
+  overflow: hidden;
+  padding: 6px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.messages-forward-picker-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.messages-forward-picker-row:hover {
+  background: #f8f5ef;
+}
+
+.messages-forward-picker-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.messages-forward-picker-status {
+  border-top: 1px solid #ede7db;
+  color: #6b6255;
+  font-size: 12px;
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+.messages-forward-picker-status-inline {
+  color: #a9a08f;
+  font-size: 11px;
+  margin-left: auto;
 }
 
 .messages-reaction-row {

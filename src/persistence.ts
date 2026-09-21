@@ -1562,6 +1562,29 @@ export async function loadChannelMessageSenderNames(
   return rows.map((row) => ({ userId: row.user_id, displayName: row.display_name }));
 }
 
+// --- Channel has active guest (migration 192) ---------------------------
+// Backs the "External guests have access to this channel" banner. A
+// narrowly-scoped boolean only -- never the guest's identity, email, or
+// expiration -- so it's safe to call for EVERY employee in the channel,
+// not just the admin/PM/channel-creator people who can already read the
+// full channel_guests row via loadChannelGuests above. See
+// backend/supabase/migrations/192_channel_has_active_guest_banner.sql.
+export async function channelHasActiveGuest(channelId: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl("rpc/channel_has_active_guest"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ check_channel_id: channelId }),
+  });
+  if (!response.ok) {
+    return false;
+  }
+  const result = await response.json().catch(() => false);
+  return result === true;
+}
+
 export type KnownUser = {
   userId: string;
   email: string;
@@ -1941,6 +1964,43 @@ export async function getMessageAttachmentUrl(storagePath: string, accessToken?:
     return null;
   }
   return `${envValue("VITE_SUPABASE_URL").replace(/\/$/, "")}/storage/v1${body.signedURL}`;
+}
+
+// Forward a channel-message/DM attachment to another channel or DM
+// (migration 190, PRODUCT_CHANNEL_FILE_FORWARDING_DESIGN.md's own
+// "smallest useful first release," §8) -- goes through the thin
+// api/forward-attachment.js route rather than calling the forward_attachment
+// RPC directly, since the route also has to perform the actual storage
+// byte-copy (a plain client fetch can't do that with the right
+// permissions -- see that route's own header). sourceKind/destinationKind
+// mirror the RPC's own restricted vocabulary for this pass.
+export type ForwardAttachmentResult = { forwarded: boolean; outcome: string; error?: string };
+
+export async function forwardAttachment(
+  sourceKind: "channel_message" | "direct_message",
+  sourceId: string,
+  destinationKind: "channel" | "conversation",
+  destinationId: string,
+  messageBody: string | null,
+  accessToken?: string,
+): Promise<ForwardAttachmentResult> {
+  if (!accessToken) {
+    return { forwarded: false, outcome: "not_signed_in", error: "Must be signed in to forward a file." };
+  }
+  try {
+    const response = await fetch("/api/forward-attachment", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ sourceKind, sourceId, destinationKind, destinationId, messageBody }),
+    });
+    const result = (await response.json().catch(() => ({}))) as { forwarded?: boolean; outcome?: string; error?: string };
+    if (!response.ok) {
+      return { forwarded: false, outcome: result.outcome || "error", error: result.error || "Could not forward that file." };
+    }
+    return { forwarded: Boolean(result.forwarded), outcome: result.outcome || (result.forwarded ? "forwarded" : "error"), error: result.error };
+  } catch {
+    return { forwarded: false, outcome: "network_error", error: "Could not reach the server to forward that file." };
+  }
 }
 
 // Avatars (migration 109) -- E: "Add user images to the main setup that
@@ -2572,6 +2632,87 @@ export async function markConversationRead(conversationId: string, myUserId: str
   );
   if (!response.ok) {
     console.error(`markConversationRead failed for conversation ${conversationId}: ${response.status}`);
+  }
+}
+
+// --- Channel/DM unread + @mention sidebar highlight (migration 191) ----
+// PRODUCT_CHANNEL_UNREAD_MENTIONS_DESIGN.md: a per-user "last read" cursor
+// per channel/DM, separate from (and additive to) direct_messages.read_at
+// above -- that older mechanism only ever drove the numeric DM unread
+// badge; this one drives the new sidebar highlight (bold row, clears once
+// viewed) plus the stronger "you were mentioned" marker, for BOTH channels
+// and DMs, per E's own "Both channels and DMs" decision. Named distinctly
+// from markConversationRead (a different, older, DM-only mechanism) to
+// avoid confusing the two.
+
+export type MessageReadSummaryEntry = {
+  conversationKind: "channel" | "conversation";
+  conversationId: string;
+  unreadCount: number;
+  mentioned: boolean;
+};
+
+// One round trip, server-side (get_message_read_summary(), migration 191)
+// rather than a client-side per-row query loop -- see that migration's own
+// header for why: computing "was I @mentioned" needs the same
+// resolveMentions()-matching regex run against every unread message body,
+// which is far cheaper done once in Postgres than fetched row-by-row to
+// the browser on every sidebar poll.
+export async function loadMessageReadSummary(accessToken?: string): Promise<MessageReadSummaryEntry[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("rpc/get_message_read_summary"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as Array<{
+    conversation_kind: "channel" | "conversation";
+    conversation_id: string;
+    unread_count: number;
+    mentioned: boolean;
+  }>;
+  return rows.map((row) => ({
+    conversationKind: row.conversation_kind,
+    conversationId: row.conversation_id,
+    unreadCount: row.unread_count,
+    mentioned: row.mentioned,
+  }));
+}
+
+// Called whenever the caller opens/views a channel or DM thread -- a plain
+// upsert via message_read_state's own RLS (`user_id = auth.uid()`), not a
+// wrapping RPC (migration 191's own header explains why: that RLS already
+// fully authorizes a caller writing their own row, a SECURITY DEFINER
+// wrapper would add nothing). Best-effort, same posture as
+// markConversationRead above -- a failed "mark read" write just means the
+// highlight doesn't clear until the next successful one, never blocks the
+// thread from opening.
+export async function upsertMessageReadCursor(
+  myUserId: string,
+  conversationKind: "channel" | "conversation",
+  conversationId: string,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const response = await fetch(supabaseUrl("message_read_state?on_conflict=user_id,conversation_kind,conversation_id"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      user_id: myUserId,
+      conversation_kind: conversationKind,
+      conversation_id: conversationId,
+      last_read_at: new Date().toISOString(),
+    }),
+  });
+  if (!response.ok) {
+    console.error(`upsertMessageReadCursor failed for ${conversationKind} ${conversationId}: ${response.status}`);
   }
 }
 

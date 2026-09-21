@@ -25,8 +25,10 @@ import {
   FileText,
   Flag,
   FolderOpen,
+  Forward,
   Hash,
   Image,
+  Info,
   LayoutDashboard,
   Link2,
   ListChecks,
@@ -195,6 +197,7 @@ import {
   loadHasAnyWorkspaceMembership,
   loadMyChannelGuestRows,
   loadChannelMessageSenderNames,
+  channelHasActiveGuest,
   queuePendingSitePhoto,
   listPendingSitePhotos,
   removePendingSitePhoto,
@@ -214,7 +217,10 @@ import {
   buildMessageAttachmentStoragePath,
   uploadMessageAttachment,
   getMessageAttachmentUrl,
+  forwardAttachment,
   markConversationRead,
+  loadMessageReadSummary,
+  upsertMessageReadCursor,
   upsertPushSubscription,
   vapidPublicKey,
   loadAllUserRoles,
@@ -367,6 +373,7 @@ import {
   type KnownUser,
   type Conversation,
   type DirectMessage,
+  type MessageReadSummaryEntry,
   type NotificationItem,
   type NotificationRule,
   type Part,
@@ -1413,6 +1420,13 @@ function App() {
   const [activeConversationReactions, setActiveConversationReactions] = useState<MessageReaction[]>([]);
   const [messagesStatus, setMessagesStatus] = useState("");
   const totalUnreadMessages = Object.values(unreadMessageCounts).reduce((sum, count) => sum + count, 0);
+  // Sidebar unread highlight + @mention marker (migration 191,
+  // PRODUCT_CHANNEL_UNREAD_MENTIONS_DESIGN.md) -- separate from
+  // unreadMessageCounts above (that older, DM-only mechanism drives just
+  // the numeric badge via direct_messages.read_at). This one covers BOTH
+  // channels and DMs (E: "Both channels and DMs"), one row per
+  // channel/DM currently unread, with a `mentioned` flag.
+  const [messageReadSummary, setMessageReadSummary] = useState<MessageReadSummaryEntry[]>([]);
   // "unsupported" covers both no Push API in this browser and no VAPID key
   // configured yet (see api/send-push.js's setup comment) -- either way,
   // there's no "Turn on notifications" affordance to show.
@@ -2582,6 +2596,7 @@ function App() {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setConversations([]);
       setUnreadMessageCounts({});
+      setMessageReadSummary([]);
       return;
     }
     const session = authSession;
@@ -2595,11 +2610,26 @@ function App() {
       loadAllKnownUsers(session.accessToken).then(setKnownUsers).catch(() => {});
       loadConversations(session.userId, session.accessToken).then(setConversations).catch(() => {});
       loadUnreadDirectMessageCounts(session.userId, session.accessToken).then(setUnreadMessageCounts).catch(() => {});
+      loadMessageReadSummary(session.accessToken).then(setMessageReadSummary).catch(() => {});
     }
     reloadMessagesOverview();
     const interval = window.setInterval(reloadMessagesOverview, 20_000);
     return () => window.clearInterval(interval);
   }, [authSession]);
+
+  // Marking a channel/DM read (migration 191) -- called from Messages
+  // whenever the caller opens/views a thread. Optimistically drops it out
+  // of local messageReadSummary state right away (E: "once that channel
+  // is viewed it un-highlights" -- shouldn't wait for the next 20s poll)
+  // while the upsert itself is fire-and-forget in the background, same
+  // best-effort posture as markConversationRead above.
+  function markThreadRead(conversationKind: "channel" | "conversation", conversationId: string) {
+    if (!authSession) {
+      return;
+    }
+    setMessageReadSummary((current) => current.filter((entry) => !(entry.conversationKind === conversationKind && entry.conversationId === conversationId)));
+    upsertMessageReadCursor(authSession.userId, conversationKind, conversationId, authSession.accessToken).catch(() => {});
+  }
 
   // The open thread polls faster than the overview above -- 5s feels close
   // enough to live for a small team without needing a websocket.
@@ -8448,6 +8478,8 @@ function App() {
             channels={channels}
             conversations={conversations}
             unreadMessageCounts={unreadMessageCounts}
+            messageReadSummary={messageReadSummary}
+            onMarkThreadRead={markThreadRead}
             activeConversationId={activeConversationId}
             activeConversationMessages={activeConversationMessages}
             activeConversationReactions={activeConversationReactions}
@@ -15788,6 +15820,173 @@ type ThreadMessage = {
   attachmentSizeBytes: number | null;
 };
 
+// Forward-an-attachment destination picker (migration 190,
+// PRODUCT_CHANNEL_FILE_FORWARDING_DESIGN.md §7/§8). Deliberately small and
+// self-contained: rather than threading channels/conversations down
+// through every MessageThread call site (ChannelDiscussion alone has six
+// call sites across the app, per a direct grep -- App scope directly,
+// Projects' own Discussion tab, GuestChannelShell, and Messages), it loads
+// its OWN copy of the same lists the sidebar already shows, via the exact
+// same persistence loaders (loadChannels/loadConversations) -- already
+// correctly RLS-scoped to "what the caller can see," no new query shape
+// needed, matching the design doc's own §7 note that this is "the same
+// query the channel list/sidebar already runs today." Two sections, per
+// E's own words (design doc §1): "Channels" (every channel the caller can
+// see) and "Chat Groups" (group-type channels UNION conversations the
+// caller participates in, deliberately overlapping "Channels" for a group
+// channel -- two different lenses on the same access, not two disjoint
+// categories, matching the design doc's own §7 wording literally).
+function ForwardPicker({
+  sourceKind,
+  sourceId,
+  myUserId,
+  accessToken,
+  onClose,
+}: {
+  sourceKind: "channel_message" | "direct_message";
+  sourceId: string;
+  myUserId: string;
+  accessToken?: string;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [status, setStatus] = useState("");
+  const [sendingKey, setSendingKey] = useState<string | null>(null);
+  const [sentKey, setSentKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      loadChannels(accessToken),
+      loadConversations(myUserId, accessToken),
+      loadAllKnownUsers(accessToken),
+      loadTeamMembers(accessToken),
+    ]).then(([loadedChannels, loadedConversations, loadedKnownUsers, loadedTeamMembers]) => {
+      if (cancelled) return;
+      setChannels(loadedChannels);
+      setConversations(loadedConversations);
+      setKnownUsers(loadedKnownUsers);
+      setTeamMembers(loadedTeamMembers);
+      setLoading(false);
+    }).catch(() => {
+      if (!cancelled) {
+        setStatus("Could not load destinations.");
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const emailByUserId = new Map(knownUsers.map((user) => [user.userId, user.email]));
+  const groupChannels = channels.filter((entry) => entry.type === "group").sort((a, b) => a.name.localeCompare(b.name));
+  const sortedChannels = [...channels].sort((a, b) => a.name.localeCompare(b.name));
+
+  async function handleForward(destinationKind: "channel" | "conversation", destinationId: string) {
+    if (!accessToken || sendingKey) {
+      return;
+    }
+    const key = `${destinationKind}:${destinationId}`;
+    setSendingKey(key);
+    setStatus("");
+    const result = await forwardAttachment(sourceKind, sourceId, destinationKind, destinationId, null, accessToken);
+    setSendingKey(null);
+    if (result.forwarded) {
+      setSentKey(key);
+      setStatus("Forwarded.");
+      window.setTimeout(() => onClose(), 900);
+    } else {
+      setStatus(result.error || "Could not forward that file.");
+    }
+  }
+
+  return (
+    <div className="messages-forward-picker">
+      <div className="messages-forward-picker-header">
+        <strong>Forward to...</strong>
+        <button type="button" className="icon-button" aria-label="Close" title="Close" onClick={onClose}><X size={14} /></button>
+      </div>
+      {loading ? (
+        <div className="empty-compact-state">Loading...</div>
+      ) : (
+        <>
+          <div className="messages-forward-picker-section-label">Channels</div>
+          {sortedChannels.length === 0 ? (
+            <div className="empty-compact-state">No channels available.</div>
+          ) : (
+            sortedChannels.map((channel) => {
+              const key = `channel:${channel.id}`;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className="messages-forward-picker-row"
+                  disabled={Boolean(sendingKey)}
+                  onClick={() => handleForward("channel", channel.id)}
+                >
+                  {channel.type === "group" && channel.private ? <Lock size={13} /> : <Hash size={13} />}
+                  <span>{channel.name}</span>
+                  {sendingKey === key && <span className="messages-forward-picker-status-inline">Forwarding...</span>}
+                  {sentKey === key && <Check size={13} />}
+                </button>
+              );
+            })
+          )}
+          <div className="messages-forward-picker-section-label">Chat Groups</div>
+          {groupChannels.length === 0 && conversations.length === 0 ? (
+            <div className="empty-compact-state">No chat groups or DMs available.</div>
+          ) : (
+            <>
+              {groupChannels.map((channel) => {
+                const key = `channel:${channel.id}`;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className="messages-forward-picker-row"
+                    disabled={Boolean(sendingKey)}
+                    onClick={() => handleForward("channel", channel.id)}
+                  >
+                    {channel.private ? <Lock size={13} /> : <Hash size={13} />}
+                    <span>{channel.name}</span>
+                    {sendingKey === key && <span className="messages-forward-picker-status-inline">Forwarding...</span>}
+                    {sentKey === key && <Check size={13} />}
+                  </button>
+                );
+              })}
+              {conversations.map((conversation) => {
+                const otherId = conversation.participantAId === myUserId ? conversation.participantBId : conversation.participantAId;
+                const email = emailByUserId.get(otherId);
+                const label = email ? teamDisplayName(email, teamMembers) : "Unknown user";
+                const key = `conversation:${conversation.id}`;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className="messages-forward-picker-row"
+                    disabled={Boolean(sendingKey)}
+                    onClick={() => handleForward("conversation", conversation.id)}
+                  >
+                    <User size={13} />
+                    <span>{label}</span>
+                    {sendingKey === key && <span className="messages-forward-picker-status-inline">Forwarding...</span>}
+                    {sentKey === key && <Check size={13} />}
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </>
+      )}
+      {status && <div className="messages-forward-picker-status">{status}</div>}
+    </div>
+  );
+}
+
 function MessageThread({
   messages,
   myUserId,
@@ -15799,6 +15998,7 @@ function MessageThread({
   mentionCandidates,
   reactions,
   onToggleReaction,
+  forwardSourceKind,
 }: {
   messages: ThreadMessage[];
   myUserId: string;
@@ -15808,6 +16008,17 @@ function MessageThread({
   senderNameFor?: (senderId: string) => string;
   // Migration 109 -- returns a public avatar URL, or "" for no avatar set.
   senderAvatarFor?: (senderId: string) => string;
+  // Forward-an-attachment (migration 190,
+  // PRODUCT_CHANNEL_FILE_FORWARDING_DESIGN.md §8) -- omitted (undefined)
+  // means "no Forward action here," same optional-prop convention as
+  // senderNameFor/mentionCandidates above. This is how guestMode stays
+  // excluded WITHOUT a separate guestMode check inside MessageThread
+  // itself (design doc §2 item 4): ChannelDiscussion's own guestMode
+  // render branch simply never passes this prop, so the button never
+  // renders for a guest session -- verified by reading both MessageThread
+  // call sites inside ChannelDiscussion (only the non-guestMode one passes
+  // it).
+  forwardSourceKind?: "channel_message" | "direct_message";
   // @mention autocomplete (migration 108 groundwork) -- E: "when i start
   // to type a name it should fill in the rest." `token` is what actually
   // gets inserted after the @ (must match resolveMentionEmails' own
@@ -15841,6 +16052,7 @@ function MessageThread({
   // plain <a target="_blank"> -- an in-app lightbox instead.
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
+  const [forwardPickerFor, setForwardPickerFor] = useState<string | null>(null);
   function reactionGroupsFor(messageId: string): { emoji: string; userIds: string[] }[] {
     const order: string[] = [];
     const byEmoji: Record<string, string[]> = {};
@@ -16086,6 +16298,33 @@ function MessageThread({
                         <Download size={14} />
                       </a>
                     )
+                  )}
+                  {/* Forward (migration 190) -- never rendered for a guest
+                      session: guestMode's own MessageThread call site
+                      (below) simply never passes forwardSourceKind, the
+                      same optional-prop convention as senderNameFor/
+                      mentionCandidates above. */}
+                  {forwardSourceKind && message.attachmentStoragePath && (
+                    <span className="messages-forward-wrap">
+                      <button
+                        type="button"
+                        className="messages-inline-icon messages-forward-button"
+                        onClick={() => setForwardPickerFor((current) => (current === message.id ? null : message.id))}
+                        aria-label="Forward this file"
+                        title="Forward this file"
+                      >
+                        <Forward size={14} />
+                      </button>
+                      {forwardPickerFor === message.id && (
+                        <ForwardPicker
+                          sourceKind={forwardSourceKind}
+                          sourceId={message.id}
+                          myUserId={myUserId}
+                          accessToken={accessToken}
+                          onClose={() => setForwardPickerFor(null)}
+                        />
+                      )}
+                    </span>
                   )}
                   {message.body && <span className="messages-flat-body">{message.body}</span>}
                   {onToggleReaction && reactionGroupsFor(message.id).length > 0 && (
@@ -16514,6 +16753,41 @@ function ChannelDiscussion({
   const [guestInviteLink, setGuestInviteLink] = useState("");
   const [channelGuests, setChannelGuests] = useState<ChannelGuest[]>([]);
   const [guestListLoaded, setGuestListLoaded] = useState(false);
+  // E, from a real Slack screenshot: the "Are you sure you want to add
+  // them? New members will be able to see all of the channel's history,
+  // including any files that have been shared in the channel" confirm
+  // step Slack shows before actually adding someone. Applied to BOTH the
+  // internal add-member flow below AND this external guest invite flow --
+  // pendingGuestInvite just gates a confirm step in front of the existing
+  // handleCreateGuestInvite logic, it doesn't change what that logic does.
+  const [pendingGuestInvite, setPendingGuestInvite] = useState(false);
+  const guestInviteConfirmPanelRef = useModalA11y(pendingGuestInvite, () => setPendingGuestInvite(false));
+
+  // "does this channel currently have an active guest" -- migration 192's
+  // own narrowly-scoped boolean RPC, so EVERY employee in the channel (not
+  // just canManageChannelGuests people) can be shown the persistent
+  // banner below. Never called in guestMode -- a guest doesn't need to be
+  // told their own channel has a guest, that's them.
+  const [hasActiveGuest, setHasActiveGuest] = useState(false);
+  useEffect(() => {
+    if (guestMode || !accessToken) {
+      setHasActiveGuest(false);
+      return;
+    }
+    let cancelled = false;
+    channelHasActiveGuest(channel.id, accessToken).then((result) => {
+      if (!cancelled) {
+        setHasActiveGuest(result);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setHasActiveGuest(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [channel.id, guestMode, accessToken]);
 
   useEffect(() => {
     setShowGuestInvitePanel(false);
@@ -16533,12 +16807,27 @@ function ChannelDiscussion({
     }).catch(() => setGuestListLoaded(true));
   }, [showGuestInvitePanel, guestListLoaded, channel.id, accessToken, canManageChannelGuests]);
 
-  async function handleCreateGuestInvite() {
+  // E, from a real Slack screenshot: adding someone shows a confirm step
+  // first ("Are you sure you want to add them? New members will be able
+  // to see all of the channel's history..."). This just validates the
+  // form and opens that confirm step -- the actual RPC call only happens
+  // from confirmCreateGuestInvite below, once the person clicks Invite.
+  function requestGuestInviteConfirm() {
+    if (!guestInviteEmail.trim()) {
+      setGuestInviteStatus("Enter the guest's email first.");
+      return;
+    }
+    setGuestInviteStatus("");
+    setPendingGuestInvite(true);
+  }
+
+  async function confirmCreateGuestInvite() {
     if (!accessToken) {
       return;
     }
     const trimmedEmail = guestInviteEmail.trim();
     if (!trimmedEmail) {
+      setPendingGuestInvite(false);
       setGuestInviteStatus("Enter the guest's email first.");
       return;
     }
@@ -16546,6 +16835,7 @@ function ChannelDiscussion({
     try {
       const suggestedExpiresAt = guestInviteExpiresAt ? new Date(guestInviteExpiresAt).toISOString() : null;
       const result = await createChannelGuestInvite(channel.id, trimmedEmail, suggestedExpiresAt, accessToken);
+      setPendingGuestInvite(false);
       if (result.outcome === "section_channel_forbidden") {
         setGuestInviteStatus("Guests can never be invited to a section channel.");
         return;
@@ -16561,6 +16851,7 @@ function ChannelDiscussion({
       setGuestInviteExpiresAt("");
       setGuestListLoaded(false);
     } catch (error) {
+      setPendingGuestInvite(false);
       setGuestInviteStatus(error instanceof Error ? error.message : "Could not create the guest invite.");
     }
   }
@@ -16648,6 +16939,24 @@ function ChannelDiscussion({
     } catch (error) {
       setGroupActionStatus(error instanceof Error ? error.message : "Could not add that person.");
     }
+  }
+
+  // E, from a real Slack screenshot: "Are you sure you want to add them?
+  // New members will be able to see all of the channel's history,
+  // including any files that have been shared in the channel." PeoplePicker
+  // below opens this confirm step instead of calling handleAddMember
+  // directly -- the actual add only happens once the person clicks Add.
+  const [pendingMemberAdd, setPendingMemberAdd] = useState<string | null>(null);
+  const memberAddConfirmPanelRef = useModalA11y(Boolean(pendingMemberAdd), () => setPendingMemberAdd(null));
+  const pendingMemberEmail = pendingMemberAdd ? knownUsers.find((user) => user.userId === pendingMemberAdd)?.email ?? "" : "";
+  const pendingMemberName = pendingMemberEmail ? teamDisplayName(pendingMemberEmail, teamMembers) : "this person";
+
+  function confirmAddMember() {
+    if (!pendingMemberAdd) {
+      return;
+    }
+    handleAddMember(pendingMemberAdd);
+    setPendingMemberAdd(null);
   }
 
   // E: "I also sent a message to someone not in the room but it didn't
@@ -16871,6 +17180,12 @@ function ChannelDiscussion({
 
   return (
     <div className="channel-discussion-panel">
+      {hasActiveGuest && (
+        <div className="channel-guest-banner" role="note">
+          <Info size={15} />
+          <span>External guests have access to this channel.</span>
+        </div>
+      )}
       {canManageChannelGuests && (
         <div className="channel-guest-management">
           <button
@@ -16900,7 +17215,7 @@ function ChannelDiscussion({
                     onChange={(event) => setGuestInviteExpiresAt(event.target.value)}
                   />
                 </label>
-                <button className="primary-action mini-action" type="button" onClick={handleCreateGuestInvite}>
+                <button className="primary-action mini-action" type="button" onClick={requestGuestInviteConfirm}>
                   Create invite link
                 </button>
               </div>
@@ -16960,6 +17275,32 @@ function ChannelDiscussion({
               </div>
             </div>
           )}
+        </div>
+      )}
+      {pendingGuestInvite && (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            ref={guestInviteConfirmPanelRef as React.Ref<HTMLElement>}
+            tabIndex={-1}
+            className="modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="guest-invite-confirm-title"
+          >
+            <div className="modal-header">
+              <div>
+                <h2 id="guest-invite-confirm-title">Invite {guestInviteEmail.trim()} as an external guest?</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setPendingGuestInvite(false)} aria-label="Cancel">x</button>
+            </div>
+            <p>
+              They'll be able to see the channel's full history, including any files that have been shared, until their access is revoked or expires.
+            </p>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setPendingGuestInvite(false)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={confirmCreateGuestInvite}>Invite</button>
+            </div>
+          </section>
         </div>
       )}
       {channel.type === "group" && (
@@ -17028,8 +17369,32 @@ function ChannelDiscussion({
           {knownUsers.every((user) => memberIds.includes(user.userId)) ? (
             <span className="empty-compact-state">Everyone known to Ergon is already a member.</span>
           ) : (
-            <PeoplePicker knownUsers={knownUsers} teamMembers={teamMembers} excludeUserIds={memberIds} onSelect={handleAddMember} />
+            <PeoplePicker knownUsers={knownUsers} teamMembers={teamMembers} excludeUserIds={memberIds} onSelect={setPendingMemberAdd} />
           )}
+        </div>
+      )}
+      {pendingMemberAdd && (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            ref={memberAddConfirmPanelRef as React.Ref<HTMLElement>}
+            tabIndex={-1}
+            className="modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="member-add-confirm-title"
+          >
+            <div className="modal-header">
+              <div>
+                <h2 id="member-add-confirm-title">Add {pendingMemberName} to this channel?</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setPendingMemberAdd(null)} aria-label="Cancel">x</button>
+            </div>
+            <p>They'll be able to see the channel's full history, including any files that have been shared.</p>
+            <div className="modal-actions">
+              <button className="secondary-action" type="button" onClick={() => setPendingMemberAdd(null)}>Cancel</button>
+              <button className="primary-action" type="button" onClick={confirmAddMember}>Add</button>
+            </div>
+          </section>
         </div>
       )}
       <div className="segmented-tabs channel-tabs">
@@ -17054,6 +17419,7 @@ function ChannelDiscussion({
             mentionCandidates={mentionCandidates}
             reactions={reactions}
             onToggleReaction={handleToggleReaction}
+            forwardSourceKind="channel_message"
           />
         </>
       )}
@@ -17372,6 +17738,8 @@ function Messages({
   channels,
   conversations,
   unreadMessageCounts,
+  messageReadSummary,
+  onMarkThreadRead,
   activeConversationId,
   activeConversationMessages,
   activeConversationReactions,
@@ -17415,6 +17783,11 @@ function Messages({
   onNotifyMentions?: (text: string, relatedEntityType: string, relatedEntityId: string, sourceLabel: string, dedupeSuffix: string) => void;
   conversations: Conversation[];
   unreadMessageCounts: Record<string, number>;
+  // Sidebar unread highlight + @mention marker (migration 191) -- see
+  // App scope's own messageReadSummary/markThreadRead for the full
+  // rationale. Covers both channels and conversations in one flat list.
+  messageReadSummary: MessageReadSummaryEntry[];
+  onMarkThreadRead: (conversationKind: "channel" | "conversation", conversationId: string) => void;
   activeConversationId: string | null;
   activeConversationMessages: DirectMessage[];
   activeConversationReactions: MessageReaction[];
@@ -17468,14 +17841,31 @@ function Messages({
     if (initialChannelId) {
       setActiveChannelId(initialChannelId.channelId);
       persistLastChannel(initialChannelId.channelId);
+      // Opened via global search rather than a sidebar click -- still a
+      // real "viewed this channel" moment, so the highlight clears here
+      // too (mirrors selectChannel's own call below).
+      onMarkThreadRead("channel", initialChannelId.channelId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialChannelId?.token]);
   const activeChannel = channels.find((entry) => entry.id === activeChannelId) ?? null;
+  // Sidebar unread highlight + @mention marker (migration 191) -- flat
+  // messageReadSummary split into per-kind lookup sets once per render.
+  const unreadChannelIds = new Set(messageReadSummary.filter((entry) => entry.conversationKind === "channel").map((entry) => entry.conversationId));
+  const mentionedChannelIds = new Set(
+    messageReadSummary.filter((entry) => entry.conversationKind === "channel" && entry.mentioned).map((entry) => entry.conversationId),
+  );
+  const unreadConversationIds = new Set(
+    messageReadSummary.filter((entry) => entry.conversationKind === "conversation").map((entry) => entry.conversationId),
+  );
+  const mentionedConversationIds = new Set(
+    messageReadSummary.filter((entry) => entry.conversationKind === "conversation" && entry.mentioned).map((entry) => entry.conversationId),
+  );
   function selectChannel(channelId: string) {
     setActiveChannelId(channelId);
     persistLastChannel(channelId);
     onSelectConversation(null);
+    onMarkThreadRead("channel", channelId);
   }
   const sectionChannels = channels.filter((entry) => entry.type === "section").sort((a, b) => a.name.localeCompare(b.name));
   function projectChannelIsClosed(channel: Channel) {
@@ -17564,12 +17954,28 @@ function Messages({
             <button
               key={channel.id}
               type="button"
-              className={`messages-conversation-row messages-channel-row ${channel.id === activeChannelId ? "active" : ""}`}
+              className={`messages-conversation-row messages-channel-row ${channel.id === activeChannelId ? "active" : ""} ${unreadChannelIds.has(channel.id) ? "has-unread" : ""}`}
               onClick={() => selectChannel(channel.id)}
             >
               <span className="messages-conversation-name">
                 {channel.type === "group" && channel.private ? <Lock size={13} /> : <Hash size={13} />}
                 {channel.name}
+                {/* Stronger, distinct marker for "you were specifically
+                    @mentioned" (E: matching Slack's own convention -- a
+                    plain unread highlight for new activity, a colored
+                    badge for a mention), layered ON TOP OF the plain
+                    unread highlight above, not instead of it. Judgment
+                    call, flagged: the design doc didn't fully specify the
+                    mention marker's exact visual shape, so this reuses
+                    the same AtSign glyph the mention-autocomplete compose
+                    UI already uses elsewhere in this file, in a small
+                    colored badge distinct from messages-unread-badge's
+                    color (that one is the OLDER numeric DM-count badge). */}
+                {mentionedChannelIds.has(channel.id) && (
+                  <span className="messages-mention-badge" title="You were mentioned">
+                    <AtSign size={10} />
+                  </span>
+                )}
               </span>
             </button>
           ))}
@@ -17716,15 +18122,21 @@ function Messages({
   function renderDmRow(row: MessageRow) {
     const avatarUrl = avatarUrlFor(row.email, teamMembers);
     const online = isRecentlyActive(lastSeenByUserId.get(row.userId));
+    // Sidebar unread highlight + @mention marker (migration 191) --
+    // additive to row.unread/messages-unread-badge above (the OLDER,
+    // DM-only numeric-count mechanism, driven by direct_messages.read_at).
+    const hasNewActivity = row.conversationId ? unreadConversationIds.has(row.conversationId) : false;
+    const wasMentioned = row.conversationId ? mentionedConversationIds.has(row.conversationId) : false;
     return (
       <button
         key={row.userId}
         type="button"
-        className={`messages-conversation-row ${row.conversationId ? "" : "messages-roster-row"} ${row.conversationId === activeConversationId && row.conversationId ? "active" : ""} ${row.pinned ? "pinned" : ""}`}
+        className={`messages-conversation-row ${row.conversationId ? "" : "messages-roster-row"} ${row.conversationId === activeConversationId && row.conversationId ? "active" : ""} ${row.pinned ? "pinned" : ""} ${hasNewActivity ? "has-unread" : ""}`}
         onClick={() => {
           setActiveChannelId(null);
           if (row.conversationId) {
             onSelectConversation(row.conversationId);
+            onMarkThreadRead("conversation", row.conversationId);
           } else {
             onStartConversation(row.userId);
           }
@@ -17740,6 +18152,11 @@ function Messages({
         </span>
         <span className="messages-conversation-name" title={row.email}>
           {displayNameFor(row.email)}
+          {wasMentioned && (
+            <span className="messages-mention-badge" title="You were mentioned">
+              <AtSign size={10} />
+            </span>
+          )}
         </span>
         {copiedUserId === row.userId ? (
           <span className="messages-copied-flag">Copied</span>
@@ -17899,6 +18316,7 @@ function Messages({
                 }}
                 reactions={activeConversationReactions}
                 onToggleReaction={onToggleReaction}
+                forwardSourceKind="direct_message"
               />
             )}
             {dmTab === "photos" && (
