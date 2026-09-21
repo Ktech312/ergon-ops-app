@@ -1479,6 +1479,89 @@ export async function loadMyActiveChannelGuestRow(accessToken?: string): Promise
   return { id: active.id, channelId: active.channel_id, displayName: active.display_name, expiresAt: active.expires_at };
 }
 
+export type ChannelGuestSelfRow = {
+  id: string;
+  channelId: string;
+  displayName: string;
+  invitedByEmail: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+};
+
+// Sibling of loadMyActiveChannelGuestRow above -- returns EVERY one of the
+// caller's own channel_guests rows, active or not, instead of collapsing
+// "revoked/expired" and "never had one at all" into the same null. RLS
+// lets a guest see their own row(s) regardless of revoked/expired status
+// (migration 188's SELECT policy on channel_guests is
+// "channel_guest_manage_authorized(channel_id) or user_id = auth.uid()"
+// -- no revoked/expired filter on that second branch), so this is a safe,
+// already-granted read, not a new access grant. App()'s guest-detection
+// effect uses this to distinguish "this person was never a guest" (falls
+// through to the normal app, unchanged) from "this person's guest access
+// has been revoked or expired" (a dedicated, clear render gate) -- see
+// the "hadInactiveGuestAccess"/"inactiveGuestRow" state next to
+// activeGuestSession in App().
+export async function loadMyChannelGuestRows(accessToken?: string): Promise<ChannelGuestSelfRow[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl("channel_guests?select=id,channel_id,display_name,invited_by_email,expires_at,revoked_at&order=invited_at.desc"),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as Array<{
+    id: string;
+    channel_id: string;
+    display_name: string;
+    invited_by_email: string;
+    expires_at: string | null;
+    revoked_at: string | null;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    channelId: row.channel_id,
+    displayName: row.display_name,
+    invitedByEmail: row.invited_by_email,
+    expiresAt: row.expires_at,
+    revokedAt: row.revoked_at,
+  }));
+}
+
+// --- Channel guest message sender names (migration 189) ----------------
+// Follow-up to migration 188: resolves real display names for the senders
+// of messages in ONE channel the caller (a normal member with real access,
+// or an active channel guest) is authorized to see -- never the wider
+// app_known_users/team_members directory a guest can't read. See
+// backend/supabase/migrations/189_channel_guest_message_sender_names.sql
+// for the full design and the display-name preference order this mirrors
+// exactly from senderNameFor/teamDisplayName's real client logic.
+export type ChannelMessageSenderName = {
+  userId: string;
+  displayName: string;
+};
+
+export async function loadChannelMessageSenderNames(
+  channelId: string,
+  accessToken?: string,
+): Promise<ChannelMessageSenderName[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("rpc/get_channel_message_sender_names"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_channel_id: channelId }),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as Array<{ user_id: string; display_name: string }>;
+  return rows.map((row) => ({ userId: row.user_id, displayName: row.display_name }));
+}
+
 export type KnownUser = {
   userId: string;
   email: string;

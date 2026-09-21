@@ -193,7 +193,8 @@ import {
   loadChannelGuests,
   revokeChannelGuest,
   loadHasAnyWorkspaceMembership,
-  loadMyActiveChannelGuestRow,
+  loadMyChannelGuestRows,
+  loadChannelMessageSenderNames,
   queuePendingSitePhoto,
   listPendingSitePhotos,
   removePendingSitePhoto,
@@ -438,6 +439,8 @@ import {
   type ChannelGuestInviteView,
   type ChannelGuest,
   type ActiveChannelGuestRow,
+  type ChannelGuestSelfRow,
+  type ChannelMessageSenderName,
   type UserRoles,
   type UserStatus,
   computeNextProjectRef,
@@ -1314,6 +1317,17 @@ function App() {
   // separate, minimal GuestChannelShell instead of the normal app.
   const [guestSessionCheckDone, setGuestSessionCheckDone] = useState(false);
   const [activeGuestSession, setActiveGuestSession] = useState<ActiveChannelGuestRow | null>(null);
+  // Fix for the "revoked/expired guest signs back in" dead-end: distinct
+  // from activeGuestSession being null (which is also true for a genuine
+  // employee, or for someone who was never a guest at all). Set only when
+  // this caller has zero workspace_members rows, zero ACTIVE channel_guests
+  // rows, AND at least one now-inactive (revoked or expired) channel_guests
+  // row -- i.e. this really was a guest, and isn't one any more. See the
+  // render gate below (search "inactiveGuestRow") for the dedicated
+  // "your access has ended" screen this drives, and the guest-detection
+  // effect above for how it's derived alongside activeGuestSession from
+  // the same loadMyChannelGuestRows() call.
+  const [inactiveGuestRow, setInactiveGuestRow] = useState<ChannelGuestSelfRow | null>(null);
   const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
   const [userRoleMap, setUserRoleMap] = useState<Record<string, UserRoles>>({});
   const [ownRoleKeys, setOwnRoleKeys] = useState<string[]>([]);
@@ -2825,24 +2839,42 @@ function App() {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setGuestSessionCheckDone(true);
       setActiveGuestSession(null);
+      setInactiveGuestRow(null);
       return;
     }
     let cancelled = false;
     setGuestSessionCheckDone(false);
     Promise.all([
       loadHasAnyWorkspaceMembership(authSession.userId, authSession.accessToken),
-      loadMyActiveChannelGuestRow(authSession.accessToken),
+      loadMyChannelGuestRows(authSession.accessToken),
     ])
-      .then(([hasWorkspaceMembership, activeGuestRow]) => {
+      .then(([hasWorkspaceMembership, guestRows]) => {
         if (cancelled) {
           return;
         }
-        setActiveGuestSession(!hasWorkspaceMembership && activeGuestRow ? activeGuestRow : null);
+        const now = Date.now();
+        const activeRow = guestRows.find((row) => !row.revokedAt && (!row.expiresAt || new Date(row.expiresAt).getTime() > now)) ?? null;
+        if (!hasWorkspaceMembership && activeRow) {
+          setActiveGuestSession({ id: activeRow.id, channelId: activeRow.channelId, displayName: activeRow.displayName, expiresAt: activeRow.expiresAt });
+          setInactiveGuestRow(null);
+        } else if (!hasWorkspaceMembership && !activeRow && guestRows.length > 0) {
+          // Never an employee, no active guest session, but at least one
+          // now-revoked/expired channel_guests row exists -- this is a
+          // former guest whose access has ended, not someone who was never
+          // a guest at all. guestRows is ordered invited_at desc, so [0] is
+          // their most recent (now-inactive) row.
+          setActiveGuestSession(null);
+          setInactiveGuestRow(guestRows[0]);
+        } else {
+          setActiveGuestSession(null);
+          setInactiveGuestRow(null);
+        }
         setGuestSessionCheckDone(true);
       })
       .catch(() => {
         if (!cancelled) {
           setActiveGuestSession(null);
+          setInactiveGuestRow(null);
           setGuestSessionCheckDone(true);
         }
       });
@@ -2861,12 +2893,13 @@ function App() {
     }
 
     // Skip the entire normal employee data-loading pass for a confirmed
-    // guest session -- not just wasted requests, ensureOwnApprovalRequest
-    // below would otherwise create a bogus pending-approval row for a
-    // guest and notify every admin about a fake "new signup." Also wait
-    // for the guest check itself to finish (guestSessionCheckDone) so this
-    // never races ahead of it on first sign-in.
-    if (!guestSessionCheckDone || activeGuestSession) {
+    // guest session (active OR now-revoked/expired) -- not just wasted
+    // requests, ensureOwnApprovalRequest below would otherwise create a
+    // bogus pending-approval row for a guest (or former guest) and notify
+    // every admin about a fake "new signup." Also wait for the guest check
+    // itself to finish (guestSessionCheckDone) so this never races ahead of
+    // it on first sign-in.
+    if (!guestSessionCheckDone || activeGuestSession || inactiveGuestRow) {
       return;
     }
 
@@ -2941,7 +2974,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [authSession, guestSessionCheckDone, activeGuestSession]);
+  }, [authSession, guestSessionCheckDone, activeGuestSession, inactiveGuestRow]);
 
   // Team directory + a simple presence heartbeat -- E: "Do we have an
   // online Status anywhere, if not it is a good thing to add now."
@@ -7639,6 +7672,37 @@ function App() {
         expiresAt={activeGuestSession.expiresAt}
         onSignOut={handleSignOut}
       />
+    );
+  }
+
+  // Fix for the "revoked/expired guest signs back in" dead-end: this
+  // person is definitively not an employee (loadHasAnyWorkspaceMembership
+  // was false) and is not a currently-active guest either -- without this
+  // gate they would fall through to the normal employee render path below
+  // and hit a broken/empty app shell (RLS blocks every real query for
+  // them regardless, so it's not a security hole, just a confusing dead
+  // end). Styled consistently with the guest-channel-shell/auth-gate
+  // classes GuestChannelShell itself uses. Deliberately does NOT fire for
+  // a genuine employee or for someone who was never a guest at all --
+  // both of those leave inactiveGuestRow null, so they fall through to
+  // the normal app exactly as before.
+  if (authSession && isRemotePersistenceConfigured() && inactiveGuestRow) {
+    return (
+      <div className="auth-gate guest-channel-shell">
+        <div className="guest-channel-shell-card">
+          <header className="guest-channel-shell-header">
+            <img className="auth-gate-logo" src="/ergon-logo.png" alt="Ergon" />
+            <div>
+              <h2>Your guest access has ended</h2>
+              <p className="muted">
+                Your guest access to this channel has been {inactiveGuestRow.revokedAt ? "revoked" : "ended (it expired)"}.
+                {inactiveGuestRow.invitedByEmail ? ` Contact ${inactiveGuestRow.invitedByEmail} if you believe this is a mistake or need access again.` : ""}
+              </p>
+            </div>
+            <button className="secondary-action" type="button" onClick={handleSignOut}>Sign out</button>
+          </header>
+        </div>
+      </div>
     );
   }
 
@@ -17184,15 +17248,53 @@ function GuestChannelShell({
     }).catch(() => {});
   }, [channelId]);
 
-  // Synthetic, guest-local knownUsers/teamMembers so the guest's OWN sent
-  // messages show their real display name instead of "Unknown user" --
+  // Migration 189 follow-up: resolve real display names for every OTHER
+  // sender in this one channel via the new narrowly-scoped RPC
+  // (get_channel_message_sender_names), loaded once on mount. Previously
+  // every employee's message showed "Unknown user" to the guest --
   // app_known_users/team_members both require workspace membership to
-  // read (untouched by migration 188's RLS additions), so an employee
-  // sender's name genuinely can't be resolved client-side here. That's a
-  // known, minimal-v1 limitation (their messages still show correctly,
-  // just attributed to "Unknown user"), not a bug -- flagged in this
-  // feature's own handoff notes.
-  const guestKnownUsers: KnownUser[] = [{ userId: myUserId, email: myEmail, lastSeenAt: new Date().toISOString() }];
+  // read directly (untouched by migration 188's RLS additions, by design
+  // -- widening that would leak the whole company directory), so the
+  // guest's own client-side senderNameFor lookup could never resolve them.
+  // This RPC is scoped to ONLY the real senders of messages that exist in
+  // this one channel, never the wider directory.
+  const [otherSenderNames, setOtherSenderNames] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!accessToken) {
+      return;
+    }
+    let cancelled = false;
+    loadChannelMessageSenderNames(channelId, accessToken).then((rows) => {
+      if (cancelled) {
+        return;
+      }
+      const map: Record<string, string> = {};
+      for (const row of rows) {
+        if (row.userId !== myUserId) {
+          map[row.userId] = row.displayName;
+        }
+      }
+      setOtherSenderNames(map);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, channelId, myUserId]);
+
+  // Synthetic, guest-local knownUsers/teamMembers merging (a) the guest's
+  // own identity, so their OWN sent messages show their real display name,
+  // and (b) one synthetic entry per OTHER sender this channel's messages
+  // actually have, resolved via otherSenderNames above. Each synthetic
+  // entry uses a unique, non-real "email" (never a real app_known_users
+  // value) purely as the join key senderNameFor/teamDisplayName already
+  // use internally -- this reuses that existing resolution logic verbatim
+  // instead of duplicating or changing it.
+  const otherSenderIds = Object.keys(otherSenderNames);
+  const guestKnownUsers: KnownUser[] = [
+    { userId: myUserId, email: myEmail, lastSeenAt: new Date().toISOString() },
+    ...otherSenderIds.map((userId) => ({ userId, email: `channel-sender:${userId}`, lastSeenAt: new Date().toISOString() })),
+  ];
   const guestTeamMembers: TeamMember[] = [
     {
       id: myUserId,
@@ -17205,6 +17307,17 @@ function GuestChannelShell({
       slackUserId: "",
       avatarUrl: "",
     },
+    ...otherSenderIds.map((userId) => ({
+      id: userId,
+      fullName: otherSenderNames[userId],
+      email: `channel-sender:${userId}`,
+      roleTitle: "",
+      isActive: true,
+      primaryRole: "",
+      secondaryRoles: [],
+      slackUserId: "",
+      avatarUrl: "",
+    })),
   ];
 
   return (
