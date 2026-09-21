@@ -44,6 +44,8 @@ declare
   ws_b_msg_id uuid;    -- workspace B message with an attachment, sender stranger_id
   outcome_val text;
   new_id_val uuid;
+  source_path_val text;
+  dest_path_val text;
   row_count integer;
   caught boolean;
   forwarded_row record;
@@ -160,18 +162,33 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', real_user_id::text)::text, true);
   perform set_config('role', 'authenticated', true);
 
-  select outcome, new_id into outcome_val, new_id_val
+  select outcome, new_id, source_storage_path, destination_storage_path
+    into outcome_val, new_id_val, source_path_val, dest_path_val
   from public.forward_attachment('channel_message', source_msg_id, 'channel', channel_c_id, 'fyi');
 
   if outcome_val <> 'forwarded' or new_id_val is null then
     raise exception 'TEST FAILED: forwarding into a writable destination channel did not succeed (outcome=%)', outcome_val;
   end if;
 
+  -- source_storage_path is the ORIGINAL (source-prefixed) path -- the
+  -- value application code must copy FROM. destination_storage_path is a
+  -- NEW path prefixed with the DESTINATION channel's own id -- the value
+  -- application code must copy TO, and the same value the destination row
+  -- itself now carries as its own attachment_storage_path (never the
+  -- source's raw path -- see migration 190's own "Revision" header note
+  -- on why that would silently break the destination's own storage RLS).
+  if source_path_val <> (channel_a_id::text || '/zz-test-190-drawing.pdf') then
+    raise exception 'TEST FAILED: source_storage_path was % (expected the original source-prefixed path)', source_path_val;
+  end if;
+  if dest_path_val is null or dest_path_val !~ ('^' || channel_c_id::text || '/') then
+    raise exception 'TEST FAILED: destination_storage_path was % (expected a path prefixed with the DESTINATION channel id %)', dest_path_val, channel_c_id;
+  end if;
+
   select * into forwarded_row from public.channel_messages where id = new_id_val;
   if forwarded_row.channel_id <> channel_c_id
      or forwarded_row.sender_id <> real_user_id
      or forwarded_row.body <> 'fyi'
-     or forwarded_row.attachment_storage_path <> (channel_a_id::text || '/zz-test-190-drawing.pdf')
+     or forwarded_row.attachment_storage_path <> dest_path_val
      or forwarded_row.attachment_file_name <> 'drawing.pdf'
      or forwarded_row.attachment_size_bytes <> 123456
      or forwarded_row.forwarded_from_message_id <> source_msg_id
@@ -180,18 +197,22 @@ begin
     raise exception 'TEST FAILED: the forwarded channel_messages row did not carry the expected copied attachment fields / lineage columns (got %)', to_jsonb(forwarded_row);
   end if;
 
-  raise notice 'TEST PASSED: Section (a) -- a workspace member can forward a message into another channel they can write to, with attachment fields and lineage columns copied correctly';
+  raise notice 'TEST PASSED: Section (a) -- a workspace member can forward a message into another channel they can write to, with attachment fields, lineage columns, and a DESTINATION-prefixed storage path (not the source''s raw path)';
 
   -- ============================================================
   -- Section (a2): the same source message can also be forwarded into a DM
   -- the caller is a participant in (channel -> conversation).
   -- ============================================================
 
-  select outcome, new_id into outcome_val, new_id_val
+  select outcome, new_id, source_storage_path, destination_storage_path
+    into outcome_val, new_id_val, source_path_val, dest_path_val
   from public.forward_attachment('channel_message', source_msg_id, 'conversation', conv_ac_id, null);
 
   if outcome_val <> 'forwarded' or new_id_val is null then
     raise exception 'TEST FAILED: forwarding into a writable DM did not succeed (outcome=%)', outcome_val;
+  end if;
+  if dest_path_val is null or dest_path_val !~ ('^' || conv_ac_id::text || '/') then
+    raise exception 'TEST FAILED: destination_storage_path was % (expected a path prefixed with the DESTINATION conversation id %)', dest_path_val, conv_ac_id;
   end if;
 
   select count(*) into row_count
@@ -199,6 +220,7 @@ begin
   where id = new_id_val
     and conversation_id = conv_ac_id
     and sender_id = real_user_id
+    and attachment_storage_path = dest_path_val
     and attachment_file_name = 'drawing.pdf'
     and forwarded_from_message_id = source_msg_id
     and forwarded_from_kind = 'channel_message';
@@ -206,7 +228,7 @@ begin
     raise exception 'TEST FAILED: the forwarded direct_messages row did not carry the expected copied attachment fields / lineage columns';
   end if;
 
-  raise notice 'TEST PASSED: Section (a2) -- the same source message can also be forwarded into a DM the caller participates in';
+  raise notice 'TEST PASSED: Section (a2) -- the same source message can also be forwarded into a DM the caller participates in, with a DESTINATION-prefixed storage path';
 
   -- ============================================================
   -- Section (b): forwarding into a destination the caller CANNOT write to

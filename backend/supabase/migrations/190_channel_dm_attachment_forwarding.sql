@@ -160,6 +160,40 @@
 -- fix_ref_assign_trigger_grants): schema-qualified, `set search_path =
 -- ''` added, behavior otherwise byte-for-byte identical.
 --
+-- ============================================================
+-- Revision, same session, BEFORE this file was ever applied to
+-- production -- destination storage path was wrong in the first draft
+-- ============================================================
+-- The first draft of this RPC copied the SOURCE row's own
+-- attachment_storage_path VALUE, unchanged, into the destination row.
+-- That is wrong: the message-attachments bucket's read policy checks
+-- `name like <parent id>::text || '/%'` against the DESTINATION
+-- channel/conversation (see this file's "storage object itself" section
+-- above) -- a destination row whose stored path still carries the
+-- SOURCE's id prefix would never satisfy the DESTINATION's own read
+-- policy, so the destination's members could never actually view the
+-- forwarded file (getMessageAttachmentUrl's signed-URL request would be
+-- rejected by storage.objects RLS forever, not just until the app-code
+-- copy step runs). Caught by re-reading this file's own header against
+-- the design doc's §6 wording ("referencing a storage path that does
+-- not yet physically exist under the destination's own id prefix") --
+-- that phrase means the STORED value must already look like a
+-- destination-prefixed path, not a source-prefixed one, before this
+-- migration was ever applied anywhere. Fixed in place (not a follow-up
+-- migration) because this file had not yet been run against production
+-- at the time this was found -- this revision is the version actually
+-- meant to ship.
+--
+-- Fix: the RPC now computes a NEW destination-prefixed path itself
+-- (`<destination id>/<stamp>-<sanitized file name>`, mirroring
+-- buildMessageAttachmentStoragePath's own shape, src/persistence.ts) and
+-- inserts THAT as attachment_storage_path, never the source's raw path.
+-- The RETURNS TABLE is widened to also hand back BOTH the original
+-- source_storage_path and the new destination_storage_path -- the
+-- calling application code (api/forward-attachment.js) needs both to
+-- perform the actual Storage-API byte-copy (source -> destination) this
+-- migration's own header already says SQL cannot do itself.
+--
 -- Confirm 190 is still the next free migration number at execution time
 -- (189 was the last one on disk as of this session's own start,
 -- re-checked directly against backend/supabase/migrations/ immediately
@@ -183,6 +217,8 @@ alter table public.direct_messages add column if not exists forwarded_from_kind 
 -- Section 2 -- forward_attachment() RPC.
 -- ============================================================
 
+drop function if exists public.forward_attachment(text, uuid, text, uuid, text);
+
 create or replace function public.forward_attachment(
   p_source_kind text,          -- 'channel_message' | 'direct_message'
   p_source_id uuid,
@@ -190,7 +226,7 @@ create or replace function public.forward_attachment(
   p_destination_id uuid,
   p_message_body text default null
 )
-returns table (outcome text, new_id uuid)
+returns table (outcome text, new_id uuid, source_storage_path text, destination_storage_path text)
 language plpgsql
 security definer
 set search_path = ''
@@ -198,7 +234,8 @@ as $$
 declare
   v_actor_id uuid := auth.uid();
   v_source_parent_id uuid;    -- channel_id or conversation_id of the source row
-  v_storage_path text;
+  v_storage_path text;        -- the SOURCE's real, existing storage path
+  v_new_storage_path text;    -- the new, destination-prefixed path the copy lands at
   v_file_name text;
   v_mime_type text;
   v_size_bytes bigint;
@@ -249,16 +286,26 @@ begin
   end if;
 
   if v_source_parent_id is null then
-    return query select 'source_not_found'::text, null::uuid;
+    return query select 'source_not_found'::text, null::uuid, null::text, null::text;
     return;
   end if;
 
   if v_storage_path is null then
-    return query select 'source_has_no_attachment'::text, null::uuid;
+    return query select 'source_has_no_attachment'::text, null::uuid, null::text, null::text;
     return;
   end if;
 
   v_body := nullif(btrim(coalesce(p_message_body, '')), '');
+
+  -- New, destination-prefixed storage path -- see this file's "Revision"
+  -- header note above for why this cannot be the source's own raw path.
+  -- Shape mirrors buildMessageAttachmentStoragePath (src/persistence.ts):
+  -- <parent id>/<stamp>-<sanitized file name>. The object at this path
+  -- does not exist yet -- application code (api/forward-attachment.js)
+  -- copies the real bytes there after this RPC returns successfully.
+  v_new_storage_path := p_destination_id::text || '/' ||
+    (extract(epoch from clock_timestamp()) * 1000)::bigint::text || '-' ||
+    substring(regexp_replace(coalesce(nullif(btrim(v_file_name), ''), 'file'), '[^a-zA-Z0-9_.-]+', '_', 'g') from 1 for 120);
 
   -- 2. No source-side gating beyond step 1's read check (design doc
   --    §3c) -- any caller who can already see the source message may
@@ -297,7 +344,7 @@ begin
       forwarded_from_message_id, forwarded_from_kind
     ) values (
       p_destination_id, v_actor_id, v_body,
-      v_storage_path, v_file_name, v_mime_type, v_size_bytes,
+      v_new_storage_path, v_file_name, v_mime_type, v_size_bytes,
       p_source_id, p_source_kind
     ) returning id into v_new_id;
   else
@@ -316,12 +363,12 @@ begin
       forwarded_from_message_id, forwarded_from_kind
     ) values (
       p_destination_id, v_actor_id, v_body,
-      v_storage_path, v_file_name, v_mime_type, v_size_bytes,
+      v_new_storage_path, v_file_name, v_mime_type, v_size_bytes,
       p_source_id, p_source_kind
     ) returning id into v_new_id;
   end if;
 
-  return query select 'forwarded'::text, v_new_id;
+  return query select 'forwarded'::text, v_new_id, v_storage_path, v_new_storage_path;
 end;
 $$;
 
