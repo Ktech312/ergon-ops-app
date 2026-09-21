@@ -495,16 +495,14 @@ built but deliberately held back uncommitted until E confirms this migration is 
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**One action pending: apply migration 189** (`backend/supabase/migrations/189_channel_guest_message_sender_names.sql`)
-and its canonical test (`backend/supabase/migration_189_channel_guest_message_sender_names_tests.sql`)
-in the Supabase SQL editor, same as every prior migration — see §4 above and HANDOFF.md for full detail.
-This closes the "Unknown user" gap for channel guests (follow-up to migration 188). The matching
-frontend (`GuestChannelShell` wiring, plus a separate fix for revoked/expired guest sign-in) is already
-built but held back uncommitted until this migration is confirmed applied, per this repo's own "a held-
-back commit still goes out on the next unrelated push" discipline.
-
-Migrations 155 through 188 are all confirmed applied and their canonical tests all
-passed in production, 2026-09-17/20. Migrations 175 through 179 — the overnight autonomous batch drafted
+**None currently.** Migrations 155 through 192 are all confirmed applied and their canonical tests all
+passed in production, 2026-09-17/21. Migration 189 (channel-guest sender-name resolution) and its
+frontend are live. Migrations 190 (channel/DM attachment forwarding), 191 (channel/DM unread + mention
+read-state), and 192 (channel-has-active-guest banner + add-member/guest-invite confirmation dialogs)
+are all confirmed applied and their combined frontend shipped together in one deploy, commit `3e48b64`,
+confirmed live in production (bundle hash verified, zero console errors). Migration 191's canonical test
+needed one same-day test-file fix (commit `245fe8f` — a hardcoded mention string that didn't match E's
+real, already-populated `team_members` name; migration 191 itself was correct). Migrations 175 through 179 — the overnight autonomous batch drafted
 per E's "do all of them" instruction — were run in required order (175 first, since 179 depends on it,
 through 179 last); E confirmed "all came back - Success. No rows returned" for all five migration+test
 pairs. Migrations 180 through 185 — this session's closing batch, closing every remaining item §5a had
