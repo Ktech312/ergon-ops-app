@@ -187,6 +187,13 @@ import {
   acceptInvite,
   loadInvites,
   revokeInvite,
+  fetchChannelGuestInviteByToken,
+  createChannelGuestInvite,
+  acceptChannelGuestInvite,
+  loadChannelGuests,
+  revokeChannelGuest,
+  loadHasAnyWorkspaceMembership,
+  loadMyActiveChannelGuestRow,
   queuePendingSitePhoto,
   listPendingSitePhotos,
   removePendingSitePhoto,
@@ -428,6 +435,9 @@ import {
   type SiteHardwareMetric,
   type UserInvite,
   type PublicInviteView,
+  type ChannelGuestInviteView,
+  type ChannelGuest,
+  type ActiveChannelGuestRow,
   type UserRoles,
   type UserStatus,
   computeNextProjectRef,
@@ -1288,6 +1298,22 @@ function App() {
   // affordance (granting/revoking global admin, System Health, approving
   // sign-ins, etc.) stays isAdmin-only, unchanged.
   const [isWorkspaceAdmin, setIsWorkspaceAdmin] = useState(false);
+  // External guest access (migration 188). A channel guest is a real
+  // authenticated user (auth.uid() resolves) but has ZERO workspace_members
+  // rows and zero rows in every other workspace-scoped table's RLS-visible
+  // set. `guestSessionCheckDone`/`activeGuestSession` are resolved by a
+  // dedicated effect that runs BEFORE the big post-signin Promise.all below
+  // (checkIsAdmin/loadOwnWorkspaceMembership/etc.) -- that effect is gated
+  // on this one having finished, and is skipped entirely once a guest
+  // session is confirmed, so a guest never fires the normal employee
+  // data-loading calls (most of which are meaningless for them, and one of
+  // which -- ensureOwnApprovalRequest -- would otherwise wrongly create a
+  // pending-approval row and notify every admin about a "new signup" that
+  // was actually just an invited outside guest). See the render gates
+  // below (search "activeGuestSession") for where this routes into the
+  // separate, minimal GuestChannelShell instead of the normal app.
+  const [guestSessionCheckDone, setGuestSessionCheckDone] = useState(false);
+  const [activeGuestSession, setActiveGuestSession] = useState<ActiveChannelGuestRow | null>(null);
   const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
   const [userRoleMap, setUserRoleMap] = useState<Record<string, UserRoles>>({});
   const [ownRoleKeys, setOwnRoleKeys] = useState<string[]>([]);
@@ -2786,12 +2812,61 @@ function App() {
   // after the very first real sign-in check completes.
   const hasCompletedInitialAuthCheckRef = useRef(false);
 
+  // External guest access (migration 188) -- the early, explicit
+  // "is this a guest session" check, run BEFORE the normal employee
+  // data-loading effect below. A guest is a real authenticated user with
+  // no workspace_members row at all -- checking BOTH conditions (an active
+  // channel_guests row AND the absence of any workspace_members row)
+  // matters because the design doc doesn't forbid a real employee also
+  // holding a channel_guests row on some other team's channel; that
+  // combination should still get the normal, full employee app, not be
+  // routed into guest mode.
+  useEffect(() => {
+    if (!authSession || !isRemotePersistenceConfigured()) {
+      setGuestSessionCheckDone(true);
+      setActiveGuestSession(null);
+      return;
+    }
+    let cancelled = false;
+    setGuestSessionCheckDone(false);
+    Promise.all([
+      loadHasAnyWorkspaceMembership(authSession.userId, authSession.accessToken),
+      loadMyActiveChannelGuestRow(authSession.accessToken),
+    ])
+      .then(([hasWorkspaceMembership, activeGuestRow]) => {
+        if (cancelled) {
+          return;
+        }
+        setActiveGuestSession(!hasWorkspaceMembership && activeGuestRow ? activeGuestRow : null);
+        setGuestSessionCheckDone(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setActiveGuestSession(null);
+          setGuestSessionCheckDone(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authSession]);
+
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setIsAdmin(false);
       setAuthChecksReady(false);
       setUserApprovalStatus(null);
       setOwnAllowedViews(null);
+      return;
+    }
+
+    // Skip the entire normal employee data-loading pass for a confirmed
+    // guest session -- not just wasted requests, ensureOwnApprovalRequest
+    // below would otherwise create a bogus pending-approval row for a
+    // guest and notify every admin about a fake "new signup." Also wait
+    // for the guest check itself to finish (guestSessionCheckDone) so this
+    // never races ahead of it on first sign-in.
+    if (!guestSessionCheckDone || activeGuestSession) {
       return;
     }
 
@@ -2866,7 +2941,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [authSession]);
+  }, [authSession, guestSessionCheckDone, activeGuestSession]);
 
   // Team directory + a simple presence heartbeat -- E: "Do we have an
   // online Status anywhere, if not it is a good thing to add now."
@@ -2880,7 +2955,11 @@ function App() {
   // list every 90s while signed in, and treat "seen in the last 5
   // minutes" as online (isRecentlyActive, below).
   useEffect(() => {
-    if (!authSession || !isRemotePersistenceConfigured()) {
+    // Skipped for a confirmed guest session -- app_known_users is an
+    // employee directory (RLS requires workspace membership to even read
+    // it), and a guest has no business writing their own presence into a
+    // company-wide "who's online" list either.
+    if (!authSession || !isRemotePersistenceConfigured() || activeGuestSession) {
       setKnownUsers([]);
       return;
     }
@@ -2894,7 +2973,7 @@ function App() {
     reload();
     const interval = window.setInterval(reload, 90_000);
     return () => window.clearInterval(interval);
-  }, [authSession]);
+  }, [authSession, activeGuestSession]);
 
   async function handleReviewApproval(targetUserId: string, status: ApprovalStatus, expiresAt: string | null) {
     if (!authSession) {
@@ -7358,6 +7437,26 @@ function App() {
           inviteFailure = error instanceof Error ? error.message : "Could not finish accepting your invite.";
         }
       }
+      // Same deferred-application pattern as pendingInviteToken above, for
+      // an external channel-guest invite that couldn't be applied at
+      // signup time because "confirm email" was on (see
+      // ChannelGuestLandingPage's own comment).
+      const pendingChannelGuestToken = window.localStorage.getItem("pendingChannelGuestToken");
+      if (pendingChannelGuestToken) {
+        window.localStorage.removeItem("pendingChannelGuestToken");
+        const pendingDisplayName = window.localStorage.getItem("pendingChannelGuestDisplayName") ?? "";
+        window.localStorage.removeItem("pendingChannelGuestDisplayName");
+        try {
+          const result = await acceptChannelGuestInvite(pendingChannelGuestToken, pendingDisplayName, session.accessToken);
+          if (result.outcome === "accepted" && result.guestChannelId) {
+            window.localStorage.setItem(`ergon:channelGuestToken:${result.guestChannelId}`, pendingChannelGuestToken);
+          } else {
+            inviteFailure = "Your channel guest invite has expired or was already used.";
+          }
+        } catch (error) {
+          inviteFailure = error instanceof Error ? error.message : "Could not finish accepting your channel guest invite.";
+        }
+      }
       setAuthSession(session);
       setAuthPassword("");
       setAuthStatus(
@@ -7507,6 +7606,39 @@ function App() {
           <small className="auth-gate-status">{authStatus}</small>
         </div>
       </div>
+    );
+  }
+
+  // External guest access (migration 188). Resolved before the normal
+  // "Checking your account..." gate below so a guest never sits waiting on
+  // authChecksReady (which the normal employee data-loading effect never
+  // sets for them, since that effect is skipped entirely for a guest
+  // session -- see the effect above).
+  if (authSession && isRemotePersistenceConfigured() && !guestSessionCheckDone) {
+    return (
+      <div className="auth-gate">
+        <div className="auth-gate-card">
+          <img className="auth-gate-logo" src="/ergon-logo.png" alt="Ergon" />
+          <p className="muted auth-gate-loading">Checking your account...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // A confirmed guest session gets a genuinely separate, minimal shell --
+  // not the normal app with things hidden. No sidebar, no nav, no other
+  // tabs -- just the one channel they were invited to.
+  if (authSession && isRemotePersistenceConfigured() && activeGuestSession) {
+    return (
+      <GuestChannelShell
+        accessToken={authSession.accessToken}
+        myUserId={authSession.userId}
+        myEmail={authSession.email}
+        channelId={activeGuestSession.channelId}
+        guestDisplayName={activeGuestSession.displayName}
+        expiresAt={activeGuestSession.expiresAt}
+        onSignOut={handleSignOut}
+      />
     );
   }
 
@@ -8109,7 +8241,7 @@ function App() {
             )}
           </>
         )}
-        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} canManageSubmittalLinks={canManageSubmittalLinks} onSubmittalShareLinkChange={handleSubmittalShareLinkChange} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} channels={channels} knownUsers={knownUsers} myUserId={authSession?.userId ?? ""} activeDiscussionSection={activeDiscussionSection} onSetActiveDiscussionSection={setActiveDiscussionSection} onNotifyMentions={notifyMentions} />}
+        {view === "projects" && allowedTabs.includes("projects") && <Projects projectSites={projectSites} setProjectSites={setProjectSites} inventoryItems={inventoryItems} projectDocuments={projectDocuments} onCreateDocuments={handleCreateProjectDocuments} onUpdateDocumentStatus={handleUpdateProjectDocumentStatus} onDownloadDocument={handleDownloadDocument} onInventoryPull={allocateFromInventory} onQueueProjectBomPurchaseRequest={queueProjectBomPurchaseRequest} tasks={tasks} taskActivity={taskActivity} teamMembers={teamMembers} onCreateTask={handleCreateTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} onOpenTasksView={() => navigateToView("tasks")} scheduleTemplates={scheduleTemplates} scheduleStatus={scheduleStatus} onGenerateSchedule={handleGenerateSchedule} submittals={submittals} submittalStatus={submittalStatus} onLoadSubmittals={reloadSubmittals} onCreateSubmittal={handleCreateSubmittal} canManageSubmittalLinks={canManageSubmittalLinks} onSubmittalShareLinkChange={handleSubmittalShareLinkChange} handoverSchema={handoverSchema} handovers={handovers} handoverStatus={handoverStatus} onLoadHandovers={reloadHandovers} onCreateHandover={handleCreateHandover} onSaveHandoverResponses={handleSaveHandoverResponses} onSubmitHandover={handleSubmitHandover} salesQuotes={salesQuotes} onPullBomFromClosedQuote={handlePullBomFromClosedQuote} catalogItems={catalogItems} onAddProjectLocation={handleAddProjectLocation} onUpdateProjectLocation={handleUpdateProjectLocation} onDeleteProjectLocation={handleDeleteProjectLocation} onAddProjectLocationItem={handleAddProjectLocationItem} onUpdateProjectLocationItem={handleUpdateProjectLocationItem} onDeleteProjectLocationItem={handleDeleteProjectLocationItem} onUploadProjectLocationImage={handleUploadProjectLocationImage} onDownloadProjectLocationImage={handleDownloadProjectLocationImage} onDeleteProjectLocationImage={handleDeleteProjectLocationImage} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} onUpdateProjectLocationImageDescription={handleUpdateProjectLocationImageDescription} onUpdateProjectLocationImageMeta={handleUpdateProjectLocationImageMeta} onMoveProjectLocationImage={handleMoveProjectLocationImage} onAddProjectShippingAddress={handleAddProjectShippingAddress} onAddProjectShipment={handleAddProjectShipment} onMarkProjectShipmentPacked={handleMarkProjectShipmentPacked} onMarkProjectShipmentShipped={handleMarkProjectShipmentShipped} onUploadProjectShipmentPhoto={handleUploadProjectShipmentPhotoWithOfflineFallback} onDeleteProjectShipmentPhoto={handleDeleteProjectShipmentPhoto} onGetProjectShipmentPhotoUrl={handleGetProjectShipmentPhotoUrl} onDetailContextChange={setProjectDetailContext} purchaseOrders={purchaseOrders} deletedProjectLocations={deletedProjectLocations} onRestoreProjectLocation={handleRestoreProjectLocation} deletedProjectLocationImages={deletedProjectLocationImages} onRestoreProjectLocationImage={handleRestoreProjectLocationImage} canReviewDeleted={isAdmin || roleMode === "manager"} accessToken={authSession?.accessToken} projectStakeholders={projectStakeholders} onLoadProjectStakeholders={handleLoadProjectStakeholders} onAddProjectStakeholder={handleAddProjectStakeholder} onUpdateProjectStakeholder={handleUpdateProjectStakeholder} onDeleteProjectStakeholder={handleDeleteProjectStakeholder} channels={channels} knownUsers={knownUsers} myUserId={authSession?.userId ?? ""} activeDiscussionSection={activeDiscussionSection} onSetActiveDiscussionSection={setActiveDiscussionSection} onNotifyMentions={notifyMentions} isAdmin={isAdmin} isWorkspaceAdmin={isWorkspaceAdmin} isManagerRole={isManagerRole} />}
         {view === "sales" && allowedTabs.includes("sales") && (
           <>
             <div className="segmented-tabs operations-subtabs">
@@ -8274,6 +8406,9 @@ function App() {
             onDownloadDocument={handleDownloadDocument}
             onChannelsChanged={reloadChannels}
             onNotifyMentions={notifyMentions}
+            isAdmin={isAdmin}
+            isWorkspaceAdmin={isWorkspaceAdmin}
+            isManagerRole={isManagerRole}
           />
         )}
         {view === "tasks" && allowedTabs.includes("tasks") && (
@@ -12620,10 +12755,19 @@ function Projects({
   activeDiscussionSection,
   onSetActiveDiscussionSection,
   onNotifyMentions,
+  isAdmin,
+  isWorkspaceAdmin,
+  isManagerRole,
 }: {
   projectSites: ProjectSite[];
   setProjectSites: Dispatch<SetStateAction<ProjectSite[]>>;
   inventoryItems: Part[];
+  // External guest access (migration 188) -- threaded through to
+  // ChannelDiscussion; see that component's own props for the full
+  // rationale.
+  isAdmin?: boolean;
+  isWorkspaceAdmin?: boolean;
+  isManagerRole?: boolean;
   projectDocuments: UploadedDoc[];
   purchaseOrders: PurchaseOrder[];
   deletedProjectLocations?: DeletedProjectLocation[];
@@ -13431,7 +13575,7 @@ function Projects({
           <button className="active" type="button" onClick={() => onSetActiveDiscussionSection("projects")}>Discussion</button>
         </div>
         {projectsSectionChannel ? (
-          <ChannelDiscussion channel={projectsSectionChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} onNotifyMentions={onNotifyMentions} />
+          <ChannelDiscussion channel={projectsSectionChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} onNotifyMentions={onNotifyMentions} isAdmin={isAdmin} isWorkspaceAdmin={isWorkspaceAdmin} isManagerRole={isManagerRole} />
         ) : (
           <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
         )}
@@ -14395,7 +14539,7 @@ function Projects({
               <button className="icon-button" type="button" onClick={() => setShowDiscussionModal(false)} aria-label="Close">x</button>
             </div>
             {projectChannel ? (
-              <ChannelDiscussion channel={projectChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={projectDocuments} onDownloadDocument={onDownloadDocument} onNotifyMentions={onNotifyMentions} />
+              <ChannelDiscussion channel={projectChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={projectDocuments} onDownloadDocument={onDownloadDocument} onNotifyMentions={onNotifyMentions} isAdmin={isAdmin} isWorkspaceAdmin={isWorkspaceAdmin} isManagerRole={isManagerRole} />
             ) : (
               <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
             )}
@@ -16181,6 +16325,10 @@ function ChannelDiscussion({
   onDownloadDocument,
   onChannelsChanged,
   onNotifyMentions,
+  guestMode,
+  isAdmin,
+  isWorkspaceAdmin,
+  isManagerRole,
 }: {
   channel: Channel;
   myUserId: string;
@@ -16199,6 +16347,21 @@ function ChannelDiscussion({
   tasks?: EOTask[];
   taskActivity?: TaskActivityEntry[];
   projectSites?: ProjectSite[];
+  // External guest access (migration 188). guestMode: this instance is
+  // being rendered INSIDE the separate, minimal guest app shell -- render
+  // only the message thread itself, no tab bar, no group-management
+  // header, no invite/guest-list UI (a guest can never manage guests, RLS
+  // would reject it anyway, but the UI shouldn't even offer it).
+  // isAdmin/isWorkspaceAdmin/isManagerRole: passed down from App scope so
+  // the (employee-facing) "Invite external guest" action can be gated
+  // client-side the same way channel_guest_manage_authorized() gates it
+  // server-side -- admin OR workspace admin OR PM OR this channel's own
+  // creator. Omitted (undefined) call sites simply never show the action,
+  // never a crash -- every one of these is optional.
+  guestMode?: boolean;
+  isAdmin?: boolean;
+  isWorkspaceAdmin?: boolean;
+  isManagerRole?: boolean;
   onCreateTask?: (task: Omit<EOTask, "id" | "taskNumber" | "createdBy" | "createdByEmail" | "createdAt" | "completedAt" | "closedByEmail" | "closedAt" | "deletedByEmail" | "deletedAt">) => Promise<boolean>;
   onUpdateTask?: (id: string, task: Partial<Omit<EOTask, "id" | "taskNumber">>) => Promise<boolean>;
   onDeleteTask?: (id: string) => void;
@@ -16267,6 +16430,92 @@ function ChannelDiscussion({
   // private group channel.
   const [showMemberList, setShowMemberList] = useState(false);
   const [groupActionStatus, setGroupActionStatus] = useState("");
+
+  // External guest access (migration 188). A guest may only ever be invited
+  // to a project/client/group channel, never a section channel (E's own
+  // "Never" requirement, enforced server-side by a guard trigger -- this
+  // client-side channel.type check is purely a UX convenience so the
+  // button never appears somewhere the RPC would just reject it). Mirrors
+  // the same additive-OR authorization shape channel_guest_manage_authorized()
+  // enforces server-side: admin OR workspace admin OR PM OR this channel's
+  // own creator. Never shown in guestMode -- a guest managing guests isn't
+  // just unauthorized, it's nonsensical (they have no workspace_members row
+  // for is_active_workspace_member() to even pass).
+  const canManageChannelGuests =
+    !guestMode && channel.type !== "section" && Boolean(isAdmin || isWorkspaceAdmin || isManagerRole || (channel.createdBy && channel.createdBy === myUserId));
+  const [showGuestInvitePanel, setShowGuestInvitePanel] = useState(false);
+  const [guestInviteEmail, setGuestInviteEmail] = useState("");
+  const [guestInviteExpiresAt, setGuestInviteExpiresAt] = useState("");
+  const [guestInviteStatus, setGuestInviteStatus] = useState("");
+  const [guestInviteLink, setGuestInviteLink] = useState("");
+  const [channelGuests, setChannelGuests] = useState<ChannelGuest[]>([]);
+  const [guestListLoaded, setGuestListLoaded] = useState(false);
+
+  useEffect(() => {
+    setShowGuestInvitePanel(false);
+    setGuestInviteLink("");
+    setGuestInviteStatus("");
+    setGuestListLoaded(false);
+    setChannelGuests([]);
+  }, [channel.id]);
+
+  useEffect(() => {
+    if (!showGuestInvitePanel || guestListLoaded || !accessToken || !canManageChannelGuests) {
+      return;
+    }
+    loadChannelGuests(channel.id, accessToken).then((rows) => {
+      setChannelGuests(rows);
+      setGuestListLoaded(true);
+    }).catch(() => setGuestListLoaded(true));
+  }, [showGuestInvitePanel, guestListLoaded, channel.id, accessToken, canManageChannelGuests]);
+
+  async function handleCreateGuestInvite() {
+    if (!accessToken) {
+      return;
+    }
+    const trimmedEmail = guestInviteEmail.trim();
+    if (!trimmedEmail) {
+      setGuestInviteStatus("Enter the guest's email first.");
+      return;
+    }
+    setGuestInviteStatus("Creating invite...");
+    try {
+      const suggestedExpiresAt = guestInviteExpiresAt ? new Date(guestInviteExpiresAt).toISOString() : null;
+      const result = await createChannelGuestInvite(channel.id, trimmedEmail, suggestedExpiresAt, accessToken);
+      if (result.outcome === "section_channel_forbidden") {
+        setGuestInviteStatus("Guests can never be invited to a section channel.");
+        return;
+      }
+      if (result.outcome !== "created" || !result.token) {
+        setGuestInviteStatus("Could not create the guest invite.");
+        return;
+      }
+      const link = `${window.location.origin}/?channel-guest=${result.token}`;
+      setGuestInviteLink(link);
+      setGuestInviteStatus(`Invite created for ${trimmedEmail}. Copy the link below and send it to them yourself -- Ergon doesn't email it for you.`);
+      setGuestInviteEmail("");
+      setGuestInviteExpiresAt("");
+      setGuestListLoaded(false);
+    } catch (error) {
+      setGuestInviteStatus(error instanceof Error ? error.message : "Could not create the guest invite.");
+    }
+  }
+
+  async function handleRevokeChannelGuest(guestId: string) {
+    if (!accessToken) {
+      return;
+    }
+    if (!window.confirm("Revoke this guest's access to the channel? They will immediately lose the ability to read or post here.")) {
+      return;
+    }
+    try {
+      await revokeChannelGuest(guestId, accessToken);
+      setGuestListLoaded(false);
+      setGuestInviteStatus("Guest access revoked.");
+    } catch (error) {
+      setGuestInviteStatus(error instanceof Error ? error.message : "Could not revoke this guest.");
+    }
+  }
 
   useEffect(() => {
     setShowMemberPicker(false);
@@ -16532,8 +16781,123 @@ function ChannelDiscussion({
     }
   }
 
+  if (guestMode) {
+    // Genuinely minimal: no group-meta header, no guest-management UI (a
+    // guest can never manage guests), no tab bar, no other tabs -- just
+    // the message thread itself. Everything else this component supports
+    // (Tasks/Files/Canvas/Photos/Links) is deliberately unreachable here.
+    return (
+      <div className="channel-discussion-panel channel-discussion-panel-guest">
+        {status && <div className="source-file"><span>{status}</span></div>}
+        <MessageThread
+          messages={messages}
+          myUserId={myUserId}
+          accessToken={accessToken}
+          onSend={handleSend}
+          emptyText="No messages yet in this channel -- say hello."
+          senderNameFor={senderNameFor}
+          senderAvatarFor={senderAvatarFor}
+          mentionCandidates={mentionCandidates}
+          reactions={reactions}
+          onToggleReaction={handleToggleReaction}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="channel-discussion-panel">
+      {canManageChannelGuests && (
+        <div className="channel-guest-management">
+          <button
+            className="secondary-action mini-action"
+            type="button"
+            onClick={() => setShowGuestInvitePanel((current) => !current)}
+          >
+            <UserPlus size={14} /> {showGuestInvitePanel ? "Hide guest access" : "Invite external guest"}
+          </button>
+          {showGuestInvitePanel && (
+            <div className="channel-guest-panel">
+              <div className="channel-guest-invite-form">
+                <label>
+                  Guest email
+                  <input
+                    type="email"
+                    value={guestInviteEmail}
+                    onChange={(event) => setGuestInviteEmail(event.target.value)}
+                    placeholder="subcontractor@othercompany.com"
+                  />
+                </label>
+                <label>
+                  Expires (optional)
+                  <input
+                    type="datetime-local"
+                    value={guestInviteExpiresAt}
+                    onChange={(event) => setGuestInviteExpiresAt(event.target.value)}
+                  />
+                </label>
+                <button className="primary-action mini-action" type="button" onClick={handleCreateGuestInvite}>
+                  Create invite link
+                </button>
+              </div>
+              {guestInviteStatus && <small className="channel-guest-status">{guestInviteStatus}</small>}
+              {guestInviteLink && (
+                <div className="channel-guest-link-row">
+                  <input readOnly value={guestInviteLink} onFocus={(event) => event.currentTarget.select()} />
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Copy invite link"
+                    title="Copy invite link"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(guestInviteLink).catch(() => {});
+                      setGuestInviteStatus("Link copied.");
+                    }}
+                  >
+                    <Copy size={15} />
+                  </button>
+                </div>
+              )}
+              <div className="channel-guest-list">
+                {!guestListLoaded ? (
+                  <div className="empty-compact-state">Loading guests...</div>
+                ) : channelGuests.length === 0 ? (
+                  <div className="empty-compact-state">No one has been invited to this channel yet.</div>
+                ) : (
+                  channelGuests.map((guest) => {
+                    const isRevoked = Boolean(guest.revokedAt);
+                    const isExpired = Boolean(guest.expiresAt && new Date(guest.expiresAt).getTime() <= Date.now());
+                    return (
+                      <div key={guest.id} className="channel-guest-row">
+                        <div>
+                          <strong>{guest.displayName}</strong>
+                          <span>
+                            Invited by {guest.invitedByEmail} on {new Date(guest.invitedAt).toLocaleDateString()}
+                            {guest.expiresAt ? ` -- expires ${new Date(guest.expiresAt).toLocaleString()}` : " -- no expiration"}
+                          </span>
+                          {isRevoked && <span className="channel-guest-status-tag">Revoked{guest.revokedByEmail ? ` by ${guest.revokedByEmail}` : ""}</span>}
+                          {!isRevoked && isExpired && <span className="channel-guest-status-tag">Expired</span>}
+                        </div>
+                        {!isRevoked && (
+                          <button
+                            className="icon-button channel-delete-button"
+                            type="button"
+                            onClick={() => handleRevokeChannelGuest(guest.id)}
+                            aria-label="Revoke guest access"
+                            title="Revoke guest access"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {channel.type === "group" && (
         <div className="channel-group-meta">
           <span className="channel-group-lock-status">
@@ -16747,6 +17111,139 @@ function ChannelDiscussion({
   );
 }
 
+// External guest access (migration 188) -- the genuinely separate, minimal
+// app shell an outside person (e.g. a subcontractor) sees once App() has
+// confirmed their session is an active channel guest and NOT an employee
+// (see the guest-detection effect + render gate in App() above, search
+// "activeGuestSession"). No sidebar, no nav, no other tabs -- just this one
+// channel's message thread, reusing ChannelDiscussion's own guestMode
+// render path so message display/reactions/file upload all work exactly
+// like the employee-facing version, without duplicating any of that logic.
+function GuestChannelShell({
+  accessToken,
+  myUserId,
+  myEmail,
+  channelId,
+  guestDisplayName,
+  expiresAt,
+  onSignOut,
+}: {
+  accessToken?: string;
+  myUserId: string;
+  myEmail: string;
+  channelId: string;
+  guestDisplayName: string;
+  expiresAt: string | null;
+  onSignOut: () => void;
+}) {
+  const [channel, setChannel] = useState<Channel | null>(null);
+  const [channelLoadFailed, setChannelLoadFailed] = useState(false);
+  // channels/channel_guests carry no denormalized workspace name, and a
+  // guest's RLS grant doesn't extend to the `workspaces` table itself (only
+  // to their own one channel row) -- so the workspace name shown in the
+  // header comes from re-querying the same anon-safe RPC the accept-invite
+  // landing page used, via the token ChannelGuestLandingPage cached in
+  // localStorage at acceptance time. Best-effort: if that cache is missing
+  // (a different device/browser, or storage was cleared), the header just
+  // omits the workspace name rather than failing.
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [inviterEmail, setInviterEmail] = useState("");
+
+  useEffect(() => {
+    if (!accessToken) {
+      return;
+    }
+    let cancelled = false;
+    loadChannels(accessToken).then((rows) => {
+      if (cancelled) {
+        return;
+      }
+      const match = rows.find((entry) => entry.id === channelId) ?? null;
+      setChannel(match);
+      setChannelLoadFailed(!match);
+    }).catch(() => {
+      if (!cancelled) {
+        setChannelLoadFailed(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, channelId]);
+
+  useEffect(() => {
+    const cachedToken = window.localStorage.getItem(`ergon:channelGuestToken:${channelId}`);
+    if (!cachedToken) {
+      return;
+    }
+    fetchChannelGuestInviteByToken(cachedToken).then((view) => {
+      if (view) {
+        setWorkspaceName(view.workspaceName);
+        setInviterEmail(view.invitedByEmail);
+      }
+    }).catch(() => {});
+  }, [channelId]);
+
+  // Synthetic, guest-local knownUsers/teamMembers so the guest's OWN sent
+  // messages show their real display name instead of "Unknown user" --
+  // app_known_users/team_members both require workspace membership to
+  // read (untouched by migration 188's RLS additions), so an employee
+  // sender's name genuinely can't be resolved client-side here. That's a
+  // known, minimal-v1 limitation (their messages still show correctly,
+  // just attributed to "Unknown user"), not a bug -- flagged in this
+  // feature's own handoff notes.
+  const guestKnownUsers: KnownUser[] = [{ userId: myUserId, email: myEmail, lastSeenAt: new Date().toISOString() }];
+  const guestTeamMembers: TeamMember[] = [
+    {
+      id: myUserId,
+      fullName: guestDisplayName,
+      email: myEmail,
+      roleTitle: "External guest",
+      isActive: true,
+      primaryRole: "guest",
+      secondaryRoles: [],
+      slackUserId: "",
+      avatarUrl: "",
+    },
+  ];
+
+  return (
+    <div className="auth-gate guest-channel-shell">
+      <div className="guest-channel-shell-card">
+        <header className="guest-channel-shell-header">
+          <img className="auth-gate-logo" src="/ergon-logo.png" alt="Ergon" />
+          <div>
+            <h2>{channel ? channel.name : "Loading your channel..."}</h2>
+            <p className="muted">
+              {workspaceName ? `${workspaceName} · ` : ""}
+              You're signed in as a guest{guestDisplayName ? ` (${guestDisplayName})` : ""}
+              {inviterEmail ? `, invited by ${inviterEmail}` : ""}
+              {expiresAt ? ` · access expires ${new Date(expiresAt).toLocaleString()}` : ""}.
+            </p>
+          </div>
+          <button className="secondary-action" type="button" onClick={onSignOut}>Sign out</button>
+        </header>
+        {channelLoadFailed ? (
+          <div className="empty-compact-state">
+            Your access to this channel could not be loaded -- it may have just expired or been revoked. Contact whoever invited you.
+          </div>
+        ) : !channel ? (
+          <div className="empty-compact-state">Loading...</div>
+        ) : (
+          <ChannelDiscussion
+            channel={channel}
+            myUserId={myUserId}
+            accessToken={accessToken}
+            teamMembers={guestTeamMembers}
+            knownUsers={guestKnownUsers}
+            guestMode
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Migration 094: real person-to-person direct messaging, ported (concept,
 // not code) from the VLTD sister project -- E: "I have a direct message
 // and alert system built into it now, I think we need that on this also."
@@ -16784,6 +17281,9 @@ function Messages({
   onDownloadDocument,
   onChannelsChanged,
   onNotifyMentions,
+  isAdmin,
+  isWorkspaceAdmin,
+  isManagerRole,
 }: {
   myUserId: string;
   myEmail: string;
@@ -16792,6 +17292,13 @@ function Messages({
   teamMembers: TeamMember[];
   channels: Channel[];
   onChannelsChanged?: () => void;
+  // External guest access (migration 188) -- threaded through to
+  // ChannelDiscussion so its "Invite external guest" action can be gated
+  // the same way for project/client/group channels reached from the
+  // Messages hub. See ChannelDiscussion's own props for the full rationale.
+  isAdmin?: boolean;
+  isWorkspaceAdmin?: boolean;
+  isManagerRole?: boolean;
   onNotifyMentions?: (text: string, relatedEntityType: string, relatedEntityId: string, sourceLabel: string, dedupeSuffix: string) => void;
   conversations: Conversation[];
   unreadMessageCounts: Record<string, number>;
@@ -17253,7 +17760,7 @@ function Messages({
               </button>
               <strong>{activeChannel.type === "group" && activeChannel.private ? <Lock size={15} /> : <Hash size={15} />}{activeChannel.name}</strong>
             </div>
-            <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={documents} onDownloadDocument={onDownloadDocument} onChannelsChanged={onChannelsChanged} onNotifyMentions={onNotifyMentions} />
+            <ChannelDiscussion channel={activeChannel} myUserId={myUserId} accessToken={accessToken} teamMembers={teamMembers} knownUsers={knownUsers} tasks={tasks} taskActivity={taskActivity} projectSites={projectSites} onCreateTask={onCreateTask} onUpdateTask={onUpdateTask} onDeleteTask={onDeleteTask} onOpenTasksView={onOpenTasksView} documents={documents} onDownloadDocument={onDownloadDocument} onChannelsChanged={onChannelsChanged} onNotifyMentions={onNotifyMentions} isAdmin={isAdmin} isWorkspaceAdmin={isWorkspaceAdmin} isManagerRole={isManagerRole} />
           </>
         ) : activeConversation ? (
           <>
@@ -27625,6 +28132,162 @@ function InviteLandingPage({ token }: { token: string }) {
   );
 }
 
+// Public, pre-login landing page for an external channel-guest invite
+// (migration 188). Reached via ?channel-guest=<token> on the root URL,
+// structurally mirroring InviteLandingPage above: talks to Supabase only
+// through the anon-key get_channel_guest_invite_by_token RPC until the
+// person actually signs up, at which point it uses their brand-new session
+// to call accept_channel_guest_invite. Distinct from InviteLandingPage in
+// exactly the ways this feature requires: collects an email (not fixed by
+// the invite -- a channel guest invite doesn't require a specific email,
+// see this feature's own migration header) + a display name (a real
+// employee invite doesn't ask for one), no Google sign-in option, and
+// routes into the separate guest app shell afterward instead of the normal
+// app -- App()'s own guest-detection effect handles that automatically
+// once the fresh session lands and the page reloads to "/".
+function ChannelGuestLandingPage({ token }: { token: string }) {
+  const [phase, setPhase] = useState<"loading" | "error" | "used" | "ready" | "submitting" | "done">("loading");
+  const [invite, setInvite] = useState<ChannelGuestInviteView | null>(null);
+  const [email, setEmail] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [formError, setFormError] = useState("");
+
+  useEffect(() => {
+    fetchChannelGuestInviteByToken(token)
+      .then((result) => {
+        if (!result) {
+          setPhase("error");
+          return;
+        }
+        setInvite(result);
+        setEmail(result.invitedEmail ?? "");
+        setPhase(result.status === "pending" ? "ready" : "used");
+      })
+      .catch(() => setPhase("error"));
+  }, [token]);
+
+  async function handleAccept() {
+    if (!invite) {
+      return;
+    }
+    if (!email.trim()) {
+      setFormError("Enter your email.");
+      return;
+    }
+    if (!displayName.trim()) {
+      setFormError("Enter the name you'd like to be shown as.");
+      return;
+    }
+    if (password.length < 8) {
+      setFormError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setFormError("Passwords do not match.");
+      return;
+    }
+    setFormError("");
+    setPhase("submitting");
+    try {
+      const session = await signUpWithPassword(email.trim(), password);
+      if (!session) {
+        // "Confirm email" is enabled on this project -- no session yet to
+        // call accept_channel_guest_invite with. Stash the token so
+        // handleSignIn can finish applying it once they confirm and sign
+        // in for real, same pattern as pendingInviteToken above.
+        window.localStorage.setItem("pendingChannelGuestToken", token);
+        window.localStorage.setItem("pendingChannelGuestDisplayName", displayName.trim());
+        setFormError("Account created. Check your email to confirm it, then come back and sign in -- your invite will finish applying automatically.");
+        setPhase("ready");
+        return;
+      }
+      const result = await acceptChannelGuestInvite(token, displayName.trim(), session.accessToken);
+      if (result.outcome !== "accepted" || !result.guestChannelId) {
+        setFormError(
+          result.outcome === "not_found_or_expired"
+            ? "This invite has expired or was already used."
+            : "Signed up, but could not apply your channel invite. Contact whoever invited you.",
+        );
+        setPhase("ready");
+        return;
+      }
+      // Cached so GuestChannelShell can redisplay channel/workspace names
+      // later (see that component's own comment) -- a guest's RLS grant
+      // doesn't extend to reading the workspaces table directly.
+      window.localStorage.setItem(`ergon:channelGuestToken:${result.guestChannelId}`, token);
+      setPhase("done");
+      window.location.href = "/";
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Could not create your account.");
+      setPhase("ready");
+    }
+  }
+
+  if (phase === "loading") {
+    return (
+      <div className="submittal-public-page">
+        <p>Loading your invite...</p>
+      </div>
+    );
+  }
+
+  if (phase === "error" || !invite) {
+    return (
+      <div className="submittal-public-page">
+        <h1>Invite not found</h1>
+        <p>This invite link is invalid or has expired. Please ask whoever invited you to send a new one.</p>
+      </div>
+    );
+  }
+
+  if (phase === "used") {
+    return (
+      <div className="submittal-public-page">
+        <h1>{invite.status === "accepted" ? "Already accepted" : invite.status === "expired" ? "Invite expired" : "Invite revoked"}</h1>
+        <p>
+          {invite.status === "accepted"
+            ? "This invite has already been used to set up guest access. If that wasn't you, contact whoever invited you."
+            : invite.status === "expired"
+              ? "This invite has expired. Please ask whoever invited you to send a new one."
+              : "This invite has been revoked. Please ask whoever invited you to send a new one."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="submittal-public-page">
+      <header className="submittal-public-header">
+        <h1>You've been invited</h1>
+        <p>
+          You've been invited to join the <strong>{invite.channelName}</strong> channel at <strong>{invite.workspaceName}</strong>, invited by {invite.invitedByEmail}
+          {invite.suggestedExpiresAt ? ` -- access expires ${new Date(invite.suggestedExpiresAt).toLocaleString()}` : ""}.
+        </p>
+      </header>
+      <section className="submittal-public-section submittal-response-form">
+        <h2>Set up your guest access</h2>
+        <label>Your name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="How should we show your name?" /></label>
+        <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" /></label>
+        <label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
+        <label>Confirm password<input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
+        {formError && <small className="error-text" role="alert">{formError}</small>}
+        <div className="submittal-response-actions">
+          <button
+            type="button"
+            className="primary-action"
+            disabled={phase === "submitting" || !email || !displayName || !password || !confirmPassword}
+            onClick={handleAccept}
+          >
+            {phase === "submitting" ? "Setting up..." : "Set up guest access"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 // Without this, any uncaught render error anywhere in the tree unmounts
 // the whole app to a blank white page with zero indication anything went
 // wrong -- the person just sees nothing and has no way to tell "reload"
@@ -27662,12 +28325,15 @@ class RootErrorBoundary extends Component<{ children: ReactNode }, { hasError: b
 const submittalToken = new URLSearchParams(window.location.search).get("submittal");
 const proposalToken = new URLSearchParams(window.location.search).get("proposal");
 const inviteToken = new URLSearchParams(window.location.search).get("invite");
+const channelGuestToken = new URLSearchParams(window.location.search).get("channel-guest");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <RootErrorBoundary>
       {inviteToken ? (
         <InviteLandingPage token={inviteToken} />
+      ) : channelGuestToken ? (
+        <ChannelGuestLandingPage token={channelGuestToken} />
       ) : submittalToken ? (
         <SubmittalPublicPage token={submittalToken} />
       ) : proposalToken ? (

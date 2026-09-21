@@ -1211,6 +1211,274 @@ export async function acceptInvite(token: string, accessToken?: string): Promise
   return true;
 }
 
+// --- Channel guest invites (migration 188) -----------------------------
+// External guest access to a single created (project/client/group) channel.
+// A guest is a real auth.users row but NEVER a workspace_members row -- see
+// backend/supabase/migrations/188_external_channel_guest_access.sql's own
+// header for the full design. Four RPCs, all already applied and live:
+// create_channel_guest_invite, get_channel_guest_invite_by_token (anon),
+// accept_channel_guest_invite, revoke_channel_guest.
+
+export type ChannelGuestInviteView = {
+  channelId: string;
+  channelName: string;
+  workspaceName: string;
+  invitedByEmail: string;
+  invitedEmail: string | null;
+  suggestedExpiresAt: string | null;
+  status: "pending" | "accepted" | "revoked" | "expired";
+};
+
+// Anon-safe lookup for the pre-account "accept this invite" landing page --
+// also safely callable AFTER acceptance (by anyone, authenticated or not)
+// since the RPC only keys off the token, never the caller's identity. The
+// guest shell reuses this post-acceptance (token cached client-side) purely
+// to redisplay channel/workspace names it has no other RLS-granted way to
+// read (channel_guests carries no denormalized copy of either).
+export async function fetchChannelGuestInviteByToken(token: string): Promise<ChannelGuestInviteView | null> {
+  if (!isRemotePersistenceConfigured() || !token) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("rpc/get_channel_guest_invite_by_token"), {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ p_token: token }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as Array<{
+    channel_id: string;
+    channel_name: string;
+    workspace_name: string;
+    invited_by_email: string;
+    invited_email: string | null;
+    suggested_expires_at: string | null;
+    status: "pending" | "accepted" | "revoked" | "expired";
+  }>;
+  if (!rows.length) {
+    return null;
+  }
+  const row = rows[0];
+  return {
+    channelId: row.channel_id,
+    channelName: row.channel_name,
+    workspaceName: row.workspace_name,
+    invitedByEmail: row.invited_by_email,
+    invitedEmail: row.invited_email,
+    suggestedExpiresAt: row.suggested_expires_at,
+    status: row.status,
+  };
+}
+
+// The inviter's action -- authenticated only, RLS/RPC-enforced to the
+// channel's creator, an admin, or a PM (channel_guest_manage_authorized).
+// Deliberately does not send an email itself (matches user_invites' own
+// separation of concerns) -- the caller is expected to show/copy the
+// resulting link.
+export async function createChannelGuestInvite(
+  channelId: string,
+  invitedEmail: string,
+  suggestedExpiresAt: string | null,
+  accessToken?: string,
+): Promise<{ outcome: string; inviteId: string | null; token: string | null }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/create_channel_guest_invite"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({
+      p_channel_id: channelId,
+      p_invited_email: invitedEmail,
+      p_suggested_expires_at: suggestedExpiresAt,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not create the guest invite"));
+  }
+  const rows = (await response.json()) as Array<{ outcome: string; invite_id: string | null; token: string | null }>;
+  const row = rows[0];
+  if (!row) {
+    throw new Error("Could not create the guest invite.");
+  }
+  return { outcome: row.outcome, inviteId: row.invite_id, token: row.token };
+}
+
+// Called with the guest's own freshly-created session, right after
+// signUpWithPassword -- mirrors acceptInvite's exact posture. Never touches
+// workspace_members.
+export async function acceptChannelGuestInvite(
+  token: string,
+  displayName: string,
+  accessToken?: string,
+): Promise<{ outcome: string; guestChannelId: string | null }> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !token) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/accept_channel_guest_invite"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_token: token, p_display_name: displayName }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not accept the guest invite"));
+  }
+  const rows = (await response.json()) as Array<{ outcome: string; guest_channel_id: string | null }>;
+  const row = rows[0];
+  if (!row) {
+    throw new Error("Could not accept the guest invite.");
+  }
+  return { outcome: row.outcome, guestChannelId: row.guest_channel_id };
+}
+
+export type ChannelGuest = {
+  id: string;
+  channelId: string;
+  displayName: string;
+  invitedByEmail: string;
+  invitedAt: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  revokedByEmail: string | null;
+};
+
+type ChannelGuestRow = {
+  id: string;
+  channel_id: string;
+  display_name: string;
+  invited_by_email: string;
+  invited_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  revoked_by_email: string | null;
+};
+
+function mapChannelGuestRow(row: ChannelGuestRow): ChannelGuest {
+  return {
+    id: row.id,
+    channelId: row.channel_id,
+    displayName: row.display_name,
+    invitedByEmail: row.invited_by_email,
+    invitedAt: row.invited_at,
+    expiresAt: row.expires_at,
+    revokedAt: row.revoked_at,
+    revokedByEmail: row.revoked_by_email,
+  };
+}
+
+// Active + revoked guests of one channel, for the inviter-facing "current
+// guests" list. RLS (channel_guest_manage_authorized) already restricts
+// this to an authorized manager of the channel's own workspace -- a guest
+// calling this only ever sees their own row (RLS's other OR branch).
+export async function loadChannelGuests(channelId: string, accessToken?: string): Promise<ChannelGuest[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`channel_guests?channel_id=eq.${channelId}&select=id,channel_id,display_name,invited_by_email,invited_at,expires_at,revoked_at,revoked_by_email&order=invited_at.desc`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as ChannelGuestRow[];
+  return rows.map(mapChannelGuestRow);
+}
+
+// Instant admin/PM/channel-creator revocation (design doc §3 item 4).
+// Checks the RPC's own returned outcome rather than just response.ok --
+// "already_revoked"/"not_found" are both 200s with no actual change, and a
+// caller-visible confirmation shouldn't claim success for either.
+export async function revokeChannelGuest(channelGuestId: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/revoke_channel_guest"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_channel_guest_id: channelGuestId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not revoke this guest"));
+  }
+  const rows = (await response.json()) as Array<{ outcome: string; revoked_at: string | null }>;
+  const outcome = rows[0]?.outcome;
+  if (outcome === "not_found") {
+    throw new Error("That guest could not be found.");
+  }
+  if (outcome === "already_revoked") {
+    throw new Error("That guest was already revoked.");
+  }
+  if (outcome !== "revoked") {
+    throw new Error("Revoke didn't affect anything -- you may not have permission to revoke this guest.");
+  }
+}
+
+// --- Guest-session detection (this feature's frontend-only concern) ------
+// A channel guest is a real authenticated user with ZERO workspace_members
+// rows -- see main.tsx's post-signin effect for how these two are combined
+// to decide "is this an employee session or a guest session."
+
+// Does this user have ANY workspace_members row at all, regardless of
+// admin flag? Distinct from loadOwnWorkspaceMembership above (which folds
+// "no row" and "row but not admin" into the same `false`) -- this one
+// specifically distinguishes "no row" (possible guest) from "row exists."
+export async function loadHasAnyWorkspaceMembership(userId: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`workspace_members?select=user_id&user_id=eq.${userId}&limit=1`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return false;
+  }
+  const rows = (await response.json()) as Array<{ user_id?: string }>;
+  return rows.length > 0;
+}
+
+export type ActiveChannelGuestRow = {
+  id: string;
+  channelId: string;
+  displayName: string;
+  expiresAt: string | null;
+};
+
+// The caller's own channel_guests row(s) -- RLS already restricts a plain
+// guest (no workspace_members row, so channel_guest_manage_authorized is
+// always false for them) to seeing only rows where user_id = auth.uid(),
+// so no explicit user_id filter is needed or even possible from the client
+// (auth.uid() isn't something a query string can express). Filters out
+// revoked/expired client-side since the RLS policy itself doesn't -- an
+// employee accidentally revoked-and-re-invited elsewhere could otherwise
+// show a stale row.
+export async function loadMyActiveChannelGuestRow(accessToken?: string): Promise<ActiveChannelGuestRow | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(
+    supabaseUrl("channel_guests?select=id,channel_id,display_name,expires_at,revoked_at&order=invited_at.desc"),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as Array<{
+    id: string;
+    channel_id: string;
+    display_name: string;
+    expires_at: string | null;
+    revoked_at: string | null;
+  }>;
+  const now = Date.now();
+  const active = rows.find((row) => !row.revoked_at && (!row.expires_at || new Date(row.expires_at).getTime() > now));
+  if (!active) {
+    return null;
+  }
+  return { id: active.id, channelId: active.channel_id, displayName: active.display_name, expiresAt: active.expires_at };
+}
+
 export type KnownUser = {
   userId: string;
   email: string;

@@ -487,10 +487,11 @@ applied and tested in production. Migration 186 (a low-severity `is_app_manager(
 an autonomous audit) and 187 (DM/directory workspace scoping, reversing migration 162's own recorded
 decision after E's 2026-09-19/20 ruling) are both confirmed applied and tested. Migration 188 (external
 guest access to a single created channel, `PRODUCT_EXTERNAL_GUEST_CHANNELS_DESIGN.md`) is confirmed
-applied and tested — backend only; its matching frontend (guest invite UI, guest accept-invite landing
-page, minimal guest app shell) is not yet built, tracked as the next active workstream. **The final
-Phase 3 cross-workspace isolation suite (§5a) is now essentially closed** — only genuine test-rigor
-items remain open.
+applied and tested; its matching frontend (guest invite UI inside `ChannelDiscussion`, the
+`?channel-guest=<token>` guest accept-invite landing page, and the separate minimal `GuestChannelShell`
+app shell) was built and shipped 2026-09-20 (`src/main.tsx`, `src/persistence.ts`) — see HANDOFF.md for
+the commit hash and full detail. **The final Phase 3 cross-workspace isolation suite (§5a) is now
+essentially closed** — only genuine test-rigor items remain open.
 
 **Migration 180** (`backend/supabase/migrations/180_project_documents_and_catalog_datasheets_storage_containment.sql`,
 commit `29acdd1`) — URGENT, same severity class as migrations 165/168/170/174: `storage.objects` RLS for
