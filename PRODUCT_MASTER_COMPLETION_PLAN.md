@@ -477,17 +477,20 @@ canonical test again.**
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**Migration 186 only.** Migrations 155 through 185 and 187 are all confirmed applied and their canonical
-tests all passed in production, 2026-09-17/19. Migrations 175 through 179 — the overnight autonomous
-batch drafted per E's "do all of them" instruction — were run in required order (175 first, since 179
-depends on it, through 179 last); E confirmed "all came back - Success. No rows returned" for all five
-migration+test pairs. Migrations 180 through 185 — this session's closing batch, closing every remaining
-item §5a had flagged as decision-dependent plus one separately-discovered bug (184) — are likewise all
-confirmed applied and tested in production. Migration 187 (DM/directory workspace scoping) is also
-confirmed applied and tested. **Migration 186** (a low-severity `is_app_manager()` grant fix found via an
-autonomous audit) is drafted, PGlite-verified, and pushed, but not yet applied — the one remaining item
-in this queue. **The final Phase 3 cross-workspace isolation suite (§5a) is now essentially closed** —
-only genuine test-rigor items remain open.
+**None currently.** Migrations 155 through 188 are all confirmed applied and their canonical tests all
+passed in production, 2026-09-17/20. Migrations 175 through 179 — the overnight autonomous batch drafted
+per E's "do all of them" instruction — were run in required order (175 first, since 179 depends on it,
+through 179 last); E confirmed "all came back - Success. No rows returned" for all five migration+test
+pairs. Migrations 180 through 185 — this session's closing batch, closing every remaining item §5a had
+flagged as decision-dependent plus one separately-discovered bug (184) — are likewise all confirmed
+applied and tested in production. Migration 186 (a low-severity `is_app_manager()` grant fix found via
+an autonomous audit) and 187 (DM/directory workspace scoping, reversing migration 162's own recorded
+decision after E's 2026-09-19/20 ruling) are both confirmed applied and tested. Migration 188 (external
+guest access to a single created channel, `PRODUCT_EXTERNAL_GUEST_CHANNELS_DESIGN.md`) is confirmed
+applied and tested — backend only; its matching frontend (guest invite UI, guest accept-invite landing
+page, minimal guest app shell) is not yet built, tracked as the next active workstream. **The final
+Phase 3 cross-workspace isolation suite (§5a) is now essentially closed** — only genuine test-rigor
+items remain open.
 
 **Migration 180** (`backend/supabase/migrations/180_project_documents_and_catalog_datasheets_storage_containment.sql`,
 commit `29acdd1`) — URGENT, same severity class as migrations 165/168/170/174: `storage.objects` RLS for
@@ -615,8 +618,9 @@ both passes. Since it's a plain SQL function (not a trigger), any fully unauthen
 pass an arbitrary user id and learn whether that user holds the manager role — low severity (boolean
 role-probe, no write path), but real and live. Verified via PGlite with a negative control confirming
 the sandbox genuinely reproduces Postgres' default PUBLIC-grant behavior pre-fix. Canonical test:
-`backend/supabase/migration_186_fix_is_app_manager_missing_grants_tests.sql`. — *Implemented locally,
-Tests passed. Not applied to production yet — kept local for E's review.*
+`backend/supabase/migration_186_fix_is_app_manager_missing_grants_tests.sql`. — *Migration applied and
+canonical test PASSED in production (E confirmed, 2026-09-20, "Success. No rows returned" for both).*
+**Do not run migration 186 or its canonical test again.**
 
 **Migration 187** (`backend/supabase/migrations/187_dm_and_directory_workspace_scoping.sql`, commit
 `c961482`) — reverses migration 162's own recorded decision after E, alarmed by an audit finding
@@ -653,6 +657,30 @@ every `security definer` function for a missing PUBLIC-grant revoke (the migrati
 found only `is_app_manager()` (closed by 186) and one purely cosmetic, non-exploitable inconsistency
 (`create_client_channel()`, a trigger function Postgres cannot invoke directly regardless of its
 grants).
+
+**Migration 188** (`backend/supabase/migrations/188_external_channel_guest_access.sql`, commit
+`f98f1e0`) — implements `PRODUCT_EXTERNAL_GUEST_CHANNELS_DESIGN.md` end to end, backend only. An
+internal PM/admin/channel-creator can invite an outside person (e.g. a subcontractor from a different
+company) into ONE `project`/`client`/`group` channel — never a `section`-type channel ("Projects,"
+"Sales," "Marketing"), enforced by a `before insert` guard trigger at the data layer, not just the UI.
+Two new tables, `channel_guests`/`channel_guest_invites` (channel-scoped only, no `workspace_id`
+column, never linked to `workspace_members` — a guest is a real `auth.users` row with a persistent,
+revocable, named identity, but never a company member). Additive RLS OR-branches (no existing condition
+removed) on `channels`/`channel_messages`/`channel_message_reactions`/the `message-attachments` storage
+bucket (read+write for the guest's own channel) and `channel_canvas` (read-only for guests — judgment
+call, flagged for E, one-line change if write access is wanted). Four RPCs:
+`create_channel_guest_invite`, `get_channel_guest_invite_by_token` (anon-callable), 
+`accept_channel_guest_invite`, `revoke_channel_guest`. Verified via the consolidated isolation suite
+(54/54 passing, zero regressions) plus its own canonical test
+(`backend/supabase/migration_188_external_channel_guest_access_tests.sql`), which directly asserts a
+guest accepting their invite produces zero `workspace_members` rows and is fully isolated from every
+other channel, the section channel, and unrelated tables. — *Migration applied and canonical test
+PASSED in production (E confirmed, 2026-09-20, "Success. No rows returned" for both).* **Do not run
+migration 188 or its canonical test again.** File promotion (a room owner moving a guest-uploaded file
+into the project's permanent document store) and the read-state/@mention notification system (design
+doc's own Phase 2) are deliberately not part of this migration. **The matching frontend — guest invite
+UI for internal staff, the guest's own accept-invite landing page, and a minimal guest-only app shell —
+is not yet built; this is the next active workstream.**
 
 **Migration 175** (`backend/supabase/migrations/175_team_members_workspace_scoping.sql`, commit
 `6db3148`) — adds a real `workspace_id` to `team_members` (root staff-directory table, no FK anywhere —
