@@ -35,6 +35,7 @@ declare
   colleague_email text := 'zz-test-191-colleague@example.com';
   colleague2_email text := 'zz-test-191-colleague2@example.com';
   existing_full_name text;
+  my_mention_token text;  -- first word of existing_full_name, whatever it really is in this DB
   project_a_id uuid;
   channel_a_id uuid;
   guest_id uuid := gen_random_uuid();
@@ -117,9 +118,23 @@ begin
   where workspace_id = real_workspace_id and lower(email) = lower(real_email);
 
   if existing_full_name is null or btrim(existing_full_name) = '' then
+    existing_full_name := 'ZzUnread191 TestEmployee';
     insert into public.team_members (workspace_id, full_name, email)
-      values (real_workspace_id, 'ZzUnread191 TestEmployee', real_email);
+      values (real_workspace_id, existing_full_name, real_email);
   end if;
+
+  -- BUG FIX (found on E's first live run against real production data):
+  -- the message body below must @mention WHATEVER real_user's actual
+  -- first name is -- get_message_read_summary() computes its own
+  -- mention-matching token from the real team_members.full_name row, not
+  -- from a hardcoded fixture string. The prior version of this test
+  -- hardcoded "@ZzUnread191" in the message body, which only matched when
+  -- no team_members row pre-existed for this admin (the fallback-insert
+  -- path above); against a real admin who already has a team_members row
+  -- (e.g. a real name like "Ehren Kellogg"), the hardcoded token never
+  -- matched the RPC's real computed token, so mentioned was always false.
+  -- Same class of bug as migration 173's event_type assumption.
+  my_mention_token := split_part(btrim(existing_full_name), ' ', 1);
 
   insert into public.projects (project_name) values ('ZZ_TEST_191 Project A') returning id into project_a_id;
   select id into channel_a_id from public.channels where type = 'project' and project_id = project_a_id;
@@ -263,7 +278,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', colleague_id::text)::text, true);
   perform set_config('role', 'authenticated', true);
   insert into public.channel_messages (channel_id, sender_id, body)
-    values (channel_a_id, colleague_id, 'Hey @ZzUnread191 can you take a look at this')
+    values (channel_a_id, colleague_id, 'Hey @' || my_mention_token || ' can you take a look at this')
     returning id into colleague_msg_id;
 
   perform set_config('request.jwt.claims', json_build_object('sub', real_user_id::text)::text, true);
