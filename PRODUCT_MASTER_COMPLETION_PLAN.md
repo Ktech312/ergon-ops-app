@@ -473,11 +473,37 @@ canonical test again.**
 
 ## 4. Completed locally but not yet migrated/deployed/verified
 
-**None currently.**
+**Migration 189** (`backend/supabase/migrations/189_channel_guest_message_sender_names.sql`) —
+follow-up to migration 188, closing a usability gap found while building that migration's frontend
+(commit `9cd9faf`): a channel guest's `senderNameFor` resolution relies on `app_known_users`/
+`team_members`, neither of which a guest can read (by design — migration 188 never widened either
+table's RLS, since that would leak the whole company directory), so every OTHER person's message in the
+guest's one channel showed "Unknown user." New narrowly-scoped RPC,
+`get_channel_message_sender_names(p_channel_id uuid) returns table (user_id uuid, display_name text)`,
+SECURITY DEFINER, resolves ONLY the real senders of messages that exist in the one channel the caller
+(a normal member with real access, or `is_active_channel_guest()`) is authorized to see — never the
+directory. Display-name preference order mirrors `senderNameFor`/`teamDisplayName`'s real client logic
+exactly: `team_members.full_name` (+ `role_title`) if a match exists in the channel's own workspace,
+else the email local-part fallback. Verified via the consolidated isolation suite (55/55 passing, zero
+regressions) plus its own canonical test
+(`backend/supabase/migration_189_channel_guest_message_sender_names_tests.sql`). See HANDOFF.md for
+full detail. — *Not applied to production yet — kept local for E's review.* The matching frontend
+(`GuestChannelShell` calling this RPC and merging the result into its local name map, plus a second,
+independent fix for the "revoked/expired guest sees a broken normal-app fallthrough" dead-end) is
+built but deliberately held back uncommitted until E confirms this migration is applied — see
+`src/main.tsx`/`src/persistence.ts`.
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**None currently.** Migrations 155 through 188 are all confirmed applied and their canonical tests all
+**One action pending: apply migration 189** (`backend/supabase/migrations/189_channel_guest_message_sender_names.sql`)
+and its canonical test (`backend/supabase/migration_189_channel_guest_message_sender_names_tests.sql`)
+in the Supabase SQL editor, same as every prior migration — see §4 above and HANDOFF.md for full detail.
+This closes the "Unknown user" gap for channel guests (follow-up to migration 188). The matching
+frontend (`GuestChannelShell` wiring, plus a separate fix for revoked/expired guest sign-in) is already
+built but held back uncommitted until this migration is confirmed applied, per this repo's own "a held-
+back commit still goes out on the next unrelated push" discipline.
+
+Migrations 155 through 188 are all confirmed applied and their canonical tests all
 passed in production, 2026-09-17/20. Migrations 175 through 179 — the overnight autonomous batch drafted
 per E's "do all of them" instruction — were run in required order (175 first, since 179 depends on it,
 through 179 last); E confirmed "all came back - Success. No rows returned" for all five migration+test
