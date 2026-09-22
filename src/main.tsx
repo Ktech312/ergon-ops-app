@@ -16746,6 +16746,12 @@ function ChannelDiscussion({
   // for is_active_workspace_member() to even pass).
   const canManageChannelGuests =
     !guestMode && channel.type !== "section" && Boolean(isAdmin || isWorkspaceAdmin || isManagerRole || (channel.createdBy && channel.createdBy === myUserId));
+  // Migration 194: channel_members' own INSERT/DELETE RLS now enforces
+  // exactly this same predicate (channel_guest_manage_authorized) -- this
+  // alias just gives the "Add people" gate its own name at the call site
+  // rather than reusing a guest-flavored one, since they now happen to be
+  // identical by design, not by coincidence.
+  const canManageChannelMembers = canManageChannelGuests;
   const [showGuestInvitePanel, setShowGuestInvitePanel] = useState(false);
   const [guestInviteEmail, setGuestInviteEmail] = useState("");
   const [guestInviteExpiresAt, setGuestInviteExpiresAt] = useState("");
@@ -17326,9 +17332,11 @@ function ChannelDiscussion({
           >
             <Users size={15} />
           </button>
-          <button className="icon-button" type="button" onClick={() => setShowMemberPicker((current) => !current)} aria-label="Add people" title="Add people">
-            <UserPlus size={15} />
-          </button>
+          {canManageChannelMembers && (
+            <button className="icon-button" type="button" onClick={() => setShowMemberPicker((current) => !current)} aria-label="Add people" title="Add people">
+              <UserPlus size={15} />
+            </button>
+          )}
           <button className="icon-button channel-delete-button" type="button" onClick={handleDeleteChannel} aria-label="Delete channel" title="Delete channel">
             <Trash2 size={15} />
           </button>

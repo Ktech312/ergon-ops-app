@@ -45,6 +45,77 @@ curl sample, before telling E something is live. This session had no Vercel CLI/
 access of its own, so it asked E to confirm directly via screenshot instead of guessing -- do the same
 in any future session that lacks that access.
 
+## 2026-09-22 overnight: doc-accuracy audit + two RLS gaps closed (migrations 193/194, E approved, not yet applied)
+
+E asked for "a list of items to work on" before going to sleep, then pushed back on the first draft
+("some of these seem like they were done or new ones/issues were added and I didn't know about it")
+-- correctly. Every item in the original list had been relayed from `HANDOFF.md`'s own prose without
+checking it against the current code, migrations directory, or production. Verifying each one
+against source turned up three separate stale notes, all now corrected in place (search this file
+for "stale" to find each correction): migration 189 was flagged "not applied, frontend held back"
+but had actually been live since commit `f7af39a`/the `3e48b64` deploy, confirmed correctly applied
+via a live production read-only catalog query E ran; the "two channels named PM" item had actually
+been resolved by E on 2026-09-01, ten days before the note that called it "not investigated" was
+even written; and BOM atomicity's "open, unimplemented" flag was stale by one day -- migrations
+131/132 shipped and were verified 2026-09-12, the note just was never updated after. **Standing
+lesson going forward, not just for tonight: an "open item" note is a timestamp of what was true when
+written, never a live status -- verify against `git log`, the migrations directory, or production
+directly before repeating one, in this session or any future one.**
+
+Two real, still-open gaps survived that audit and were confirmed by direct read of the live
+migration files, not doc prose: `channel_canvas`'s SELECT/INSERT/UPDATE never got the same
+private-group `channel_members` check `channel_messages` already enforces (any workspace member
+could read/edit a *private* group channel's shared notes doc without being a member of that
+specific channel); `channel_members` had no gate beyond plain workspace membership on
+INSERT/DELETE at all (any workspace member could add or remove any other member from any group
+channel). E approved fixing both.
+
+- **Migration 193 (`channel_canvas_private_group_scoping.sql`)** replaces all three
+  `channel_canvas` policies with the exact same predicate `channel_messages` already uses (workspace
+  member AND (section/project/client, OR a non-private group, OR a real `channel_members` row for a
+  private group)), joined directly against `channels` instead of the coarser
+  `channel_owner_workspace_id()` resolver the old policies used (that resolver only ever returns a
+  workspace_id, with no way to also see the channel's own `type`/`private` columns). SELECT keeps
+  its existing guest OR-branch; INSERT/UPDATE deliberately do NOT gain one -- migration 188's own
+  header is explicit that canvas stays read-only for guests, and this is a pure containment fix, not
+  a reopening of that decision.
+- **Migration 194 (`channel_members_manage_authorization.sql`)** gates `channel_members`'
+  INSERT/DELETE with `channel_guest_manage_authorized(channel_id)` -- the exact helper migration 188
+  already built for the closely related "who may manage this channel's external guest access"
+  question (admin OR workspace-admin OR PM role OR the channel's own creator), reused rather than
+  inventing a second, possibly-inconsistent permission model for the same class of decision. SELECT
+  is untouched -- "View members" stays visible to any workspace member, unchanged. Verified against
+  the real client code before writing: `createGroupChannel` (`persistence.ts`) inserts the channel
+  row first (stamping `created_by`), then bulk-inserts the initial `channel_members` rows as a
+  separate follow-up call -- by then `created_by` is already committed, so the creator-branch check
+  correctly authorizes normal channel creation. No `channel_members` DELETE call site exists
+  anywhere in the frontend today (no "remove member" UI was ever built) -- tightening DELETE is pure
+  defense-in-depth against a direct REST call, not a change to a working feature.
+- **Frontend**: the "Add people" button (`ChannelDiscussion`, `main.tsx`) was previously shown
+  unconditionally to any viewer; now gated behind `canManageChannelMembers` (an alias of the
+  existing `canManageChannelGuests` boolean, since migration 194 makes the two predicates formally
+  identical) so an unauthorized member no longer sees a control that would just 403 on click.
+
+**Verification**: both migrations plus the fix run clean through the full consolidated isolation
+suite (`node backend/supabase/consolidated_isolation_suite/run_all.mjs`) -- 60/60 canonical test
+files passing, including two new ones
+(`migration_193_channel_canvas_private_group_scoping_tests.sql`,
+`migration_194_channel_members_manage_authorization_tests.sql`). One older canonical test file
+needed a test-only fix, not a migration change: `migration_162_..._tests.sql`'s own structural sweep
+asserted `channel_canvas`'s SELECT policy body contained the literal substring
+`channel_owner_workspace_id` -- true before 193, no longer true after (193 legitimately restructured
+the policy to a direct `channels` join, same class of "policy shape changed for a good reason, old
+test asserted an implementation detail instead of behavior" issue this repo has hit before, e.g. the
+166-vs-173/177 false positive). Fixed in place, migration 162 itself untouched. `npx tsc -b` clean,
+`npx vite build` clean, full `vitest` suite clean (44 files, 502 tests, unchanged from baseline --
+this is an RLS-only change plus one UI gate, no test file needed updating).
+
+**Not yet applied to production.** Both migration files are committed and kept local, same as every
+other migration in this repo -- E needs to run `193_channel_canvas_private_group_scoping.sql` then
+`194_channel_members_manage_authorization.sql` (in that order; 194 depends on
+`channel_guest_manage_authorized()` from 188, already live, not on 193) in the Supabase SQL editor,
+then their two canonical test files, before this is confirmed live.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
@@ -4052,7 +4123,7 @@ E's stated direction, from an overnight planning conversation (research → clar
 
 ## Open / pending items
 
-**⚠️ Most current item (2026-09-11): BOM atomicity is open, unimplemented, and now has a stronger design with one added prerequisite.** `saveProjectSites`'s BOM delete-then-reinsert (`persistence.ts`) still has no transaction between the two requests -- see the local-only work-log entry above and `PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md` for the full design, revised 2026-09-11 to reconcile-by-id. Implementing it now also requires a `BomLine` type change (stable line id + stable catalog item id/SKU) that hasn't been scoped or approved separately. Do not pick this up without a separate, explicit go-ahead to implement -- the design being finished is not that go-ahead.
+~~⚠️ Most current item (2026-09-11): BOM atomicity is open, unimplemented~~ **-- stale, actually shipped 2026-09-12.** This bullet was never updated after the fact. `PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md`'s own header confirms migrations 131/132 (`replace_project_bom_lines`, reconcile-by-id) were implemented, applied, and fully verified in production 2026-09-12 -- E reran the canonical verification script successfully. Confirmed directly against the live code during a 2026-09-22 doc-accuracy audit: `saveProjectSites` (`src/persistence.ts:8598`) calls the real `rpc/replace_project_bom_lines`, not the old delete-then-reinsert. Nothing left to do here. **Lesson, same one as the migration-189 and two-PM-channels corrections earlier the same night: an "open item" note is a snapshot from when it was written, not a live status -- always check it against the code/migrations directory before treating it as still true.**
 
 **Resolved (2026-09-11):** the item-metadata `<` vs `!==` follow-up noted here on 2026-09-10 is fixed -- see the local-only work-log entry above.
 

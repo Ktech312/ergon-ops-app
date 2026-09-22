@@ -1267,12 +1267,24 @@ there, not an oversight.
      (to `projects`/`clients`, both workspace-scoped already); `section`/`group` types have no anchor
      of any kind, so `channels` gets a genuine `workspace_id` column (unlike every other Stage 4
      table) rather than a resolver. **Migration 162 (`862aa75`) CONFIRMED APPLIED and its canonical
-     test PASSED in production, 2026-09-17.** Two pre-existing bugs found in passing, NOT fixed by
-     this migration (a
-     different authorization dimension than workspace containment, need their own review):
-     `channel_canvas` is fully open (`using(true)`) rather than membership-gated like
-     `channel_messages` was tightened to be; `channel_members` is fully open on all three operations
-     (anyone can add/remove anyone from any channel).
+     test PASSED in production, 2026-09-17.** Two pre-existing gaps found in passing, NOT fixed by
+     this migration (a different authorization dimension than workspace containment, correctly
+     deferred for their own review at the time) -- **both closed 2026-09-22, E approved.**
+     `channel_canvas`'s SELECT/INSERT/UPDATE never got the same private-group `channel_members`
+     check `channel_messages` already enforces (not literally `using(true)` by this point --
+     migration 162 itself had already workspace-scoped it -- the real gap was narrower: any
+     workspace member could read/edit a *private group's* canvas without being a member of that
+     specific channel). **Migration 193 (`channel_canvas_private_group_scoping`) closes this** by
+     mirroring `channel_messages`' own predicate exactly. `channel_members`' INSERT/DELETE had no
+     gate beyond workspace membership at all -- any workspace member could add/remove any other
+     member from any group channel. **Migration 194 (`channel_members_manage_authorization`)
+     closes this**, reusing migration 188's existing `channel_guest_manage_authorized()` helper
+     (admin/workspace-admin/PM/channel-creator) rather than inventing a second permission model for
+     the same class of decision -- SELECT is untouched (membership lists stay broadly workspace-
+     readable, unchanged). Both migrations PGlite-verified against the full 001-194 consolidated
+     isolation suite (60/60 canonical tests passing) and their own new canonical test files; **not
+     yet applied to production -- kept local for E's review**, same as every other migration in
+     this repo before E runs it in Supabase Studio.
    - **`conversations`/`direct_messages` (private 1:1 DMs, migrations 094/100 — distinct from
      `channels`)** — **RESOLVED, 2026-09-17: E decided these stay cross-workspace** (personal
      messaging, not tenant data) — no migration needed, this table is correctly left exactly as-is.

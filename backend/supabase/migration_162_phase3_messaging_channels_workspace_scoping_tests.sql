@@ -178,8 +178,19 @@ begin
   select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'channel_members' and cmd = 'SELECT' and position('channel_owner_workspace_id' in coalesce(qual, '')) > 0;
   if row_count = 0 then raise exception 'TEST FAILED: channel_members SELECT policy does not reference channel_owner_workspace_id'; end if;
 
-  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'channel_canvas' and cmd = 'SELECT' and position('channel_owner_workspace_id' in coalesce(qual, '')) > 0;
-  if row_count = 0 then raise exception 'TEST FAILED: channel_canvas SELECT policy does not reference channel_owner_workspace_id'; end if;
+  -- 2026-09-22 (migration 193): channel_canvas's SELECT policy was
+  -- rewritten from a channel_owner_workspace_id()-resolver call to a
+  -- direct join against channels (matching channel_messages' own exact
+  -- predicate shape, so a private group channel's canvas can also check
+  -- real channel_members) -- this assertion follows that legitimate
+  -- structural change rather than asserting a substring that's simply no
+  -- longer true. The workspace predicate itself (is_workspace_member) is
+  -- still there, just reached via the join instead of the resolver;
+  -- migration 193's own canonical test proves the actual authorization
+  -- behavior end-to-end, this sweep only needs to confirm SOME workspace
+  -- check exists in the policy body.
+  select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'channel_canvas' and cmd = 'SELECT' and position('is_workspace_member' in coalesce(qual, '')) > 0;
+  if row_count = 0 then raise exception 'TEST FAILED: channel_canvas SELECT policy does not reference is_workspace_member'; end if;
 
   select count(*) into row_count from pg_policies where schemaname = 'public' and tablename = 'channel_message_reactions' and cmd = 'SELECT' and position('is_workspace_member' in coalesce(qual, '')) > 0;
   if row_count = 0 then raise exception 'TEST FAILED: channel_message_reactions SELECT policy does not reference is_workspace_member'; end if;
