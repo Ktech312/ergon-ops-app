@@ -1,22 +1,20 @@
 # Ergon Ops — Handoff Doc
 
-## URGENT — needs E's confirmation: consolidation is pushed, Vercel deploy status not yet verified (2026-09-21)
+## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
-**Original incident (2026-09-21, earlier the same day):** Vercel Hobby plan caps a deployment at 12
-serverless functions (every `.js` file under `api/` except the underscore-prefixed `api/_lib/` helper
-folder counts). This app was already AT that cap (12 real routes); migration 190's
-`api/forward-attachment.js` made 13, tipping it over. Production silently kept serving stale code
-(`245fe8f`) while two later pushes (`3e48b64`, `c9d9fec`) both showed **Status: Error** in the Vercel
-dashboard — undetected because the `vite build` step itself always looked clean; the real failure was
-in a later step, past what the truncated build-log tail shows. Concretely: **migrations 190/191/192
-were confirmed applied and correct in the database the whole time — only their matching FRONTEND
-wasn't actually live.** E's explicit decision: stay on the free Hobby plan for now, do NOT upgrade to
-Pro — fix by consolidating routes. **Noted for later, per E:** upgrading to Vercel Pro (removes the
-12-function cap entirely) is the better long-term fix, revisit once the app is in full commercial
-production with real paying customers.
+**Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
+file under `api/` except the underscore-prefixed `api/_lib/` helper folder counts). This app was
+already AT that cap (12 real routes); migration 190's `api/forward-attachment.js` made 13, tipping it
+over. Production silently kept serving stale code (`245fe8f`) while two later pushes (`3e48b64`,
+`c9d9fec`) both showed **Status: Error** in the Vercel dashboard — undetected because the `vite build`
+step itself always looked clean; the real failure was in a later step, past what the truncated
+build-log tail shows. Concretely: migrations 190/191/192 were confirmed applied and correct in the
+database the whole time — only their matching FRONTEND wasn't actually live. E's explicit decision:
+stay on the free Hobby plan for now, do NOT upgrade to Pro. **Noted for later, per E:** upgrading to
+Vercel Pro (removes the 12-function cap entirely) is the better long-term fix, revisit once the app is
+in full commercial production with real paying customers.
 
-**Consolidation done, pushed as `80e4a3e` (this session, later the same day):** merged the 7 `send-*`
-routes into 2 dispatcher files --
+**Fix, pushed as `80e4a3e`:** merged the 7 `send-*` routes into 2 dispatcher files --
 - `api/send-notification.js` (replaces `send-notification-email.js`/`send-notification-slack.js`/
   `send-push.js`/`send-system-health-alert.js`), dispatched on a new `channel` body field
   (`email`/`slack`/`push`/`system-health`).
@@ -29,22 +27,23 @@ unchanged (same auth/role/rate-limit checks, same rate-limit KEY STRINGS since S
 surface breakdown is keyed by the string before the first ":", same validation, same response
 shapes/status codes). Updated every frontend call site (`main.tsx`, `persistence.ts`) and every
 backend unit test (`tests/api/*.test.js`, `src/system-health-phase-b.test.ts`) to match. Real
-(non-`_lib`) `api/*.js` file count: **13 → 8** (confirmed by local count before pushing), comfortably
-under 12 with headroom for ~4 more future routes. `npx tsc -b`, `npx vite build`, and the full vitest
-suite (44 files, 502 tests) all pass clean.
+(non-`_lib`) `api/*.js` file count: **13 → 8**, comfortably under 12 with headroom for ~4 more future
+routes. `npx tsc -b`, `npx vite build`, and the full vitest suite (44 files, 502 tests) all passed
+clean before pushing.
 
-**What this session could NOT verify, and the next session's actual first task:** no Vercel CLI, API
-token, or dashboard access was available in this sandbox to check the deployment's own Status field
-directly -- exactly the check this incident's own root-cause note says must never be skipped in favor
-of a clean build log. **E needs to confirm directly in the Vercel dashboard** that the deployment for
-commit `80e4a3e` shows **Status: Ready** (not Error), and if it's Ready, that the site is serving it
-(check the "Production" alias points at `80e4a3e` or later, not still `245fe8f`). If E confirms Ready:
-also re-verify the combined migrations 190/191/192 frontend (the Forward action, unread/mention
-highlights, add-member confirmation dialogs, guest banner) is now genuinely visible/working for a real
-user -- that code was already committed (`3e48b64`) and should ride along with this deploy
-automatically, no separate re-push needed. If E reports Error again: get the real error text past the
-"Deploying outputs..." line in the build log (not just the clean `vite build` step) before guessing at
-a further fix -- this session had no way to fetch that log text itself.
+**Confirmed live by E (2026-09-21, Vercel dashboard screenshot):** deployment `80e4a3e` shows
+**Status: Ready**, tagged **Production**. The follow-up docs-only commit `15dd74a` also deployed
+**Ready**/**Production** on top of it. Since `80e4a3e` is a descendant of `3e48b64` (the already-committed
+combined migrations 190/191/192 frontend), that frontend rode along automatically and should now be
+genuinely live -- **not yet separately re-verified feature-by-feature** (Forward action, unread/mention
+highlights, add-member confirmation dialogs, guest banner); worth a quick real-user check next time
+someone's in the app, not urgent since the deploy itself is confirmed healthy.
+
+**Process fix, now standing practice:** after any push, check the **Vercel deployment's own Status
+field** (Ready vs Error) directly in the dashboard, not just a clean build-log tail or a bundle-content
+curl sample, before telling E something is live. This session had no Vercel CLI/API token/dashboard
+access of its own, so it asked E to confirm directly via screenshot instead of guessing -- do the same
+in any future session that lacks that access.
 
 ## Next coder session
 
