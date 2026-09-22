@@ -116,6 +116,111 @@ other migration in this repo -- E needs to run `193_channel_canvas_private_group
 `channel_guest_manage_authorized()` from 188, already live, not on 193) in the Supabase SQL editor,
 then their two canonical test files, before this is confirmed live.
 
+## 2026-09-22 overnight, continued: Stage 7 onboarding backend -- self-serve company signup (migration 195, E approved "lightweight" path), not yet applied
+
+E's own decisions on Stage 7 (recorded in `PRODUCT_ONBOARDING_CONFIG.md`'s 2026-09-22 update, same
+night): model this on Teams/QuickBooks, different industries from day one, self-serve signup gated
+by E's own manual per-company approval (no billing infra yet), per-company branding under the
+"Ergon" platform brand, lightweight onboarding first ("sign up -> E approves -> empty isolated
+workspace, configure as you go") rather than a guided wizard, which E explicitly deferred until a
+real second company has gone through the lightweight path at least once ("let's start with
+lightweight and once everything actually works and is tested 100, we build the guide").
+
+**Backend built and PGlite-tested this session** -- `backend/supabase/migrations/195_company_signup_requests.sql`
++ `api/request-company-signup.js`. Frontend (public signup page, admin review queue, accept-landing
+page) deliberately NOT built this pass, per this repo's own standing "hold frontend until the
+migration is confirmed applied" practice (same as 188/190/191/192's own precedent) -- this backend
+alone is already a substantial, security-sensitive surface (the first genuinely public,
+unauthenticated write path in this schema) and deserves E's review before more is built on top of
+it.
+
+**The flow**: (1) a prospect submits company name + their own name/email via the new public API
+route; (2) E (platform admin) reviews pending requests and approves or rejects; approval provisions
+a real, immediately-isolated workspace and issues a bearer token (no email-sending infra exists
+reliably in this app -- E copies/sends the token however they choose, same posture as every guest-
+invite link already in this app); (3) the prospect visits a link carrying that token, signs up via
+normal client-side Supabase Auth (mirrors `InviteLandingPage`/`ChannelGuestLandingPage` exactly),
+then accepts, becoming their new company's own founding workspace admin.
+
+**New table**: `company_signup_requests` (status enum pending/approved/rejected, reviewed_by/at,
+rejection_reason, created_workspace_id, signup_token, signup_token_used_at). RLS: SELECT/UPDATE
+gated on `is_app_admin()` only -- no INSERT policy for any client role at all.
+
+**Five functions**: `submit_company_signup_request()` -- has NO anon/authenticated grant at all,
+reachable only via the new API route's service-role connection, which is where IP+email rate
+limiting actually lives (Postgres/RLS has no concept of "requests per minute"). `approve_company_signup()`/
+`reject_company_signup()` -- `is_app_admin()`-gated (the same legacy, currently-meaningful admin
+flag every other admin action in this app already uses, not the newer, currently-unused
+`is_platform_admin()`/`platform_admins` concept -- see the real gap below).
+`get_company_signup_by_token()` -- anon-callable read, mirrors `get_channel_guest_invite_by_token`.
+`accept_company_signup()` -- authenticated-only, creates the new workspace's first
+`workspace_members` row with `is_workspace_admin = true`.
+
+**Four real bugs found and fixed by this migration's own canonical test, not assumed correct**:
+1. Migration 182's own `workspaces_seed_default_branding` AFTER INSERT trigger already auto-creates
+   a `company_branding` row ("New Company" placeholder) the instant a workspace is created -- a
+   first-draft explicit INSERT collided with it (`company_branding_pkey` duplicate). Fixed: UPDATE
+   the trigger-seeded row's placeholder name instead of inserting a second one.
+2. The real unique constraint on `channels` is `(type, section_key, workspace_id)`, not the pre-
+   Phase-3 `(type, section_key)` a first draft assumed -- fixed the `ON CONFLICT` clause to match.
+3. **The real, load-bearing one**: migration 162's own `guard_channel_workspace_id_mutation()`
+   trigger unconditionally overrides a section/group channel's `workspace_id` with
+   `resolve_caller_workspace_id()` on every INSERT -- correct for normal user-initiated channel
+   creation, but it silently discarded `approve_company_signup`'s own explicit `workspace_id` and
+   redirected the 4 seeded section channels into the APPROVING ADMIN's own existing workspace
+   instead (where `ON CONFLICT DO NOTHING` then silently absorbed them, since that workspace already
+   had its own 4 section channels) -- the insert reported success with zero errors while doing the
+   wrong thing entirely. Fixed by redefining `guard_channel_workspace_id_mutation()` (`create or
+   replace function`, migration 162's own file never touched, matching this repo's standing "fix an
+   old function through a later migration" discipline already used for `bump_conversation_last_message_at`,
+   migration 190) with one narrow escape hatch: a transaction-local Postgres setting
+   (`app.provisioning_workspace_id`) that only `approve_company_signup` itself can ever set (no
+   client-facing surface can call `set_config` directly), gated on that same function's own
+   `is_app_admin()` check, and only ever naming a workspace_id that function's own preceding
+   statement just created in the same transaction.
+4. `accept_company_signup`'s `returns table (outcome text, workspace_id uuid)` had its OUT parameter
+   literally named `workspace_id` -- shadowing `workspace_members.workspace_id` inside the function
+   body's own `on conflict (workspace_id, user_id)` clause, the exact class of unqualified-identifier
+   hazard migration 105's own header already warns about. Renamed the OUT column to
+   `joined_workspace_id`.
+
+**A fifth, separate gap found and fixed, not a bug in this migration's own logic**: `workspaces`'
+own SELECT RLS (migration 115) is gated on `is_platform_admin()` (the `platform_admins` table) --
+a completely different flag from the legacy `is_app_admin()`/`app_admins` this migration's
+approve/reject functions correctly use (matching how every other admin action in this app actually
+works today). `PRODUCT_ONBOARDING_CONFIG.md`'s own §1b finding had already flagged that "zero
+frontend or API code reads or writes any of it yet" -- meaning `platform_admins` has likely never
+had a row in production. Net effect, caught live by this test: E's own real account (an app_admin)
+could approve a company but then couldn't even SELECT the workspace it just created. This is the
+first feature that actually needs real platform-admin read access, so migration 195 closes this
+honestly: every existing `app_admins` row is backfilled into `platform_admins` too (idempotent),
+mirroring how migration 133 bootstrapped the first app_admin when that concept was introduced.
+
+**`api/request-company-signup.js`** (new, 9th real `api/*.js` route, still comfortably under
+Vercel's 12-function cap) -- the only path to `submit_company_signup_request()`. No `requireAuth()`
+(there is no session to require); two independent rate limits instead, since every other rate-
+limited route in this app keys by an authenticated caller id, which doesn't exist here: 10/hour per
+IP, 3/day per email (`checkRateLimit`, same helper every other route uses). Never leaks the RPC's
+own raw error text to an anonymous caller -- a generic 400 instead.
+
+**Verification**: full consolidated isolation suite, 61/61 canonical tests passing (including the
+new `migration_195_company_signup_requests_tests.sql`, which is what caught all four bugs above,
+one at a time, across several iterations -- not written once and assumed correct). `npx tsc -b`
+clean, `npx vite build` clean, `tests/api/request-company-signup.test.js` (new, 8 tests) passing,
+full `vitest` suite run alongside it.
+
+**Not yet applied to production, and deliberately incomplete on purpose.** Migration 195 needs to
+run in Supabase Studio (after 193/194 above) before anything downstream can work. Frontend is the
+next real piece of work, explicitly not started tonight: a public signup page calling
+`/api/request-company-signup`, an Admin panel "Company Signup Requests" review queue (list +
+Approve/Reject, wired to `company_signup_requests` REST reads + `approve_company_signup`/
+`reject_company_signup` RPCs), and an accept-landing page (`?company-signup=<token>`, mirroring
+`ChannelGuestLandingPage`'s exact shape) to complete the loop. Also flagged, not built: seeding a
+brand-new company's catalog/schedule-templates/notification-rules is deliberately NOT done by this
+migration (per E's own "different industries" decision -- copying Ergon Test Workspace's specific
+AV-industry data into a stranger's company would be wrong), so a freshly accepted company lands in a
+genuinely empty operational-config state today, honest but not yet polished onboarding.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
