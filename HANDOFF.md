@@ -1,83 +1,50 @@
 # Ergon Ops — Handoff Doc
 
-## URGENT — next session's first task: production deploys are currently broken (2026-09-21)
+## URGENT — needs E's confirmation: consolidation is pushed, Vercel deploy status not yet verified (2026-09-21)
 
-**Root cause, confirmed directly from the Vercel dashboard (E screenshotted it):** the Hobby (free)
-plan caps a deployment at 12 serverless functions. Every `.js` file under `api/` EXCEPT the `api/_lib/`
-helper folder (Vercel's own convention: underscore-prefixed paths are excluded from function counting)
-counts toward this limit. Before tonight's work there were exactly 12 real routes (10 top-level +
-`api/cron/task-overdue.js` + `api/cron/system-health-retention.js`) — already AT the cap. Adding
-`api/forward-attachment.js` (migration 190's file-forwarding feature) made 13, tipping it over.
+**Original incident (2026-09-21, earlier the same day):** Vercel Hobby plan caps a deployment at 12
+serverless functions (every `.js` file under `api/` except the underscore-prefixed `api/_lib/` helper
+folder counts). This app was already AT that cap (12 real routes); migration 190's
+`api/forward-attachment.js` made 13, tipping it over. Production silently kept serving stale code
+(`245fe8f`) while two later pushes (`3e48b64`, `c9d9fec`) both showed **Status: Error** in the Vercel
+dashboard — undetected because the `vite build` step itself always looked clean; the real failure was
+in a later step, past what the truncated build-log tail shows. Concretely: **migrations 190/191/192
+were confirmed applied and correct in the database the whole time — only their matching FRONTEND
+wasn't actually live.** E's explicit decision: stay on the free Hobby plan for now, do NOT upgrade to
+Pro — fix by consolidating routes. **Noted for later, per E:** upgrading to Vercel Pro (removes the
+12-function cap entirely) is the better long-term fix, revisit once the app is in full commercial
+production with real paying customers.
 
-**Current real production impact:** the site has been serving stale code since this happened — the
-Vercel "Production" alias is still pointing at commit `245fe8f` (the migration-191-test-fix commit),
-NOT the later commits. Two pushes after that (`3e48b64` — the combined frontend for migrations
-190/191/192 — and `c9d9fec`, a docs-only commit) both show **Status: Error** in the Vercel dashboard,
-with the real error only visible past the "Deploying outputs..." line in the build log (the `vite
-build` step itself always succeeds and looks clean — the failure happens in a LATER step Vercel doesn't
-show in the truncated log tail, which is why this went undetected for two pushes: build-log success was
-wrongly taken as deploy success). Concretely, this means: **migrations 190, 191, and 192 are all
-confirmed applied to the database correctly (E ran them, tests passed) — the backend is 100% fine and
-live — but their matching FRONTEND (the Forward action, unread/mention highlights, add-member
-confirmation dialogs, guest banner) is NOT actually live for real users right now**, despite earlier
-messages in this session's own transcript claiming it was verified live (that verification checked
-bundle CONTENT via curl during a window where a stale-but-still-cached response happened to look
-plausible — a real process mistake, corrected here, not to be repeated: after any push, check the
-**Vercel deployment's own Status field** (Ready vs Error), not just a build-log tail or a single curl
-sample, before telling E something is live).
+**Consolidation done, pushed as `80e4a3e` (this session, later the same day):** merged the 7 `send-*`
+routes into 2 dispatcher files --
+- `api/send-notification.js` (replaces `send-notification-email.js`/`send-notification-slack.js`/
+  `send-push.js`/`send-system-health-alert.js`), dispatched on a new `channel` body field
+  (`email`/`slack`/`push`/`system-health`).
+- `api/send-template-email.js` (replaces `send-invite-email.js`/`send-proposal-email.js`/
+  `send-submittal-email.js`), dispatched on a new `template` body field
+  (`invite`/`proposal`/`submittal`).
 
-**E's explicit decision (2026-09-21), do not re-litigate:** stay on the free Hobby plan for now
-("everything has to be free for now") — do NOT upgrade to Vercel Pro. Fix this by consolidating
-existing API routes into fewer files so the real function count drops comfortably under 12, with room
-for future growth. **E also asked this to be noted for later:** upgrading to Vercel Pro (removes the
-12-function cap entirely) is the better long-term fix and should be revisited once the app is in full
-commercial production with real paying customers — this consolidation is a free-tier workaround, not
-the permanent architecture.
+Pure refactor, no behavior change -- every branch is that route's own handler body carried forward
+unchanged (same auth/role/rate-limit checks, same rate-limit KEY STRINGS since System Health's own
+surface breakdown is keyed by the string before the first ":", same validation, same response
+shapes/status codes). Updated every frontend call site (`main.tsx`, `persistence.ts`) and every
+backend unit test (`tests/api/*.test.js`, `src/system-health-phase-b.test.ts`) to match. Real
+(non-`_lib`) `api/*.js` file count: **13 → 8** (confirmed by local count before pushing), comfortably
+under 12 with headroom for ~4 more future routes. `npx tsc -b`, `npx vite build`, and the full vitest
+suite (44 files, 502 tests) all pass clean.
 
-**The 13 real route files as of this session** (get this list back under ~10-11 after consolidation, to
-leave headroom for the next feature that needs a new endpoint):
-```
-api/create-notification.js
-api/forward-attachment.js          <- NEW this session, the one that tipped it over
-api/respond-to-proposal.js
-api/sales-quote-extract.js
-api/send-invite-email.js
-api/send-notification-email.js
-api/send-notification-slack.js
-api/send-proposal-email.js
-api/send-push.js
-api/send-submittal-email.js
-api/send-system-health-alert.js
-api/cron/system-health-retention.js
-api/cron/task-overdue.js
-```
-(`api/_lib/*.js` — 9 shared helper files — do NOT count, confirmed by Vercel's own documented
-underscore-exclusion convention; no need to touch those.)
-
-**Suggested consolidation shape** (not yet built, not yet verified — a real design/implementation task
-for the next session, not a mechanical one): the `send-*` routes are the obvious candidates, since
-several are thin, related dispatch wrappers already called from the same notification-event system
-(`api/_lib/notificationEvents.js`) — e.g. `send-notification-email`/`send-notification-slack`/
-`send-push`/`send-system-health-alert` could plausibly merge into one or two dispatcher files taking a
-`channel`/`type` field in the request body instead of being separate URLs; `send-invite-email`/
-`send-proposal-email`/`send-submittal-email` are three different email templates on the same underlying
-send mechanism and could plausibly merge similarly. **Whoever does this must**: (1) read every real
-route file being merged first to understand its exact current auth/rate-limit/payload/response
-behavior — this is a pure file-consolidation refactor, the actual logic/security behavior of each
-endpoint must not change at all; (2) find and update every real frontend call site (`src/persistence.ts`/
-`src/main.tsx`, grep for each route's literal path string) to call the new consolidated endpoint shape;
-(3) verify `npx tsc -p tsconfig.json --noEmit` passes; (4) after pushing, **directly check the Vercel
-deployment's Status in the dashboard is "Ready," not just that the build log looks clean** — E can
-screenshot this if asked; (5) count the real (non-`_lib`) files under `api/` locally BEFORE pushing and
-confirm the number is comfortably under 12, as a proactive check that doesn't require waiting on Vercel
-at all.
-
-**Not urgent, but do this too once the deploy pipeline is fixed:** re-verify (via a fresh, definitive
-Vercel Status check, not a bundle-content curl guess) that the combined migrations 190/191/192 frontend
-(commit `3e48b64`'s actual code) is genuinely live once a NEW, successful deployment goes out carrying
-it — the current plan is that fixing the function-count problem and pushing again will naturally carry
-that already-committed code along, so no separate re-push of `3e48b64`'s content should be needed,
-just confirm it end-to-end once deploys are working again.
+**What this session could NOT verify, and the next session's actual first task:** no Vercel CLI, API
+token, or dashboard access was available in this sandbox to check the deployment's own Status field
+directly -- exactly the check this incident's own root-cause note says must never be skipped in favor
+of a clean build log. **E needs to confirm directly in the Vercel dashboard** that the deployment for
+commit `80e4a3e` shows **Status: Ready** (not Error), and if it's Ready, that the site is serving it
+(check the "Production" alias points at `80e4a3e` or later, not still `245fe8f`). If E confirms Ready:
+also re-verify the combined migrations 190/191/192 frontend (the Forward action, unread/mention
+highlights, add-member confirmation dialogs, guest banner) is now genuinely visible/working for a real
+user -- that code was already committed (`3e48b64`) and should ride along with this deploy
+automatically, no separate re-push needed. If E reports Error again: get the real error text past the
+"Deploying outputs..." line in the build log (not just the clean `vite build` step) before guessing at
+a further fix -- this session had no way to fetch that log text itself.
 
 ## Next coder session
 
