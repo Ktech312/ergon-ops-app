@@ -1,5 +1,85 @@
 # New-Company Onboarding & Administrator-Configuration Design
 
+## Update (2026-09-22): E's real decisions, replacing this document's open questions below
+
+Everything from here to the horizontal rule supersedes the open questions this document originally
+raised in §2/§5/§6/§9 and the now-stale isolation caveats in §8. Nothing below authorizes writing
+code or a migration yet — this is still design-only, same as the rest of this document — but these
+are no longer open questions, they are E's answers, given directly:
+
+1. **Model this the way Teams, QuickBooks, or any other real SaaS product works.** Ergon is the
+   platform brand (like Microsoft or Intuit); each company that signs up is a tenant that lives and
+   works inside it, the same relationship Teams/QuickBooks have to the companies that use them.
+   This framing answers most of the document's original open questions by default, not as a
+   separate decision for each one.
+2. **Timeline: soon, once E is confident the platform actually works.** Not an immediate hard
+   deadline, but real intent, not speculative — this should be built with the expectation of an
+   actual second company using it in the near term, not shelved indefinitely.
+3. **Different industries from day one — like Teams/Google Workspace, not locked to one vertical.**
+   This is the single biggest scope change from this document's original framing (§7's "starter
+   configurations" assumed reuse within roughly the same vertical). The AV/security-integrator-
+   specific catalog categories, site hardware rules, BOM ship-to defaults, and role vocabulary
+   (§1a/§1b's full inventory) all need a real path to per-company configuration, not just a
+   swappable starter template within the same shape.
+4. **Self-serve signup, gated by E's manual approval per company** — there is no billing/SaaS
+   subscription infrastructure yet (Phase 9 remains explicitly deferred, per the master plan's own
+   standing stop boundary), so a new company can sign up but does not go live until E approves it.
+   This is a company-level version of the existing Pending Approvals pattern (migration-133-era),
+   not a brand-new concept — but it is a NEW, public-facing, unauthenticated signup surface, which
+   this document's original §2 step 1 ("platform-admin-only, no self-serve") explicitly assumed
+   would not exist. That assumption is now wrong and needs to be redesigned, not patched.
+5. **Branding: per-company on their own pages; "Ergon" stays the platform brand throughout** —
+   resolves §2 step 3's "genuine open design question" (a workspace-aware pre-auth route, vs.
+   generic platform branding pre-auth). Decided: pre-auth/platform-level surfaces stay Ergon-
+   branded; a signed-in company's own pages show their own company name/logo, the same relationship
+   Teams shows "Microsoft Teams" pre-login and an org's own branding once inside it.
+6. **Role vocabulary, workflow stages, and similar configuration: follow the Teams/QuickBooks
+   model** — each org customizes within a shared platform structure, not a fixed global list.
+   Directly supports §6's already-proposed (but previously "future, not this phase")
+   `workspace_role_definitions` design — this moves that from "later" to "needed for this phase,"
+   given decision 3 above (different industries need different role vocabularies too, not just
+   different catalogs).
+7. **The load-bearing requirement, raised unprompted, more important than any single open
+   question above**: a feature built and shipped against the Ergon Test Workspace (the one
+   currently in daily use) must automatically be available to every future company, without a
+   separate build per company. **This is largely already true, by construction, not a new thing to
+   build**: the whole app is one shared codebase and schema serving every workspace; only *rows*
+   are partitioned per `workspace_id` (the entire point of the Phase 2/3 RLS containment work,
+   migrations 115 through 194, now essentially complete per the master plan's own Stage 6 green
+   gate). A new company starts with zero rows in every workspace-scoped table, not zero access to
+   the feature itself. The one way this discipline could quietly break: a genuinely global table
+   with no `workspace_id` at all, added without thinking it through — company A's configuration
+   would then leak into company B's UI, not as a security bug (no cross-tenant row is exposed) but
+   as an actual product bug (the wrong company's settings visibly apply to the wrong company). This
+   must be checked, explicitly, on every future feature from here forward, the same discipline
+   already applied throughout Phase 3 (see `feedback_workspace_tenancy_default` — an operational-
+   config table defaults to per-workspace, never global, unless there's a specific, stated reason
+   it should be shared, the same reasoning the governance decision in §11 of the master plan
+   already applied to `notification_rules`/`standard_install_times`/`project_schedule_templates`).
+8. **§8's isolation caveats below are now largely stale, not current risk.** They were written
+   before Phase 3 existed and describe `clients`/`sales_quotes` RLS as "explicitly untouched" and
+   "any authenticated user from either workspace could still read/write the other's rows" — that
+   was true in 2026-09-08 and has not been true since Phase 3 landed (migrations 155-194,
+   consolidated isolation suite: 60/60 canonical tests passing as of tonight). Read §8 as
+   historical record of what the gap USED to be, not a current blocker — a second workspace can
+   already be created safely today, per the master plan's own §6 gate, which is now green.
+
+**What this does NOT authorize**: no code, no migration, no self-serve signup surface exists yet.
+The recommended build order, lightest-weight first rather than a full guided wizard up front (E's
+own Q6 follow-up, "I don't know what you mean" — clarified and answered here rather than assumed):
+sign up with company name + your name/email → E approves it in a Pending Approvals-style queue →
+the new company lands in a genuinely empty, safely-isolated workspace and configures branding/
+catalog/team from inside the normal app as they go, the same way Slack or a small QuickBooks
+company actually onboards today — not a separate multi-step wizard before they ever see the real
+product. A guided wizard, if ever wanted, is worth building once a real second company has actually
+gone through the lightweight path at least once, not designed speculatively against zero real usage.
+This still needs its own full design pass (the self-serve signup surface especially — a new
+public, unauthenticated write path needs the same RLS/abuse-prevention rigor as everything else in
+this schema) before any of it is implemented; this update records E's decisions, it is not that
+design pass.
+
+---
+
 **Scope**: Product design only, per Priority 7 of the 2026-09-08 overnight work queue. No source
 files, migrations, or data were modified to produce this report. This document extends
 `PRODUCT_TENANCY_AUDIT.md` (its §5 no-code inventory, §7 preview/versioning findings, §10 working
