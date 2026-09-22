@@ -403,10 +403,10 @@ async function sendSystemHealthNotice(
     if (!accessToken) {
       return;
     }
-    await fetch("/api/send-system-health-alert", {
+    await fetch("/api/send-notification", {
       method: "POST",
       headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ kind, ...params }),
+      body: JSON.stringify({ channel: "system-health", kind, ...params }),
     });
   } catch (error) {
     console.error(`sendSystemHealthNotice: could not send ${kind} for surface "${params.surface}":`, error);

@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createMockReq, createMockRes, mockFetchRouter, jsonResponse } from "./_test-helpers.js";
 
-const handler = (await import("../../api/send-notification-slack.js")).default;
+// 2026-09-21 API-route consolidation (Vercel Hobby plan's 12-function
+// cap): this route's own file was merged into api/send-notification.js,
+// dispatched on a `channel` field. Every request body below now carries
+// `channel: "slack"` -- coverage and assertions are otherwise unchanged.
+const handler = (await import("../../api/send-notification.js")).default;
 
 const CALLER = { id: "caller-uuid", email: "caller@ergon.test" };
 
@@ -28,14 +32,14 @@ describe("send-notification-slack", () => {
   it("signed-out caller: 401", async () => {
     global.fetch = vi.fn(mockFetchRouter([{ match: "/auth/v1/user", respond: () => jsonResponse(401, {}) }]));
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "n1" } }), res);
+    await handler(createMockReq({ body: { channel: "slack", notificationId: "n1" } }), res);
     expect(res.statusCode).toBe(401);
   });
 
   it("invalid notificationId: 404", async () => {
     global.fetch = vi.fn(routerFor({ notificationRows: [] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "bogus" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "slack", notificationId: "bogus" }, token: "t" }), res);
     expect(res.statusCode).toBe(404);
   });
 
@@ -45,7 +49,7 @@ describe("send-notification-slack", () => {
     }));
     global.fetch = fetchMock;
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "n1", title: "SPOOFED", body: "SPOOFED BODY" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "slack", notificationId: "n1", title: "SPOOFED", body: "SPOOFED BODY" }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     expect(res.body.sent).toBe(true);
     const webhookCall = fetchMock.mock.calls.find(([url]) => String(url).includes("hooks.slack.test"));
@@ -61,7 +65,7 @@ describe("send-notification-slack", () => {
       deliveryRows: [{ id: "d1" }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "n1" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "slack", notificationId: "n1" }, token: "t" }), res);
     expect(res.body.sent).toBe(false);
   });
 
@@ -71,7 +75,7 @@ describe("send-notification-slack", () => {
       notificationRows: [{ id: "n1", recipient_email: "real@ergon.test", title: "Real title", body: "" }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "n1" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "slack", notificationId: "n1" }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     expect(res.body.sent).toBe(false);
   });

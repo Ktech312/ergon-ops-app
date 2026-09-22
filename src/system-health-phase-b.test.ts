@@ -99,24 +99,28 @@ describe("recordSystemHealthEvent", () => {
 
   // Migration 152 (2026-09-16): the RPC now reports whether this call
   // crossed the alert threshold; when it does, the browser-side wrapper
-  // fires the actual alert email via api/send-system-health-alert.js.
-  it("POSTs to send-system-health-alert when the RPC reports alert_worthy", async () => {
+  // fires the actual alert email. As of 2026-09-21's API-route
+  // consolidation (Vercel Hobby plan's 12-function cap), this route is
+  // api/send-notification.js with channel: "system-health" in the body
+  // (formerly its own api/send-system-health-alert.js file).
+  it("POSTs to send-notification (channel: system-health) when the RPC reports alert_worthy", async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, { event_id: "evt-1", alert_worthy: true }));
     globalThis.fetch = fetchMock;
     await recordSystemHealthEvent({ surface: "test_surface", failureReasonCode: "test_reason", severity: "down" }, "token");
-    const alertCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/send-system-health-alert"));
+    const alertCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/send-notification"));
     expect(alertCall).toBeDefined();
-    const body = JSON.parse((alertCall as [string, { body: string }])[1].body) as { kind: string; surface: string; failureReasonCode: string };
+    const body = JSON.parse((alertCall as [string, { body: string }])[1].body) as { channel: string; kind: string; surface: string; failureReasonCode: string };
+    expect(body.channel).toBe("system-health");
     expect(body.kind).toBe("alert");
     expect(body.surface).toBe("test_surface");
     expect(body.failureReasonCode).toBe("test_reason");
   });
 
-  it("does NOT POST to send-system-health-alert when the RPC reports alert_worthy=false", async () => {
+  it("does NOT POST to send-notification when the RPC reports alert_worthy=false", async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, { event_id: "evt-1", alert_worthy: false }));
     globalThis.fetch = fetchMock;
     await recordSystemHealthEvent({ surface: "test_surface", failureReasonCode: "test_reason", severity: "info" }, "token");
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/send-system-health-alert"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/send-notification"))).toBe(false);
   });
 
   it("returns false (never throws) when the RPC call fails", async () => {
@@ -150,9 +154,10 @@ describe("recordSystemHealthRecovery", () => {
     await expect(
       recordSystemHealthRecovery({ surface: "test_surface", failureReasonCode: "test_reason" }, "token"),
     ).resolves.toBe(true);
-    const recoveryCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/send-system-health-alert"));
+    const recoveryCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/send-notification"));
     expect(recoveryCall).toBeDefined();
-    const body = JSON.parse((recoveryCall as [string, { body: string }])[1].body) as { kind: string };
+    const body = JSON.parse((recoveryCall as [string, { body: string }])[1].body) as { channel: string; kind: string };
+    expect(body.channel).toBe("system-health");
     expect(body.kind).toBe("recovery");
   });
 
@@ -162,14 +167,14 @@ describe("recordSystemHealthRecovery", () => {
     await expect(
       recordSystemHealthRecovery({ surface: "test_surface", failureReasonCode: "test_reason" }, "token"),
     ).resolves.toBe(true);
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/send-system-health-alert"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/send-notification"))).toBe(false);
   });
 
   it("returns true but sends no notice when recovered but never alerted", async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(true, 200, { recovered: true, was_alerted: false }));
     globalThis.fetch = fetchMock;
     await recordSystemHealthRecovery({ surface: "test_surface", failureReasonCode: "test_reason" }, "token");
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/send-system-health-alert"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/send-notification"))).toBe(false);
   });
 
   it("returns false (never throws) when the RPC call fails", async () => {

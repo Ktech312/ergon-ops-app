@@ -3149,10 +3149,10 @@ function App() {
     const roleLabel = ROLE_KEY_OPTIONS.find((option) => option.value === invite.primaryRole)?.label ?? invite.primaryRole;
     const inviteUrl = `${window.location.origin}/?invite=${invite.token}`;
     try {
-      const response = await fetch("/api/send-invite-email", {
+      const response = await fetch("/api/send-template-email", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${authSession?.accessToken ?? ""}` },
-        body: JSON.stringify({ email: invite.email, fullName: invite.fullName, roleLabel, inviteUrl, companyName: branding.companyName }),
+        body: JSON.stringify({ template: "invite", email: invite.email, fullName: invite.fullName, roleLabel, inviteUrl, companyName: branding.companyName }),
       });
       const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
       setInviteStatus(result.sent ? `Invite emailed to ${invite.email}.` : (result.reason || result.error || "Invite created, but the email could not be sent."));
@@ -5093,10 +5093,10 @@ function App() {
     for (const row of created) {
       if (emailActive) {
         try {
-          const response = await fetch("/api/send-notification-email", {
+          const response = await fetch("/api/send-notification", {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-            body: JSON.stringify({ notificationId: row.id }),
+            body: JSON.stringify({ channel: "email", notificationId: row.id }),
           });
           const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
           await recordNotificationDelivery(row.id, "email", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
@@ -5106,10 +5106,10 @@ function App() {
       }
       if (slackActive) {
         try {
-          const response = await fetch("/api/send-notification-slack", {
+          const response = await fetch("/api/send-notification", {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-            body: JSON.stringify({ notificationId: row.id }),
+            body: JSON.stringify({ channel: "slack", notificationId: row.id }),
           });
           const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
           await recordNotificationDelivery(row.id, "slack", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
@@ -5119,10 +5119,10 @@ function App() {
       }
       if (pushActive) {
         try {
-          const response = await fetch("/api/send-push", {
+          const response = await fetch("/api/send-notification", {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-            body: JSON.stringify(options?.directMessageId ? { directMessageId: options.directMessageId } : { notificationId: row.id }),
+            body: JSON.stringify(options?.directMessageId ? { channel: "push", directMessageId: options.directMessageId } : { channel: "push", notificationId: row.id }),
           });
           const result = (await response.json()) as { sent: boolean; reason?: string; error?: string };
           await recordNotificationDelivery(row.id, "push", result.sent ? "sent" : "skipped", result.sent ? undefined : (result.reason || result.error), authSession.accessToken);
@@ -5455,10 +5455,10 @@ function App() {
       setSubmittalStatus(`Submittal v${created.version} created. Sending email to ${clientEmail}...`);
       const shareUrl = `${window.location.origin}${window.location.pathname}?submittal=${shareToken}`;
       try {
-        const emailResponse = await fetch("/api/send-submittal-email", {
+        const emailResponse = await fetch("/api/send-template-email", {
           method: "POST",
           headers: { "Content-Type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({ submittalId: created.id, shareUrl }),
+          body: JSON.stringify({ template: "submittal", submittalId: created.id, shareUrl }),
         });
         const emailResult = (await emailResponse.json()) as { sent: boolean; reason?: string; error?: string };
         if (emailResult.sent) {
@@ -5607,10 +5607,10 @@ function App() {
       setQuoteProposalStatus(`Proposal v${created.version} created. Sending email to ${quote.clientEmail}...`);
       const shareUrl = `${window.location.origin}${window.location.pathname}?proposal=${shareToken}`;
       try {
-        const emailResponse = await fetch("/api/send-proposal-email", {
+        const emailResponse = await fetch("/api/send-template-email", {
           method: "POST",
           headers: { "Content-Type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({ proposalId: created.id, shareUrl }),
+          body: JSON.stringify({ template: "proposal", proposalId: created.id, shareUrl }),
         });
         const emailResult = (await emailResponse.json()) as { sent: boolean; reason?: string; error?: string };
         if (emailResult.sent) {
@@ -5657,10 +5657,10 @@ function App() {
       setDiscountApprovalReviewStatus(`Approved. Sending email to ${request.clientEmail}...`);
       const shareUrl = `${window.location.origin}${window.location.pathname}?proposal=${created.shareToken}`;
       try {
-        const emailResponse = await fetch("/api/send-proposal-email", {
+        const emailResponse = await fetch("/api/send-template-email", {
           method: "POST",
           headers: { "Content-Type": "application/json", authorization: `Bearer ${authSession.accessToken}` },
-          body: JSON.stringify({ proposalId: created.id, shareUrl }),
+          body: JSON.stringify({ template: "proposal", proposalId: created.id, shareUrl }),
         });
         const emailResult = (await emailResponse.json()) as { sent: boolean; reason?: string; error?: string };
         if (emailResult.sent) {

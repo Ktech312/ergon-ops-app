@@ -5,7 +5,12 @@ vi.mock("../../api/_lib/mailer.js", () => ({
   sendEmail: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
-const handler = (await import("../../api/send-system-health-alert.js")).default;
+// 2026-09-21 API-route consolidation (Vercel Hobby plan's 12-function
+// cap): this route's own file was merged into api/send-notification.js,
+// dispatched on a `channel` field. Every request body below now carries
+// `channel: "system-health"` -- coverage and assertions are otherwise
+// unchanged.
+const handler = (await import("../../api/send-notification.js")).default;
 const { sendEmail } = await import("../../api/_lib/mailer.js");
 
 const CALLER = { id: "caller-uuid", email: "caller@ergon.test" };
@@ -31,7 +36,7 @@ describe("send-system-health-alert", () => {
   it("signed-out caller: 401, never sends", async () => {
     global.fetch = vi.fn(mockFetchRouter([{ match: "/auth/v1/user", respond: () => jsonResponse(401, {}) }]));
     const res = createMockRes();
-    await handler(createMockReq({ body: { kind: "alert", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "system-health", kind: "alert", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
     expect(res.statusCode).toBe(401);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -39,7 +44,7 @@ describe("send-system-health-alert", () => {
   it("invalid kind: 400", async () => {
     global.fetch = vi.fn(routerFor());
     const res = createMockRes();
-    await handler(createMockReq({ body: { kind: "not-a-real-kind", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "system-health", kind: "not-a-real-kind", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
     expect(res.statusCode).toBe(400);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -47,7 +52,7 @@ describe("send-system-health-alert", () => {
   it("missing surface/failureReasonCode: 400", async () => {
     global.fetch = vi.fn(routerFor());
     const res = createMockRes();
-    await handler(createMockReq({ body: { kind: "alert" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "system-health", kind: "alert" }, token: "t" }), res);
     expect(res.statusCode).toBe(400);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -57,7 +62,7 @@ describe("send-system-health-alert", () => {
     const res = createMockRes();
     await handler(
       createMockReq({
-        body: { kind: "alert", surface: "cron", entityType: "cron_job", failureReasonCode: "task_overdue_load_failed", severity: "down", occurrenceCount: 3, adminEmails: ["attacker@evil.test"] },
+        body: { channel: "system-health", kind: "alert", surface: "cron", entityType: "cron_job", failureReasonCode: "task_overdue_load_failed", severity: "down", occurrenceCount: 3, adminEmails: ["attacker@evil.test"] },
         token: "t",
       }),
       res,
@@ -76,7 +81,7 @@ describe("send-system-health-alert", () => {
   it("recovery: subject/body read 'recovered', not 'DOWN'", async () => {
     global.fetch = vi.fn(routerFor());
     const res = createMockRes();
-    await handler(createMockReq({ body: { kind: "recovery", surface: "cron", failureReasonCode: "task_overdue_load_failed" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "system-health", kind: "recovery", surface: "cron", failureReasonCode: "task_overdue_load_failed" }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     expect(sendEmail.mock.calls[0][0].subject).toContain("recovered");
   });
@@ -84,7 +89,7 @@ describe("send-system-health-alert", () => {
   it("no admins found: sent:false, never calls sendEmail", async () => {
     global.fetch = vi.fn(routerFor({ adminEmails: [] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { kind: "alert", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "system-health", kind: "alert", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     expect(res.body.sent).toBe(false);
     expect(sendEmail).not.toHaveBeenCalled();
@@ -104,11 +109,11 @@ describe("send-system-health-alert", () => {
     );
     for (let i = 0; i < 10; i += 1) {
       const res = createMockRes();
-      await handler(createMockReq({ body: { kind: "alert", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
+      await handler(createMockReq({ body: { channel: "system-health", kind: "alert", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
       expect(res.statusCode).toBe(200);
     }
     const res = createMockRes();
-    await handler(createMockReq({ body: { kind: "alert", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "system-health", kind: "alert", surface: "cron", failureReasonCode: "x" }, token: "t" }), res);
     expect(res.statusCode).toBe(429);
   });
 });

@@ -5,7 +5,12 @@ vi.mock("../../api/_lib/mailer.js", () => ({
   sendEmail: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
-const handler = (await import("../../api/send-invite-email.js")).default;
+// 2026-09-21 API-route consolidation (Vercel Hobby plan's 12-function
+// cap): this route's own file was merged into api/send-template-email.js,
+// dispatched on a `template` field. Every request body below now carries
+// `template: "invite"` -- coverage and assertions are otherwise
+// unchanged.
+const handler = (await import("../../api/send-template-email.js")).default;
 const { sendEmail } = await import("../../api/_lib/mailer.js");
 
 const CALLER = { id: "caller-uuid", email: "caller@ergon.test" };
@@ -29,7 +34,7 @@ describe("send-invite-email", () => {
   it("signed-out caller: 401", async () => {
     global.fetch = vi.fn(mockFetchRouter([{ match: "/auth/v1/user", respond: () => jsonResponse(401, {}) }]));
     const res = createMockRes();
-    await handler(createMockReq({ body: { email: "new@ergon.test", inviteUrl: ALLOWED_INVITE_URL } }), res);
+    await handler(createMockReq({ body: { template: "invite", email: "new@ergon.test", inviteUrl: ALLOWED_INVITE_URL } }), res);
     expect(res.statusCode).toBe(401);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -37,7 +42,7 @@ describe("send-invite-email", () => {
   it("signed-in but not admin: 403 -- inviting is admin-only, no role grants it", async () => {
     global.fetch = vi.fn(routerFor({ roleKeys: ["manager", "sales", "pm"] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { email: "new@ergon.test", inviteUrl: ALLOWED_INVITE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "invite", email: "new@ergon.test", inviteUrl: ALLOWED_INVITE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(403);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -45,7 +50,7 @@ describe("send-invite-email", () => {
   it("rejects an inviteUrl that doesn't point back at this app (phishing-link guard)", async () => {
     global.fetch = vi.fn(routerFor({ isAdmin: true }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { email: "new@ergon.test", inviteUrl: "https://evil.example/steal-creds" }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "invite", email: "new@ergon.test", inviteUrl: "https://evil.example/steal-creds" }, token: "t" }), res);
     expect(res.statusCode).toBe(400);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -53,7 +58,7 @@ describe("send-invite-email", () => {
   it("rejects a malformed email address", async () => {
     global.fetch = vi.fn(routerFor({ isAdmin: true }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { email: "not-an-email", inviteUrl: ALLOWED_INVITE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "invite", email: "not-an-email", inviteUrl: ALLOWED_INVITE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(400);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -61,7 +66,7 @@ describe("send-invite-email", () => {
   it("authorized admin: sends the invite", async () => {
     global.fetch = vi.fn(routerFor({ isAdmin: true }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { email: "new@ergon.test", inviteUrl: ALLOWED_INVITE_URL, fullName: "New Hire", roleLabel: "sales" }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "invite", email: "new@ergon.test", inviteUrl: ALLOWED_INVITE_URL, fullName: "New Hire", roleLabel: "sales" }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     expect(sendEmail).toHaveBeenCalledTimes(1);
     expect(sendEmail.mock.calls[0][0].to).toBe("new@ergon.test");

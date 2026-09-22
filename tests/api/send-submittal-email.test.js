@@ -5,7 +5,12 @@ vi.mock("../../api/_lib/mailer.js", () => ({
   sendEmail: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
-const handler = (await import("../../api/send-submittal-email.js")).default;
+// 2026-09-21 API-route consolidation (Vercel Hobby plan's 12-function
+// cap): this route's own file was merged into api/send-template-email.js,
+// dispatched on a `template` field. Every request body below now carries
+// `template: "submittal"` -- coverage and assertions are otherwise
+// unchanged.
+const handler = (await import("../../api/send-template-email.js")).default;
 const { sendEmail } = await import("../../api/_lib/mailer.js");
 
 const CALLER = { id: "caller-uuid", email: "caller@ergon.test" };
@@ -30,7 +35,7 @@ describe("send-submittal-email", () => {
   it("signed-out caller: 401", async () => {
     global.fetch = vi.fn(mockFetchRouter([{ match: "/auth/v1/user", respond: () => jsonResponse(401, {}) }]));
     const res = createMockRes();
-    await handler(createMockReq({ body: { submittalId: "s1", shareUrl: ALLOWED_SHARE_URL } }), res);
+    await handler(createMockReq({ body: { template: "submittal", submittalId: "s1", shareUrl: ALLOWED_SHARE_URL } }), res);
     expect(res.statusCode).toBe(401);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -38,7 +43,7 @@ describe("send-submittal-email", () => {
   it("signed-in but not pm/admin (e.g. manager): 403 -- matches project_submittals' own write RLS, no regression", async () => {
     global.fetch = vi.fn(routerFor({ roleKeys: ["manager"], submittalRows: [] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "submittal", submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(403);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -46,7 +51,7 @@ describe("send-submittal-email", () => {
   it("rejects a destination URL that doesn't point back at this app", async () => {
     global.fetch = vi.fn(routerFor({ roleKeys: ["pm"], submittalRows: [] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { submittalId: "s1", shareUrl: "https://evil.example/phish" }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "submittal", submittalId: "s1", shareUrl: "https://evil.example/phish" }, token: "t" }), res);
     expect(res.statusCode).toBe(400);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -54,7 +59,7 @@ describe("send-submittal-email", () => {
   it("invalid/nonexistent submittalId: 404", async () => {
     global.fetch = vi.fn(routerFor({ roleKeys: ["pm"], submittalRows: [] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { submittalId: "does-not-exist", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "submittal", submittalId: "does-not-exist", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(404);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -67,7 +72,7 @@ describe("send-submittal-email", () => {
     const res = createMockRes();
     await handler(
       createMockReq({
-        body: { submittalId: "s1", shareUrl: ALLOWED_SHARE_URL, clientEmail: "attacker@external.test", projectName: "SPOOFED", projectRef: "FAKE-REF" },
+        body: { template: "submittal", submittalId: "s1", shareUrl: ALLOWED_SHARE_URL, clientEmail: "attacker@external.test", projectName: "SPOOFED", projectRef: "FAKE-REF" },
         token: "t",
       }),
       res,
@@ -88,7 +93,7 @@ describe("send-submittal-email", () => {
       submittalRows: [{ client_name: "Real Client", client_email: "real-client@external.test", content_snapshot: { projectName: "Real Project", companyName: "Acme Integrators" } }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "submittal", submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     const call = sendEmail.mock.calls[0][0];
     expect(call.html).toContain("Thanks,<br/>Acme Integrators");
@@ -101,7 +106,7 @@ describe("send-submittal-email", () => {
       submittalRows: [{ client_name: "Real Client", client_email: "real-client@external.test", content_snapshot: { projectName: "Real Project" } }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "submittal", submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     const call = sendEmail.mock.calls[0][0];
     expect(call.html).toContain("Thanks,<br/>Ergon");
@@ -114,7 +119,7 @@ describe("send-submittal-email", () => {
       submittalRows: [{ client_name: "Real Client", client_email: "real-client@external.test", content_snapshot: {} }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "submittal", submittalId: "s1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     expect(sendEmail).toHaveBeenCalledTimes(1);
   });

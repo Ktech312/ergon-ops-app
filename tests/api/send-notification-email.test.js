@@ -5,7 +5,11 @@ vi.mock("../../api/_lib/mailer.js", () => ({
   sendEmail: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
-const handler = (await import("../../api/send-notification-email.js")).default;
+// 2026-09-21 API-route consolidation (Vercel Hobby plan's 12-function
+// cap): this route's own file was merged into api/send-notification.js,
+// dispatched on a `channel` field. Every request body below now carries
+// `channel: "email"` -- coverage and assertions are otherwise unchanged.
+const handler = (await import("../../api/send-notification.js")).default;
 const { sendEmail } = await import("../../api/_lib/mailer.js");
 
 const CALLER = { id: "caller-uuid", email: "caller@ergon.test" };
@@ -30,7 +34,7 @@ describe("send-notification-email", () => {
   it("signed-out caller: 401", async () => {
     global.fetch = vi.fn(mockFetchRouter([{ match: "/auth/v1/user", respond: () => jsonResponse(401, {}) }]));
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "n1" } }), res);
+    await handler(createMockReq({ body: { channel: "email", notificationId: "n1" } }), res);
     expect(res.statusCode).toBe(401);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -38,14 +42,14 @@ describe("send-notification-email", () => {
   it("missing notificationId: 400", async () => {
     global.fetch = vi.fn(mockFetchRouter([{ match: "/auth/v1/user", respond: () => jsonResponse(200, CALLER) }]));
     const res = createMockRes();
-    await handler(createMockReq({ body: {}, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "email",}, token: "t" }), res);
     expect(res.statusCode).toBe(400);
   });
 
   it("invalid notificationId: 404, never calls sendEmail", async () => {
     global.fetch = vi.fn(routerFor({ notificationRows: [], knownUserRows: [] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "does-not-exist" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "email", notificationId: "does-not-exist" }, token: "t" }), res);
     expect(res.statusCode).toBe(404);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -56,7 +60,7 @@ describe("send-notification-email", () => {
       knownUserRows: [],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "n1" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "email", notificationId: "n1" }, token: "t" }), res);
     expect(res.statusCode).toBe(403);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -68,7 +72,7 @@ describe("send-notification-email", () => {
     }));
     const res = createMockRes();
     await handler(
-      createMockReq({ body: { notificationId: "n1", to: "someone-else@ergon.test", subject: "SPOOFED", body: "SPOOFED BODY" }, token: "t" }),
+      createMockReq({ body: { channel: "email", notificationId: "n1", to: "someone-else@ergon.test", subject: "SPOOFED", body: "SPOOFED BODY" }, token: "t" }),
       res,
     );
     expect(res.statusCode).toBe(200);
@@ -86,7 +90,7 @@ describe("send-notification-email", () => {
       knownUserRows: [{ user_id: "real-uuid" }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "n1" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "email", notificationId: "n1" }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     expect(res.body.sent).toBe(false);
     expect(sendEmail).not.toHaveBeenCalled();
@@ -98,7 +102,7 @@ describe("send-notification-email", () => {
       knownUserRows: [{ user_id: "real-uuid" }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { notificationId: "n1" }, token: "t" }), res);
+    await handler(createMockReq({ body: { channel: "email", notificationId: "n1" }, token: "t" }), res);
     expect(res.statusCode).toBe(400);
     expect(sendEmail).not.toHaveBeenCalled();
   });

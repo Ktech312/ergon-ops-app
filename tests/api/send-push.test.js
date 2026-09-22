@@ -8,7 +8,11 @@ vi.mock("web-push", () => ({
   },
 }));
 
-const handler = (await import("../../api/send-push.js")).default;
+// 2026-09-21 API-route consolidation (Vercel Hobby plan's 12-function
+// cap): this route's own file was merged into api/send-notification.js,
+// dispatched on a `channel` field. Every request body below now carries
+// `channel: "push"` -- coverage and assertions are otherwise unchanged.
+const handler = (await import("../../api/send-notification.js")).default;
 const webpush = (await import("web-push")).default;
 
 const SUPABASE_URL = "https://test.supabase.co";
@@ -31,7 +35,7 @@ describe("send-push: signed-out caller", () => {
     global.fetch = vi.fn(mockFetchRouter([
       { match: "/auth/v1/user", respond: () => jsonResponse(401, { error: "invalid token" }) },
     ]));
-    const req = createMockReq({ body: { notificationId: "n1" } });
+    const req = createMockReq({ body: { channel: "push", notificationId: "n1" } });
     const res = createMockRes();
     await handler(req, res);
     expect(res.statusCode).toBe(401);
@@ -43,7 +47,7 @@ describe("send-push: missing target", () => {
     global.fetch = vi.fn(mockFetchRouter([
       { match: "/auth/v1/user", respond: () => jsonResponse(200, SENDER) },
     ]));
-    const req = createMockReq({ body: {}, token: "sender-token" });
+    const req = createMockReq({ body: { channel: "push",}, token: "sender-token" });
     const res = createMockRes();
     await handler(req, res);
     expect(res.statusCode).toBe(400);
@@ -66,7 +70,7 @@ describe("send-push: direct-message mode", () => {
       messageRows: [{ id: "m1", conversation_id: "c1", sender_id: "someone-else", body: "hi" }],
       conversationRows: [],
     }));
-    const req = createMockReq({ body: { directMessageId: "m1" }, token: "sender-token" });
+    const req = createMockReq({ body: { channel: "push", directMessageId: "m1" }, token: "sender-token" });
     const res = createMockRes();
     await handler(req, res);
     expect(res.statusCode).toBe(403);
@@ -74,7 +78,7 @@ describe("send-push: direct-message mode", () => {
 
   it("404s for an invalid/inaccessible message id (RLS would hide it) instead of guessing a recipient", async () => {
     global.fetch = vi.fn(routerFor({ messageRows: [], conversationRows: [] }));
-    const req = createMockReq({ body: { directMessageId: "does-not-exist" }, token: "sender-token" });
+    const req = createMockReq({ body: { channel: "push", directMessageId: "does-not-exist" }, token: "sender-token" });
     const res = createMockRes();
     await handler(req, res);
     expect(res.statusCode).toBe(404);
@@ -87,7 +91,7 @@ describe("send-push: direct-message mode", () => {
       subscriptions: [{ id: "sub1", endpoint: "https://fcm.example/1", p256dh: "p", auth_key: "a" }],
     }));
     const req = createMockReq({
-      body: {
+      body: { channel: "push",
         directMessageId: "m1",
         // An attacker-shaped payload -- attempting to override who gets
         // notified and what they see. None of this should reach webpush.
@@ -122,7 +126,7 @@ describe("send-push: direct-message mode", () => {
       subscriptions: [{ id: "sub1", endpoint: "https://fcm.example/1", p256dh: "p", auth_key: "a" }],
     }));
     const req = createMockReq({
-      body: { directMessageId: "m1", conversationId: "attacker-picked-conversation" },
+      body: { channel: "push", directMessageId: "m1", conversationId: "attacker-picked-conversation" },
       token: "sender-token",
     });
     const res = createMockRes();
@@ -147,7 +151,7 @@ describe("send-push: notification-event mode", () => {
 
   it("404s on an invalid notificationId", async () => {
     global.fetch = vi.fn(routerFor({ notificationRows: [], knownUserRows: [] }));
-    const req = createMockReq({ body: { notificationId: "bogus" }, token: "sender-token" });
+    const req = createMockReq({ body: { channel: "push", notificationId: "bogus" }, token: "sender-token" });
     const res = createMockRes();
     await handler(req, res);
     expect(res.statusCode).toBe(404);
@@ -158,7 +162,7 @@ describe("send-push: notification-event mode", () => {
       notificationRows: [{ id: "n1", recipient_email: "ghost@nowhere.test", title: "Hi", body: "" }],
       knownUserRows: [],
     }));
-    const req = createMockReq({ body: { notificationId: "n1" }, token: "sender-token" });
+    const req = createMockReq({ body: { channel: "push", notificationId: "n1" }, token: "sender-token" });
     const res = createMockRes();
     await handler(req, res);
     expect(res.statusCode).toBe(200);
@@ -172,7 +176,7 @@ describe("send-push: notification-event mode", () => {
       subscriptions: [{ id: "sub1", endpoint: "https://fcm.example/2", p256dh: "p", auth_key: "a" }],
     }));
     const req = createMockReq({
-      body: { notificationId: "n1", title: "SPOOFED", body: "SPOOFED BODY", userId: "someone-else" },
+      body: { channel: "push", notificationId: "n1", title: "SPOOFED", body: "SPOOFED BODY", userId: "someone-else" },
       token: "sender-token",
     });
     const res = createMockRes();
@@ -191,7 +195,7 @@ describe("send-push: notification-event mode", () => {
       deliveryRows: [{ id: "delivery1" }],
       knownUserRows: [{ user_id: "real-user-uuid" }],
     }));
-    const req = createMockReq({ body: { notificationId: "n1" }, token: "sender-token" });
+    const req = createMockReq({ body: { channel: "push", notificationId: "n1" }, token: "sender-token" });
     const res = createMockRes();
     await handler(req, res);
     expect(res.statusCode).toBe(200);
@@ -208,7 +212,7 @@ describe("send-push: rate limiting", () => {
     ]));
     let lastStatus;
     for (let i = 0; i < 45; i += 1) {
-      const req = createMockReq({ body: { notificationId: "n1" }, token: "spammer-token" });
+      const req = createMockReq({ body: { channel: "push", notificationId: "n1" }, token: "spammer-token" });
       const r = createMockRes();
       await handler(req, r);
       lastStatus = r.statusCode;

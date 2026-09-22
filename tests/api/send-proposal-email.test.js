@@ -5,7 +5,12 @@ vi.mock("../../api/_lib/mailer.js", () => ({
   sendEmail: vi.fn().mockResolvedValue({ sent: true }),
 }));
 
-const handler = (await import("../../api/send-proposal-email.js")).default;
+// 2026-09-21 API-route consolidation (Vercel Hobby plan's 12-function
+// cap): this route's own file was merged into api/send-template-email.js,
+// dispatched on a `template` field. Every request body below now carries
+// `template: "proposal"` -- coverage and assertions are otherwise
+// unchanged.
+const handler = (await import("../../api/send-template-email.js")).default;
 const { sendEmail } = await import("../../api/_lib/mailer.js");
 
 const CALLER = { id: "caller-uuid", email: "caller@ergon.test" };
@@ -30,7 +35,7 @@ describe("send-proposal-email", () => {
   it("signed-out caller: 401", async () => {
     global.fetch = vi.fn(mockFetchRouter([{ match: "/auth/v1/user", respond: () => jsonResponse(401, {}) }]));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL } }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "p1", shareUrl: ALLOWED_SHARE_URL } }), res);
     expect(res.statusCode).toBe(401);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -38,7 +43,7 @@ describe("send-proposal-email", () => {
   it("signed-in but unauthorized role (e.g. warehouse): 403", async () => {
     global.fetch = vi.fn(routerFor({ roleKeys: ["warehouse"], proposalRows: [] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(403);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -46,7 +51,7 @@ describe("send-proposal-email", () => {
   it("rejects a destination URL that doesn't point back at this app", async () => {
     global.fetch = vi.fn(routerFor({ roleKeys: ["sales"], proposalRows: [] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: "https://evil.example/phish" }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "p1", shareUrl: "https://evil.example/phish" }, token: "t" }), res);
     expect(res.statusCode).toBe(400);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -54,7 +59,7 @@ describe("send-proposal-email", () => {
   it("invalid/nonexistent proposalId: 404", async () => {
     global.fetch = vi.fn(routerFor({ roleKeys: ["sales"], proposalRows: [] }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "does-not-exist", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "does-not-exist", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(404);
     expect(sendEmail).not.toHaveBeenCalled();
   });
@@ -67,7 +72,7 @@ describe("send-proposal-email", () => {
     const res = createMockRes();
     await handler(
       createMockReq({
-        body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL, clientEmail: "attacker@external.test", clientName: "SPOOFED", siteName: "SPOOFED SITE" },
+        body: { template: "proposal", proposalId: "p1", shareUrl: ALLOWED_SHARE_URL, clientEmail: "attacker@external.test", clientName: "SPOOFED", siteName: "SPOOFED SITE" },
         token: "t",
       }),
       res,
@@ -92,7 +97,7 @@ describe("send-proposal-email", () => {
       }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     const call = sendEmail.mock.calls[0][0];
     expect(call.subject).toContain("SQ-2026-0042");
@@ -114,7 +119,7 @@ describe("send-proposal-email", () => {
       }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     const call = sendEmail.mock.calls[0][0];
     expect(call.subject).toBe("Proposal for Real Site");
@@ -132,7 +137,7 @@ describe("send-proposal-email", () => {
       }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     const call = sendEmail.mock.calls[0][0];
     expect(call.html).toContain("Thanks,<br/>Acme Integrators");
@@ -150,7 +155,7 @@ describe("send-proposal-email", () => {
       }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     const call = sendEmail.mock.calls[0][0];
     expect(call.html).toContain("Thanks,<br/>Ergon");
@@ -162,7 +167,7 @@ describe("send-proposal-email", () => {
       proposalRows: [{ quote_id: "11112222-3333-4444-5555-666677778888", client_name: "Real Client", client_email: "real-client@external.test", content_snapshot: {} }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     expect(sendEmail).toHaveBeenCalledTimes(1);
   });
@@ -174,7 +179,7 @@ describe("send-proposal-email", () => {
       proposalRows: [{ quote_id: "11112222-3333-4444-5555-666677778888", client_name: "Real Client", client_email: "real-client@external.test", content_snapshot: {} }],
     }));
     const res = createMockRes();
-    await handler(createMockReq({ body: { proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
+    await handler(createMockReq({ body: { template: "proposal", proposalId: "p1", shareUrl: ALLOWED_SHARE_URL }, token: "t" }), res);
     expect(res.statusCode).toBe(200);
     expect(sendEmail).toHaveBeenCalledTimes(1);
   });
