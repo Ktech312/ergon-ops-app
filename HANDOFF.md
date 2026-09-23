@@ -229,6 +229,27 @@ two pre-existing, unrelated background-sync 400s already documented elsewhere in
 build/vitest all clean (510 tests, unchanged -- no new test file, same precedent as every other DOM-
 behavior UI addition in this repo).
 
+**A real bug found the same night, doing an actual end-to-end test with obviously-fake data (`ZZ
+Test Signup Co`), fixed and pushed (`fb447ef`)**: the copyable signup link only ever rendered inside
+the PENDING row in `CompanySignupRequestsPanel` -- which disappears the instant `refresh()` runs
+right after clicking Approve, making the link functionally unretrievable in real use (an admin would
+need to screenshot it in the sub-second window before the list re-rendered). Fixed two ways at once:
+moved the link into the Decided table (where an approved request actually lives afterward), and
+stopped caching it in ephemeral component state -- it's now derived directly from the row's own
+`signup_token`/`signup_token_used_at` columns (`loadCompanySignupRequests` now selects them; RLS
+already restricts this whole table to `is_app_admin()`, so nothing new is exposed by including them
+in the already-admin-only payload), so the link survives a page reload instead of vanishing on first
+re-render. Verified the complete loop live against production: submitted a real request → showed
+correctly in the Admin queue → approved it → link now shows in Decided, survives a fresh tab reload
+→ the `?company-signup=<token>` landing page correctly resolves it and shows "Welcome to Ergon...
+ZZ Test Signup Co." Real account creation was deliberately NOT completed (would have signed the
+real admin session out of the same browser and into the fake test account). **This real, provisioned
+test workspace (`ZZ Test Signup Co`) is still sitting in production** -- a real `workspaces` row,
+`company_branding` row, and 4 section `channels`, same "harmless, obviously-named test data" posture
+as every other `ZZ_TEST_*`/test artifact already left in this app; flagged here rather than silently
+left, same as always. No UI exists to delete a workspace -- ask for one to be built, or clear it
+manually via Supabase Studio if it bothers you.
+
 **Still flagged, not built, deliberately**: seeding a brand-new company's catalog/schedule-templates/
 notification-rules is deliberately NOT done by migration 195 (per E's own "different industries"
 decision -- copying Ergon Test Workspace's specific AV-industry data into a stranger's company would
