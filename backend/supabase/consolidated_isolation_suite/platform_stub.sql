@@ -43,14 +43,19 @@ create table auth.users (
   email text unique,
   raw_user_meta_data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  -- Defaults to confirmed (now()) -- every existing canonical test across
-  -- the whole suite creates synthetic users via a plain `insert into
-  -- auth.users (id, email) values (...)` with no email_confirmed_at
-  -- named, and none of the other 195 migrations' worth of tests care
-  -- about confirmation state. Migration 196's own test is the only one
-  -- that needs an explicitly UNCONFIRMED user, and sets this to null
-  -- itself for that one fixture row.
-  email_confirmed_at timestamptz default now()
+  -- NO default -- matches real Supabase Auth exactly: email_confirmed_at
+  -- is null until GoTrue actually confirms the address, never set by a
+  -- raw row insert. CORRECTED 2026-09-22: an earlier version of this
+  -- stub defaulted this to now() ("confirmed by default"), which does
+  -- NOT match production -- caught live when migration 196's canonical
+  -- test passed against this stub locally but failed in real production
+  -- with `email_not_confirmed` for a fixture user the test intended to
+  -- be confirmed. The other 195 migrations' worth of tests never
+  -- reference this column at all, so removing the false default doesn't
+  -- affect them -- only migration 196's own test does, and it now sets
+  -- email_confirmed_at explicitly for every fixture user, confirmed or
+  -- not, rather than relying on any default.
+  email_confirmed_at timestamptz
 );
 
 create or replace function auth.uid() returns uuid

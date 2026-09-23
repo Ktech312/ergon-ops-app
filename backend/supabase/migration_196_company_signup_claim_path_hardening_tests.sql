@@ -133,18 +133,24 @@ begin
 
   perform set_config('role', 'postgres', true);
 
-  insert into auth.users (id, email) values
-    (app_admin_only_id, 'zz-test-196-app-admin-only@example.com'),
-    (colleague_id, 'zz-test-196-colleague@example.com'),
-    (success_user_id, success_email),
-    (wrong_email_user_id, wrong_email_user_email),
-    (existing_member_user_id, existing_member_email),
-    (expired_user_id, expired_email),
-    (revoked_user_id, revoked_email),
-    (regen_user_id, regen_email),
-    (concurrent_user_id, concurrent_email);
-  -- unconfirmed_user_id inserted separately below, with email_confirmed_at
-  -- explicitly null (the stub table's own default is now(), confirmed).
+  -- email_confirmed_at set explicitly for every row here -- real
+  -- Supabase Auth has NO default for this column (null until GoTrue
+  -- actually confirms the address), so relying on a stub default was
+  -- itself the bug an earlier version of this test had (caught live:
+  -- passed against a locally-stubbed default, failed in real production
+  -- with email_not_confirmed for a fixture meant to be confirmed).
+  -- unconfirmed_user_id is the one deliberate exception, inserted
+  -- separately below with email_confirmed_at left null.
+  insert into auth.users (id, email, email_confirmed_at) values
+    (app_admin_only_id, 'zz-test-196-app-admin-only@example.com', now()),
+    (colleague_id, 'zz-test-196-colleague@example.com', now()),
+    (success_user_id, success_email, now()),
+    (wrong_email_user_id, wrong_email_user_email, now()),
+    (existing_member_user_id, existing_member_email, now()),
+    (expired_user_id, expired_email, now()),
+    (revoked_user_id, revoked_email, now()),
+    (regen_user_id, regen_email, now()),
+    (concurrent_user_id, concurrent_email, now());
 
   insert into public.app_admins (user_id) values (app_admin_only_id) on conflict do nothing;
   -- Deliberately NOT inserted into platform_admins -- this is the whole

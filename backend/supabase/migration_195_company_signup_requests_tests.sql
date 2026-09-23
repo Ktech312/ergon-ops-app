@@ -69,9 +69,17 @@ begin
 
   perform set_config('role', 'postgres', true);
 
-  insert into auth.users (id, email) values
-    (colleague_id, colleague_email),
-    (prospect_id, prospect_email);
+  -- email_confirmed_at set explicitly -- real Supabase Auth has no
+  -- default for this column (null until GoTrue actually confirms the
+  -- address); migration 196's own accept_company_signup now requires it,
+  -- so prospect_id (which accepts successfully in section (f) below)
+  -- must be marked confirmed explicitly rather than relying on any
+  -- stub default (an earlier version of the stub incorrectly defaulted
+  -- this to now(), caught live when this exact test passed locally but
+  -- failed in real production -- see platform_stub.sql's own comment).
+  insert into auth.users (id, email, email_confirmed_at) values
+    (colleague_id, colleague_email, now()),
+    (prospect_id, prospect_email, now());
 
   insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values
     (real_workspace_id, colleague_id, false);
