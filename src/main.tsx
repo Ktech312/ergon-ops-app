@@ -197,10 +197,15 @@ import {
   loadCompanySignupRequests,
   approveCompanySignupRequest,
   rejectCompanySignupRequest,
+  revokeCompanySignupToken,
+  regenerateCompanySignupToken,
   requestCompanySignup,
   fetchCompanySignupByToken,
   acceptCompanySignup,
+  companySignupTokenState,
   type CompanySignupRequest,
+  type CompanySignupTokenState,
+  type CompanySignupAcceptOutcome,
   loadHasAnyWorkspaceMembership,
   loadMyChannelGuestRows,
   loadChannelMessageSenderNames,
@@ -7536,7 +7541,7 @@ function App() {
         try {
           const result = await acceptCompanySignup(pendingCompanySignupToken, session.accessToken);
           if (result.outcome !== "accepted" || !result.workspaceId) {
-            inviteFailure = "Your company signup link has expired or was already used.";
+            inviteFailure = companySignupAcceptOutcomeMessage(result.outcome);
           }
         } catch (error) {
           inviteFailure = error instanceof Error ? error.message : "Could not finish setting up your company.";
@@ -19423,12 +19428,26 @@ function WelcomeSlideshow({
 // The signup link is derived from signupToken directly, not cached in
 // component state -- see this component's own comment below for the bug
 // that discipline closes (found live-testing this feature, 2026-09-22).
+// Gated on companySignupTokenState === "valid" (persistence.ts, mirrors
+// get_company_signup_by_token's own server-side CASE exactly) rather than
+// the narrower !signupToken || signupTokenUsedAt check this started
+// with -- an expired or revoked token no longer shows a copyable link
+// either, closing the gap the migration-196 HANDOFF entry flagged
+// honestly as not yet done.
 function companySignupLinkFor(request: CompanySignupRequest): string | null {
-  if (!request.signupToken || request.signupTokenUsedAt) {
+  if (companySignupTokenState(request) !== "valid") {
     return null;
   }
   return `${window.location.origin}${window.location.pathname}?company-signup=${request.signupToken}`;
 }
+
+const COMPANY_SIGNUP_TOKEN_STATE_LABELS: Record<CompanySignupTokenState, string> = {
+  not_applicable: "--",
+  valid: "Valid",
+  expired: "Expired",
+  revoked: "Revoked",
+  used: "Used",
+};
 
 function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: string; isAdmin: boolean }) {
   const [requests, setRequests] = useState<CompanySignupRequest[]>([]);
@@ -19436,7 +19455,8 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
   const [status, setStatus] = useState("");
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-  const [justApprovedId, setJustApprovedId] = useState<string | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [justIssuedLinkForId, setJustIssuedLinkForId] = useState<string | null>(null);
 
   async function refresh() {
     const rows = await loadCompanySignupRequests(accessToken);
@@ -19459,7 +19479,7 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
     setStatus("Approving...");
     try {
       await approveCompanySignupRequest(requestId, accessToken);
-      setJustApprovedId(requestId);
+      setJustIssuedLinkForId(requestId);
       setStatus("Approved -- copy the link below and send it to them.");
       await refresh();
     } catch (error) {
@@ -19477,6 +19497,30 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
       await refresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not reject this company.");
+    }
+  }
+
+  async function handleRevoke(requestId: string) {
+    setStatus("Revoking...");
+    try {
+      await revokeCompanySignupToken(requestId, accessToken);
+      setRevokingId(null);
+      setStatus("Revoked -- that link no longer works.");
+      await refresh();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not revoke this signup link.");
+    }
+  }
+
+  async function handleRegenerate(requestId: string) {
+    setStatus("Regenerating...");
+    try {
+      await regenerateCompanySignupToken(requestId, accessToken);
+      setJustIssuedLinkForId(requestId);
+      setStatus("Regenerated -- the old link no longer works. Copy the new one below.");
+      await refresh();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not regenerate this signup link.");
     }
   }
 
@@ -19542,9 +19586,9 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
         // admin-visible via this same table's own RLS, so nothing new is
         // exposed, and the link survives a page reload instead of being
         // lost the moment React re-renders. This <details> defaults open
-        // right after an approval so it doesn't look like nothing
-        // happened.
-        <details open={justApprovedId !== null}>
+        // right after an approval or a regeneration so it doesn't look
+        // like nothing happened.
+        <details open={justIssuedLinkForId !== null}>
           <summary>Decided ({decided.length})</summary>
           <table className="stack-table-mobile">
             <thead>
@@ -19553,18 +19597,39 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
                 <th>Requested by</th>
                 <th>Status</th>
                 <th>Reviewed</th>
+                <th>Token</th>
+                <th>Expires</th>
                 <th>Signup link</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {decided.map((request) => {
                 const link = companySignupLinkFor(request);
+                const tokenState = companySignupTokenState(request);
+                // Regeneration only requires the request be approved and
+                // not yet accepted (migration 196's own regenerate_company_
+                // signup_token check) -- deliberately available even for
+                // an already-expired or already-revoked token, since
+                // that's the actual recovery action an admin wants in
+                // exactly that case. Revoke only makes sense against a
+                // currently-live token.
+                const canRegenerate = request.status === "approved" && !request.signupTokenUsedAt;
+                const canRevoke = tokenState === "valid";
                 return (
                 <tr key={request.id}>
                   <td>{request.companyName}</td>
                   <td data-label="Requested by">{request.requesterEmail}</td>
                   <td data-label="Status"><span className={`status ${request.status === "approved" ? "ok" : "warn"}`}>{request.status}</span></td>
                   <td data-label="Reviewed">{request.reviewedAt ? new Date(request.reviewedAt).toLocaleString() : ""}</td>
+                  <td data-label="Token">
+                    {request.status === "approved" && (
+                      <span className={`status ${tokenState === "valid" ? "ok" : tokenState === "used" ? "ok" : "warn"}`}>
+                        {COMPANY_SIGNUP_TOKEN_STATE_LABELS[tokenState]}
+                      </span>
+                    )}
+                  </td>
+                  <td data-label="Expires">{request.signupTokenExpiresAt ? new Date(request.signupTokenExpiresAt).toLocaleString() : ""}</td>
                   <td data-label="Signup link">
                     {link ? (
                       <div className="channel-guest-link-row">
@@ -19579,9 +19644,33 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
                           <Copy size={15} />
                         </button>
                       </div>
-                    ) : request.status === "approved" ? (
+                    ) : tokenState === "used" ? (
                       <span className="muted">Already used to finish signing up.</span>
+                    ) : tokenState === "expired" ? (
+                      <span className="muted">Expired -- regenerate to issue a new one.</span>
+                    ) : tokenState === "revoked" ? (
+                      <span className="muted">Revoked -- regenerate to issue a new one.</span>
                     ) : null}
+                  </td>
+                  <td>
+                    {request.status === "approved" && (
+                      revokingId === request.id ? (
+                        <>
+                          <span className="muted">Revoke this link?</span>{" "}
+                          <button className="secondary-action mini-action" type="button" onClick={() => handleRevoke(request.id)}>Confirm revoke</button>{" "}
+                          <button className="secondary-action mini-action" type="button" onClick={() => setRevokingId(null)}>Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          {canRevoke && (
+                            <button className="secondary-action mini-action" type="button" onClick={() => setRevokingId(request.id)}>Revoke</button>
+                          )}{" "}
+                          {canRegenerate && (
+                            <button className="secondary-action mini-action" type="button" onClick={() => handleRegenerate(request.id)}>Regenerate</button>
+                          )}
+                        </>
+                      )
+                    )}
                   </td>
                 </tr>
                 );
@@ -29103,8 +29192,39 @@ function RequestCompanySignupPage() {
 // ChannelGuestLandingPage's exact shape (loading/error/used/ready/
 // submitting/done phases, deferred-application via localStorage when
 // "confirm email" is enabled).
+// Shared between CompanySignupLandingPage and App's handleSignIn (the
+// deferred-application path for "confirm email" projects) -- a plain
+// function declaration so it's hoisted and usable from handleSignIn
+// (defined earlier in this file, inside App) regardless of textual
+// order. Every accept_company_signup() outcome gets its own specific,
+// actionable message -- item 4 of E's own review: "Do not collapse them
+// into the current generic used-or-expired message."
+function companySignupAcceptOutcomeMessage(outcome: CompanySignupAcceptOutcome): string {
+  switch (outcome) {
+    case "email_not_confirmed":
+      return "Please confirm your email address first (check your inbox), then come back and try this link again.";
+    case "email_mismatch":
+      return "This link was issued for a different email address. Sign up using the exact email your company signup was approved for.";
+    case "already_member_of_another_workspace":
+      return "This account already belongs to another company on Ergon. Contact whoever approved this signup for help.";
+    case "expired":
+      return "This signup link has expired. Contact whoever approved your company for a new one.";
+    case "revoked":
+      return "This signup link was revoked. Contact whoever approved your company for a new one.";
+    case "already_used":
+      return "This signup link has already been used. If that wasn't you, contact whoever approved your company.";
+    case "not_found":
+    default:
+      return "This signup link is invalid. Contact whoever approved your company for a new one.";
+  }
+}
+
 function CompanySignupLandingPage({ token }: { token: string }) {
-  const [phase, setPhase] = useState<"loading" | "error" | "ready" | "submitting" | "done">("loading");
+  // Item 2/3 of E's own review: distinct states for every real token
+  // status, and the account-creation form only ever renders for "ready"
+  // (the exact-"valid" case) -- never for any of the others, even
+  // momentarily.
+  const [phase, setPhase] = useState<"loading" | "not_found" | "expired" | "revoked" | "used" | "ready" | "submitting" | "done">("loading");
   const [companyName, setCompanyName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29114,14 +29234,16 @@ function CompanySignupLandingPage({ token }: { token: string }) {
   useEffect(() => {
     fetchCompanySignupByToken(token)
       .then((result) => {
-        if (!result) {
-          setPhase("error");
-          return;
+        setCompanyName(result.companyName ?? "");
+        if (result.status === "valid") {
+          setPhase("ready");
+        } else if (result.status === "expired" || result.status === "revoked" || result.status === "used") {
+          setPhase(result.status);
+        } else {
+          setPhase("not_found");
         }
-        setCompanyName(result.companyName);
-        setPhase("ready");
       })
-      .catch(() => setPhase("error"));
+      .catch(() => setPhase("not_found"));
   }, [token]);
 
   async function handleAccept() {
@@ -29154,7 +29276,7 @@ function CompanySignupLandingPage({ token }: { token: string }) {
       }
       const result = await acceptCompanySignup(token, session.accessToken);
       if (result.outcome !== "accepted" || !result.workspaceId) {
-        setFormError("This signup link has already been used or has expired. Contact whoever approved your company.");
+        setFormError(companySignupAcceptOutcomeMessage(result.outcome));
         setPhase("ready");
         return;
       }
@@ -29174,11 +29296,38 @@ function CompanySignupLandingPage({ token }: { token: string }) {
     );
   }
 
-  if (phase === "error") {
+  if (phase === "not_found") {
     return (
       <div className="submittal-public-page">
         <h1>Signup link not found</h1>
-        <p>This link is invalid, has already been used, or hasn't been approved yet. Contact whoever approved your company.</p>
+        <p>This link is invalid or hasn't been approved yet. Contact whoever approved your company.</p>
+      </div>
+    );
+  }
+
+  if (phase === "expired") {
+    return (
+      <div className="submittal-public-page">
+        <h1>Signup link expired</h1>
+        <p>This link has expired. Contact whoever approved your company for a new one.</p>
+      </div>
+    );
+  }
+
+  if (phase === "revoked") {
+    return (
+      <div className="submittal-public-page">
+        <h1>Signup link revoked</h1>
+        <p>This link was revoked. Contact whoever approved your company for a new one.</p>
+      </div>
+    );
+  }
+
+  if (phase === "used") {
+    return (
+      <div className="submittal-public-page">
+        <h1>Already set up</h1>
+        <p>This company has already finished setting up. If that wasn't you, contact whoever approved your company.</p>
       </div>
     );
   }

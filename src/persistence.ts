@@ -1430,12 +1430,15 @@ export type CompanySignupRequest = {
   reviewedAt: string | null;
   rejectionReason: string | null;
   createdWorkspaceId: string | null;
-  // Included (RLS already restricts this whole table to is_app_admin(),
-  // same exposure level as everything else in it) specifically so the
-  // accept link can be reconstructed on reload -- see
+  // Included (RLS already restricts this whole table to
+  // is_platform_admin(), same exposure level as everything else in it)
+  // specifically so the accept link can be reconstructed on reload -- see
   // CompanySignupRequestsPanel's own comment for the bug this closes.
   signupToken: string | null;
   signupTokenUsedAt: string | null;
+  // Migration 196: real, enforced token lifecycle fields.
+  signupTokenExpiresAt: string | null;
+  signupTokenRevokedAt: string | null;
   createdAt: string;
 };
 
@@ -1451,6 +1454,8 @@ type CompanySignupRequestRow = {
   created_workspace_id: string | null;
   signup_token: string | null;
   signup_token_used_at: string | null;
+  signup_token_expires_at: string | null;
+  signup_token_revoked_at: string | null;
   created_at: string;
 };
 
@@ -1467,8 +1472,34 @@ function mapCompanySignupRequestRow(row: CompanySignupRequestRow): CompanySignup
     createdWorkspaceId: row.created_workspace_id,
     signupToken: row.signup_token,
     signupTokenUsedAt: row.signup_token_used_at,
+    signupTokenExpiresAt: row.signup_token_expires_at,
+    signupTokenRevokedAt: row.signup_token_revoked_at,
     createdAt: row.created_at,
   };
+}
+
+// A single, reusable classification of an approved request's token
+// lifecycle state -- used by both the admin panel (item 5) and could be
+// reused anywhere else this needs to be displayed consistently. Mirrors
+// get_company_signup_by_token's own server-side CASE exactly (migration
+// 196) so the admin's own view of "is this link still good" never
+// disagrees with what accept_company_signup will actually do.
+export type CompanySignupTokenState = "not_applicable" | "revoked" | "expired" | "used" | "valid";
+
+export function companySignupTokenState(request: CompanySignupRequest): CompanySignupTokenState {
+  if (request.status !== "approved" || !request.signupToken) {
+    return "not_applicable";
+  }
+  if (request.signupTokenRevokedAt) {
+    return "revoked";
+  }
+  if (request.signupTokenExpiresAt && new Date(request.signupTokenExpiresAt).getTime() <= Date.now()) {
+    return "expired";
+  }
+  if (request.signupTokenUsedAt) {
+    return "used";
+  }
+  return "valid";
 }
 
 // Platform-admin review queue -- RLS (is_app_admin()) already restricts
@@ -1519,6 +1550,43 @@ export async function rejectCompanySignupRequest(requestId: string, reason: stri
   }
 }
 
+// Migration 196, platform-admin-only. Only meaningful for an approved,
+// unused, not-already-revoked token -- the RPC itself rejects anything
+// else with a clear error, surfaced here unchanged.
+export async function revokeCompanySignupToken(requestId: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/revoke_company_signup_token"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_request_id: requestId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not revoke this signup link"));
+  }
+}
+
+// Migration 196, platform-admin-only. Overwrites the token column
+// directly -- the old token stops matching any row the instant this
+// commits, no separate invalidation list needed. Only meaningful for an
+// approved, not-yet-accepted request.
+export async function regenerateCompanySignupToken(requestId: string, accessToken?: string): Promise<{ signupToken: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/regenerate_company_signup_token"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_request_id: requestId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not regenerate this signup link"));
+  }
+  const result = (await response.json()) as { signup_token: string };
+  return { signupToken: result.signup_token };
+}
+
 // The public signup form's only path -- goes through the Vercel API route,
 // NOT a direct Supabase RPC call. submit_company_signup_request() has no
 // anon/authenticated grant at all (see api/request-company-signup.js's
@@ -1545,9 +1613,25 @@ export async function requestCompanySignup(companyName: string, requesterName: s
 // Anon-safe token lookup for the accept-landing page -- mirrors
 // fetchChannelGuestInviteByToken exactly. Returns null for an invalid,
 // unapproved, or already-used token, never an error.
-export async function fetchCompanySignupByToken(token: string): Promise<{ companyName: string } | null> {
+// Migration 196's get_company_signup_by_token now returns a real,
+// enforced status (mirrors get_channel_guest_invite_by_token's own
+// established shape) instead of one generic found-or-not signal --
+// "not_found" covers both a token that never matched any row at all
+// (zero rows from the RPC) AND a row that matched but was never actually
+// approved (a pending/rejected request's token column is always null in
+// practice, so this second case is defensive, not a normal path).
+export type CompanySignupTokenStatus = "not_found" | "expired" | "revoked" | "used" | "valid";
+
+export type CompanySignupTokenLookup = {
+  companyName: string | null;
+  status: CompanySignupTokenStatus;
+};
+
+const COMPANY_SIGNUP_TOKEN_STATUSES: readonly CompanySignupTokenStatus[] = ["not_found", "expired", "revoked", "used", "valid"];
+
+export async function fetchCompanySignupByToken(token: string): Promise<CompanySignupTokenLookup> {
   if (!isRemotePersistenceConfigured() || !token) {
-    return null;
+    return { companyName: null, status: "not_found" };
   }
   const response = await fetch(supabaseUrl("rpc/get_company_signup_by_token"), {
     method: "POST",
@@ -1555,18 +1639,34 @@ export async function fetchCompanySignupByToken(token: string): Promise<{ compan
     body: JSON.stringify({ p_token: token }),
   });
   if (!response.ok) {
-    return null;
+    return { companyName: null, status: "not_found" };
   }
-  const rows = (await response.json()) as Array<{ company_name: string }>;
+  const rows = (await response.json()) as Array<{ company_name: string; status: string }>;
   if (!rows.length) {
-    return null;
+    return { companyName: null, status: "not_found" };
   }
-  return { companyName: rows[0].company_name };
+  const row = rows[0];
+  const status = (COMPANY_SIGNUP_TOKEN_STATUSES as readonly string[]).includes(row.status) ? (row.status as CompanySignupTokenStatus) : "not_found";
+  return { companyName: row.company_name, status };
 }
 
 // Called with the prospect's own freshly-created session, right after
 // signUpWithPassword -- mirrors acceptChannelGuestInvite's exact posture.
-export async function acceptCompanySignup(token: string, accessToken?: string): Promise<{ outcome: string; workspaceId: string | null }> {
+// Migration 196's accept_company_signup returns one of 8 distinct
+// outcomes -- see that migration's own header comment for the exact
+// check order. "accepted" is the only success case; every other value is
+// a specific, real reason to show the caller, not a generic catch-all.
+export type CompanySignupAcceptOutcome =
+  | "accepted"
+  | "not_found"
+  | "expired"
+  | "revoked"
+  | "already_used"
+  | "email_not_confirmed"
+  | "email_mismatch"
+  | "already_member_of_another_workspace";
+
+export async function acceptCompanySignup(token: string, accessToken?: string): Promise<{ outcome: CompanySignupAcceptOutcome; workspaceId: string | null }> {
   if (!isRemotePersistenceConfigured() || !accessToken || !token) {
     throw new Error("Not configured.");
   }
@@ -1583,7 +1683,7 @@ export async function acceptCompanySignup(token: string, accessToken?: string): 
   if (!row) {
     throw new Error("Could not accept this company signup.");
   }
-  return { outcome: row.outcome, workspaceId: row.joined_workspace_id };
+  return { outcome: row.outcome as CompanySignupAcceptOutcome, workspaceId: row.joined_workspace_id };
 }
 
 // --- Guest-session detection (this feature's frontend-only concern) ------
