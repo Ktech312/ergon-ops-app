@@ -348,6 +348,67 @@ as designed; the bug was purely in what the local test environment was faking. R
 canonical isolation tests clean before handing the corrected test file back to E, which then passed
 in production on the second attempt.
 
+## 2026-09-22, same night: migration 197 + full signup lifecycle frontend -- E's own follow-up, applied and confirmed live
+
+Right after 196 closed out, E followed up directly: **"Migration 196 is applied and tested; do not
+edit or rerun it. Its database authorization fix is correct, but the feature is not yet fully
+closed."** Two more things were still open: (a) every pre-196-approved token was left with a null
+`signup_token_expires_at` (196 could only fix the rule going forward, not retroactively), and (b)
+the frontend still didn't consume any of what 196 actually built -- it showed one generic "used or
+expired" message for every failure and had no revoke/regenerate controls at all.
+
+**Migration `197_backfill_pre_196_signup_token_expiration.sql`** -- a one-time data backfill, not a
+schema/function change: `signup_token_expires_at = reviewed_at + interval '7 days'` for every
+`approved`/unused/null-expiry row, scoped so no post-196 approval's real expiration is ever
+overwritten. Does not touch `workspaces`/`workspace_members` -- no workspace deleted, no owner
+fabricated, per E's own explicit instruction. The one real-production row this affected, `ZZ Test
+Signup Co`, kept its already-provisioned `active` workspace exactly as-is and gained a real
+expiration (confirmed live afterward: reviewed 9/22 5:51:55 PM -> expires 9/29 5:51:55 PM, exactly 7
+days). 63/63 canonical isolation tests pass, including the new migration 197 test -- since this
+PGlite harness starts from empty data, the test reproduces the migration's own UPDATE against
+freshly-inserted, historically-shaped fixtures rather than re-observing real historical data the
+harness has no way to represent. — *Migration applied and canonical test PASSED in production (E
+confirmed, 2026-09-22, "Success. No rows returned" for both).* **Do not run migration 197 or its
+canonical test again.**
+
+**Frontend, items 1-6 of E's own list, all shipped in the same pass (no migration involved -- purely
+consumes what 196/197 already shipped)**:
+1. `fetchCompanySignupByToken` now maps `get_company_signup_by_token`'s real status
+   (not_found/expired/revoked/used/valid) instead of collapsing everything into found-or-not.
+2/3. `CompanySignupLandingPage` renders a distinct message per state, and **the account-creation
+   form only ever renders for the exact "valid" case** -- never shown, never submittable, for
+   anything else.
+4. Every `accept_company_signup()` outcome (`email_not_confirmed`, `email_mismatch`,
+   `already_member_of_another_workspace`, `expired`, `revoked`, `already_used`, `not_found`) gets
+   its own specific, actionable message via a shared `companySignupAcceptOutcomeMessage()` helper,
+   reused by both the landing page and `handleSignIn`'s deferred (confirm-email) acceptance path.
+5. `CompanySignupRequestsPanel` (Admin) gained **Revoke** and **Regenerate** controls, a **Token**
+   status column (Valid/Expired/Revoked/Used, via the new shared `companySignupTokenState()`
+   helper -- mirrors `get_company_signup_by_token`'s own server-side CASE exactly), and an
+   **Expires** column. The signup-link display now also greys out for an expired or revoked token,
+   not just a used one -- closes the gap the migration-196 entry above flagged honestly as not yet
+   done.
+6. New `src/company-signup-lifecycle.test.ts` (30 tests): the status/outcome mappers,
+   `companySignupTokenState`'s full state matrix, and revoke/regenerate's write-verification.
+
+**Verified live in production after deploy** (bundle content confirmed via direct fetch before
+trusting a stale cached tab, same discipline as every other deploy check tonight): Admin's Decided
+table shows `ZZ Test Signup Co` with Token "Valid", Expires "9/29/2026, 5:51:55 PM" (proving 197's
+backfill landed correctly on the real row), and both Revoke/Regenerate buttons present; a bogus
+`?company-signup=` token shows "Signup link not found"; the real, still-valid token still correctly
+shows the account-creation form. Zero console errors. `npx tsc -b` clean, `npx vite build` clean,
+full `vitest` suite clean (544 tests, 30 new).
+
+**The company-signup claim path (Stage 7's "lightweight" onboarding path) is now feature-complete
+and fully hardened end-to-end** -- request -> platform-admin-only approve/reject -> real token
+lifecycle (expiration, revocation, regeneration) -> verified-caller acceptance -> atomic workspace
+activation, with accurate, specific messaging at every step and no raw signup data ever exposed
+beyond a real platform admin. Still open, tracked from before, not touched by this pass: seeding a
+brand-new company's catalog/schedule-templates/notification-rules remains deliberately empty (E's
+own "different industries" decision), and the guided wizard remains deferred until a real second
+company has gone through this lightweight path at least once (E's own words, 2026-09-22: "once
+everything actually works and is tested 100, we build the guide").
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly

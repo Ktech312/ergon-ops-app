@@ -1459,7 +1459,29 @@ there, not an oversight.
    visibility — the exact leak migration 173 closed); see that file's own Section 4 header comment for
    the full history. **Suite now passes 51/51 with zero findings — the gate is GREEN**, and a second
    real workspace may now be created per §6, subject to any other still-open items in this section.
-7. **Company onboarding and no-code workspace configuration — NOT STARTED.** Blocked on stage 6.
+7. **Company onboarding and no-code workspace configuration — LIGHTWEIGHT PATH SHIPPED AND HARDENED,
+   2026-09-22.** No longer blocked on stage 6 (green as of the entry above). E's own decision:
+   model on Teams/QuickBooks, self-serve signup gated by E's own platform-admin approval (no billing
+   infra yet), lightweight path first (a guided setup wizard deliberately deferred until this path
+   has real usage — "once everything actually works and is tested 100, we build the guide"). Built
+   across migrations 195-197 plus a full frontend pass, all confirmed live in production: a public
+   `?request-company` signup form (rate-limited via `api/request-company-signup.js`, the only
+   genuinely public unauthenticated write path in this schema); a real `is_platform_admin()`-gated
+   review queue (`company_signup_requests`, migration 195 — corrected from an initial `is_app_admin()`
+   mistake by migration 196 after E's own review, since that flag is grantable to any of Ergon's own
+   employees and must never gate approving unrelated companies); full workspace provisioning on
+   approval (workspace, branding, 4 section channels — migration 162's own long-standing "belongs to
+   Stage 7" flag, now closed); a hardened claim path (migration 196) verifying the accepting caller's
+   real, confirmed auth email against the request, rejecting a caller who already belongs to another
+   workspace, real 7-day token expiration with explicit revoke/regenerate, and atomic pending->active
+   workspace activation only on genuine acceptance; a one-time backfill (migration 197) giving every
+   pre-196 approved token a real expiration; and a full frontend lifecycle (distinct messaging per
+   token/outcome state, admin revoke/regenerate/expiration/status controls) matching what the backend
+   actually enforces, not a generic catch-all. See `HANDOFF.md`'s same-night entries for the full
+   defect list and verification detail. **Deliberately still open**: seeding a new company's
+   catalog/schedule-templates/notification-rules (E's own "different industries" decision — stays
+   genuinely empty, not copied from Ergon Test Workspace); the guided wizard itself; company-level
+   branding/subscription/usage-metrics surfaces beyond what's listed here.
 8. **Support module first release (D13) — NOT STARTED.** Blocked on stage 7 per the authorized order
    (build after Phase 3 completes). Design doc: `PRODUCT_SUPPORT_MODULE_DESIGN.md`.
 9. **Engineering/Product Development module first release (D14) — NOT STARTED.** Same gating as
