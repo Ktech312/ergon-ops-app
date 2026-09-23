@@ -329,13 +329,24 @@ multi-connection proof would need the same two-`pg`-connection methodology
 `PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md` §6 item 5 already established, not invented fresh here.
 `npx tsc -b` clean, `npx vite build` clean, full `vitest` suite clean (514 tests, 4 new for item 7).
 
-**Not yet applied to production.** Per E's own instruction, this is presented as migration 196
-alone first -- run it, then its own canonical test, before anything else. `ZZ Test Signup Co` (the
-production test artifact from earlier tonight, already flagged above) is deliberately untouched by
-this migration beyond gaining the two new nullable columns -- its existing token, its
-not-yet-accepted state, and its already-provisioned (now-stale-shape, still-`active`) workspace are
-left exactly as they were, per E's explicit instruction not to touch it outside this migration's own
-reviewed behavior.
+— *Migration 196 applied and its canonical test PASSED in production (E confirmed, 2026-09-22,
+"Success. No rows returned" for both).* **Do not run migration 196 or its canonical test again.**
+`ZZ Test Signup Co` (the production test artifact from earlier tonight, already flagged above)
+remains deliberately untouched beyond gaining the two new nullable columns -- its existing token,
+its not-yet-accepted state, and its already-provisioned (now-stale-shape, still-`active`) workspace
+are exactly as they were.
+
+**One real production bug surfaced along the way, not in the migration itself.** The canonical
+test's first production run failed with `email_not_confirmed` for a fixture user the test intended
+to be confirmed -- root cause was a genuine inaccuracy in the local PGlite test harness (
+`consolidated_isolation_suite/platform_stub.sql` had incorrectly defaulted
+`auth.users.email_confirmed_at` to `now()`, which does not match real Supabase Auth -- that column
+is null until GoTrue actually confirms the address). Fixed (`e1e6a4d`): removed the false default,
+made every affected canonical test fixture set `email_confirmed_at` explicitly. `accept_company_signup`
+itself was correct the whole time -- it correctly rejected an unconfirmed synthetic test user exactly
+as designed; the bug was purely in what the local test environment was faking. Re-verified 62/62
+canonical isolation tests clean before handing the corrected test file back to E, which then passed
+in production on the second attempt.
 
 ## Next coder session
 
