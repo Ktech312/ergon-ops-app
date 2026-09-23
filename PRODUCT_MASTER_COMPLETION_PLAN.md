@@ -1478,10 +1478,36 @@ there, not an oversight.
    pre-196 approved token a real expiration; and a full frontend lifecycle (distinct messaging per
    token/outcome state, admin revoke/regenerate/expiration/status controls) matching what the backend
    actually enforces, not a generic catch-all. See `HANDOFF.md`'s same-night entries for the full
-   defect list and verification detail. **Deliberately still open**: seeding a new company's
+   defect list and verification detail.
+
+   **Genuinely separate "Ergon Platform" console added, same night** — closes E's own original
+   question that started this whole security-review arc ("is there an Ergon admin page... that only
+   the Owner or employees of Ergon can enter"). `CompanySignupRequestsPanel` relocated out of the
+   per-company Admin page entirely, into a new `isPlatformAdmin`-gated `ErgonPlatformPage`
+   (full-app-replacing, same pattern as the guest-session shell), reachable only via a
+   platform-admin-only account-menu link, alongside a new Companies table listing every workspace on
+   the platform. **Migration 198** (`platform_company_lifecycle_and_audit_log.sql`, canonical test
+   64/64 in the consolidated suite, **not yet applied to production**) adds `suspend_company()` /
+   `reactivate_company()` — both `is_platform_admin()`-gated, both require a non-empty reason, both
+   record a durable, read-only-to-anyone-but-a-platform-admin audit row in a new
+   `company_admin_audit_log` table — plus a server-enforced warning gate
+   (`OWN_WORKSPACE_CONFIRMATION_REQUIRED`) before a platform admin can suspend their own active
+   company. Suspending a company needed **no new blocking logic**: the pre-existing
+   `resolve_caller_workspace_id()` active-workspace check (migration 117), already the tenancy
+   resolver behind nearly every workspace-scoped RLS policy/trigger, already rejects a suspended
+   workspace's members the moment `workspaces.status` flips — migration 198's test proves this
+   directly rather than building something redundant. Hard workspace deletion was deliberately NOT
+   built — the Companies table's "Remove company" control is rendered disabled with a tooltip
+   naming it future retention/deletion-policy work, so it can never be mistaken for a shipped
+   capability. See `HANDOFF.md`'s matching same-night entry for the full item-by-item accounting
+   against E's own numbered review, and for the confirmation status (update both once E has actually
+   run migration 198 in production).
+
+   **Deliberately still open**: seeding a new company's
    catalog/schedule-templates/notification-rules (E's own "different industries" decision — stays
    genuinely empty, not copied from Ergon Test Workspace); the guided wizard itself; company-level
-   branding/subscription/usage-metrics surfaces beyond what's listed here.
+   branding/subscription/usage-metrics surfaces beyond what's listed here; hard workspace deletion
+   (by design, not an oversight — see migration 198 above).
 8. **Support module first release (D13) — NOT STARTED.** Blocked on stage 7 per the authorized order
    (build after Phase 3 completes). Design doc: `PRODUCT_SUPPORT_MODULE_DESIGN.md`.
 9. **Engineering/Product Development module first release (D14) — NOT STARTED.** Same gating as

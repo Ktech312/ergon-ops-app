@@ -95,6 +95,21 @@ trigger-enforced, `NOT NULL` `workspace_id` column, backfilled to the Ergon Test
 (`PRODUCT_PHASE2_PLAN.md`, Revision 5, both migrations run and verified). This matters directly
 for §8 and §9 below.
 
+**Implementation status update (2026-09-22, later the same night)**: decision 4 above (self-serve
+signup, gated by E's manual approval) is no longer design-only — it shipped as the "lightweight"
+onboarding path, migrations 195-197, fully live in production, plus a genuinely separate
+`is_platform_admin()`-gated "Ergon Platform" console (relocated out of the per-company Admin page)
+for reviewing signup requests and managing companies. That console gained real company lifecycle
+controls the same night — Suspend/Reactivate, each requiring an explicit reason and recorded to a
+durable audit log, migration 198 (canonical test passing locally, application to production
+pending as of this entry) — the natural next step once "approve a company" existed: an approved
+company now also needs a reversible way to pause it without deleting any data. Hard deletion was
+explicitly NOT built (no retention/deletion-policy decision exists yet). See `HANDOFF.md`'s
+same-night dated entries and `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 7 for full detail — this
+document remains the design record for what's still genuinely undecided (starter
+configurations/role vocabulary/module enablement below), not a status tracker; check those two
+files for current status before treating any section below as still purely hypothetical.
+
 ---
 
 ## 1. Inventory: administrator-configurable today vs. still hard-coded

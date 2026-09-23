@@ -47,6 +47,7 @@ import {
   ShoppingCart,
   Trash2,
   Truck,
+  Shield,
   Upload,
   User,
   UserPlus,
@@ -203,9 +204,14 @@ import {
   fetchCompanySignupByToken,
   acceptCompanySignup,
   companySignupTokenState,
+  checkIsPlatformAdmin,
+  loadPlatformWorkspaces,
+  suspendCompany,
+  reactivateCompany,
   type CompanySignupRequest,
   type CompanySignupTokenState,
   type CompanySignupAcceptOutcome,
+  type PlatformWorkspace,
   loadHasAnyWorkspaceMembership,
   loadMyChannelGuestRows,
   loadChannelMessageSenderNames,
@@ -1311,6 +1317,12 @@ function App() {
     });
   }
   const [isAdmin, setIsAdmin] = useState(false);
+  // Migration 115's platform_admins -- deliberately separate from isAdmin
+  // above (Ergon's own company admin flag). Gates the Ergon Platform
+  // console (companies list, signup approvals) -- an isAdmin-only
+  // employee of Ergon's own workspace must never see this, matching
+  // is_platform_admin()'s own server-side gate on every RPC it protects.
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   // Per-workspace admin (migration 185) -- additive alongside the global
   // isAdmin flag above, never a replacement. Gates only the specific
   // actions migration 185's RLS actually grants a workspace admin for
@@ -1336,6 +1348,12 @@ function App() {
   // separate, minimal GuestChannelShell instead of the normal app.
   const [guestSessionCheckDone, setGuestSessionCheckDone] = useState(false);
   const [activeGuestSession, setActiveGuestSession] = useState<ActiveChannelGuestRow | null>(null);
+  // Ergon Platform console (2026-09-22) -- a toggle, not a View tab, same
+  // reasoning as activeGuestSession below: this is a genuinely separate
+  // space, not one more company tab mixed in with the rest, so it
+  // replaces the whole app shell (like GuestChannelShell) rather than
+  // being reached through the normal per-company tab-visibility system.
+  const [showErgonPlatform, setShowErgonPlatform] = useState(false);
   // Fix for the "revoked/expired guest signs back in" dead-end: distinct
   // from activeGuestSession being null (which is also true for a genuine
   // employee, or for someone who was never a guest at all). Set only when
@@ -2928,6 +2946,7 @@ function App() {
   useEffect(() => {
     if (!authSession || !isRemotePersistenceConfigured()) {
       setIsAdmin(false);
+      setIsPlatformAdmin(false);
       setAuthChecksReady(false);
       setUserApprovalStatus(null);
       setOwnAllowedViews(null);
@@ -2952,6 +2971,7 @@ function App() {
 
     Promise.all([
       checkIsAdmin(authSession.userId, authSession.accessToken),
+      checkIsPlatformAdmin(authSession.userId, authSession.accessToken),
       loadOwnWorkspaceMembership(authSession.userId, authSession.accessToken),
       loadUserRoleMode(authSession.userId, authSession.accessToken),
       loadOwnRoleKeys(authSession.userId, authSession.accessToken),
@@ -2968,11 +2988,12 @@ function App() {
         }
         return loadOwnApprovalStatus(authSession.userId, authSession.accessToken);
       }),
-    ]).then(([adminFlag, workspaceAdminFlag, savedRole, roleKeys, allowedViews, status]) => {
+    ]).then(([adminFlag, platformAdminFlag, workspaceAdminFlag, savedRole, roleKeys, allowedViews, status]) => {
       if (cancelled) {
         return;
       }
       setIsAdmin(adminFlag);
+      setIsPlatformAdmin(platformAdminFlag);
       setIsWorkspaceAdmin(workspaceAdminFlag);
       const resolvedRole = savedRole && (ALL_ROLE_KEYS as string[]).includes(savedRole) ? (savedRole as RoleMode) : null;
       if (resolvedRole) {
@@ -7715,6 +7736,16 @@ function App() {
     );
   }
 
+  // Ergon Platform console -- gated on isPlatformAdmin, not isAdmin (see
+  // CompanySignupRequestsPanel's own comment for exactly why those two
+  // must never be conflated). Checked before the guest-session branch
+  // below since a platform admin is by definition a real employee, never
+  // a guest, but ordering doesn't matter in practice -- the two states
+  // are mutually exclusive.
+  if (authSession && isRemotePersistenceConfigured() && isPlatformAdmin && showErgonPlatform) {
+    return <ErgonPlatformPage accessToken={authSession.accessToken} ownWorkspaceId={branding.workspaceId} onExit={() => setShowErgonPlatform(false)} />;
+  }
+
   // A confirmed guest session gets a genuinely separate, minimal shell --
   // not the normal app with things hidden. No sidebar, no nav, no other
   // tabs -- just the one channel they were invited to.
@@ -7968,6 +7999,18 @@ function App() {
                       }}
                     >
                       <User size={14} /> Admin
+                    </button>
+                  )}
+                  {isPlatformAdmin && (
+                    <button
+                      className="secondary-action mini-action account-menu-admin-link"
+                      type="button"
+                      onClick={() => {
+                        setShowErgonPlatform(true);
+                        setAccountMenuOpen(false);
+                      }}
+                    >
+                      <Shield size={14} /> Ergon Platform
                     </button>
                   )}
                   <div className="auth-card">
@@ -8579,7 +8622,6 @@ function App() {
         {view === "admin" && canReviewApprovals && (
           <AdminPage
             currentUserId={authSession?.userId ?? ""}
-            accessToken={authSession?.accessToken}
             isAdmin={isAdmin}
             isWorkspaceAdmin={isWorkspaceAdmin}
             isManagerRole={isManagerRole}
@@ -19449,7 +19491,15 @@ const COMPANY_SIGNUP_TOKEN_STATE_LABELS: Record<CompanySignupTokenState, string>
   used: "Used",
 };
 
-function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: string; isAdmin: boolean }) {
+// isPlatformAdmin, not isAdmin -- moved here from the per-company Admin
+// page (2026-09-22) after E's own direct question ("is there an Ergon
+// admin page... that only Ergon employees can enter") surfaced that this
+// panel was gated on isAdmin (Ergon's own company admin flag) the whole
+// time, even after migration 196 corrected the server-side RPCs to
+// require real is_platform_admin(). A company admin who wasn't a
+// platform admin could still see this whole panel and would have hit a
+// confusing server rejection trying to use it.
+function CompanySignupRequestsPanel({ accessToken, isPlatformAdmin }: { accessToken?: string; isPlatformAdmin: boolean }) {
   const [requests, setRequests] = useState<CompanySignupRequest[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState("");
@@ -19465,13 +19515,13 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
   }
 
   useEffect(() => {
-    if (isAdmin && accessToken && !loaded) {
+    if (isPlatformAdmin && accessToken && !loaded) {
       refresh();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin, accessToken, loaded]);
+  }, [isPlatformAdmin, accessToken, loaded]);
 
-  if (!isAdmin) {
+  if (!isPlatformAdmin) {
     return null;
   }
 
@@ -19683,9 +19733,229 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
   );
 }
 
+// The genuinely separate, Ergon-only console E originally asked for
+// (2026-09-22): "is there an Ergon admin page for me to control these
+// things... that only the Owner or employees of Ergon can enter, view
+// companies using the software... Add/remove/Approve companies." Gated
+// strictly on isPlatformAdmin, rendered in place of the entire normal
+// app (same pattern GuestChannelShell already uses for a guest session)
+// -- never reachable from a plain company admin's own view, regardless
+// of how many companies exist on the platform.
+function ErgonPlatformPage({ accessToken, ownWorkspaceId, onExit }: { accessToken?: string; ownWorkspaceId?: string; onExit: () => void }) {
+  const [workspaces, setWorkspaces] = useState<PlatformWorkspace[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  // Migration 198 item 4: a failed load is a DISTINCT state from "loaded,
+  // zero rows" -- never collapsed into the empty-state row. null means
+  // no error; loaded stays false while a load is genuinely in flight.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [status, setStatus] = useState("");
+  // Which row currently has its inline reason input open, and for which
+  // action -- mirrors CompanySignupRequestsPanel's rejectingId/revokingId
+  // pattern above.
+  const [pendingAction, setPendingAction] = useState<{ workspaceId: string; kind: "suspend" | "reactivate" } | null>(null);
+  const [reason, setReason] = useState("");
+  // Item 9: set only when suspend_company() has just rejected an attempt
+  // with OWN_WORKSPACE_CONFIRMATION_REQUIRED -- a second, harder-to-miss
+  // warning step, not a plain failure message.
+  const [ownWorkspaceWarning, setOwnWorkspaceWarning] = useState<{ workspaceId: string; reason: string } | null>(null);
+
+  async function refresh() {
+    setLoadError(null);
+    try {
+      const rows = await loadPlatformWorkspaces(accessToken);
+      setWorkspaces(rows);
+      setLoaded(true);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load companies.");
+      setLoaded(true);
+    }
+  }
+
+  useEffect(() => {
+    if (accessToken && !loaded) {
+      refresh();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, loaded]);
+
+  function beginAction(workspaceId: string, kind: "suspend" | "reactivate") {
+    setPendingAction({ workspaceId, kind });
+    setReason("");
+    setOwnWorkspaceWarning(null);
+    setStatus("");
+  }
+
+  function cancelAction() {
+    setPendingAction(null);
+    setReason("");
+    setOwnWorkspaceWarning(null);
+  }
+
+  async function confirmSuspend(workspaceId: string, confirmOwnWorkspace: boolean) {
+    const trimmedReason = confirmOwnWorkspace && ownWorkspaceWarning ? ownWorkspaceWarning.reason : reason.trim();
+    if (!trimmedReason) {
+      setStatus("A reason is required.");
+      return;
+    }
+    setStatus("Suspending...");
+    try {
+      await suspendCompany(workspaceId, trimmedReason, confirmOwnWorkspace, accessToken);
+      setStatus("Suspended.");
+      setPendingAction(null);
+      setOwnWorkspaceWarning(null);
+      setReason("");
+      await refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not suspend this company.";
+      if (!confirmOwnWorkspace && message.includes("OWN_WORKSPACE_CONFIRMATION_REQUIRED")) {
+        setOwnWorkspaceWarning({ workspaceId, reason: trimmedReason });
+        setStatus("");
+      } else {
+        setStatus(message);
+      }
+    }
+  }
+
+  async function confirmReactivate(workspaceId: string) {
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      setStatus("A reason is required.");
+      return;
+    }
+    setStatus("Reactivating...");
+    try {
+      await reactivateCompany(workspaceId, trimmedReason, accessToken);
+      setStatus("Reactivated.");
+      setPendingAction(null);
+      setReason("");
+      await refresh();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not reactivate this company.");
+    }
+  }
+
+  return (
+    <div className="content-grid">
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <div>
+            <h2>Ergon Platform</h2>
+            <p>Platform-admin only -- every company using Ergon, and the queue to approve new ones.</p>
+          </div>
+          <button className="secondary-action mini-action" type="button" onClick={onExit}>Back to Ergon</button>
+        </div>
+      </section>
+      <CompanySignupRequestsPanel accessToken={accessToken} isPlatformAdmin={true} />
+      <section className="panel wide">
+        <div className="panel-title-row">
+          <div>
+            <h2>Companies</h2>
+            <p>Every company (workspace) on the platform, regardless of status.</p>
+          </div>
+          <button className="secondary-action mini-action" type="button" onClick={() => { setLoaded(false); }}>Refresh</button>
+        </div>
+        {status && !pendingAction && <p className="muted">{status}</p>}
+        {loadError ? (
+          <div className="empty-compact-state" role="alert">
+            Could not load companies: {loadError}{" "}
+            <button className="secondary-action mini-action" type="button" onClick={() => { setLoaded(false); }}>Retry</button>
+          </div>
+        ) : (
+          <table className="stack-table-mobile">
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th>Slug</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {workspaces.map((workspace) => {
+                const isOwnWorkspace = ownWorkspaceId !== undefined && ownWorkspaceId !== "" && workspace.id === ownWorkspaceId;
+                const showingReasonFor = pendingAction && pendingAction.workspaceId === workspace.id ? pendingAction.kind : null;
+                const showingOwnWarning = ownWorkspaceWarning?.workspaceId === workspace.id;
+                return (
+                  <tr key={workspace.id}>
+                    <td>
+                      {workspace.name}
+                      {isOwnWorkspace && <span className="muted"> (your company)</span>}
+                    </td>
+                    <td data-label="Slug">{workspace.slug}</td>
+                    <td data-label="Status">
+                      <span className={`status ${workspace.status === "active" ? "ok" : "warn"}`}>{workspace.status}</span>
+                    </td>
+                    <td data-label="Created">{new Date(workspace.createdAt).toLocaleString()}</td>
+                    <td>
+                      {showingOwnWarning ? (
+                        <div className="roster-add-row">
+                          <span className="muted">
+                            This is YOUR OWN active company -- suspending it will lock you (and everyone else here) out too. Suspend anyway?
+                          </span>
+                          <button className="primary-action mini-action" type="button" onClick={() => confirmSuspend(workspace.id, true)}>
+                            Yes, suspend my own company
+                          </button>{" "}
+                          <button className="secondary-action mini-action" type="button" onClick={cancelAction}>Cancel</button>
+                        </div>
+                      ) : showingReasonFor ? (
+                        <div className="roster-add-row">
+                          <input
+                            value={reason}
+                            onChange={(event) => setReason(event.target.value)}
+                            placeholder="Reason (required)"
+                          />
+                          <button
+                            className="secondary-action mini-action"
+                            type="button"
+                            onClick={() => (showingReasonFor === "suspend" ? confirmSuspend(workspace.id, false) : confirmReactivate(workspace.id))}
+                          >
+                            Confirm {showingReasonFor === "suspend" ? "suspend" : "reactivate"}
+                          </button>
+                          <button className="secondary-action mini-action" type="button" onClick={cancelAction}>Cancel</button>
+                          {status && <span className="muted">{status}</span>}
+                        </div>
+                      ) : (
+                        <>
+                          {workspace.status === "active" && (
+                            <button className="secondary-action mini-action" type="button" onClick={() => beginAction(workspace.id, "suspend")}>
+                              Suspend
+                            </button>
+                          )}
+                          {workspace.status === "suspended" && (
+                            <button className="secondary-action mini-action" type="button" onClick={() => beginAction(workspace.id, "reactivate")}>
+                              Reactivate
+                            </button>
+                          )}{" "}
+                          <button
+                            className="secondary-action mini-action"
+                            type="button"
+                            disabled
+                            title="Not yet available -- planned as future retention/deletion-policy work, not hard deletion."
+                          >
+                            Remove company
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {workspaces.length === 0 && loaded && (
+                <tr>
+                  <td colSpan={5} className="empty-compact-state">No companies yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function AdminPage({
   currentUserId,
-  accessToken,
   isAdmin,
   isWorkspaceAdmin,
   isManagerRole,
@@ -19770,7 +20040,6 @@ function AdminPage({
   onRespondToApprovalRequest,
 }: {
   currentUserId: string;
-  accessToken?: string;
   isAdmin: boolean;
   isWorkspaceAdmin: boolean;
   isManagerRole: boolean;
@@ -19967,7 +20236,6 @@ function AdminPage({
 
   return (
     <div className="content-grid">
-      <CompanySignupRequestsPanel accessToken={accessToken} isAdmin={isAdmin} />
       {(isAdmin || isManagerRole) && (deletionLog ?? []).length > 0 && (
         <section className="panel wide">
           <div className="panel-title-row">

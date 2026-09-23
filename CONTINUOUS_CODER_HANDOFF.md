@@ -144,6 +144,15 @@ one genuinely outstanding action was sending E migration 144's canonical test, d
 
 ## Next-session launchpad
 
+**2026-09-22, most recent work (this file's own historical batch list below predates it and is not
+updated for it) — Stage 7 onboarding: self-serve company signup (migrations 195-197, applied and
+live) plus the genuinely separate "Ergon Platform" console with company Suspend/Reactivate and a
+durable audit log (migration 198, canonical test 64/64 locally, NOT yet applied to production as of
+this entry). Full detail lives in `HANDOFF.md`'s same-night dated entries and
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 7, both of which are authoritative for current status —
+read those first, not this file, for anything Stage-7-related. Do not re-derive this design from
+scratch or rerun migrations 195-198 or their tests.**
+
 **Repository checkpoint: QUEUE C2 IS FULLY CLOSED.** Migrations 134, 135, 136, 137 (+141), 138, 139,
 140 (+142), 143, 144, and 145 are all applied in production, **every one canonically tested and
 passing.** Queue C2.6 (internal share-link lifecycle controls), Queue C2.7 (both parts, including its

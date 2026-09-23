@@ -1911,6 +1911,118 @@ export async function checkIsAdmin(userId: string, accessToken?: string): Promis
   return rows.length > 0;
 }
 
+// Migration 115's own platform_admins concept -- deliberately DIFFERENT
+// from checkIsAdmin's app_admins flag above. app_admins is Ergon's own
+// company admin flag, grantable to any of Ergon's own employees via Team
+// Roster's "Make admin" button; is_platform_admin() gates genuinely
+// platform-wide actions (approving an unrelated company onto the whole
+// platform) that must never follow from being an admin of one company.
+// Migration 195's own backfill seeded this table from app_admins once,
+// at that migration's apply time -- it is NOT kept in sync afterward,
+// deliberately: granting/revoking platform_admin going forward is its
+// own separate, no-UI-yet action (Supabase Studio), not a side effect of
+// Team Roster's "Make admin" button. Mirrors checkIsAdmin's exact shape;
+// RLS on platform_admins (migration 115) already restricts a non-
+// platform-admin caller to zero rows, same safe-empty posture.
+export async function checkIsPlatformAdmin(userId: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+
+  const response = await fetch(supabaseUrl(`platform_admins?user_id=eq.${userId}&select=user_id`), {
+    headers: supabaseHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    return false;
+  }
+
+  const rows = (await response.json()) as Array<{ user_id?: string }>;
+  return rows.length > 0;
+}
+
+export type PlatformWorkspace = {
+  id: string;
+  name: string;
+  slug: string;
+  status: "active" | "suspended" | "pending";
+  createdAt: string;
+};
+
+type PlatformWorkspaceRow = {
+  id: string;
+  name: string;
+  slug: string;
+  status: "active" | "suspended" | "pending";
+  created_at: string;
+};
+
+// Every company/workspace on the whole platform -- RLS (migration 115)
+// already restricts this to is_platform_admin() or a caller's own
+// workspace membership, so a plain company admin sees only their own
+// workspace, never the full list. Only a genuine platform admin sees
+// every company.
+//
+// Throws on a failed request rather than returning [] -- deliberately
+// DIFFERENT from this file's usual list-loader convention (see e.g.
+// loadCompanySignupRequests just above), per E's own explicit review
+// item: "Make company-list load failures visible. Never convert a
+// failed request into a misleading 'No companies yet' state." A silent
+// [] here is indistinguishable from a platform with zero real
+// companies, which is exactly the misleading state E called out.
+// ErgonPlatformPage (main.tsx) catches this and renders a distinct
+// error banner instead of the empty-state row.
+export async function loadPlatformWorkspaces(accessToken?: string): Promise<PlatformWorkspace[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("workspaces?select=id,name,slug,status,created_at&order=created_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not load companies"));
+  }
+  const rows = (await response.json()) as PlatformWorkspaceRow[];
+  return rows.map((row) => ({ id: row.id, name: row.name, slug: row.slug, status: row.status, createdAt: row.created_at }));
+}
+
+// Migration 198, items 5/8/9. Both throw on failure with the real
+// Postgres error detail surfaced (readSupabaseError) rather than
+// swallowing it -- these are destructive-adjacent admin actions, never
+// silently-ignorable. suspend_company() raises a message starting with
+// "OWN_WORKSPACE_CONFIRMATION_REQUIRED" (item 9) when the caller is
+// suspending a company they are themselves a member of and
+// confirmOwnWorkspace was not passed -- ErgonPlatformPage detects that
+// specific substring and re-prompts rather than showing it as a plain
+// failure.
+export async function suspendCompany(workspaceId: string, reason: string, confirmOwnWorkspace: boolean, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/suspend_company"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_workspace_id: workspaceId, p_reason: reason, p_confirm_own_workspace: confirmOwnWorkspace }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not suspend this company"));
+  }
+}
+
+export async function reactivateCompany(workspaceId: string, reason: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/reactivate_company"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_workspace_id: workspaceId, p_reason: reason }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not reactivate this company"));
+  }
+}
+
 // Per-workspace admin flag (migration 185, is_workspace_admin(workspace_id))
 // -- an additive companion to checkIsAdmin's global flag, never a
 // replacement. Reads the caller's own workspace_members row for their

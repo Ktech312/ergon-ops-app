@@ -409,6 +409,121 @@ own "different industries" decision), and the guided wizard remains deferred unt
 company has gone through this lightweight path at least once (E's own words, 2026-09-22: "once
 everything actually works and is tested 100, we build the guide").
 
+## 2026-09-22, same night: the "Ergon Platform" console -- isPlatformAdmin-gated company list/relocation (no migration), then migration 198 -- Suspend/Reactivate + durable audit log, E's own numbered spec, not yet applied
+
+Right after 197's lifecycle work shipped, E's earlier direct question from before the security
+detour -- **"is there an Ergon admin page for me to control these things... that only the Owner or
+employees of Ergon can enter, view companies using the software... Add/remove/Approve companies"**
+-- was still genuinely unanswered: `CompanySignupRequestsPanel` had been corrected server-side
+(migration 196) but was still reachable from inside the per-company `AdminPage`, gated on
+`isAdmin` (Ergon's own company admin flag) client-side, not `isPlatformAdmin`. Built the real,
+separate console per the instruction to "continue directly with Stage 7 onboarding":
+
+- New `isPlatformAdmin` state (`checkIsPlatformAdmin`, queries `platform_admins`), a `showErgonPlatform`
+  toggle, and a new top-level conditional render (same full-app-replacing pattern as
+  `GuestChannelShell`) -- `ErgonPlatformPage`, reachable only via a `Shield`-icon "Ergon Platform"
+  account-menu link that only renders when `isPlatformAdmin` is true.
+- `CompanySignupRequestsPanel` relocated OUT of `AdminPage` entirely (its render call and the
+  now-unused `accessToken` prop both removed from `AdminPage`) and into `ErgonPlatformPage`,
+  alongside a new **Companies** table (`loadPlatformWorkspaces`, RLS already restricts this to
+  `is_platform_admin()` or the caller's own single workspace membership).
+
+E's direct follow-up, in full, is what migration 198 below answers item-by-item:
+
+> Continue the current Ergon Platform console work... Finish this as one coherent
+> platform-administration batch: 1. Keep the entire console strictly gated by `is_platform_admin()`
+> in both the UI and database. 2. Prove that a company `app_admin` or `workspace_admin` who is not a
+> platform admin cannot see the console, signup queue, tokens, or all-company list. 3. Move company
+> signup review completely out of the individual company Admin page. 4. Make company-list load
+> failures visible. Never convert a failed request into a misleading "No companies yet" state. 5.
+> Support Suspend and Reactivate as the reversible company-management actions. 6. Do not implement
+> hard workspace deletion. Label "Remove company" as future retention/deletion-policy work rather
+> than claiming it exists. 7. Suspending a company must block its members through the existing
+> active-workspace checks without deleting data, memberships, files, or history. 8. Require an
+> explicit confirmation and reason for suspension/reactivation and record a durable audit event. 9.
+> Prevent accidental suspension of the platform admin's currently active company without an
+> additional explicit warning. 10. Add tests for platform-admin access, ordinary company-admin
+> denial, load-error visibility, suspension, reactivation, and audit logging. 11. Run the full
+> application suite and consolidated isolation suite, then commit, push, deploy, and verify the real
+> production console. 12. Reconcile HANDOFF.md, PRODUCT_MASTER_COMPLETION_PLAN.md,
+> CONTINUOUS_CODER_HANDOFF.md, and PRODUCT_ONBOARDING_CONFIG.md.
+
+Items 1-3 were already true of the live schema/relocation work above by the time this list arrived
+-- verified directly, not assumed, and re-proven by migration 198's own canonical test (Sections
+(a)-(c)). Item 6 is a deliberate non-action: no delete-workspace RPC exists or is planned; the
+Companies table's "Remove company" button is rendered **disabled**, with a title tooltip stating
+plainly it's not yet available and is planned as future retention/deletion-policy work, not hard
+deletion -- so the label can never be read as claiming a capability that doesn't exist.
+
+**Migration `198_platform_company_lifecycle_and_audit_log.sql`** -- items 5, 7 (verified, not
+newly built), 8, 9:
+- New `company_admin_audit_log` table (`workspace_id`, `actor_user_id`, `action` in
+  `('suspended','reactivated')`, `reason` -- a non-empty check constraint, not just app-side
+  validation, `created_at default clock_timestamp()`, not `now()` -- see the migration's own
+  in-file comment on why `now()`/`transaction_timestamp()` would tie two audit rows written in the
+  same transaction). RLS: `is_platform_admin()`-only SELECT, no UPDATE/DELETE policy for anyone --
+  writes happen exclusively through the two functions below.
+- `suspend_company(p_workspace_id, p_reason, p_confirm_own_workspace default false)` and
+  `reactivate_company(p_workspace_id, p_reason)` -- both `is_platform_admin()`-gated, both reject a
+  blank/whitespace reason, both write one audit row in the same transaction as the status flip.
+  `suspend_company` additionally checks whether the caller is themselves a member of the workspace
+  being suspended; if so and `p_confirm_own_workspace` wasn't passed, it raises a distinct,
+  named `OWN_WORKSPACE_CONFIRMATION_REQUIRED: ...` message instead of a generic failure --
+  `ErgonPlatformPage` detects that exact substring and renders a second, explicit warning step
+  ("This is YOUR OWN active company... Suspend anyway?") rather than treating it as an ordinary
+  error (item 9). This is enforced server-side, not just in the UI -- the same discipline this
+  whole security-review arc was about in the first place.
+- **Item 7 needed no new blocking logic at all, and the migration says so directly rather than
+  building something redundant**: `resolve_caller_workspace_id()` (migration 117, unchanged since)
+  already requires the caller's workspace membership to join to a `workspaces` row with
+  `status = 'active'`, and is the tenancy resolver nearly every workspace-scoped RLS policy/trigger
+  in this schema already calls. Setting `workspaces.status = 'suspended'` therefore already blocks
+  every read/write routed through it, for every member, with zero rows touched in
+  `workspace_members` or any tenant table. The canonical test proves this directly (inserting a
+  `clients` row as a suspended workspace's own member fails with "...workspace is not active
+  (suspended)"; membership row count is unchanged before/after) rather than assuming it.
+
+**Canonical test** (`migration_198_platform_company_lifecycle_and_audit_log_tests.sql`, 13
+sections) proves: an app_admin-only user and an ordinary (non-platform-admin) workspace_admin can
+call neither function and see neither the all-company list nor the audit log (item 2); a blank
+reason, a nonexistent workspace id, and a wrong-status attempt (reactivating an active company,
+suspending an already-suspended one) are all rejected with no state/audit change; a real suspend
+flips status, records exactly one correctly-attributed audit row, and leaves the membership row
+intact; the suspended member is then blocked from a real workspace-scoped write (item 7); reactivate
+restores both status and access, and records a second audit row; the own-workspace confirmation
+gate blocks an unconfirmed self-suspend and succeeds once explicitly confirmed (item 9); the audit
+log stays invisible to anyone but a real platform admin throughout. Found and fixed one real bug
+in the test itself while building it (not a bug in the migration): the test's own single
+`do $$ ... $$` block is one transaction, so two audit rows written back-to-back both got the exact
+same `now()` value (Postgres freezes `now()` for a whole transaction) -- the tiebreak on `order by
+created_at desc` was non-deterministic. Fixed at the source (the table's `created_at` default
+switched to `clock_timestamp()`, which is correct for a real audit log regardless of this test --
+see the migration's own comment) rather than papering over it in the test. Full consolidated
+isolation suite: **64/64 passed** after the fix. Full `vitest` suite (new
+`src/platform-company-lifecycle.test.ts`, 13 tests covering `loadPlatformWorkspaces`'s
+load-error-vs-empty-list distinction and both RPC calls' write-verification/error-surfacing):
+**557/557 passed clean (544 baseline + 13 new).** `npx tsc -b` and `npx vite build` both clean.
+
+**Frontend** (`ErgonPlatformPage`, same commit as the migration): the Companies table now shows a
+distinct error banner with a Retry button on a failed load, never silently falling back to "No
+companies yet" (item 4); each active company gets a **Suspend** button, each suspended one gets a
+**Reactivate** button, both opening an inline reason input (mirrors
+`CompanySignupRequestsPanel`'s own reject-reason row) that requires non-empty text before
+confirming; a company matching the signed-in platform admin's own workspace is labeled "(your
+company)" in the table as a first, informational warning, with the harder confirmation gate
+described above as the real backstop; a disabled "Remove company" button with an explanatory
+tooltip sits alongside Suspend/Reactivate per item 6.
+
+**Migration 198 has NOT yet been applied to production and its canonical test has NOT yet been run
+there** -- sent as the next single Supabase action, per this session's own established migration
+workflow (write + locally verify first, hand off one migration at a time, wait for E's confirmation
+before treating it as live or doing any production verification). **Do not mark this section
+"applied"/"confirmed live" until E has actually run it and confirmed the canonical test's final
+notice.** Once confirmed: verify live in production (Ergon Platform link appears only for a real
+platform admin; Companies table renders real data with working Suspend/Reactivate/own-company
+warning; the per-company Admin page shows no signup-requests panel at all) and update this entry
+plus `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 accordingly.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
