@@ -153,6 +153,37 @@ async function resolveMentions(ctx, text) {
 }
 
 const HANDLERS = {
+  // Support module first release (migration 200, decision D13). Fires
+  // after assign_support_case_owner() succeeds (client-side, same
+  // convention as every other *_assigned event -- see task_assigned just
+  // below). owner_workspace_member_id -> workspace_members.user_id ->
+  // app_known_users.email: the same two-hop path this schema always uses
+  // to get a real email out of a workspace_members row (no direct
+  // auth.users query). A case with no owner (or an owner who has never
+  // logged in, so no app_known_users row exists yet) has no one real to
+  // notify -- an empty recipients list, not an error.
+  async support_case_assigned(ctx) {
+    const supportCase = await fetchOne(ctx, "support_cases", ctx.relatedEntityId, "id,case_number,summary,owner_workspace_member_id");
+    if (!supportCase) {
+      return err(404, "Support case not found.");
+    }
+    let recipients = [];
+    if (supportCase.owner_workspace_member_id) {
+      const member = await fetchOne(ctx, "workspace_members", supportCase.owner_workspace_member_id, "id,user_id");
+      if (member) {
+        const knownRows = await restGet(ctx, `app_known_users?user_id=eq.${encodeURIComponent(member.user_id)}&select=email`, true);
+        const email = knownRows && knownRows[0] ? knownRows[0].email : null;
+        recipients = email ? [email] : [];
+      }
+    }
+    return {
+      relatedEntityType: "support_case",
+      title: "Support case assigned to you",
+      body: `${supportCase.case_number}: ${supportCase.summary}`.slice(0, 200),
+      recipients: excludingSelf(ctx, recipients),
+    };
+  },
+
   async task_assigned(ctx) {
     const task = await fetchOne(ctx, "tasks", ctx.relatedEntityId, "id,title,assignee_email,assigned_role_key,deleted_at");
     if (!task || task.deleted_at) {

@@ -9424,6 +9424,300 @@ export async function loadInstalledAssets(projectId: string, accessToken?: strin
   return rows.map(mapInstalledAssetRow);
 }
 
+// ============================================================
+// Support module, first release (migration 200, decision D13). See
+// PRODUCT_SUPPORT_MODULE_DESIGN.md -- revalidated against the current
+// schema before this shipped (2026-09-23). A support case only ever
+// starts from a project already on the Client Ledger (added_to_ledger =
+// true, enforced server-side by create_support_case()) -- this minimal
+// loader exists because ProjectLedgerInfo itself is lazily-loaded
+// per-project elsewhere (Client Ledger's own tab) and pulling the full
+// set for every project just to find the ledger-eligible ones would be
+// wasteful; this queries only the two columns a project picker needs.
+// ============================================================
+
+export type LedgerEligibleProject = { id: string; projectName: string; customerName: string };
+
+export async function loadLedgerEligibleProjects(accessToken?: string): Promise<LedgerEligibleProject[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl("projects?select=id,project_name,customer_name&added_to_ledger=eq.true&order=project_name.asc"),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as Array<{ id: string; project_name: string; customer_name: string | null }>;
+  return rows.map((row) => ({ id: row.id, projectName: row.project_name, customerName: row.customer_name ?? "" }));
+}
+
+export type SupportCaseStatus = "open" | "in_progress" | "waiting_on_client" | "resolved" | "reopened" | "closed";
+export type SupportCasePriority = "low" | "normal" | "high" | "urgent";
+export type SupportCaseActivityKind = "note" | "status_change" | "client_communication" | "scheduled_visit" | "parts_used" | "reopened";
+
+export type SupportCase = {
+  id: string;
+  workspaceId: string;
+  caseNumber: string;
+  projectId: string;
+  status: SupportCaseStatus;
+  priority: SupportCasePriority;
+  slaDueAt: string | null;
+  ownerWorkspaceMemberId: string | null;
+  summary: string;
+  createdByEmail: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  closedAt: string | null;
+};
+
+type SupportCaseRow = {
+  id: string;
+  workspace_id: string;
+  case_number: string;
+  project_id: string;
+  status: SupportCaseStatus;
+  priority: SupportCasePriority;
+  sla_due_at: string | null;
+  owner_workspace_member_id: string | null;
+  summary: string;
+  created_by_email: string;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  closed_at: string | null;
+};
+
+function mapSupportCaseRow(row: SupportCaseRow): SupportCase {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    caseNumber: row.case_number,
+    projectId: row.project_id,
+    status: row.status,
+    priority: row.priority,
+    slaDueAt: row.sla_due_at,
+    ownerWorkspaceMemberId: row.owner_workspace_member_id,
+    summary: row.summary,
+    createdByEmail: row.created_by_email,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    resolvedAt: row.resolved_at,
+    closedAt: row.closed_at,
+  };
+}
+
+const SUPPORT_CASE_SELECT = "id,workspace_id,case_number,project_id,status,priority,sla_due_at,owner_workspace_member_id,summary,created_by_email,created_at,updated_at,resolved_at,closed_at";
+
+export async function loadSupportCases(accessToken?: string): Promise<SupportCase[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`support_cases?select=${SUPPORT_CASE_SELECT}&order=created_at.desc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not load support cases"));
+  }
+  const rows = (await response.json()) as SupportCaseRow[];
+  return rows.map(mapSupportCaseRow);
+}
+
+export type SupportCaseActivity = {
+  id: string;
+  supportCaseId: string;
+  kind: SupportCaseActivityKind;
+  body: string | null;
+  actorEmail: string;
+  occurredAt: string;
+  previousStatus: string | null;
+  newStatus: string | null;
+  inventoryItemId: string | null;
+  qty: number | null;
+};
+
+type SupportCaseActivityRow = {
+  id: string;
+  support_case_id: string;
+  kind: SupportCaseActivityKind;
+  body: string | null;
+  actor_email: string;
+  occurred_at: string;
+  previous_status: string | null;
+  new_status: string | null;
+  inventory_item_id: string | null;
+  qty: string | number | null;
+};
+
+function mapSupportCaseActivityRow(row: SupportCaseActivityRow): SupportCaseActivity {
+  return {
+    id: row.id,
+    supportCaseId: row.support_case_id,
+    kind: row.kind,
+    body: row.body,
+    actorEmail: row.actor_email,
+    occurredAt: row.occurred_at,
+    previousStatus: row.previous_status,
+    newStatus: row.new_status,
+    inventoryItemId: row.inventory_item_id,
+    qty: row.qty === null ? null : Number(row.qty),
+  };
+}
+
+const SUPPORT_CASE_ACTIVITY_SELECT = "id,support_case_id,kind,body,actor_email,occurred_at,previous_status,new_status,inventory_item_id,qty";
+
+export async function loadSupportCaseActivity(supportCaseId: string, accessToken?: string): Promise<SupportCaseActivity[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`support_case_activity?support_case_id=eq.${supportCaseId}&select=${SUPPORT_CASE_ACTIVITY_SELECT}&order=occurred_at.asc`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not load this case's activity"));
+  }
+  const rows = (await response.json()) as SupportCaseActivityRow[];
+  return rows.map(mapSupportCaseActivityRow);
+}
+
+export async function loadSupportCaseAssetIds(supportCaseId: string, accessToken?: string): Promise<string[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`support_case_assets?support_case_id=eq.${supportCaseId}&select=installed_asset_id`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as Array<{ installed_asset_id: string }>;
+  return rows.map((row) => row.installed_asset_id);
+}
+
+export async function createSupportCase(
+  input: { projectId: string; summary: string; priority: SupportCasePriority; ownerWorkspaceMemberId?: string | null; installedAssetIds?: string[] },
+  accessToken?: string,
+): Promise<SupportCase> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/create_support_case"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({
+      p_project_id: input.projectId,
+      p_summary: input.summary,
+      p_priority: input.priority,
+      p_owner_workspace_member_id: input.ownerWorkspaceMemberId ?? null,
+      p_installed_asset_ids: input.installedAssetIds && input.installedAssetIds.length > 0 ? input.installedAssetIds : null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not create this support case"));
+  }
+  return mapSupportCaseRow(await response.json());
+}
+
+export async function addSupportCaseActivity(
+  input: { supportCaseId: string; kind: "note" | "client_communication" | "scheduled_visit" | "parts_used"; body: string; occurredAt?: string; inventoryItemId?: string; qty?: number },
+  accessToken?: string,
+): Promise<SupportCaseActivity> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/add_support_case_activity"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({
+      p_support_case_id: input.supportCaseId,
+      p_kind: input.kind,
+      p_body: input.body,
+      p_occurred_at: input.occurredAt ?? null,
+      p_inventory_item_id: input.inventoryItemId ?? null,
+      p_qty: input.qty ?? null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not log this activity"));
+  }
+  return mapSupportCaseActivityRow(await response.json());
+}
+
+export async function changeSupportCaseStatus(
+  supportCaseId: string,
+  newStatus: "open" | "in_progress" | "waiting_on_client" | "resolved" | "closed",
+  note: string,
+  accessToken?: string,
+): Promise<SupportCase> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/change_support_case_status"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_support_case_id: supportCaseId, p_new_status: newStatus, p_note: note || null }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not change this case's status"));
+  }
+  return mapSupportCaseRow(await response.json());
+}
+
+export async function reopenSupportCase(supportCaseId: string, note: string, accessToken?: string): Promise<SupportCase> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/reopen_support_case"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_support_case_id: supportCaseId, p_note: note || null }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not reopen this case"));
+  }
+  return mapSupportCaseRow(await response.json());
+}
+
+// (workspace_members.id, user_id) pairs the caller can see -- RLS
+// already scopes this to the caller's own workspace, so no workspace_id
+// filter is needed here. The UI joins user_id against the already-loaded
+// `knownUsers` app state to show a real email in the owner picker,
+// rather than this module inventing a second email-lookup path.
+export type SupportCaseAssignee = { workspaceMemberId: string; userId: string };
+
+export async function loadSupportCaseAssignees(accessToken?: string): Promise<SupportCaseAssignee[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("workspace_members?select=id,user_id&order=created_at.asc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as Array<{ id: string; user_id: string }>;
+  return rows.map((row) => ({ workspaceMemberId: row.id, userId: row.user_id }));
+}
+
+export async function assignSupportCaseOwner(supportCaseId: string, ownerWorkspaceMemberId: string | null, accessToken?: string): Promise<SupportCase> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/assign_support_case_owner"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_support_case_id: supportCaseId, p_owner_workspace_member_id: ownerWorkspaceMemberId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not reassign this case"));
+  }
+  return mapSupportCaseRow(await response.json());
+}
+
 // One catalog item + location + install date, many serials at once -- a
 // garage can easily have 50+ sensors, so the add form supports pasting a
 // whole list of serials (one per line) rather than one round trip each.

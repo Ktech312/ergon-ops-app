@@ -7,6 +7,7 @@ import {
   Award,
   Archive,
   BarChart3,
+  LifeBuoy,
   Bell,
   BookOpen,
   BookUser,
@@ -469,13 +470,29 @@ import {
   type UserRoles,
   type UserStatus,
   computeNextProjectRef,
+  loadLedgerEligibleProjects,
+  type LedgerEligibleProject,
+  loadSupportCases,
+  loadSupportCaseActivity,
+  loadSupportCaseAssetIds,
+  loadSupportCaseAssignees,
+  type SupportCase,
+  type SupportCaseActivity,
+  type SupportCaseStatus,
+  type SupportCasePriority,
+  type SupportCaseAssignee,
+  createSupportCase,
+  addSupportCaseActivity,
+  changeSupportCaseStatus,
+  reopenSupportCase,
+  assignSupportCaseOwner,
 } from "./persistence";
 import { DataLoadErrorBanner } from "./components/DataLoadErrorBanner";
 import { runClosedWonConversionFlow, buildProjectConversionStatusMessage } from "./quote-conversion-flow";
 import { parseWorkbookSheetToRows } from "./xlsx-import";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "messages" | "search" | "profile";
+type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "support" | "messages" | "search" | "profile";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -551,7 +568,7 @@ type RoleMode = "warehouse" | "purchasing" | "pm" | "manager" | "sales" | "engin
 
 const ALL_ROLE_KEYS: RoleMode[] = ["warehouse", "purchasing", "pm", "manager", "sales", "engineering", "product_development", "implementation", "support", "marketing"];
 
-const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "messages"];
+const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "support", "messages"];
 
 // Plain-language labels for criticalLoadErrors so a real failure names
 // the actual screen it affects (in the sync pill's tooltip and each
@@ -670,6 +687,7 @@ const TAB_LABELS: Record<View, string> = {
   admin: "Admin",
   library: "Library",
   client_ledger: "Client Ledger",
+  support: "Support",
   messages: "Messages",
   search: "Search Results",
   profile: "Profile",
@@ -685,13 +703,13 @@ const TAB_LABELS: Record<View, string> = {
 const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
   warehouse: ["dashboard", "inventory", "projects", "tasks", "messages"],
   purchasing: ["dashboard", "purchasing", "inventory", "vendors", "tasks", "reports", "messages"],
-  pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports", "saas_calendar", "messages"],
-  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "messages"],
+  pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports", "saas_calendar", "support", "messages"],
+  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "support", "messages"],
   sales: ["dashboard", "sales", "marketing", "tasks", "reports", "saas_calendar", "messages"],
-  engineering: ["dashboard", "projects", "inventory", "tasks", "reports", "messages"],
+  engineering: ["dashboard", "projects", "inventory", "tasks", "reports", "support", "messages"],
   product_development: ["dashboard", "projects", "tasks", "reports", "messages"],
-  implementation: ["dashboard", "projects", "purchasing", "inventory", "vendors", "tasks", "messages"],
-  support: ["dashboard", "tasks", "reports", "messages"],
+  implementation: ["dashboard", "projects", "purchasing", "inventory", "vendors", "tasks", "support", "messages"],
+  support: ["dashboard", "support", "tasks", "reports", "messages"],
   marketing: ["dashboard", "marketing", "reports", "tasks", "messages"],
 };
 
@@ -737,6 +755,7 @@ const MOBILE_NAV_TAB_ICON: Record<View, (size: number) => React.ReactNode> = {
   admin: (size) => <User size={size} />,
   library: (size) => <BookOpen size={size} />,
   client_ledger: (size) => <Archive size={size} />,
+  support: (size) => <LifeBuoy size={size} />,
   messages: (size) => <MessageCircle size={size} />,
   search: (size) => <Search size={size} />,
   profile: (size) => <User size={size} />,
@@ -1045,7 +1064,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library", "client_ledger", "messages", "search", "profile"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library", "client_ledger", "support", "messages", "search", "profile"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -7990,6 +8009,7 @@ function App() {
             {allowedTabs.includes("reports") && <NavButton icon={<BarChart3 size={16} />} label="Reports" active={view === "reports"} onClick={() => navigateToView("reports")} />}
             {allowedTabs.includes("saas_calendar") && <NavButton icon={<CalendarDays size={16} />} label="SaaS Calendar" active={view === "saas_calendar"} onClick={() => navigateToView("saas_calendar")} />}
             {allowedTabs.includes("client_ledger") && <NavButton icon={<Archive size={16} />} label="Client Ledger" active={view === "client_ledger"} onClick={() => navigateToView("client_ledger")} />}
+            {allowedTabs.includes("support") && <NavButton icon={<LifeBuoy size={16} />} label="Support" active={view === "support"} onClick={() => navigateToView("support")} />}
             {allowedTabs.includes("messages") && <NavButton icon={<MessageCircle size={16} />} label="Messages" iconOnly active={view === "messages"} onClick={() => navigateToView("messages")} hasUnread={totalUnreadMessages > 0} />}
           </nav>
           <div className="top-nav-actions">
@@ -8616,6 +8636,9 @@ function App() {
             currentUserEmail={authSession?.email ?? ""}
           />
         )}
+        {view === "support" && allowedTabs.includes("support") && (
+          <SupportCasesPage accessToken={authSession?.accessToken} knownUsers={knownUsers} projectSites={projectSites} onNotify={triggerNotification} />
+        )}
         {view === "messages" && allowedTabs.includes("messages") && (
           <Messages
             myUserId={authSession?.userId ?? ""}
@@ -9039,6 +9062,7 @@ function pageTitle(view: View) {
     library: "Learning Library",
     messages: "Messages",
     client_ledger: "Client Ledger",
+    support: "Support",
     search: "Search Results",
     profile: "Profile",
   };
@@ -9067,6 +9091,7 @@ function pageSubtitle(view: View) {
     admin: "Users, roles, approvals, and system configuration.",
     library: "Reference guides and onboarding materials.",
     client_ledger: "The permanent record for a site once it closes out -- lifecycle, financials, hardware, and final documents.",
+    support: "Service cases linked to closed, ledger-added projects.",
     messages: "Direct messages with anyone on the team.",
     search: "Everything that matches, filterable by type.",
     profile: "Your photo, name, and contact info -- how you show up to everyone else.",
@@ -15714,6 +15739,637 @@ function ClientLedger({
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+// Support module, first release (migration 200, decision D13). Genuinely
+// self-contained, same shape as ErgonPlatformPage -- loads its own data
+// on mount rather than threading yet more state through App's own
+// (already enormous) top-level state, since this is a clearly separate
+// section, not a variant of an existing one.
+
+const SUPPORT_STATUS_LABELS: Record<SupportCaseStatus, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  waiting_on_client: "Waiting on Client",
+  resolved: "Resolved",
+  reopened: "Reopened",
+  closed: "Closed",
+};
+
+const SUPPORT_STATUS_ORDER: SupportCaseStatus[] = ["open", "in_progress", "waiting_on_client", "resolved", "reopened", "closed"];
+
+function supportStatusStatusClass(status: SupportCaseStatus): string {
+  if (status === "closed" || status === "resolved") return "ok";
+  if (status === "reopened") return "warn";
+  return "";
+}
+
+// Mirrors change_support_case_status()'s own state machine exactly
+// (backend/supabase/migrations/200_support_module_first_release.sql) --
+// kept in sync deliberately, not derived, so a UI change here is a
+// visible diff against the one real source of truth rather than a
+// silent behavior drift.
+function allowedNextSupportStatuses(current: SupportCaseStatus): Exclude<SupportCaseStatus, "reopened">[] {
+  if (current === "open" || current === "in_progress" || current === "waiting_on_client") {
+    return (["open", "in_progress", "waiting_on_client", "resolved"] as const).filter((s) => s !== current);
+  }
+  if (current === "resolved" || current === "reopened") {
+    return ["closed"];
+  }
+  return [];
+}
+
+function SupportCasesPage({
+  accessToken,
+  knownUsers,
+  projectSites,
+  onNotify,
+}: {
+  accessToken?: string;
+  knownUsers: KnownUser[];
+  projectSites: ProjectSite[];
+  onNotify: (eventType: string, relatedEntityId: string) => Promise<void>;
+}) {
+  const [cases, setCases] = useState<SupportCase[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [assignees, setAssignees] = useState<SupportCaseAssignee[]>([]);
+  const [ledgerProjects, setLedgerProjects] = useState<LedgerEligibleProject[]>([]);
+  const [statusFilter, setStatusFilter] = useState<SupportCaseStatus | "all">("all");
+  const [priorityFilter, setPriorityFilter] = useState<SupportCasePriority | "all">("all");
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [status, setStatus] = useState("");
+
+  async function refresh() {
+    setLoadError(null);
+    try {
+      const [caseRows, assigneeRows, projectRows] = await Promise.all([
+        loadSupportCases(accessToken),
+        loadSupportCaseAssignees(accessToken),
+        loadLedgerEligibleProjects(accessToken),
+      ]);
+      setCases(caseRows);
+      setAssignees(assigneeRows);
+      setLedgerProjects(projectRows);
+      setLoaded(true);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load support cases.");
+      setLoaded(true);
+    }
+  }
+
+  useEffect(() => {
+    if (accessToken && !loaded) {
+      refresh();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, loaded]);
+
+  function emailForUserId(userId: string): string {
+    return knownUsers.find((u) => u.userId === userId)?.email ?? userId;
+  }
+
+  function ownerLabel(ownerWorkspaceMemberId: string | null): string {
+    if (!ownerWorkspaceMemberId) return "Unassigned";
+    const assignee = assignees.find((a) => a.workspaceMemberId === ownerWorkspaceMemberId);
+    return assignee ? emailForUserId(assignee.userId) : "Unassigned";
+  }
+
+  function projectNameFor(projectId: string): string {
+    const bySite = projectSites.find((p) => p.id === projectId);
+    if (bySite) return bySite.name;
+    const byLedger = ledgerProjects.find((p) => p.id === projectId);
+    return byLedger ? byLedger.projectName : "Project";
+  }
+
+  const filteredCases = cases.filter(
+    (c) => (statusFilter === "all" || c.status === statusFilter) && (priorityFilter === "all" || c.priority === priorityFilter),
+  );
+
+  const selectedCase = selectedCaseId ? cases.find((c) => c.id === selectedCaseId) ?? null : null;
+
+  return (
+    <div className="content-grid">
+      <section className="panel wide">
+        <PanelHeader title="Support" label="Service cases linked to closed, ledger-added projects." />
+        <div className="report-filter-row">
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as SupportCaseStatus | "all")}>
+            <option value="all">All statuses</option>
+            {SUPPORT_STATUS_ORDER.map((s) => (
+              <option key={s} value={s}>{SUPPORT_STATUS_LABELS[s]}</option>
+            ))}
+          </select>
+          <select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as SupportCasePriority | "all")}>
+            <option value="all">All priorities</option>
+            <option value="low">Low</option>
+            <option value="normal">Normal</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+          <button className="secondary-action mini-action" type="button" onClick={() => setLoaded(false)}>Refresh</button>
+          <button className="primary-action mini-action" type="button" onClick={() => setShowCreateModal(true)}>New Case</button>
+          {status && <span className="muted">{status}</span>}
+        </div>
+        {loadError ? (
+          <div className="empty-compact-state" role="alert">
+            Could not load support cases: {loadError}{" "}
+            <button className="secondary-action mini-action" type="button" onClick={() => setLoaded(false)}>Retry</button>
+          </div>
+        ) : (
+          <table className="stack-table-mobile">
+            <thead>
+              <tr>
+                <th>Case</th>
+                <th>Project</th>
+                <th>Status</th>
+                <th>Priority</th>
+                <th>Owner</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredCases.map((supportCase) => (
+                <tr key={supportCase.id} className="clickable-row" onClick={() => setSelectedCaseId(supportCase.id)}>
+                  <td>{supportCase.caseNumber}</td>
+                  <td data-label="Project">{projectNameFor(supportCase.projectId)}</td>
+                  <td data-label="Status">
+                    <span className={`status ${supportStatusStatusClass(supportCase.status)}`}>{SUPPORT_STATUS_LABELS[supportCase.status]}</span>
+                  </td>
+                  <td data-label="Priority">{supportCase.priority}</td>
+                  <td data-label="Owner">{ownerLabel(supportCase.ownerWorkspaceMemberId)}</td>
+                  <td data-label="Created">{new Date(supportCase.createdAt).toLocaleDateString()}</td>
+                </tr>
+              ))}
+              {filteredCases.length === 0 && loaded && (
+                <tr>
+                  <td colSpan={6} className="empty-compact-state">
+                    No support cases{statusFilter !== "all" || priorityFilter !== "all" ? " match these filters" : " yet"}.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </section>
+      {cases.length > 0 && (
+        <section className="panel">
+          <h3>Cases by status</h3>
+          <div className="metric-grid">
+            {SUPPORT_STATUS_ORDER.map((s) => (
+              <div className="metric" key={s}>
+                <span>{SUPPORT_STATUS_LABELS[s]}</span>
+                <strong>{cases.filter((c) => c.status === s).length}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      {showCreateModal && (
+        <NewSupportCaseModal
+          accessToken={accessToken}
+          ledgerProjects={ledgerProjects}
+          assignees={assignees}
+          knownUsers={knownUsers}
+          onClose={() => setShowCreateModal(false)}
+          onCreated={(newCase) => {
+            setShowCreateModal(false);
+            setStatus(`Created ${newCase.caseNumber}.`);
+            setLoaded(false);
+            setSelectedCaseId(newCase.id);
+          }}
+        />
+      )}
+      {selectedCase && (
+        <SupportCaseDetailModal
+          accessToken={accessToken}
+          supportCase={selectedCase}
+          assignees={assignees}
+          knownUsers={knownUsers}
+          projectName={projectNameFor(selectedCase.projectId)}
+          onClose={() => setSelectedCaseId(null)}
+          onChanged={(updated) => {
+            setCases((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+          }}
+          onNotify={onNotify}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewSupportCaseModal({
+  accessToken,
+  ledgerProjects,
+  assignees,
+  knownUsers,
+  onClose,
+  onCreated,
+}: {
+  accessToken?: string;
+  ledgerProjects: LedgerEligibleProject[];
+  assignees: SupportCaseAssignee[];
+  knownUsers: KnownUser[];
+  onClose: () => void;
+  onCreated: (newCase: SupportCase) => void;
+}) {
+  const [projectId, setProjectId] = useState("");
+  const [summary, setSummary] = useState("");
+  const [priority, setPriority] = useState<SupportCasePriority>("normal");
+  const [ownerWorkspaceMemberId, setOwnerWorkspaceMemberId] = useState("");
+  const [availableAssets, setAvailableAssets] = useState<InstalledAsset[]>([]);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const panelRef = useModalA11y(true, onClose);
+
+  useEffect(() => {
+    if (!projectId) {
+      setAvailableAssets([]);
+      setSelectedAssetIds([]);
+      return;
+    }
+    loadInstalledAssets(projectId, accessToken).then(setAvailableAssets);
+    setSelectedAssetIds([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, accessToken]);
+
+  async function handleSubmit() {
+    if (!projectId || !summary.trim()) {
+      setError("A project and a summary are required.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      const newCase = await createSupportCase(
+        { projectId, summary: summary.trim(), priority, ownerWorkspaceMemberId: ownerWorkspaceMemberId || null, installedAssetIds: selectedAssetIds },
+        accessToken,
+      );
+      onCreated(newCase);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create this support case.");
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <section
+        ref={panelRef as React.Ref<HTMLElement>}
+        tabIndex={-1}
+        className="modal-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-support-case-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-header">
+          <h2 id="new-support-case-title">New Support Case</h2>
+          <button className="icon-button" type="button" aria-label="Close" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="modal-section">
+          <label className="form-field">
+            Project (must already be on the Client Ledger)
+            <select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
+              <option value="">Select a project...</option>
+              {ledgerProjects.map((p) => (
+                <option key={p.id} value={p.id}>{p.projectName}{p.customerName ? ` -- ${p.customerName}` : ""}</option>
+              ))}
+            </select>
+          </label>
+          <label className="form-field">
+            Summary
+            <textarea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="What's the issue?" rows={3} />
+          </label>
+          <label className="form-field">
+            Priority
+            <select value={priority} onChange={(event) => setPriority(event.target.value as SupportCasePriority)}>
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </label>
+          <label className="form-field">
+            Owner (optional)
+            <select value={ownerWorkspaceMemberId} onChange={(event) => setOwnerWorkspaceMemberId(event.target.value)}>
+              <option value="">Unassigned</option>
+              {assignees.map((a) => (
+                <option key={a.workspaceMemberId} value={a.workspaceMemberId}>
+                  {knownUsers.find((u) => u.userId === a.userId)?.email ?? a.userId}
+                </option>
+              ))}
+            </select>
+          </label>
+          {availableAssets.length > 0 && (
+            <div className="form-field">
+              <span>Linked installed assets (optional)</span>
+              {availableAssets.map((asset) => (
+                <label className="checkbox-inline-field" key={asset.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedAssetIds.includes(asset.id)}
+                    onChange={(event) =>
+                      setSelectedAssetIds((prev) => (event.target.checked ? [...prev, asset.id] : prev.filter((id) => id !== asset.id)))
+                    }
+                  />
+                  {asset.serialNumber}
+                </label>
+              ))}
+            </div>
+          )}
+          {error && <small className="error-text" role="alert">{error}</small>}
+          <div className="modal-actions">
+            <button className="primary-action" type="button" disabled={submitting || !projectId || !summary.trim()} onClick={handleSubmit}>
+              {submitting ? "Creating..." : "Create Case"}
+            </button>
+            <button className="secondary-action" type="button" onClick={onClose}>Cancel</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const SUPPORT_ACTIVITY_KIND_LABELS: Record<string, string> = {
+  note: "Note",
+  status_change: "Status change",
+  client_communication: "Client communication",
+  scheduled_visit: "Scheduled visit",
+  parts_used: "Parts used",
+  reopened: "Reopened",
+};
+
+function SupportCaseDetailModal({
+  accessToken,
+  supportCase,
+  assignees,
+  knownUsers,
+  projectName,
+  onClose,
+  onChanged,
+  onNotify,
+}: {
+  accessToken?: string;
+  supportCase: SupportCase;
+  assignees: SupportCaseAssignee[];
+  knownUsers: KnownUser[];
+  projectName: string;
+  onClose: () => void;
+  onChanged: (updated: SupportCase) => void;
+  onNotify: (eventType: string, relatedEntityId: string) => Promise<void>;
+}) {
+  const [activity, setActivity] = useState<SupportCaseActivity[]>([]);
+  const [activityLoaded, setActivityLoaded] = useState(false);
+  const [status, setStatus] = useState("");
+  const [ownerDraft, setOwnerDraft] = useState(supportCase.ownerWorkspaceMemberId ?? "");
+  const [statusTarget, setStatusTarget] = useState<SupportCaseStatus | "">("");
+  const [statusNote, setStatusNote] = useState("");
+  const [activityKind, setActivityKind] = useState<"note" | "client_communication" | "scheduled_visit" | "parts_used">("note");
+  const [activityBody, setActivityBody] = useState("");
+  const [visitAt, setVisitAt] = useState("");
+  const [partsInventoryItemId, setPartsInventoryItemId] = useState("");
+  const [partsQty, setPartsQty] = useState("");
+  const [busy, setBusy] = useState(false);
+  const panelRef = useModalA11y(true, onClose);
+
+  async function refreshActivity() {
+    const rows = await loadSupportCaseActivity(supportCase.id, accessToken);
+    setActivity(rows);
+    setActivityLoaded(true);
+  }
+
+  useEffect(() => {
+    if (accessToken && !activityLoaded) {
+      refreshActivity();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, activityLoaded]);
+
+  function emailForUserId(userId: string): string {
+    return knownUsers.find((u) => u.userId === userId)?.email ?? userId;
+  }
+
+  async function handleSaveOwner() {
+    setBusy(true);
+    setStatus("Saving owner...");
+    try {
+      const updated = await assignSupportCaseOwner(supportCase.id, ownerDraft || null, accessToken);
+      onChanged(updated);
+      setStatus("Owner updated.");
+      if (ownerDraft) {
+        await onNotify("support_case_assigned", supportCase.id);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not update the owner.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleChangeStatus() {
+    if (!statusTarget) return;
+    setBusy(true);
+    setStatus("Updating status...");
+    try {
+      const updated = await changeSupportCaseStatus(supportCase.id, statusTarget as "open" | "in_progress" | "waiting_on_client" | "resolved" | "closed", statusNote, accessToken);
+      onChanged(updated);
+      setStatusTarget("");
+      setStatusNote("");
+      setStatus(`Status changed to ${SUPPORT_STATUS_LABELS[updated.status]}.`);
+      await refreshActivity();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not change the status.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReopen() {
+    setBusy(true);
+    setStatus("Reopening...");
+    try {
+      const updated = await reopenSupportCase(supportCase.id, statusNote, accessToken);
+      onChanged(updated);
+      setStatusNote("");
+      setStatus("Case reopened.");
+      await refreshActivity();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not reopen this case.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAddActivity() {
+    if (activityKind === "parts_used") {
+      if (!partsInventoryItemId || !partsQty || Number(partsQty) <= 0) {
+        setStatus("An inventory item and a positive quantity are required.");
+        return;
+      }
+    } else if (!activityBody.trim()) {
+      setStatus("A note is required.");
+      return;
+    }
+    setBusy(true);
+    setStatus("Logging...");
+    try {
+      await addSupportCaseActivity(
+        {
+          supportCaseId: supportCase.id,
+          kind: activityKind,
+          body: activityBody.trim(),
+          occurredAt: activityKind === "scheduled_visit" && visitAt ? new Date(visitAt).toISOString() : undefined,
+          inventoryItemId: activityKind === "parts_used" ? partsInventoryItemId : undefined,
+          qty: activityKind === "parts_used" ? Number(partsQty) : undefined,
+        },
+        accessToken,
+      );
+      setActivityBody("");
+      setVisitAt("");
+      setPartsInventoryItemId("");
+      setPartsQty("");
+      setStatus("Logged.");
+      await refreshActivity();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not log this activity.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const nextStatuses = allowedNextSupportStatuses(supportCase.status);
+  const canReopen = supportCase.status === "resolved" || supportCase.status === "closed";
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <section
+        ref={panelRef as React.Ref<HTMLElement>}
+        tabIndex={-1}
+        className="modal-panel modal-panel-wide"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="support-case-detail-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-header">
+          <div>
+            <h2 id="support-case-detail-title">{supportCase.caseNumber}</h2>
+            <p className="muted">{projectName}</p>
+          </div>
+          <button className="icon-button" type="button" aria-label="Close" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="modal-section">
+          <p>{supportCase.summary}</p>
+          <div className="report-filter-row">
+            <span className={`status ${supportStatusStatusClass(supportCase.status)}`}>{SUPPORT_STATUS_LABELS[supportCase.status]}</span>
+            <span className="muted">Priority: {supportCase.priority}</span>
+            <span className="muted">Created {new Date(supportCase.createdAt).toLocaleString()}</span>
+          </div>
+
+          <label className="form-field">
+            Owner
+            <span className="roster-add-row">
+              <select value={ownerDraft} onChange={(event) => setOwnerDraft(event.target.value)}>
+                <option value="">Unassigned</option>
+                {assignees.map((a) => (
+                  <option key={a.workspaceMemberId} value={a.workspaceMemberId}>{emailForUserId(a.userId)}</option>
+                ))}
+              </select>
+              <button className="secondary-action mini-action" type="button" disabled={busy || ownerDraft === (supportCase.ownerWorkspaceMemberId ?? "")} onClick={handleSaveOwner}>
+                Save
+              </button>
+            </span>
+          </label>
+
+          {nextStatuses.length > 0 && (
+            <div className="roster-add-row">
+              <select value={statusTarget} onChange={(event) => setStatusTarget(event.target.value as SupportCaseStatus | "")}>
+                <option value="">Change status to...</option>
+                {nextStatuses.map((s) => (
+                  <option key={s} value={s}>{SUPPORT_STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+              <input value={statusNote} onChange={(event) => setStatusNote(event.target.value)} placeholder="Note (optional)" />
+              <button className="secondary-action mini-action" type="button" disabled={busy || !statusTarget} onClick={handleChangeStatus}>
+                Confirm
+              </button>
+            </div>
+          )}
+          {canReopen && (
+            <div className="roster-add-row">
+              <input value={statusNote} onChange={(event) => setStatusNote(event.target.value)} placeholder="Reason for reopening (optional)" />
+              <button className="secondary-action mini-action" type="button" disabled={busy} onClick={handleReopen}>
+                Reopen case
+              </button>
+            </div>
+          )}
+          {status && <p className="muted">{status}</p>}
+
+          <h3>Activity</h3>
+          <ul className="activity-feed">
+            {activity.map((entry) => (
+              <li key={entry.id}>
+                <strong>{SUPPORT_ACTIVITY_KIND_LABELS[entry.kind] ?? entry.kind}</strong>{" "}
+                <span className="muted">{entry.actorEmail} -- {new Date(entry.occurredAt).toLocaleString()}</span>
+                {(entry.kind === "status_change" || entry.kind === "reopened") && entry.previousStatus && entry.newStatus && (
+                  <div className="muted">
+                    {SUPPORT_STATUS_LABELS[entry.previousStatus as SupportCaseStatus] ?? entry.previousStatus} -&gt;{" "}
+                    {SUPPORT_STATUS_LABELS[entry.newStatus as SupportCaseStatus] ?? entry.newStatus}
+                  </div>
+                )}
+                {entry.kind === "parts_used" && (
+                  <div className="muted">Qty: {entry.qty}</div>
+                )}
+                {entry.body && <div>{entry.body}</div>}
+              </li>
+            ))}
+            {activity.length === 0 && activityLoaded && <li className="empty-compact-state">No activity yet.</li>}
+          </ul>
+
+          <h3>Log activity</h3>
+          <label className="form-field">
+            Kind
+            <select value={activityKind} onChange={(event) => setActivityKind(event.target.value as typeof activityKind)}>
+              <option value="note">Note</option>
+              <option value="client_communication">Client communication</option>
+              <option value="scheduled_visit">Scheduled visit</option>
+              <option value="parts_used">Parts used</option>
+            </select>
+          </label>
+          {activityKind === "scheduled_visit" && (
+            <label className="form-field">
+              Visit date/time
+              <input type="datetime-local" value={visitAt} onChange={(event) => setVisitAt(event.target.value)} />
+            </label>
+          )}
+          {activityKind === "parts_used" ? (
+            <>
+              <label className="form-field">
+                Inventory item id
+                <input value={partsInventoryItemId} onChange={(event) => setPartsInventoryItemId(event.target.value)} placeholder="Inventory item id" />
+              </label>
+              <label className="form-field">
+                Quantity
+                <input type="number" min="0" step="0.01" value={partsQty} onChange={(event) => setPartsQty(event.target.value)} />
+              </label>
+              <p className="muted">
+                Deduct the real inventory separately via Transfer to Project first -- this only logs what was used on this case.
+              </p>
+            </>
+          ) : null}
+          <label className="form-field">
+            Note
+            <textarea value={activityBody} onChange={(event) => setActivityBody(event.target.value)} rows={2} />
+          </label>
+          <button className="secondary-action mini-action" type="button" disabled={busy} onClick={handleAddActivity}>
+            Log
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

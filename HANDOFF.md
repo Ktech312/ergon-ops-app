@@ -759,8 +759,63 @@ fixture-gathering (not the function) was the bug -- fixed by fetching that one r
 
 Full consolidated isolation suite (migrations 001-200): **66/66 passed.** **Migration 200 APPLIED
 and its canonical test PASSED in production (E confirmed, 2026-09-23, "this one is complete --
-Success. No rows returned").** No frontend exists yet for this module -- that's the next piece of
-work, in progress. **Do not run migration 200 or its canonical test again.**
+Success. No rows returned").** **Do not run migration 200 or its canonical test again.**
+
+**Frontend, same day, no new migration needed**: a new **Support** nav tab (`LifeBuoy` icon),
+gated into `support`/`manager`/`pm`/`engineering`/`implementation`'s default tab sets (the roles
+that plausibly own post-install service work -- not added to sales/purchasing/warehouse/marketing,
+which don't). `SupportCasesPage` (list + filters by status/priority + a "Cases by status" count
+summary -- item 3's "basic reporting", kept intentionally small rather than a new Reports
+integration), `NewSupportCaseModal` (project picker restricted to Client Ledger-eligible projects
+via a new lightweight `loadLedgerEligibleProjects` loader, summary/priority/owner, optional
+installed-asset checkboxes once a project is picked), `SupportCaseDetailModal` (owner reassignment,
+a status-change control computed client-side from `allowedNextSupportStatuses()` -- deliberately
+kept in sync with `change_support_case_status()`'s own state machine by direct comment reference,
+not derived, so a future drift between the two is a visible diff, not a silent behavior mismatch --
+a distinct Reopen control only shown when resolved/closed, and the activity timeline + a
+log-activity form covering note/client_communication/scheduled_visit/parts_used). All three
+components load their own data on mount (`ErgonPlatformPage`'s established shape), not threaded
+through `App`'s own already-enormous top-level state.
+
+`parts_used` logging is explicit in the UI about NOT being the real inventory deduction -- the form
+shows "Deduct the real inventory separately via Transfer to Project first -- this only logs what was
+used on this case," matching the migration's own documented scope (log-only, reuses the existing
+Transfer to Project flow for the real stock move, never re-derives balance math). `support_case_assigned`
+was added to `api/_lib/notificationEvents.js`'s HANDLERS (two-hop `workspace_members.user_id ->
+app_known_users.email` lookup, the same path this schema always uses to get a real email from a
+`workspace_members` row) so `assign_support_case_owner()` fires a real notification through the
+existing, already-hardened `/api/create-notification` route -- no new notification-sending
+infrastructure.
+
+**A real bug caught before this shipped**: the first draft of both new modals used
+`className="modal-overlay"` for their backdrop -- a class that does not exist anywhere in
+`styles.css` at all. Every real modal in this app uses `.modal-backdrop` (confirmed by grep against
+~20 other call sites), which also drives real behavior beyond styling (`body:has(.modal-backdrop)`
+hides the mobile bottom nav and install banner while a modal is open). Caught during a deliberate
+post-write review (not by tsc, which has no way to catch an unknown CSS class name), fixed, and both
+modals were also wired into the existing, established `useModalA11y()` hook (Escape-to-close, focus
+trap, return-focus-on-close) that most modals in this app already use, rather than shipping with no
+focus management at all.
+
+New `src/support-cases.test.ts` (18 tests): the load-error-vs-empty-list distinction for
+`loadSupportCases`/`loadSupportCaseActivity` (a genuine failure must never look like zero cases, the
+same discipline as `loadPlatformWorkspaces`), numeric `qty` coercion (Postgres `numeric` arrives as a
+JSON string), and every RPC-calling function's exact request-body shape plus real-error-surfacing on
+rejection (a project not on the Client Ledger, an invalid status transition, a cross-workspace owner
+id). **Deliberately NOT covered by an automated test**: rendering the actual
+`SupportCasesPage`/`NewSupportCaseModal`/`SupportCaseDetailModal` JSX -- same `main.tsx` module-scope
+`createRoot(...).render(...)` constraint documented in `auth-session-persistence.test.ts`'s own
+header; verified live in production instead, after deploy. `npx tsc -b` and `npx vite build` both
+clean; full `vitest` suite **600/600 passed clean (582 baseline + 18 new)**.
+
+**Deliberately still open for this first release** (unchanged from the design doc's own §6 and this
+migration's own header, not newly discovered gaps): no SLA enforcement beyond the plain
+`sla_due_at` column (no visual overdue flag built into the UI yet either -- a real, small gap worth
+a follow-up, not done here); no client-facing portal/share-link; parts_used's inventory item is
+entered by raw id in this v1 (a proper searchable item picker, matching Transfer to Project's own
+UI, is the obvious next polish pass, not done here to keep this batch shippable); Google
+Calendar/any real calendar integration for scheduled visits (it's a plain future-dated activity
+note, exactly as the design doc's §5 scoped it).
 
 ## Next coder session
 

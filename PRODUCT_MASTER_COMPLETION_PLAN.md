@@ -1541,9 +1541,18 @@ there, not an oversight.
    production**, canonical test passing (66/66 in the consolidated isolation suite). A real bug
    (previous_status recorded from the row's post-update state instead of pre-update) was caught and
    fixed before this reached E, with the canonical test's own Section (f) written specifically to
-   catch a recurrence, not just confirm a transition happened. **No frontend exists yet** — that's
-   the in-progress next piece; the module is not usable until it ships. See `HANDOFF.md`'s matching
-   2026-09-23 entry for full detail.
+   catch a recurrence, not just confirm a transition happened. **Frontend shipped the same day**: a
+   new Support nav tab (case list + filters + a small status-count summary), a New Case modal
+   (Client-Ledger-eligible projects only, optional installed-asset links), a case detail modal
+   (owner reassignment, a status-change control kept in sync with the RPC's own state machine by
+   direct comment reference, Reopen, and an activity timeline/log-activity form). Wired into
+   `api/_lib/notificationEvents.js` so reassigning a case's owner fires a real notification through
+   the existing hardened route. `npx tsc -b`/`npx vite build` clean, 18 new persistence-layer tests.
+   **Pending as of this entry**: production deploy and live verification (queued immediately after
+   this write-up). See `HANDOFF.md`'s matching 2026-09-23 entry for full detail, including one real
+   bug caught before shipping (both new modals initially used a CSS class, `modal-overlay`, that
+   doesn't exist anywhere in this app — fixed to the real `modal-backdrop` convention, plus wired
+   into the standing `useModalA11y()` focus-trap hook).
 9. **Engineering/Product Development module first release (D14) — NOT STARTED.** Same gating as
    stage 8. Design doc: `PRODUCT_ENGINEERING_MODULE_DESIGN.md`.
 
