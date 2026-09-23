@@ -109,12 +109,19 @@ login/signup landing page (removing the generic "Create user" button entirely �
 now only ever come from an invitation or an approved business-signup link, matching decision 1's own
 Teams/QuickBooks framing), Remember Me was implemented honestly (localStorage vs. sessionStorage,
 never the password), and the public signup request now actually notifies real platform admins
-(migration 199, canonical test passing locally, application to production pending as of this entry)
-instead of silently landing in the queue with no signal. See `HANDOFF.md`'s same-night dated entries
+(migration 199, **applied and confirmed live end-to-end, 2026-09-23** — a real durable in-app
+notification lands in a real platform admin's notification bell) instead of silently landing in the
+queue with no signal. **Email delivery for that notification is NOT configured in production** (no
+`GMAIL_USER`/`RESEND_API_KEY` set — a pre-existing, already-documented gap, not specific to this
+feature) — every failed attempt is recorded to System Health, never silently dropped, and the
+request itself is never affected either way; do not describe email delivery as working until a real
+provider is configured and a real delivery is verified. See `HANDOFF.md`'s same-night dated entries
 and `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 7 for full detail — this
 document remains the design record for what's still genuinely undecided (starter
 configurations/role vocabulary/module enablement below), not a status tracker; check those two
-files for current status before treating any section below as still purely hypothetical.
+files for current status before treating any section below as still purely hypothetical. The guided
+onboarding wizard, industry starter catalog/template data, SaaS subscription billing, and hard
+workspace deletion all remain deliberately deferred, not built.
 
 ---
 

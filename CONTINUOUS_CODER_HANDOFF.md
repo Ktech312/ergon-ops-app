@@ -144,16 +144,30 @@ one genuinely outstanding action was sending E migration 144's canonical test, d
 
 ## Next-session launchpad
 
-**2026-09-22/23, most recent work (this file's own historical batch list below predates it and is
-not updated for it) — Stage 7 onboarding: self-serve company signup (migrations 195-197, applied and
-live), the genuinely separate "Ergon Platform" console with company Suspend/Reactivate and a durable
-audit log (migration 198, applied and confirmed live), and a branded login/signup landing page with
-honest Remember Me plus real platform-admin signup notifications (migration 199, canonical test
-passing locally, NOT yet applied to production as of this entry). Full detail lives in
-`HANDOFF.md`'s same-night dated entries and `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 7, both of
-which are authoritative for current status — read those first, not this file, for anything
-Stage-7-related. Do not re-derive this design from scratch or rerun migrations 195-199 or their
-tests.**
+**2026-09-22/23 — Stage 7 lightweight company onboarding is SHIPPED and fully live (this file's own
+historical batch list below predates it and is not updated for it):** self-serve company signup
+(migrations 195-197), the genuinely separate "Ergon Platform" console with company Suspend/
+Reactivate and a durable audit log (migration 198), and a branded login/signup landing page with
+honest Remember Me plus real platform-admin signup notifications (migration 199) — **all four
+migrations applied and confirmed live in production**, all four canonical tests passed. Current,
+accurate status, stated plainly so it can't be mis-skimmed:
+- Lightweight company onboarding (request → platform-admin review → hardened claim link → founding
+  admin account) is shipped and live.
+- The durable in-app notification to platform admins on a new signup request is real and confirmed
+  working (verified live, a real notification landed in a real platform admin's bell).
+- Email delivery for that notification is **NOT configured** in production (no `GMAIL_USER`/
+  `RESEND_API_KEY` set at all — a pre-existing, already-documented gap, not specific to this
+  feature). Every failed attempt is recorded to System Health (`company_signup_notification` /
+  `email_send_failed`), never silently dropped, and never affects the underlying request. Do not
+  describe email delivery as working until a real provider is configured and a real delivery is
+  verified.
+- Deliberately still deferred, not built: the guided onboarding wizard, industry starter
+  catalog/template data, SaaS subscription billing, and hard workspace deletion.
+
+Full detail lives in `HANDOFF.md`'s same-night dated entries and `PRODUCT_MASTER_COMPLETION_PLAN.md`
+§11 item 7, both of which are authoritative for current status — read those first, not this file,
+for anything Stage-7-related. Do not re-derive this design from scratch or rerun migrations 195-199
+or their tests.**
 
 **Repository checkpoint: QUEUE C2 IS FULLY CLOSED.** Migrations 134, 135, 136, 137 (+141), 138, 139,
 140 (+142), 143, 144, and 145 are all applied in production, **every one canonically tested and
