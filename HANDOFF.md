@@ -256,6 +256,87 @@ decision -- copying Ergon Test Workspace's specific AV-industry data into a stra
 be wrong), so a freshly accepted company lands in a genuinely empty operational-config state today,
 honest but not yet polished onboarding.
 
+## 2026-09-22, same night: migration 196 -- corrective hardening of the company-signup claim path, E's own review, not yet applied
+
+E reviewed migration 195 directly (not just the summary above) and stopped further onboarding work
+cold: **"Stop further onboarding expansion temporarily. Migration 195 is live and must not be
+edited. Prepare a corrective migration 196..."** -- with a precise, numbered list of 8 required
+corrections. The most serious, and the reason this whole corrective pass exists: **195's
+`approve_company_signup`/`reject_company_signup` were gated on `is_app_admin()` -- Ergon's OWN
+company admin flag, grantable to any of Ergon's own employees via Team Roster's "Make admin"
+button -- instead of `is_platform_admin()`.** Net effect: any employee promoted to admin within
+Ergon's own workspace could approve or reject UNRELATED companies joining the whole platform,
+exactly backwards from the Microsoft/Google model E asked for (a Contoso IT admin has zero reach
+into Microsoft's own tenant-approval console). This was found because E asked directly whether a
+genuinely separate, Ergon-only platform console existed -- it didn't; what existed was the approval
+panel bolted onto the same per-company Admin page every company's own admin sees, only "safe" by
+accident because exactly one admin account existed. Migration `196_company_signup_claim_path_hardening.sql`
+fixes this and seven other named defects:
+
+1/2. **`accept_company_signup` now verifies the caller, not just the token.** 195 never checked that
+   the person holding a valid `signup_token` was actually the person who requested the company --
+   any authenticated holder of a leaked/shared/copy-pasted link could claim someone else's company
+   and become its founding admin. Fixed: the caller's `auth.users.email` (server-side lookup via
+   `auth.uid()`, never a client-supplied parameter) must case-insensitively, exactly match
+   `requester_email`, and that email must be confirmed (`email_confirmed_at is not null`) before
+   granting workspace admin.
+3. **Reject acceptance if the account already belongs to another workspace** -- this app has no
+   multi-workspace selector anywhere; accepting with an account that already has a real
+   `workspace_members` row elsewhere would put it into a state the rest of the app has never been
+   built to handle. Rejected outright (`already_member_of_another_workspace`) until a real selector
+   exists -- not designed here.
+4. **Token expiration (7-day default) plus explicit `revoke_company_signup_token()`/
+   `regenerate_company_signup_token()`**, both platform-admin-only. Regenerating overwrites the
+   token column directly -- the old value stops matching any row the instant it commits, no separate
+   invalidation list needed.
+5. **`get_company_signup_by_token` now reports a real, enforced status** (`not_found`/`expired`/
+   `revoked`/`used`/`valid`) instead of one generic catch-all -- mirrors
+   `get_channel_guest_invite_by_token`'s own established shape exactly (zero rows for a token that
+   never existed, one row with a computed status for one that does).
+6. **The provisioned workspace now starts `'pending'`** (a new status value -- E's own explicit
+   instruction not to overload `'suspended'` for this, a different fact: suspended was once active
+   and got turned off, pending was never turned on) **and only activates atomically with the
+   founding admin membership on successful acceptance.** Previously it was `'active'` the moment an
+   admin approved the request, before anyone had actually claimed it.
+7. **`requestCompanySignup()` (`src/persistence.ts`) now requires `submitted === true`, not just
+   `response.ok`.** `api/request-company-signup.js` already correctly returns a 200 with
+   `submitted:false` when Supabase env vars are missing (deliberately not a 4xx, so a misconfigured
+   deploy doesn't look like a validation error) -- but the client only checked `.ok`, so the public
+   form showed "Request received" for a request that never actually landed. Real bug, same class as
+   this repo's own standing "verify writes affected rows, not just response.ok" lesson. New test
+   file: `src/company-signup-request-verification.test.ts`.
+8. **The Decided-table link-retrieval fix from earlier tonight is untouched and still correct** --
+   flagged honestly, not silently extended: it does not yet grey out an expired or revoked link
+   (only checks `signupToken`/`signupTokenUsedAt`, not the two new columns) -- a known gap, out of
+   scope for what E asked this migration to cover.
+
+**Migration 195's own canonical test needed updating to match two legitimately changed behaviors**
+(never editing 195's own migration file, per this repo's standing discipline) -- a fresh workspace
+now starts `pending` not `active` immediately after approval, and a reused token now reports the
+more specific `already_used` instead of the old generic `not_found_or_already_used`. Both are
+consequences of 196's own reviewed design, not regressions.
+
+**Verification**: 62/62 canonical isolation tests pass against a fresh PGlite replay of the full
+001-196 migration history, including the new `migration_196_company_signup_claim_path_hardening_tests.sql`
+covering every case E listed by name: correct/wrong/unconfirmed email, anonymous acceptance,
+cross-workspace conflict, expired/revoked/bogus/already-used tokens, regeneration invalidating the
+old token, and that no raw signup-request/token data leaks to an ordinary authenticated user OR to
+an app_admin who is not a platform_admin. The concurrency case (exactly one founding administrator
+results from two accept attempts against the same token) is tested honestly, not overclaimed -- this
+PGlite harness has no true second concurrent connection, so what's proven is the FOR UPDATE lock +
+WHERE-recheck idiom's state-transition correctness, not genuine OS-thread concurrency; a true
+multi-connection proof would need the same two-`pg`-connection methodology
+`PRODUCT_PROJECT_BOM_ATOMIC_REPLACE_PLAN.md` §6 item 5 already established, not invented fresh here.
+`npx tsc -b` clean, `npx vite build` clean, full `vitest` suite clean (514 tests, 4 new for item 7).
+
+**Not yet applied to production.** Per E's own instruction, this is presented as migration 196
+alone first -- run it, then its own canonical test, before anything else. `ZZ Test Signup Co` (the
+production test artifact from earlier tonight, already flagged above) is deliberately untouched by
+this migration beyond gaining the two new nullable columns -- its existing token, its
+not-yet-accepted state, and its already-provisioned (now-stale-shape, still-`active`) workspace are
+left exactly as they were, per E's explicit instruction not to touch it outside this migration's own
+reviewed behavior.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
