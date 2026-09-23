@@ -1487,7 +1487,9 @@ there, not an oversight.
    (full-app-replacing, same pattern as the guest-session shell), reachable only via a
    platform-admin-only account-menu link, alongside a new Companies table listing every workspace on
    the platform. **Migration 198** (`platform_company_lifecycle_and_audit_log.sql`, canonical test
-   64/64 in the consolidated suite, **not yet applied to production**) adds `suspend_company()` /
+   64/64 in the consolidated suite, **applied and confirmed live in production, 2026-09-22 —
+   live-verified via a real Suspend → Reactivate cycle against `ZZ Test Signup Co`**) adds
+   `suspend_company()` /
    `reactivate_company()` — both `is_platform_admin()`-gated, both require a non-empty reason, both
    record a durable, read-only-to-anyone-but-a-platform-admin audit row in a new
    `company_admin_audit_log` table — plus a server-enforced warning gate

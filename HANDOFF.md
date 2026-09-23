@@ -409,7 +409,7 @@ own "different industries" decision), and the guided wizard remains deferred unt
 company has gone through this lightweight path at least once (E's own words, 2026-09-22: "once
 everything actually works and is tested 100, we build the guide").
 
-## 2026-09-22, same night: the "Ergon Platform" console -- isPlatformAdmin-gated company list/relocation (no migration), then migration 198 -- Suspend/Reactivate + durable audit log, E's own numbered spec, not yet applied
+## 2026-09-22, same night: the "Ergon Platform" console -- isPlatformAdmin-gated company list/relocation (no migration), then migration 198 -- Suspend/Reactivate + durable audit log, E's own numbered spec, applied and confirmed live
 
 **(`caf2f23`)** Right after 197's lifecycle work shipped, E's earlier direct question from before
 the security detour -- **"is there an Ergon admin page for me to control these things... that only
@@ -514,15 +514,17 @@ company)" in the table as a first, informational warning, with the harder confir
 described above as the real backstop; a disabled "Remove company" button with an explanatory
 tooltip sits alongside Suspend/Reactivate per item 6.
 
-**Migration 198 has NOT yet been applied to production and its canonical test has NOT yet been run
-there** -- sent as the next single Supabase action, per this session's own established migration
-workflow (write + locally verify first, hand off one migration at a time, wait for E's confirmation
-before treating it as live or doing any production verification). **Do not mark this section
-"applied"/"confirmed live" until E has actually run it and confirmed the canonical test's final
-notice.** Once confirmed: verify live in production (Ergon Platform link appears only for a real
-platform admin; Companies table renders real data with working Suspend/Reactivate/own-company
-warning; the per-company Admin page shows no signup-requests panel at all) and update this entry
-plus `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 accordingly.
+**Migration 198 APPLIED and its canonical test PASSED in production (E confirmed, 2026-09-22,
+"Both - Success. No rows returned" for both).** Live-verified immediately after via a real
+Suspend -> Reactivate cycle against `ZZ Test Signup Co` (the existing production test artifact,
+not a new one): Suspend flipped its status to `suspended` and swapped the row's action button to
+Reactivate; Reactivate flipped it back to `active`, restoring it exactly as it was before this
+check. Also confirmed the same night, before 198 was applied: the Ergon Platform link appears only
+for a real platform admin (`eck1679@gmail.com`'s own account menu); the Companies table loads real
+data (`ZZ Test Signup Co`, `Ergon Test Workspace (your company)` -- the own-company label renders
+correctly); the per-company Admin page shows no Company Signup Requests panel at all, confirmed via
+accessibility-tree search finding zero matches. **Do not run migration 198 or its canonical test
+again.**
 
 ## Next coder session
 
