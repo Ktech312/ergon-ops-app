@@ -411,10 +411,10 @@ everything actually works and is tested 100, we build the guide").
 
 ## 2026-09-22, same night: the "Ergon Platform" console -- isPlatformAdmin-gated company list/relocation (no migration), then migration 198 -- Suspend/Reactivate + durable audit log, E's own numbered spec, not yet applied
 
-Right after 197's lifecycle work shipped, E's earlier direct question from before the security
-detour -- **"is there an Ergon admin page for me to control these things... that only the Owner or
-employees of Ergon can enter, view companies using the software... Add/remove/Approve companies"**
--- was still genuinely unanswered: `CompanySignupRequestsPanel` had been corrected server-side
+**(`caf2f23`)** Right after 197's lifecycle work shipped, E's earlier direct question from before
+the security detour -- **"is there an Ergon admin page for me to control these things... that only
+the Owner or employees of Ergon can enter, view companies using the software... Add/remove/Approve
+companies"** -- was still genuinely unanswered: `CompanySignupRequestsPanel` had been corrected server-side
 (migration 196) but was still reachable from inside the per-company `AdminPage`, gated on
 `isAdmin` (Ergon's own company admin flag) client-side, not `isPlatformAdmin`. Built the real,
 separate console per the instruction to "continue directly with Stage 7 onboarding":
