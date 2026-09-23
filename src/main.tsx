@@ -194,6 +194,13 @@ import {
   acceptChannelGuestInvite,
   loadChannelGuests,
   revokeChannelGuest,
+  loadCompanySignupRequests,
+  approveCompanySignupRequest,
+  rejectCompanySignupRequest,
+  requestCompanySignup,
+  fetchCompanySignupByToken,
+  acceptCompanySignup,
+  type CompanySignupRequest,
   loadHasAnyWorkspaceMembership,
   loadMyChannelGuestRows,
   loadChannelMessageSenderNames,
@@ -7520,6 +7527,21 @@ function App() {
           inviteFailure = error instanceof Error ? error.message : "Could not finish accepting your channel guest invite.";
         }
       }
+      // Same deferred-application pattern again, for a company signup
+      // that couldn't be applied at signup time because "confirm email"
+      // was on (see CompanySignupLandingPage's own comment).
+      const pendingCompanySignupToken = window.localStorage.getItem("pendingCompanySignupToken");
+      if (pendingCompanySignupToken) {
+        window.localStorage.removeItem("pendingCompanySignupToken");
+        try {
+          const result = await acceptCompanySignup(pendingCompanySignupToken, session.accessToken);
+          if (result.outcome !== "accepted" || !result.workspaceId) {
+            inviteFailure = "Your company signup link has expired or was already used.";
+          }
+        } catch (error) {
+          inviteFailure = error instanceof Error ? error.message : "Could not finish setting up your company.";
+        }
+      }
       setAuthSession(session);
       setAuthPassword("");
       setAuthStatus(
@@ -8552,6 +8574,7 @@ function App() {
         {view === "admin" && canReviewApprovals && (
           <AdminPage
             currentUserId={authSession?.userId ?? ""}
+            accessToken={authSession?.accessToken}
             isAdmin={isAdmin}
             isWorkspaceAdmin={isWorkspaceAdmin}
             isManagerRole={isManagerRole}
@@ -19388,8 +19411,160 @@ function WelcomeSlideshow({
   );
 }
 
+// Self-contained (its own load-on-mount + approve/reject handlers) rather
+// than prop-drilled through App like AdminPage's other ~50 sections --
+// this whole feature (Stage 7 onboarding's "lightweight" path, migration
+// 195) only needs accessToken + isAdmin, so threading five more props
+// through App's own render call adds real risk for no benefit. Gated
+// strictly on isAdmin, not isAdmin || isManagerRole like Pending
+// Approvals -- matches approve_company_signup/reject_company_signup's
+// own is_app_admin()-only server-side gate exactly (E: "I must approve
+// each company").
+function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: string; isAdmin: boolean }) {
+  const [requests, setRequests] = useState<CompanySignupRequest[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [status, setStatus] = useState("");
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [approvedLinks, setApprovedLinks] = useState<Record<string, string>>({});
+
+  async function refresh() {
+    const rows = await loadCompanySignupRequests(accessToken);
+    setRequests(rows);
+    setLoaded(true);
+  }
+
+  useEffect(() => {
+    if (isAdmin && accessToken && !loaded) {
+      refresh();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, accessToken, loaded]);
+
+  if (!isAdmin) {
+    return null;
+  }
+
+  async function handleApprove(requestId: string) {
+    setStatus("Approving...");
+    try {
+      const result = await approveCompanySignupRequest(requestId, accessToken);
+      const link = `${window.location.origin}${window.location.pathname}?company-signup=${result.signupToken}`;
+      setApprovedLinks((current) => ({ ...current, [requestId]: link }));
+      setStatus("Approved -- copy the link below and send it to them.");
+      await refresh();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not approve this company.");
+    }
+  }
+
+  async function handleReject(requestId: string) {
+    setStatus("Rejecting...");
+    try {
+      await rejectCompanySignupRequest(requestId, rejectReason.trim(), accessToken);
+      setRejectingId(null);
+      setRejectReason("");
+      setStatus("Rejected.");
+      await refresh();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not reject this company.");
+    }
+  }
+
+  const pending = requests.filter((request) => request.status === "pending");
+  const decided = requests.filter((request) => request.status !== "pending");
+
+  return (
+    <section className="panel wide">
+      <PanelHeader title="Company Signup Requests" label="New companies wait here until you approve or reject them -- platform-admin only." />
+      <div className="report-filter-row">
+        <button className="secondary-action mini-action" type="button" onClick={refresh}>Refresh</button>
+        {status && <span className="muted">{status}</span>}
+      </div>
+      <table className="stack-table-mobile">
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Requested by</th>
+            <th>Requested</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {pending.map((request) => (
+            <tr key={request.id}>
+              <td>{request.companyName}</td>
+              <td data-label="Requested by">{request.requesterName} ({request.requesterEmail})</td>
+              <td data-label="Requested">{new Date(request.createdAt).toLocaleString()}</td>
+              <td>
+                {rejectingId === request.id ? (
+                  <div className="roster-add-row">
+                    <input value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="Reason (optional)" />
+                    <button className="secondary-action mini-action" type="button" onClick={() => handleReject(request.id)}>Confirm reject</button>
+                    <button className="secondary-action mini-action" type="button" onClick={() => { setRejectingId(null); setRejectReason(""); }}>Cancel</button>
+                  </div>
+                ) : (
+                  <>
+                    <button className="primary-action mini-action" type="button" onClick={() => handleApprove(request.id)}>Approve</button>{" "}
+                    <button className="secondary-action mini-action" type="button" onClick={() => setRejectingId(request.id)}>Reject</button>
+                  </>
+                )}
+                {approvedLinks[request.id] && (
+                  <div className="channel-guest-link-row">
+                    <input readOnly value={approvedLinks[request.id]} onFocus={(event) => event.currentTarget.select()} />
+                    <button
+                      className="icon-button"
+                      type="button"
+                      aria-label="Copy signup link"
+                      title="Copy signup link"
+                      onClick={() => navigator.clipboard?.writeText(approvedLinks[request.id]).catch(() => {})}
+                    >
+                      <Copy size={15} />
+                    </button>
+                  </div>
+                )}
+              </td>
+            </tr>
+          ))}
+          {pending.length === 0 && (
+            <tr>
+              <td colSpan={4} className="empty-compact-state">No company signup requests waiting.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      {decided.length > 0 && (
+        <details>
+          <summary>Decided ({decided.length})</summary>
+          <table className="stack-table-mobile">
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th>Requested by</th>
+                <th>Status</th>
+                <th>Reviewed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {decided.map((request) => (
+                <tr key={request.id}>
+                  <td>{request.companyName}</td>
+                  <td data-label="Requested by">{request.requesterEmail}</td>
+                  <td data-label="Status"><span className={`status ${request.status === "approved" ? "ok" : "warn"}`}>{request.status}</span></td>
+                  <td data-label="Reviewed">{request.reviewedAt ? new Date(request.reviewedAt).toLocaleString() : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function AdminPage({
   currentUserId,
+  accessToken,
   isAdmin,
   isWorkspaceAdmin,
   isManagerRole,
@@ -19474,6 +19649,7 @@ function AdminPage({
   onRespondToApprovalRequest,
 }: {
   currentUserId: string;
+  accessToken?: string;
   isAdmin: boolean;
   isWorkspaceAdmin: boolean;
   isManagerRole: boolean;
@@ -19670,6 +19846,7 @@ function AdminPage({
 
   return (
     <div className="content-grid">
+      <CompanySignupRequestsPanel accessToken={accessToken} isAdmin={isAdmin} />
       {(isAdmin || isManagerRole) && (deletionLog ?? []).length > 0 && (
         <section className="panel wide">
           <div className="panel-title-row">
@@ -28827,6 +29004,179 @@ function ChannelGuestLandingPage({ token }: { token: string }) {
   );
 }
 
+// The public "request a company" form (Stage 7 onboarding's lightweight
+// path, migration 195). Genuinely unauthenticated -- no accessToken
+// anywhere in this component, reached before any sign-in exists. Submits
+// through requestCompanySignup() (the Vercel API route, rate-limited
+// server-side), never a direct Supabase call.
+function RequestCompanySignupPage() {
+  const [companyName, setCompanyName] = useState("");
+  const [requesterName, setRequesterName] = useState("");
+  const [requesterEmail, setRequesterEmail] = useState("");
+  const [phase, setPhase] = useState<"idle" | "submitting" | "done">("idle");
+  const [formError, setFormError] = useState("");
+
+  async function handleSubmit() {
+    if (!companyName.trim() || !requesterName.trim() || !requesterEmail.trim()) {
+      setFormError("All three fields are required.");
+      return;
+    }
+    setFormError("");
+    setPhase("submitting");
+    try {
+      await requestCompanySignup(companyName.trim(), requesterName.trim(), requesterEmail.trim());
+      setPhase("done");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Could not submit this request.");
+      setPhase("idle");
+    }
+  }
+
+  if (phase === "done") {
+    return (
+      <div className="submittal-public-page">
+        <h1>Request received</h1>
+        <p>Thanks -- your request to bring <strong>{companyName}</strong> onto Ergon is in review. We'll send you a link to finish setting up your account once it's approved.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="submittal-public-page">
+      <header className="submittal-public-header">
+        <h1>Get your company on Ergon</h1>
+        <p>Tell us a bit about your company. Every new company is reviewed before it goes live.</p>
+      </header>
+      <section className="submittal-public-section submittal-response-form">
+        <label>Company name<input value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="Acme Co" /></label>
+        <label>Your name<input value={requesterName} onChange={(event) => setRequesterName(event.target.value)} placeholder="Jane Smith" /></label>
+        <label>Your email<input value={requesterEmail} onChange={(event) => setRequesterEmail(event.target.value)} type="email" autoComplete="email" placeholder="jane@acmeco.com" /></label>
+        {formError && <small className="error-text" role="alert">{formError}</small>}
+        <div className="submittal-response-actions">
+          <button
+            type="button"
+            className="primary-action"
+            disabled={phase === "submitting" || !companyName || !requesterName || !requesterEmail}
+            onClick={handleSubmit}
+          >
+            {phase === "submitting" ? "Submitting..." : "Request access"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// The accept-landing page for an approved company signup -- mirrors
+// ChannelGuestLandingPage's exact shape (loading/error/used/ready/
+// submitting/done phases, deferred-application via localStorage when
+// "confirm email" is enabled).
+function CompanySignupLandingPage({ token }: { token: string }) {
+  const [phase, setPhase] = useState<"loading" | "error" | "ready" | "submitting" | "done">("loading");
+  const [companyName, setCompanyName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [formError, setFormError] = useState("");
+
+  useEffect(() => {
+    fetchCompanySignupByToken(token)
+      .then((result) => {
+        if (!result) {
+          setPhase("error");
+          return;
+        }
+        setCompanyName(result.companyName);
+        setPhase("ready");
+      })
+      .catch(() => setPhase("error"));
+  }, [token]);
+
+  async function handleAccept() {
+    if (!email.trim()) {
+      setFormError("Enter your email.");
+      return;
+    }
+    if (password.length < 8) {
+      setFormError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setFormError("Passwords do not match.");
+      return;
+    }
+    setFormError("");
+    setPhase("submitting");
+    try {
+      const session = await signUpWithPassword(email.trim(), password);
+      if (!session) {
+        // "Confirm email" is enabled on this project -- no session yet to
+        // call accept_company_signup with. Stash the token so
+        // handleSignIn can finish applying it once they confirm and sign
+        // in for real, same pattern as pendingInviteToken/
+        // pendingChannelGuestToken.
+        window.localStorage.setItem("pendingCompanySignupToken", token);
+        setFormError("Account created. Check your email to confirm it, then come back and sign in -- your company will finish setting up automatically.");
+        setPhase("ready");
+        return;
+      }
+      const result = await acceptCompanySignup(token, session.accessToken);
+      if (result.outcome !== "accepted" || !result.workspaceId) {
+        setFormError("This signup link has already been used or has expired. Contact whoever approved your company.");
+        setPhase("ready");
+        return;
+      }
+      setPhase("done");
+      window.location.href = "/";
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Could not create your account.");
+      setPhase("ready");
+    }
+  }
+
+  if (phase === "loading") {
+    return (
+      <div className="submittal-public-page">
+        <p>Loading your invite...</p>
+      </div>
+    );
+  }
+
+  if (phase === "error") {
+    return (
+      <div className="submittal-public-page">
+        <h1>Signup link not found</h1>
+        <p>This link is invalid, has already been used, or hasn't been approved yet. Contact whoever approved your company.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="submittal-public-page">
+      <header className="submittal-public-header">
+        <h1>Welcome to Ergon</h1>
+        <p>Set up your account to finish bringing <strong>{companyName}</strong> onto Ergon. You'll be this company's first admin.</p>
+      </header>
+      <section className="submittal-public-section submittal-response-form">
+        <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" /></label>
+        <label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
+        <label>Confirm password<input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
+        {formError && <small className="error-text" role="alert">{formError}</small>}
+        <div className="submittal-response-actions">
+          <button
+            type="button"
+            className="primary-action"
+            disabled={phase === "submitting" || !email || !password || !confirmPassword}
+            onClick={handleAccept}
+          >
+            {phase === "submitting" ? "Setting up..." : "Create my account"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 // Without this, any uncaught render error anywhere in the tree unmounts
 // the whole app to a blank white page with zero indication anything went
 // wrong -- the person just sees nothing and has no way to tell "reload"
@@ -28865,6 +29215,8 @@ const submittalToken = new URLSearchParams(window.location.search).get("submitta
 const proposalToken = new URLSearchParams(window.location.search).get("proposal");
 const inviteToken = new URLSearchParams(window.location.search).get("invite");
 const channelGuestToken = new URLSearchParams(window.location.search).get("channel-guest");
+const companySignupToken = new URLSearchParams(window.location.search).get("company-signup");
+const showRequestCompanySignup = new URLSearchParams(window.location.search).has("request-company");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -28873,6 +29225,10 @@ createRoot(document.getElementById("root")!).render(
         <InviteLandingPage token={inviteToken} />
       ) : channelGuestToken ? (
         <ChannelGuestLandingPage token={channelGuestToken} />
+      ) : companySignupToken ? (
+        <CompanySignupLandingPage token={companySignupToken} />
+      ) : showRequestCompanySignup ? (
+        <RequestCompanySignupPage />
       ) : submittalToken ? (
         <SubmittalPublicPage token={submittalToken} />
       ) : proposalToken ? (

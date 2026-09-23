@@ -1415,6 +1415,160 @@ export async function revokeChannelGuest(channelGuestId: string, accessToken?: s
   }
 }
 
+// --- Self-serve company signup (migration 195, Stage 7 onboarding's
+// "lightweight" path -- E: "let's start with lightweight"). Mirrors the
+// channel-guest-invite functions immediately above (same shape: an admin
+// action, an anon-safe token lookup, a client-side signup + accept). -----
+
+export type CompanySignupRequest = {
+  id: string;
+  companyName: string;
+  requesterName: string;
+  requesterEmail: string;
+  status: "pending" | "approved" | "rejected";
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  rejectionReason: string | null;
+  createdWorkspaceId: string | null;
+  createdAt: string;
+};
+
+type CompanySignupRequestRow = {
+  id: string;
+  company_name: string;
+  requester_name: string;
+  requester_email: string;
+  status: "pending" | "approved" | "rejected";
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string | null;
+  created_workspace_id: string | null;
+  created_at: string;
+};
+
+function mapCompanySignupRequestRow(row: CompanySignupRequestRow): CompanySignupRequest {
+  return {
+    id: row.id,
+    companyName: row.company_name,
+    requesterName: row.requester_name,
+    requesterEmail: row.requester_email,
+    status: row.status,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: row.reviewed_at,
+    rejectionReason: row.rejection_reason,
+    createdWorkspaceId: row.created_workspace_id,
+    createdAt: row.created_at,
+  };
+}
+
+// Platform-admin review queue -- RLS (is_app_admin()) already restricts
+// this to a real platform admin; anyone else gets zero rows, not an
+// error, same safe-empty posture every other admin-only list in this app
+// already has.
+export async function loadCompanySignupRequests(accessToken?: string): Promise<CompanySignupRequest[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("company_signup_requests?select=*&order=created_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as CompanySignupRequestRow[];
+  return rows.map(mapCompanySignupRequestRow);
+}
+
+export async function approveCompanySignupRequest(requestId: string, accessToken?: string): Promise<{ workspaceId: string; signupToken: string }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/approve_company_signup"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_request_id: requestId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not approve this company"));
+  }
+  const result = (await response.json()) as { workspace_id: string; signup_token: string };
+  return { workspaceId: result.workspace_id, signupToken: result.signup_token };
+}
+
+export async function rejectCompanySignupRequest(requestId: string, reason: string, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/reject_company_signup"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_request_id: requestId, p_reason: reason || null }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not reject this company"));
+  }
+}
+
+// The public signup form's only path -- goes through the Vercel API route,
+// NOT a direct Supabase RPC call. submit_company_signup_request() has no
+// anon/authenticated grant at all (see api/request-company-signup.js's
+// own header) -- the API route is where rate limiting actually lives.
+export async function requestCompanySignup(companyName: string, requesterName: string, requesterEmail: string): Promise<void> {
+  const response = await fetch("/api/request-company-signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ companyName, requesterName, requesterEmail }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}) as { error?: string });
+    throw new Error(body.error || "Could not submit this signup request.");
+  }
+}
+
+// Anon-safe token lookup for the accept-landing page -- mirrors
+// fetchChannelGuestInviteByToken exactly. Returns null for an invalid,
+// unapproved, or already-used token, never an error.
+export async function fetchCompanySignupByToken(token: string): Promise<{ companyName: string } | null> {
+  if (!isRemotePersistenceConfigured() || !token) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("rpc/get_company_signup_by_token"), {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ p_token: token }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const rows = (await response.json()) as Array<{ company_name: string }>;
+  if (!rows.length) {
+    return null;
+  }
+  return { companyName: rows[0].company_name };
+}
+
+// Called with the prospect's own freshly-created session, right after
+// signUpWithPassword -- mirrors acceptChannelGuestInvite's exact posture.
+export async function acceptCompanySignup(token: string, accessToken?: string): Promise<{ outcome: string; workspaceId: string | null }> {
+  if (!isRemotePersistenceConfigured() || !accessToken || !token) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/accept_company_signup"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_token: token }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not accept this company signup"));
+  }
+  const rows = (await response.json()) as Array<{ outcome: string; joined_workspace_id: string | null }>;
+  const row = rows[0];
+  if (!row) {
+    throw new Error("Could not accept this company signup.");
+  }
+  return { outcome: row.outcome, workspaceId: row.joined_workspace_id };
+}
+
 // --- Guest-session detection (this feature's frontend-only concern) ------
 // A channel guest is a real authenticated user with ZERO workspace_members
 // rows -- see main.tsx's post-signin effect for how these two are combined
