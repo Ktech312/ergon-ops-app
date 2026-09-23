@@ -110,11 +110,9 @@ test asserted an implementation detail instead of behavior" issue this repo has 
 `npx vite build` clean, full `vitest` suite clean (44 files, 502 tests, unchanged from baseline --
 this is an RLS-only change plus one UI gate, no test file needed updating).
 
-**Not yet applied to production.** Both migration files are committed and kept local, same as every
-other migration in this repo -- E needs to run `193_channel_canvas_private_group_scoping.sql` then
-`194_channel_members_manage_authorization.sql` (in that order; 194 depends on
-`channel_guest_manage_authorized()` from 188, already live, not on 193) in the Supabase SQL editor,
-then their two canonical test files, before this is confirmed live.
+— *Migrations 193 and 194 applied and both canonical tests PASSED in production (E confirmed,
+2026-09-22, "193, 194, 195 tests all ran good").* **Do not run migrations 193/194 or their canonical
+tests again.**
 
 ## 2026-09-22 overnight, continued: Stage 7 onboarding backend -- self-serve company signup (migration 195, E approved "lightweight" path), not yet applied
 
@@ -209,9 +207,12 @@ one at a time, across several iterations -- not written once and assumed correct
 clean, `npx vite build` clean, `tests/api/request-company-signup.test.js` (new, 8 tests) passing,
 full `vitest` suite run alongside it.
 
-**Not yet applied to production, and deliberately incomplete on purpose.** Migration 195 needs to
-run in Supabase Studio (after 193/194 above) before anything downstream can work. Frontend is the
-next real piece of work, explicitly not started tonight: a public signup page calling
+— *Migration 195 applied and its canonical test PASSED in production (E confirmed, 2026-09-22, "193,
+194, 195 tests all ran good").* **Do not run migration 195 or its canonical test again.** The
+`api/request-company-signup.js` API route shipped automatically with the same push (Vercel
+deployment, not something run in Supabase -- confirmed no action needed there after E briefly tried
+running it as SQL and got the expected "not SQL" syntax error). **Deliberately incomplete on
+purpose, still.** Frontend is the next real piece of work, not started yet: a public signup page calling
 `/api/request-company-signup`, an Admin panel "Company Signup Requests" review queue (list +
 Approve/Reject, wired to `company_signup_requests` REST reads + `approve_company_signup`/
 `reject_company_signup` RPCs), and an accept-landing page (`?company-signup=<token>`, mirroring
