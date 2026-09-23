@@ -526,7 +526,7 @@ correctly); the per-company Admin page shows no Company Signup Requests panel at
 accessibility-tree search finding zero matches. **Do not run migration 198 or its canonical test
 again.**
 
-## 2026-09-23: branded login page redesign + honest Remember Me + real platform-admin signup notifications (migration 199, sent, not yet applied)
+## 2026-09-23: branded login page redesign + honest Remember Me + real platform-admin signup notifications (migration 199, applied and confirmed live end-to-end)
 
 E's own numbered spec, in full, right after confirming migration 198's application:
 
@@ -652,16 +652,33 @@ the seed data's own real platform admin had no guaranteed `app_known_users` row,
 test now builds fully synthetic fixtures instead of depending on it). `npx tsc -b` and
 `npx vite build` both clean.
 
-**Migration 199 has NOT yet been applied to production** -- sent as the next single Supabase action.
-The frontend redesign and Remember Me do not depend on it at all (pure client-side/routing changes)
-and are safe to deploy regardless; only the notification email/in-app row is affected until it runs
--- and that failure path is itself already handled gracefully (System Health, not a crash or a lost
-request), per the design above. **Do not mark this section "applied" until E has actually run it and
-confirmed the canonical test's final notice.** Once confirmed: verify live in production at desktop
-and mobile widths, and submit one real `ZZ Test`-prefixed business-signup request through the actual
-public form to confirm it reaches the real Ergon Platform queue and a real platform-admin
-notification/email attempt fires -- without approving it or creating another test workspace, per
-E's own explicit instruction.
+**Migration 199 APPLIED and its canonical test PASSED in production (E confirmed, 2026-09-23,
+"both - Success. No rows returned" for both).** Full end-to-end live verification immediately after,
+using two real `ZZ Test`-prefixed requests through the actual public form (neither approved, neither
+turned into a workspace, per E's own explicit instruction):
+- **Before 199 was applied** (submitted earlier the same session, while it was still pending): the
+  request itself still succeeded (`submitted:true`, "Request received" shown) and landed correctly in
+  the real Ergon Platform queue -- but `get_platform_admin_emails()` didn't exist yet, so the lookup
+  failed and recorded to System Health -- Events as `company_signup_notification` /
+  `platform_admin_email_lookup_failed`, exactly the graceful-degradation path this batch was
+  designed around.
+- **After 199 was applied** (a second `ZZ Test 199 Notification Co v2` request): the admin-email
+  lookup now succeeds, a real durable in-app notification landed in the platform admin's own
+  notification bell ("New company signup request -- ZZ Test Requester v2
+  (zz-test-199-notify-v2@example.com) requested a new company account for 'ZZ Test 199 Notification
+  Co v2'. Review it in Ergon Platform -> Company Signup Requests."), and the flow now correctly
+  reaches the email-send step -- which itself still fails and records `email_send_failed` to System
+  Health, but only because production has no `GMAIL_USER`/`RESEND_API_KEY` configured at all, the
+  same pre-existing, already-documented gap this file's own mailer.js entry describes (E declined to
+  set up Gmail SMTP; Resend is sandboxed to `eck1679@gmail.com` only) -- not a bug in this batch.
+  Both System Health rows are visible side by side in Admin -> System Health -- Events, correctly
+  distinguishing the two different failure reasons across the before/after cases.
+
+This proves every layer of item 7 works as designed: the request is never lost either way, the
+durable in-app notification is real and correctly addressed once the lookup can succeed, and a mail
+failure (from any cause) is recorded rather than silently dropped. Also reconfirmed live: your own
+already-signed-in session (predating this deploy) kept loading correctly after the Remember Me
+change shipped -- no one was signed out by this deployment.
 
 ## Next coder session
 

@@ -1513,13 +1513,18 @@ there, not an oversight.
    now reaches the existing `RequestCompanySignupPage` without typing `?request-company`. Remember
    Me is real: checked persists the session in `localStorage`, unchecked in `sessionStorage` only,
    for password sign-in, Google OAuth (via a redirect-surviving hint), and token refresh alike, with
-   sign-out clearing both. **Migration 199** (`get_platform_admin_emails()`, canonical test passing
-   locally, **not yet applied to production**) closes the last real gap in the self-serve signup
-   path: submitting the public request form now creates a durable in-app notification and attempts
-   an email to every real platform admin (never an ordinary company admin — a dedicated function,
-   deliberately not reusing `get_admin_emails()`, the exact conflation migration 196 already had to
-   correct once), with a mail or lookup failure recorded to System Health rather than silently lost
-   and the request itself never affected either way. See `HANDOFF.md`'s matching 2026-09-23 entry
+   sign-out clearing both. **Migration 199** (`get_platform_admin_emails()`, **applied and confirmed
+   live end-to-end in production, 2026-09-23** — two real `ZZ Test`-prefixed requests through the
+   actual public form, before and after applying it, proved the graceful-degradation path (System
+   Health) before and the real durable in-app notification after) closes the last real gap in the
+   self-serve signup path: submitting the public request form now creates a durable in-app
+   notification and attempts an email to every real platform admin (never an ordinary company admin
+   — a dedicated function, deliberately not reusing `get_admin_emails()`, the exact conflation
+   migration 196 already had to correct once), with a mail or lookup failure recorded to System
+   Health rather than silently lost and the request itself never affected either way — the email leg
+   itself currently still fails in production (no `GMAIL_USER`/`RESEND_API_KEY` configured at all, a
+   pre-existing, already-documented gap, not new), but is correctly recorded rather than silently
+   dropped. See `HANDOFF.md`'s matching 2026-09-23 entry
    for full detail and the confirmation status.
 
    **Deliberately still open**: seeding a new company's
