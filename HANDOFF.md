@@ -680,6 +680,88 @@ failure (from any cause) is recorded rather than silently dropped. Also reconfir
 already-signed-in session (predating this deploy) kept loading correctly after the Remember Me
 change shipped -- no one was signed out by this deployment.
 
+## 2026-09-23: Support module first release (D13) begins -- migration 200 applied and confirmed live, backend only so far
+
+E's numbered spec, right after the Stage 7 login-page batch closed out: begin the already-approved
+Support module first release (D13) using `PRODUCT_SUPPORT_MODULE_DESIGN.md`, revalidated against
+current source/migrations before implementation; ship support cases (workspace-contained, linked to
+client/project/site/installed asset where available), the six-status lifecycle (open/in_progress/
+waiting_on_client/resolved/reopened/closed), an activity timeline, scheduled visits, parts/labor
+records, resolve/reopen, role-based access/RLS/notifications/basic reporting -- explicitly excluding
+a client portal and automated SLA enforcement; hand over one Supabase action at a time while
+continuing frontend/test/doc/accessibility work in parallel; then continue directly into the
+Engineering module (D14) once Support is shipped and live-verified, without stopping to ask what's
+next until both are done or a real business decision blocks every remaining independent task.
+
+**Design doc revalidated against the current schema first, per E's own instruction -- two real,
+concrete drifts found and corrected, not implemented verbatim:**
+1. `installed_assets` (migration 089) has no own `workspace_id` column at all -- migration 157
+   scoped its RLS by *deriving* the workspace through `project_owner_workspace_id(project_id)`,
+   never adding a column. `support_case_activity`/`support_case_assets` follow that same derived
+   pattern (pure children, a column would be redundant); `support_cases` itself gets a real, own
+   `workspace_id` column instead, matching the `projects`/`sales_quotes` root-table shape, since
+   first-release scope explicitly needs direct list/filter queries on cases (§7 of the design doc,
+   and E's own spec) -- a derived-only table would need an inefficient join on every list.
+2. The design doc's own illustrative schema referenced `inventory_items(ref)` -- that column does
+   not exist. Real linkage uses `inventory_item_id uuid references inventory_items(id)`, the table's
+   actual primary key.
+
+**Migration `200_support_module_first_release.sql`** -- `support_cases` (own workspace_id, stamped
+server-side via `resolve_caller_workspace_id()` in the same trigger that generates `case_number`
+("SC-<year>-####", workspace-scoped ref counter, same pattern as `sales_quotes`/`projects`),
+cross-checked against the caller-supplied `project_id`'s own workspace so a case can never be
+created against another workspace's project even though RLS's own with-check only verifies
+membership in the NEW row's workspace_id, not that project_id agrees with it -- the same class of
+cross-entity containment gap this schema's own history (migration 155) has found and fixed before,
+closed here from the start); `support_case_assets` (junction, cross-checks the linked
+`installed_asset` belongs to the SAME workspace via its own project, not just any asset row);
+`support_case_activity` (append-only, same SELECT+INSERT-only shape as `task_activity_log` --
+`actor_email` is always server-resolved from the real caller, direct client INSERT is impossible,
+every row goes through one of three RPCs). RPCs: `create_support_case()` (requires the target
+project already be on the Client Ledger, per the design doc's own §2 -- "not from scratch, and not
+from an open/in-progress project"); `add_support_case_activity()` (note/client_communication/
+scheduled_visit/parts_used only -- explicitly rejects status_change/reopened, which have their own
+functions); `change_support_case_status()` (a real small state machine: active states bounce freely
+among themselves and can reach resolved; resolved/reopened can only reach closed from here -- going
+back to an active state from resolved/closed requires `reopen_support_case()` specifically, so a
+reopen is always a distinct, auditable transition, never a silent flip); `reopen_support_case()`
+(only from resolved/closed, sets status to the real, distinct `'reopened'` value -- not merely an
+activity kind, matching E's own six-value status list exactly); `assign_support_case_owner()`
+(rejects an owner id from a different workspace). `parts_used` is a LOG entry only in this release --
+it does not itself move real inventory; real stock deduction stays exactly where it already lives
+(client-driven `saveInventoryMovements`/`recordMovements`), reused from the frontend like a normal
+Transfer to Project rather than re-deriving balance math inside a new SQL function, exactly as the
+design doc's §5 instructs ("not a new deduction mechanism"). `notification_rules`'s event_type check
+constraint gained `support_case_assigned` so Admin's existing per-event channel toggle UI covers it
+like every other event, with zero new UI needed for that part.
+
+**Real bug caught and fixed before this ever reached E, not after**: an early draft of
+`change_support_case_status()` read `v_case.status` for the activity row's `previous_status` AFTER
+the `UPDATE ... RETURNING` had already run -- meaning every status-change activity row would have
+recorded the NEW status as its own "previous" value. Caught while re-reading the function before
+writing its test, fixed by capturing the previous status into its own variable before the UPDATE.
+The canonical test's Section (f) specifically proves the FIXED behavior (asserts the exact
+previous/new pair at each transition), not just that a transition happened at all -- this is a case
+where the test would have passed just as easily against the buggy version if it had only checked
+the new status, so it was written to catch the specific bug found.
+
+Also fixed a second issue, this one in the TEST file itself, caught by the isolation suite before
+being sent to E: `projects`' own pre-existing INSERT policy (migration 157) requires
+`is_app_admin()` or `has_role('pm')` (the legacy, still-live gate on who may create a project at
+all) -- the test's synthetic fixture users needed `app_admins` rows purely so the test's OWN project
+fixtures could be created, unrelated to anything this migration itself changes. And a real test-only
+bug in Section (k) (cross-workspace owner-assignment rejection): the test tried to read workspace
+B's own `workspace_members` row AS workspace A's user, which `workspace_members`' RLS correctly
+hides -- the query silently returned `NULL` rather than erroring, and passing `NULL` to
+`assign_support_case_owner()` short-circuits its "is not null" rejection guard, so the test's own
+fixture-gathering (not the function) was the bug -- fixed by fetching that one row as `postgres`
+(bypassing RLS, appropriate for test setup) instead.
+
+Full consolidated isolation suite (migrations 001-200): **66/66 passed.** **Migration 200 APPLIED
+and its canonical test PASSED in production (E confirmed, 2026-09-23, "this one is complete --
+Success. No rows returned").** No frontend exists yet for this module -- that's the next piece of
+work, in progress. **Do not run migration 200 or its canonical test again.**
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
@@ -4748,6 +4830,6 @@ E's stated direction, from an overnight planning conversation (research → clar
 1. `npx tsc -b` — must be clean.
 2. `npx vite build` — must be clean.
 3. If `styles.css` changed, confirm brace balance (`grep -c '{' vs '}'` or careful read).
-4. Commit with a descriptive message, push, and tell the user which migration(s) (if any) still need to be run manually in Supabase Studio — don't assume they've run automatically. Paste the raw SQL into the chat message itself, not just as a file attachment (see "Current setup truth" above re: paste corruption).
+4. Commit with a descriptive message, push, and tell the user which migration(s) (if any) still need to be run manually in Supabase Studio — don't assume they've run automatically. **Corrected 2026-09-23, supersedes this item's own older wording below**: give only a markdown link to the migration file, never paste the raw SQL inline in chat — E said so directly, twice, after this checklist's original "paste it inline" advice (itself written to work around a since-irrelevant paste-corruption issue) kept getting followed by mistake. See `feedback_sql_handoff_link_only` in the auto-memory system for the full note.
 5. **Immediately after that commit succeeds, replace the `(pending commit...)` placeholder in the work-log entry you just wrote with the real short hash and push a small HANDOFF-only follow-up commit** — see the standing rule above. Do this every time, same turn, not batched later.
 6. For anything E reports as a mobile-only bug, ask for a screenshot before guessing at a fix — two out of three bugs in the 2026-08-14 mobile report were diagnosable from the description alone, but the third genuinely needed visual evidence to confirm even the diagnosis of the first two.

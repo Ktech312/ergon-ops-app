@@ -1532,8 +1532,18 @@ there, not an oversight.
    genuinely empty, not copied from Ergon Test Workspace); the guided wizard itself; company-level
    branding/subscription/usage-metrics surfaces beyond what's listed here; hard workspace deletion
    (by design, not an oversight — see migration 198 above).
-8. **Support module first release (D13) — NOT STARTED.** Blocked on stage 7 per the authorized order
-   (build after Phase 3 completes). Design doc: `PRODUCT_SUPPORT_MODULE_DESIGN.md`.
+8. **Support module first release (D13) — IN PROGRESS, backend shipped 2026-09-23.** Design doc
+   `PRODUCT_SUPPORT_MODULE_DESIGN.md` revalidated against the current schema before implementation
+   (two real drifts found and corrected — see `HANDOFF.md`'s matching entry). **Migration 200**
+   (`support_cases`/`support_case_assets`/`support_case_activity`, the full six-status lifecycle,
+   `create_support_case()`/`add_support_case_activity()`/`change_support_case_status()`/
+   `reopen_support_case()`/`assign_support_case_owner()`) — **applied and confirmed live in
+   production**, canonical test passing (66/66 in the consolidated isolation suite). A real bug
+   (previous_status recorded from the row's post-update state instead of pre-update) was caught and
+   fixed before this reached E, with the canonical test's own Section (f) written specifically to
+   catch a recurrence, not just confirm a transition happened. **No frontend exists yet** — that's
+   the in-progress next piece; the module is not usable until it ships. See `HANDOFF.md`'s matching
+   2026-09-23 entry for full detail.
 9. **Engineering/Product Development module first release (D14) — NOT STARTED.** Same gating as
    stage 8. Design doc: `PRODUCT_ENGINEERING_MODULE_DESIGN.md`.
 
