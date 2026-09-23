@@ -184,9 +184,15 @@ begin
   -- actually write the right rows," which is what this section checks.
   perform set_config('role', 'postgres', true);
 
-  select count(*) into row_count from public.workspaces where id = new_workspace_id and status = 'active';
+  -- 2026-09-22 (migration 196): approve_company_signup now creates the
+  -- workspace as 'pending', not 'active' -- activation is deferred until
+  -- its owner actually accepts (migration 196's own canonical test
+  -- proves the full pending -> active transition, atomically with the
+  -- founding membership row). This assertion follows that legitimate,
+  -- reviewed behavior change rather than asserting the superseded one.
+  select count(*) into row_count from public.workspaces where id = new_workspace_id and status = 'pending';
   if row_count is distinct from 1 then
-    raise exception 'TEST FAILED: approve_company_signup did not create an active workspaces row (% rows)', row_count;
+    raise exception 'TEST FAILED: approve_company_signup did not create a pending workspaces row (% rows)', row_count;
   end if;
 
   -- Also proves migration 182's own workspaces_seed_default_branding
@@ -299,10 +305,13 @@ begin
   end if;
 
   -- Re-using the same (now-used) token: a safe no-op, not a second row
-  -- and not an error.
+  -- and not an error. 2026-09-22 (migration 196): the generic
+  -- 'not_found_or_already_used' outcome was split into distinct,
+  -- specific outcomes (see migration 196's own canonical test) -- this
+  -- reuse case now reports 'already_used' precisely.
   select outcome, joined_workspace_id into outcome_text, outcome_workspace_id from public.accept_company_signup(issued_token);
-  if outcome_text is distinct from 'not_found_or_already_used' then
-    raise exception 'TEST FAILED: re-using an already-accepted token did not report not_found_or_already_used (got %)', outcome_text;
+  if outcome_text is distinct from 'already_used' then
+    raise exception 'TEST FAILED: re-using an already-accepted token did not report already_used (got %)', outcome_text;
   end if;
 
   select count(*) into row_count from public.workspace_members where user_id = prospect_id;

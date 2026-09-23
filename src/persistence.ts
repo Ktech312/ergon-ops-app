@@ -1529,9 +1529,16 @@ export async function requestCompanySignup(companyName: string, requesterName: s
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ companyName, requesterName, requesterEmail }),
   });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}) as { error?: string });
-    throw new Error(body.error || "Could not submit this signup request.");
+  const body = await response.json().catch(() => ({}) as { error?: string; submitted?: boolean; reason?: string });
+  // api/request-company-signup.js deliberately returns a 200 with
+  // submitted:false (not a 4xx/5xx) when Supabase env vars are missing,
+  // so a misconfigured deploy doesn't look like a validation error to the
+  // caller -- but that means response.ok alone is NOT sufficient proof
+  // anything was actually submitted. A real bug, found live-testing this
+  // feature (2026-09-22): the public form showed "Request received" even
+  // when nothing had been. Fixed by requiring submitted === true too.
+  if (!response.ok || body.submitted !== true) {
+    throw new Error(body.error || body.reason || "Could not submit this signup request.");
   }
 }
 

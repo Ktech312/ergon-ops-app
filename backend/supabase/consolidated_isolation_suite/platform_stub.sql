@@ -42,7 +42,15 @@ create table auth.users (
   id uuid primary key default gen_random_uuid(),
   email text unique,
   raw_user_meta_data jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Defaults to confirmed (now()) -- every existing canonical test across
+  -- the whole suite creates synthetic users via a plain `insert into
+  -- auth.users (id, email) values (...)` with no email_confirmed_at
+  -- named, and none of the other 195 migrations' worth of tests care
+  -- about confirmation state. Migration 196's own test is the only one
+  -- that needs an explicitly UNCONFIRMED user, and sets this to null
+  -- itself for that one fixture row.
+  email_confirmed_at timestamptz default now()
 );
 
 create or replace function auth.uid() returns uuid
