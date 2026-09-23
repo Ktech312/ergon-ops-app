@@ -19420,13 +19420,23 @@ function WelcomeSlideshow({
 // Approvals -- matches approve_company_signup/reject_company_signup's
 // own is_app_admin()-only server-side gate exactly (E: "I must approve
 // each company").
+// The signup link is derived from signupToken directly, not cached in
+// component state -- see this component's own comment below for the bug
+// that discipline closes (found live-testing this feature, 2026-09-22).
+function companySignupLinkFor(request: CompanySignupRequest): string | null {
+  if (!request.signupToken || request.signupTokenUsedAt) {
+    return null;
+  }
+  return `${window.location.origin}${window.location.pathname}?company-signup=${request.signupToken}`;
+}
+
 function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: string; isAdmin: boolean }) {
   const [requests, setRequests] = useState<CompanySignupRequest[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState("");
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-  const [approvedLinks, setApprovedLinks] = useState<Record<string, string>>({});
+  const [justApprovedId, setJustApprovedId] = useState<string | null>(null);
 
   async function refresh() {
     const rows = await loadCompanySignupRequests(accessToken);
@@ -19448,9 +19458,8 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
   async function handleApprove(requestId: string) {
     setStatus("Approving...");
     try {
-      const result = await approveCompanySignupRequest(requestId, accessToken);
-      const link = `${window.location.origin}${window.location.pathname}?company-signup=${result.signupToken}`;
-      setApprovedLinks((current) => ({ ...current, [requestId]: link }));
+      await approveCompanySignupRequest(requestId, accessToken);
+      setJustApprovedId(requestId);
       setStatus("Approved -- copy the link below and send it to them.");
       await refresh();
     } catch (error) {
@@ -19509,20 +19518,6 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
                     <button className="secondary-action mini-action" type="button" onClick={() => setRejectingId(request.id)}>Reject</button>
                   </>
                 )}
-                {approvedLinks[request.id] && (
-                  <div className="channel-guest-link-row">
-                    <input readOnly value={approvedLinks[request.id]} onFocus={(event) => event.currentTarget.select()} />
-                    <button
-                      className="icon-button"
-                      type="button"
-                      aria-label="Copy signup link"
-                      title="Copy signup link"
-                      onClick={() => navigator.clipboard?.writeText(approvedLinks[request.id]).catch(() => {})}
-                    >
-                      <Copy size={15} />
-                    </button>
-                  </div>
-                )}
               </td>
             </tr>
           ))}
@@ -19534,7 +19529,22 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
         </tbody>
       </table>
       {decided.length > 0 && (
-        <details>
+        // Bug found live-testing this feature (2026-09-22): the copyable
+        // signup link used to render only inside the PENDING row -- which
+        // disappears the instant refresh() runs right after Approve,
+        // making the link functionally unretrievable in practice (an
+        // admin would need to screenshot it in the ~100ms window before
+        // the list re-rendered). Moved to the Decided table instead
+        // (where an approved request actually lives afterward), and
+        // derived straight from the row's own signupToken/
+        // signupTokenUsedAt (companySignupLinkFor, above) rather than
+        // cached in ephemeral component state -- the token is already
+        // admin-visible via this same table's own RLS, so nothing new is
+        // exposed, and the link survives a page reload instead of being
+        // lost the moment React re-renders. This <details> defaults open
+        // right after an approval so it doesn't look like nothing
+        // happened.
+        <details open={justApprovedId !== null}>
           <summary>Decided ({decided.length})</summary>
           <table className="stack-table-mobile">
             <thead>
@@ -19543,17 +19553,39 @@ function CompanySignupRequestsPanel({ accessToken, isAdmin }: { accessToken?: st
                 <th>Requested by</th>
                 <th>Status</th>
                 <th>Reviewed</th>
+                <th>Signup link</th>
               </tr>
             </thead>
             <tbody>
-              {decided.map((request) => (
+              {decided.map((request) => {
+                const link = companySignupLinkFor(request);
+                return (
                 <tr key={request.id}>
                   <td>{request.companyName}</td>
                   <td data-label="Requested by">{request.requesterEmail}</td>
                   <td data-label="Status"><span className={`status ${request.status === "approved" ? "ok" : "warn"}`}>{request.status}</span></td>
                   <td data-label="Reviewed">{request.reviewedAt ? new Date(request.reviewedAt).toLocaleString() : ""}</td>
+                  <td data-label="Signup link">
+                    {link ? (
+                      <div className="channel-guest-link-row">
+                        <input readOnly value={link} onFocus={(event) => event.currentTarget.select()} />
+                        <button
+                          className="icon-button"
+                          type="button"
+                          aria-label="Copy signup link"
+                          title="Copy signup link"
+                          onClick={() => navigator.clipboard?.writeText(link).catch(() => {})}
+                        >
+                          <Copy size={15} />
+                        </button>
+                      </div>
+                    ) : request.status === "approved" ? (
+                      <span className="muted">Already used to finish signing up.</span>
+                    ) : null}
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </details>

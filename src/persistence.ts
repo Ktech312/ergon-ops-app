@@ -1430,6 +1430,12 @@ export type CompanySignupRequest = {
   reviewedAt: string | null;
   rejectionReason: string | null;
   createdWorkspaceId: string | null;
+  // Included (RLS already restricts this whole table to is_app_admin(),
+  // same exposure level as everything else in it) specifically so the
+  // accept link can be reconstructed on reload -- see
+  // CompanySignupRequestsPanel's own comment for the bug this closes.
+  signupToken: string | null;
+  signupTokenUsedAt: string | null;
   createdAt: string;
 };
 
@@ -1443,6 +1449,8 @@ type CompanySignupRequestRow = {
   reviewed_at: string | null;
   rejection_reason: string | null;
   created_workspace_id: string | null;
+  signup_token: string | null;
+  signup_token_used_at: string | null;
   created_at: string;
 };
 
@@ -1457,6 +1465,8 @@ function mapCompanySignupRequestRow(row: CompanySignupRequestRow): CompanySignup
     reviewedAt: row.reviewed_at,
     rejectionReason: row.rejection_reason,
     createdWorkspaceId: row.created_workspace_id,
+    signupToken: row.signup_token,
+    signupTokenUsedAt: row.signup_token_used_at,
     createdAt: row.created_at,
   };
 }
