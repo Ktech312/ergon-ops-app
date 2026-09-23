@@ -211,16 +211,29 @@ full `vitest` suite run alongside it.
 194, 195 tests all ran good").* **Do not run migration 195 or its canonical test again.** The
 `api/request-company-signup.js` API route shipped automatically with the same push (Vercel
 deployment, not something run in Supabase -- confirmed no action needed there after E briefly tried
-running it as SQL and got the expected "not SQL" syntax error). **Deliberately incomplete on
-purpose, still.** Frontend is the next real piece of work, not started yet: a public signup page calling
-`/api/request-company-signup`, an Admin panel "Company Signup Requests" review queue (list +
-Approve/Reject, wired to `company_signup_requests` REST reads + `approve_company_signup`/
-`reject_company_signup` RPCs), and an accept-landing page (`?company-signup=<token>`, mirroring
-`ChannelGuestLandingPage`'s exact shape) to complete the loop. Also flagged, not built: seeding a
-brand-new company's catalog/schedule-templates/notification-rules is deliberately NOT done by this
-migration (per E's own "different industries" decision -- copying Ergon Test Workspace's specific
-AV-industry data into a stranger's company would be wrong), so a freshly accepted company lands in a
-genuinely empty operational-config state today, honest but not yet polished onboarding.
+running it as SQL and got the expected "not SQL" syntax error).
+
+**Frontend built and confirmed live the same night (`e9729ea`)**: a public signup page (`?request-
+company`, POSTs to `/api/request-company-signup`), a platform-admin-only "Company Signup Requests"
+review panel at the top of Admin (list + Approve/Reject, copies the accept link the same way guest
+invites already do -- no reliable email-sending infra exists in this app), and the accept-landing
+page (`?company-signup=<token>`, mirrors `ChannelGuestLandingPage`'s exact shape, including the
+confirm-email deferred-application path via `handleSignIn`). `CompanySignupRequestsPanel` is self-
+contained (its own load-on-mount + approve/reject handlers, just `accessToken`+`isAdmin` props)
+rather than prop-drilled through `App` like `AdminPage`'s other ~50 sections. Verified directly
+against the live production bundle after deploy (`index-B7K6zLni.js`, confirmed via fetch that it
+actually contains the new code, not just that the push succeeded): `?request-company` renders the
+form; `?company-signup=<bogus-token>` gracefully shows "Signup link not found"; the Admin panel
+shows "Company Signup Requests" at the top with a correct empty state and no console errors beyond
+two pre-existing, unrelated background-sync 400s already documented elsewhere in this file. tsc/
+build/vitest all clean (510 tests, unchanged -- no new test file, same precedent as every other DOM-
+behavior UI addition in this repo).
+
+**Still flagged, not built, deliberately**: seeding a brand-new company's catalog/schedule-templates/
+notification-rules is deliberately NOT done by migration 195 (per E's own "different industries"
+decision -- copying Ergon Test Workspace's specific AV-industry data into a stranger's company would
+be wrong), so a freshly accepted company lands in a genuinely empty operational-config state today,
+honest but not yet polished onboarding.
 
 ## Next coder session
 
