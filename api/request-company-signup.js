@@ -21,6 +21,8 @@
 // which doesn't exist for an anonymous signup request).
 
 import { checkRateLimit } from "./_lib/rateLimit.js";
+import { sendEmail } from "./_lib/mailer.js";
+import { recordSystemHealthEventServerSide } from "./_lib/systemHealth.js";
 
 const MAX_LENGTH = { companyName: 200, requesterName: 200, requesterEmail: 320 };
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -98,5 +100,99 @@ export default async function handler(req, res) {
     return;
   }
 
+  const requestId = await response.json();
+
+  // Item 7 of the login-page redesign spec: notify platform admins, never
+  // ordinary company admins. The request itself already succeeded above
+  // (submitted:true is earned) -- nothing from here down may ever change
+  // that response, so this is awaited (a Vercel serverless function's
+  // execution can be frozen the instant the response is sent -- a
+  // fire-and-forget call here could simply never run) but wrapped in its
+  // own try/catch so a genuinely unexpected failure still can't turn a
+  // successful submission into an error response. A mail failure
+  // specifically must not lose the request; it stays visible in the
+  // platform queue (CompanySignupRequestsPanel already reads every
+  // 'pending' row directly, independent of whether a notification ever
+  // went out) and is recorded to System Health instead of silently
+  // swallowed.
+  try {
+    await notifyPlatformAdmins({ supabaseUrl, serviceRoleKey, requestId, companyName: companyName.trim(), requesterName: requesterName.trim(), requesterEmail: normalizedEmail });
+  } catch (error) {
+    console.error("[request-company-signup] notifyPlatformAdmins unexpected failure:", error instanceof Error ? error.message : error);
+  }
+
   res.status(200).json({ submitted: true });
+}
+
+async function notifyPlatformAdmins({ supabaseUrl, serviceRoleKey, requestId, companyName, requesterName, requesterEmail }) {
+  const adminRowsResponse = await fetch(`${supabaseUrl}/rest/v1/rpc/get_platform_admin_emails`, {
+    method: "POST",
+    headers: { apikey: serviceRoleKey, authorization: `Bearer ${serviceRoleKey}`, "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+
+  if (!adminRowsResponse.ok) {
+    await recordSystemHealthEventServerSide({
+      surface: "company_signup_notification",
+      entityType: "company_signup_request",
+      entityId: typeof requestId === "string" ? requestId : null,
+      failureReasonCode: "platform_admin_email_lookup_failed",
+      severity: "degraded",
+      safeDetail: { status: adminRowsResponse.status },
+    });
+    return;
+  }
+
+  const adminRows = await adminRowsResponse.json();
+  const adminEmails = Array.isArray(adminRows) ? adminRows.map((row) => row.email).filter(Boolean) : [];
+  if (adminEmails.length === 0) {
+    return;
+  }
+
+  const title = "New company signup request";
+  const body = `${requesterName} (${requesterEmail}) requested a new company account for "${companyName}". Review it in Ergon Platform -> Company Signup Requests.`;
+
+  for (const email of adminEmails) {
+    await fetch(`${supabaseUrl}/rest/v1/notifications`, {
+      method: "POST",
+      headers: {
+        apikey: serviceRoleKey,
+        authorization: `Bearer ${serviceRoleKey}`,
+        "content-type": "application/json",
+        prefer: "return=minimal,resolution=ignore-duplicates",
+      },
+      body: JSON.stringify({
+        recipient_email: email,
+        event_type: "company_signup_requested",
+        title,
+        body,
+        related_entity_type: "company_signup_request",
+        related_entity_id: requestId,
+        dedupe_key: `company_signup_requested:${requestId}:${email.toLowerCase()}`,
+      }),
+    }).catch(() => undefined);
+  }
+
+  const emailResults = await Promise.all(
+    adminEmails.map((email) =>
+      sendEmail({
+        to: email,
+        subject: title,
+        html: `<p>${body}</p>`,
+        fromName: "Ergon Ops",
+      }),
+    ),
+  );
+
+  const failures = emailResults.filter((result) => !result.sent);
+  if (failures.length > 0) {
+    await recordSystemHealthEventServerSide({
+      surface: "company_signup_notification",
+      entityType: "company_signup_request",
+      entityId: typeof requestId === "string" ? requestId : null,
+      failureReasonCode: "email_send_failed",
+      severity: "degraded",
+      safeDetail: { failedCount: failures.length, totalRecipients: adminEmails.length, reasons: failures.map((f) => f.error || f.reason || "unknown") },
+    });
+  }
 }

@@ -43,6 +43,7 @@ export function computeNextProjectRef(existingRefs: string[], year: number): str
 
 const LOCAL_STATE_KEY = "ergon:app-state:v1";
 const AUTH_SESSION_KEY = "ergon:auth-session:v1";
+const AUTH_REMEMBER_HINT_KEY = "ergon:auth-remember-hint:v1";
 const WORKSPACE_KEY = "default";
 const STATE_KEYS: Array<keyof PersistedAppState> = ["roleMode"];
 
@@ -605,21 +606,76 @@ export function saveLocalAppState(state: PersistedAppState) {
   window.localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(state));
 }
 
+// Remember me (Stage 7 login redesign, 2026-09-22): checked persists the
+// session in localStorage (survives closing the browser); unchecked
+// persists it only in sessionStorage (ends when this tab/browser session
+// closes). loadAuthSession checks localStorage first so a session saved
+// before this change (always localStorage) keeps loading correctly --
+// nobody gets silently signed out by this deployment.
 export function loadAuthSession(): AuthSession | null {
   try {
-    const raw = window.localStorage.getItem(AUTH_SESSION_KEY);
-    return raw ? (JSON.parse(raw) as AuthSession) : null;
+    const fromLocal = window.localStorage.getItem(AUTH_SESSION_KEY);
+    if (fromLocal) {
+      return JSON.parse(fromLocal) as AuthSession;
+    }
+  } catch {
+    // fall through to sessionStorage
+  }
+  try {
+    const fromSession = window.sessionStorage.getItem(AUTH_SESSION_KEY);
+    return fromSession ? (JSON.parse(fromSession) as AuthSession) : null;
   } catch {
     return null;
   }
 }
 
-export function saveAuthSession(session: AuthSession | null) {
+// `remember` left undefined (refreshAuthSession, signUpWithPassword) means
+// "keep whatever storage already holds a session" -- a refresh must never
+// silently upgrade a session-only sign-in into a remembered one or vice
+// versa. Only an explicit true/false (the login checkbox, or the OAuth
+// redirect hint below) changes which storage is used.
+function isCurrentAuthSessionRemembered(): boolean {
+  try {
+    if (window.sessionStorage.getItem(AUTH_SESSION_KEY) !== null) {
+      return false;
+    }
+  } catch {
+    // ignore -- fall through to the localStorage-remembered default
+  }
+  return true;
+}
+
+export function saveAuthSession(session: AuthSession | null, remember?: boolean) {
   if (!session) {
-    window.localStorage.removeItem(AUTH_SESSION_KEY);
+    try {
+      window.localStorage.removeItem(AUTH_SESSION_KEY);
+    } catch {
+      // ignore
+    }
+    try {
+      window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+    } catch {
+      // ignore
+    }
     return;
   }
-  window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+  const rememberSession = remember ?? isCurrentAuthSessionRemembered();
+  const serialized = JSON.stringify(session);
+  if (rememberSession) {
+    try {
+      window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+    } catch {
+      // ignore
+    }
+    window.localStorage.setItem(AUTH_SESSION_KEY, serialized);
+  } else {
+    try {
+      window.localStorage.removeItem(AUTH_SESSION_KEY);
+    } catch {
+      // ignore
+    }
+    window.sessionStorage.setItem(AUTH_SESSION_KEY, serialized);
+  }
 }
 
 function normalizeAuthSession(payload: {
@@ -641,7 +697,7 @@ function normalizeAuthSession(payload: {
   };
 }
 
-export async function signInWithPassword(email: string, password: string): Promise<AuthSession> {
+export async function signInWithPassword(email: string, password: string, remember: boolean = false): Promise<AuthSession> {
   const response = await fetch(supabaseAuthUrl("token?grant_type=password"), {
     method: "POST",
     headers: supabaseHeaders(),
@@ -653,7 +709,7 @@ export async function signInWithPassword(email: string, password: string): Promi
   }
 
   const session = normalizeAuthSession(await response.json());
-  saveAuthSession(session);
+  saveAuthSession(session, remember);
   return session;
 }
 
@@ -695,9 +751,19 @@ export async function refreshAuthSession(session: AuthSession): Promise<AuthSess
   return refreshed;
 }
 
-export function signInWithGoogleRedirect() {
+export function signInWithGoogleRedirect(remember: boolean = false) {
   if (!isRemotePersistenceConfigured()) {
     throw new Error("Supabase is not configured.");
+  }
+
+  // The remember-me choice can't survive the full-page redirect to Google
+  // as React state, so it's stashed in sessionStorage (tab-scoped, ends up
+  // exactly where this tab was) right before navigating away and consumed
+  // once, on return, by consumeOAuthRedirectSession below.
+  try {
+    window.sessionStorage.setItem(AUTH_REMEMBER_HINT_KEY, remember ? "1" : "0");
+  } catch {
+    // ignore -- worst case the OAuth return defaults to session-only, see below
   }
 
   const redirectTo = `${window.location.origin}${window.location.pathname}`;
@@ -811,7 +877,14 @@ export async function consumeOAuthRedirectSession(): Promise<AuthSession | null>
   };
 
   if (authFlow !== "recovery") {
-    saveAuthSession(session);
+    let remember = false;
+    try {
+      remember = window.sessionStorage.getItem(AUTH_REMEMBER_HINT_KEY) === "1";
+      window.sessionStorage.removeItem(AUTH_REMEMBER_HINT_KEY);
+    } catch {
+      // ignore -- defaults to session-only, the safer of the two to guess wrong
+    }
+    saveAuthSession(session, remember);
   }
   return session;
 }
@@ -824,6 +897,11 @@ export async function signOut(session: AuthSession | null) {
     }).catch(() => undefined);
   }
   saveAuthSession(null);
+  try {
+    window.sessionStorage.removeItem(AUTH_REMEMBER_HINT_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 export async function acquireTransactionLock(lockType: "inventory_item" | "project" | "build" | "purchase_request", lockKey: string, accessToken?: string) {

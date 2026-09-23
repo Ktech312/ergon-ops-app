@@ -1303,6 +1303,9 @@ function App() {
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => loadAuthSession());
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  // Login page redesign (2026-09-22), item 9: defaults unchecked -- an
+  // explicit opt-in to surviving a closed browser, not the default.
+  const [rememberMe, setRememberMe] = useState(false);
   const [authStatus, setAuthStatus] = useState("Sign in to use production cloud persistence.");
   const [passwordResetSession, setPasswordResetSession] = useState<AuthSession | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -7516,7 +7519,7 @@ function App() {
 
   async function handleSignIn() {
     try {
-      const session = await signInWithPassword(authEmail.trim(), authPassword);
+      const session = await signInWithPassword(authEmail.trim(), authPassword, rememberMe);
       // If this account was created from an invite link but the project
       // requires email confirmation, the invite couldn't be applied at
       // signup time (no session existed yet) -- it was stashed instead. Now
@@ -7585,7 +7588,7 @@ function App() {
   function handleGoogleSignIn() {
     try {
       setAuthStatus("Redirecting to Google...");
-      signInWithGoogleRedirect();
+      signInWithGoogleRedirect(rememberMe);
     } catch (error) {
       setAuthStatus(error instanceof Error ? error.message : "Google sign-in is not available yet.");
       setSyncStatus("error");
@@ -7698,23 +7701,98 @@ function App() {
 
   if (requiresSignIn) {
     return (
-      <div className="auth-gate">
-        <div className="auth-gate-card">
-          <img className="auth-gate-logo" src="/ergon-logo.png" alt="Ergon" />
-          <h2>Sign in to continue</h2>
-          <p className="muted">Inventory, purchasing, projects, and reports are only visible after you sign in.</p>
-          <label className="auth-gate-field">Email<input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="you@company.com" type="email" autoComplete="email" /></label>
-          <label className="auth-gate-field">Password<input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Password" type="password" autoComplete="current-password" /></label>
-          <div className="auth-gate-actions">
-            <button className="primary-action" type="button" onClick={handleSignIn} disabled={!authEmail || !authPassword}>Sign in</button>
-            <button className="secondary-action" type="button" onClick={handleSignUp} disabled={!authEmail || !authPassword}>Create user</button>
+      <div className="auth-shell">
+        <div className="auth-brand-panel">
+          <div className="auth-brand-content">
+            <div className="auth-brand-mark">
+              <img src="/ergon-icon.png" alt="" />
+            </div>
+            <div className="auth-brand-wordmark">Ergon</div>
+            <h1 className="auth-brand-headline">Run the whole install business from one place.</h1>
+            <p className="auth-brand-message">
+              Inventory, purchasing, projects, sales, and your team's messages, in one system built for install
+              and integration teams.
+            </p>
+            <ul className="auth-brand-points">
+              <li>Real-time inventory and purchasing</li>
+              <li>Every project tracked from quote to closeout</li>
+              <li>One shared home for your whole team</li>
+            </ul>
           </div>
-          <button className="link-button auth-reset-link" type="button" onClick={() => handleRequestPasswordReset()} disabled={!authEmail.trim()}>
-            Forgot password?
-          </button>
-          <div className="auth-gate-divider">or</div>
-          <button className="secondary-action auth-gate-google" type="button" onClick={handleGoogleSignIn}>Sign in with Google</button>
-          <small className="auth-gate-status">{authStatus}</small>
+        </div>
+        <div className="auth-login-panel">
+          <form
+            className="auth-gate-card auth-login-card"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (authEmail && authPassword) {
+                handleSignIn();
+              }
+            }}
+          >
+            <img className="auth-gate-logo" src="/ergon-logo.png" alt="Ergon" />
+            <h2>Welcome back.</h2>
+            <label className="auth-gate-field">
+              Email address
+              <input
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                placeholder="you@company.com"
+                type="email"
+                autoComplete="email"
+                required
+              />
+            </label>
+            <label className="auth-gate-field">
+              Password
+              <input
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="Password"
+                type="password"
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            <div className="auth-login-row">
+              <label className="auth-remember-field">
+                <input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} />
+                Remember me
+              </label>
+              <button
+                className="link-button auth-reset-link auth-link-tap"
+                type="button"
+                onClick={() => handleRequestPasswordReset()}
+                disabled={!authEmail.trim()}
+              >
+                Forgot password?
+              </button>
+            </div>
+            <button className="primary-action auth-login-submit" type="submit" disabled={!authEmail || !authPassword}>
+              Log in
+            </button>
+            {authStatus && (
+              <p className={`auth-login-status${syncStatus === "error" ? " auth-login-status-error" : ""}`} role={syncStatus === "error" ? "alert" : "status"}>
+                {authStatus}
+              </p>
+            )}
+            <div className="auth-gate-divider">or</div>
+            <button className="secondary-action auth-gate-google" type="button" onClick={handleGoogleSignIn}>
+              Sign in with Google
+            </button>
+            <div className="auth-login-footer">
+              <span className="muted">Need a new business account?</span>
+              <button
+                className="link-button auth-link-tap"
+                type="button"
+                onClick={() => {
+                  window.location.href = "/?request-company";
+                }}
+              >
+                Request new business signup
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     );
@@ -29426,6 +29504,9 @@ function RequestCompanySignupPage() {
       <div className="submittal-public-page">
         <h1>Request received</h1>
         <p>Thanks -- your request to bring <strong>{companyName}</strong> onto Ergon is in review. We'll send you a link to finish setting up your account once it's approved.</p>
+        <button className="link-button auth-link-tap" type="button" onClick={() => { window.location.href = "/"; }}>
+          Back to sign in
+        </button>
       </div>
     );
   }
@@ -29449,6 +29530,9 @@ function RequestCompanySignupPage() {
             onClick={handleSubmit}
           >
             {phase === "submitting" ? "Submitting..." : "Request access"}
+          </button>
+          <button className="link-button auth-link-tap" type="button" onClick={() => { window.location.href = "/"; }}>
+            Back to sign in
           </button>
         </div>
       </section>

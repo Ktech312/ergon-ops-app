@@ -526,6 +526,143 @@ correctly); the per-company Admin page shows no Company Signup Requests panel at
 accessibility-tree search finding zero matches. **Do not run migration 198 or its canonical test
 again.**
 
+## 2026-09-23: branded login page redesign + honest Remember Me + real platform-admin signup notifications (migration 199, sent, not yet applied)
+
+E's own numbered spec, in full, right after confirming migration 198's application:
+
+> Add this as the next Stage 7 onboarding batch... Replace the current signed-out authentication
+> card with a properly branded Ergon login landing page based on the attached layout reference.
+> [12 numbered requirements: desktop split layout using Ergon's own logo/colors/message, not the
+> reference's blue/placeholder styling; mobile/tablet collapses to one card, Ergon identity visible,
+> no horizontal overflow, 44px touch targets; a real "Welcome back." login card (email, password,
+> Remember me, Forgot password, primary Log in, Enter submits, visible accessible failure message,
+> email/password stays primary); remove the generic Create user button from the normal login page --
+> ordinary employee accounts come from invitations, founding-company accounts from an approved
+> business-signup link; replace "Sign up" with "Need a new business account? / Request new business
+> signup", opening the existing request flow without typing `?request-company`; reuse the existing
+> request flow as-is (no Auth account/workspace at request time); make "Send me the request" real --
+> durable in-app notification for platform admins, email to the configured platform-admin address via
+> existing server-owned infra, a mail failure must not lose the request (record to System Health,
+> stay visible in the queue), never notify ordinary company admins; approval stays the existing
+> hardened migration 195-198 flow, untouched; Remember Me implemented honestly (localStorage when
+> checked, sessionStorage when unchecked, never the password, loadAuthSession/refresh/OAuth-return/
+> sign-out all correct, defaults unchecked, existing localStorage sessions keep loading); Google login
+> stays secondary below an "or" divider; regression coverage for all of the above; verify the signed-
+> out production experience at desktop and mobile widths after deployment, confirm a real request
+> reaches the real queue without approving or creating another test workspace. Update every handoff
+> document, then continue directly with the next Stage 7 configuration item.]
+
+**Login screen** (`main.tsx`'s `requiresSignIn` branch, `styles.css`): rebuilt as a dedicated
+two-panel `.auth-shell` (left `.auth-brand-panel` -- Ergon's own established brand-red gradient,
+already used by `.primary-action`/`.view-mode-tab.active`, not a new color; `/ergon-icon.png` in a
+white chip plus an HTML "Ergon" wordmark, not the raw logo file directly on a dark background, since
+`ergon-logo.png`'s own wordmark is dark maroon and would vanish there; original product copy, not
+the reference's text -- right `.auth-login-card`, a real `<form>` so Enter submits natively).
+Deliberately built as NEW classes, not a rewrite of `.auth-gate`/`.auth-gate-card` -- those stay
+exactly as they were for the password-reset/checking-account/waiting-for-approval screens, which
+still use them unchanged; the login card reuses `.auth-gate-card`'s own box chrome via a second
+class on the same element rather than duplicating it. Below 900px `.auth-brand-panel` hides
+entirely and the card centers alone, matching item 2's "mobile/tablet" wording (broader than this
+app's usual 760px phone-only breakpoint). The failure message uses `role="alert"` specifically when
+`syncStatus === "error"` and `role="status"` otherwise (verified live: a real failed sign-in against
+production Supabase Auth rendered `role="alert"` with the real "Invalid login credentials" text, in
+the established `.error-text` red `#9a2f20`). "Create user" is gone from this screen; the function
+itself (`handleSignUp`) still exists for a second, unrelated, dev-only fallback sign-in widget in the
+account menu (only reachable when Supabase isn't configured at all, i.e. never in production) --
+left untouched, out of scope, not the "normal login page" E's spec named. "Request new business
+signup" does a real `window.location.href = "/?request-company"` navigation (this app's own
+established pattern for reaching a query-param-gated page, e.g. `RequestCompanySignupPage` itself
+already existed and needed zero logic changes) -- verified live: click navigates, form submits,
+shows "Request received." A "Back to sign in" link was added to `RequestCompanySignupPage` (both its
+form and its done state) since the redesign now makes that page reachable without ever having typed
+a URL, and it previously had no way back except the browser's own back button. 44px touch targets
+confirmed via direct `getBoundingClientRect()` checks at 375px width (the Log in and Google buttons
+needed an explicit `min-height: 44px` override once measured at 40px -- fixed with
+`.auth-login-card .auth-login-submit`/`.auth-login-panel .auth-gate-google`, both scoped narrowly
+enough to avoid changing `.primary-action`/`.secondary-action`'s own 40px sitewide default). No
+horizontal overflow confirmed via `scrollWidth`/`clientWidth` equality at 375px.
+
+**Remember Me** (`persistence.ts`): `AUTH_SESSION_KEY` unchanged (`"ergon:auth-session:v1"`);
+`saveAuthSession(session, remember?)` now writes to `localStorage` when `remember` is `true`,
+`sessionStorage` when `false`, always clearing the OTHER storage's copy first so the two can never
+disagree; when `remember` is omitted (every internal call site except the login form itself --
+`refreshAuthSession`, `signUpWithPassword`) it auto-detects and PRESERVES whichever storage already
+holds a session (a token refresh must never silently upgrade a session-only sign-in into a
+remembered one or the reverse), defaulting to `localStorage` only when neither exists yet (matches
+this app's entire pre-existing behavior for a first-time case). `loadAuthSession()` checks
+`localStorage` first, `sessionStorage` second -- an already-remembered session from before this
+deployment keeps loading exactly as before, nobody gets silently signed out. `signInWithPassword`
+gained a third `remember` parameter (default `false`, matching the checkbox's own unchecked
+default). Google OAuth needed its own mechanism since the choice can't survive a full-page redirect
+as React state: `signInWithGoogleRedirect(remember)` stashes `"1"`/`"0"` in a new, dedicated
+`sessionStorage` key (`AUTH_REMEMBER_HINT_KEY`, tab-scoped, survives the redirect to Google and
+back) immediately before navigating away; `consumeOAuthRedirectSession()` reads and clears that hint
+on return and passes it through explicitly. `signOut()` now clears both storages plus the leftover
+hint key, unconditionally.
+
+**Platform-admin signup notifications** -- migration 199 (`get_platform_admin_emails()`), plus
+`api/request-company-signup.js`: mirrors `get_admin_emails()` (migration 123) exactly, but resolves
+`platform_admins`, never `app_admins` -- conflating those two was this session's own earlier,
+already-corrected security mistake (migration 196), and reusing `get_admin_emails()` here would have
+repeated it silently. Deliberately NOT granted to `authenticated` or `anon` at all (unlike
+`get_admin_emails()`, which is) -- platform admin emails are the whole platform's contact list, with
+no reason to be resolvable by any signed-in user; the only real caller is
+`request-company-signup.js`'s service-role connection, matching `submit_company_signup_request()`'s
+own grantless posture. The existing `/api/create-notification` route couldn't be reused here at all
+-- it hard-requires `requireAuth`, and this flow is genuinely anonymous (a prospect with no Ergon
+account yet) -- so the new `notifyPlatformAdmins()` helper writes the `notifications` row and calls
+`sendEmail()` (`_lib/mailer.js`) directly, the same "already in the same Node process, no reason for
+an extra HTTP hop" reasoning `_lib/systemHealth.js` already established for System Health's own
+alert emails. A real bug caught before it shipped: the first draft called
+`notifyPlatformAdmins(...).catch(...)` WITHOUT awaiting it before responding -- a Vercel serverless
+function's execution can be frozen the instant the response is sent, so a genuinely fire-and-forget
+call there could simply never run at all. Fixed to `await` it inside the route's own try/catch, so
+it still can't turn a successful submission into an error response, but now actually completes.
+Mail-delivery failure (the real, natural case in this test environment -- no `GMAIL_USER`/
+`RESEND_API_KEY` configured, `sendEmail`'s own honest "not configured" branch) and a failed
+admin-email lookup both record to `record_system_health_event` (`surface:
+"company_signup_notification"`, `entityId` the real request id) rather than being silently dropped
+-- and neither ever changes the `{submitted:true}` response the request itself already earned.
+
+**Tests**: `src/auth-session-persistence.test.ts` (20 tests) -- the full remember-me storage matrix
+directly against `persistence.ts` (both explicit directions, the omitted-remember preserve-existing
+behavior for refresh, legacy-localStorage-still-loads, sign-out clearing both stores including after
+a failed logout network call, and the OAuth remember-hint round trip, working around jsdom's
+non-configurable `window.location.assign` by letting its real "Not implemented: navigation" throw
+past the point where the hint is already written, rather than trying to mock navigation itself).
+`tests/api/request-company-signup.test.js` gained a new "platform-admin notification routing"
+`describe` block (5 tests): one notification row per real platform admin with the correct
+event_type/related_entity_id; `get_admin_emails` (ordinary company admins) is never called, only
+`get_platform_admin_emails`; zero admins found does nothing and doesn't crash; a mail-send failure
+and an admin-lookup failure each still return `submitted:true` while recording the correct System
+Health failure_reason_code. **Deliberately NOT covered by an automated test**: rendering the actual
+login-screen JSX (no visible Create-user button, real keyboard Enter-to-submit, the live
+`role="alert"` DOM attribute, business-signup click-through) -- `main.tsx` executes a real
+`createRoot(...).render(...)` at module scope in its own last few lines, so importing it in a test
+at all would attempt a real DOM render immediately; doing this properly would mean pulling
+`App`/`RequestCompanySignupPage`/etc. into their own module first, a structural refactor well beyond
+this batch's actual scope, not attempted here. Verified those specific behaviors live instead, in a
+real browser against a temporary local `.env.local` pointed at production's own public (client-
+exposed anyway) Supabase URL/anon key, deleted again immediately after: desktop two-panel screenshot,
+mobile 375px screenshot (single card, Ergon identity visible, no horizontal overflow), a real failed
+sign-in round-trip showing the accessible error, `getBoundingClientRect()` checks for the 44px
+targets, and a full click-through to the business-signup form and back. Full consolidated isolation
+suite (migrations 001-199): **65/65 passed** (one real test-fixture bug fixed during development --
+the seed data's own real platform admin had no guaranteed `app_known_users` row, so migration 199's
+test now builds fully synthetic fixtures instead of depending on it). `npx tsc -b` and
+`npx vite build` both clean.
+
+**Migration 199 has NOT yet been applied to production** -- sent as the next single Supabase action.
+The frontend redesign and Remember Me do not depend on it at all (pure client-side/routing changes)
+and are safe to deploy regardless; only the notification email/in-app row is affected until it runs
+-- and that failure path is itself already handled gracefully (System Health, not a crash or a lost
+request), per the design above. **Do not mark this section "applied" until E has actually run it and
+confirmed the canonical test's final notice.** Once confirmed: verify live in production at desktop
+and mobile widths, and submit one real `ZZ Test`-prefixed business-signup request through the actual
+public form to confirm it reaches the real Ergon Platform queue and a real platform-admin
+notification/email attempt fires -- without approving it or creating another test workspace, per
+E's own explicit instruction.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly

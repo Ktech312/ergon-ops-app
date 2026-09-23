@@ -101,11 +101,17 @@ onboarding path, migrations 195-197, fully live in production, plus a genuinely 
 `is_platform_admin()`-gated "Ergon Platform" console (relocated out of the per-company Admin page)
 for reviewing signup requests and managing companies. That console gained real company lifecycle
 controls the same night — Suspend/Reactivate, each requiring an explicit reason and recorded to a
-durable audit log, migration 198 (canonical test passing locally, application to production
-pending as of this entry) — the natural next step once "approve a company" existed: an approved
-company now also needs a reversible way to pause it without deleting any data. Hard deletion was
-explicitly NOT built (no retention/deletion-policy decision exists yet). See `HANDOFF.md`'s
-same-night dated entries and `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 7 for full detail — this
+durable audit log, migration 198 (applied and confirmed live) — the natural next step once "approve
+a company" existed: an approved company now also needs a reversible way to pause it without
+deleting any data. Hard deletion was explicitly NOT built (no retention/deletion-policy decision
+exists yet). **2026-09-23 follow-up**: the signed-out screen itself was rebuilt into a real branded
+login/signup landing page (removing the generic "Create user" button entirely — ordinary accounts
+now only ever come from an invitation or an approved business-signup link, matching decision 1's own
+Teams/QuickBooks framing), Remember Me was implemented honestly (localStorage vs. sessionStorage,
+never the password), and the public signup request now actually notifies real platform admins
+(migration 199, canonical test passing locally, application to production pending as of this entry)
+instead of silently landing in the queue with no signal. See `HANDOFF.md`'s same-night dated entries
+and `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 item 7 for full detail — this
 document remains the design record for what's still genuinely undecided (starter
 configurations/role vocabulary/module enablement below), not a status tracker; check those two
 files for current status before treating any section below as still purely hypothetical.

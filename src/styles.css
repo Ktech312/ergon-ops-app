@@ -580,6 +580,184 @@ button {
   text-align: center;
 }
 
+/* Login page redesign (Stage 7, 2026-09-22) -- a dedicated two-panel
+   shell for the sign-in screen specifically. Deliberately NOT built on
+   .auth-gate (kept exactly as-is for the password-reset/checking-account/
+   waiting-for-approval screens, which still use it unchanged) -- .auth-shell
+   replaces it only for this one screen. The login card itself reuses
+   .auth-gate-card's own box chrome (background/border/radius/shadow/
+   padding) via a second class on the same element, so this block only
+   adds what's actually new. */
+
+.auth-shell {
+  align-items: stretch;
+  display: flex;
+  min-height: 100vh;
+}
+
+.auth-brand-panel {
+  align-items: center;
+  background:
+    radial-gradient(circle at 15% 12%, rgba(255, 150, 110, 0.28), transparent 46%),
+    linear-gradient(160deg, #3c0d08 0%, #6a1512 22%, #8a1c22 46%, #a01029 68%, #7f1a1f 100%);
+  display: flex;
+  flex: 1 1 46%;
+  justify-content: center;
+  padding: 48px;
+}
+
+.auth-brand-content {
+  color: white;
+  display: grid;
+  gap: 18px;
+  max-width: 420px;
+}
+
+.auth-brand-mark {
+  align-items: center;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  display: flex;
+  height: 56px;
+  justify-content: center;
+  padding: 10px;
+  width: 56px;
+}
+
+.auth-brand-mark img {
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.auth-brand-wordmark {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  margin: -6px 0 0;
+  text-transform: uppercase;
+}
+
+.auth-brand-headline {
+  font-size: 32px;
+  line-height: 1.15;
+  margin: 8px 0 0;
+}
+
+.auth-brand-message {
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.auth-brand-points {
+  display: grid;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.auth-brand-points li {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.auth-brand-points li::before {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  content: "";
+  flex: none;
+  height: 6px;
+  width: 6px;
+}
+
+.auth-login-panel {
+  align-items: center;
+  display: flex;
+  flex: 1 1 54%;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-login-card {
+  max-width: 400px;
+}
+
+.auth-login-row {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.auth-remember-field {
+  align-items: center;
+  color: #514b43;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.auth-remember-field input {
+  height: 18px;
+  width: 18px;
+}
+
+.auth-link-tap {
+  align-items: center;
+  display: inline-flex;
+  min-height: 44px;
+}
+
+.auth-login-card .auth-login-submit {
+  min-height: 44px;
+  width: 100%;
+}
+
+.auth-login-panel .auth-gate-google {
+  min-height: 44px;
+}
+
+.auth-login-status {
+  color: #3f3a30;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+  text-align: center;
+}
+
+.auth-login-status-error {
+  color: #9a2f20;
+}
+
+.auth-login-footer {
+  align-items: center;
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  margin-top: 4px;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .auth-brand-panel {
+    display: none;
+  }
+
+  .auth-login-panel {
+    padding: 24px 16px;
+  }
+}
+
 .top-nav {
   background: rgba(255, 255, 255, 0.92);
   border-bottom: 1px solid #ded7cb;

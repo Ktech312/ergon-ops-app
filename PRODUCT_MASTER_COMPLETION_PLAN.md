@@ -1505,6 +1505,23 @@ there, not an oversight.
    against E's own numbered review, and for the confirmation status (update both once E has actually
    run migration 198 in production).
 
+   **Branded login/signup landing page + honest Remember Me + real platform-admin signup
+   notifications, 2026-09-23.** The signed-out screen was rebuilt as a two-panel branded login page
+   (Ergon's own brand-red gradient and copy, not a copied reference design), the generic "Create
+   user" button was removed from it (ordinary accounts come from invitations, founding-company
+   accounts from an approved business-signup link only), and a "Request new business signup" link
+   now reaches the existing `RequestCompanySignupPage` without typing `?request-company`. Remember
+   Me is real: checked persists the session in `localStorage`, unchecked in `sessionStorage` only,
+   for password sign-in, Google OAuth (via a redirect-surviving hint), and token refresh alike, with
+   sign-out clearing both. **Migration 199** (`get_platform_admin_emails()`, canonical test passing
+   locally, **not yet applied to production**) closes the last real gap in the self-serve signup
+   path: submitting the public request form now creates a durable in-app notification and attempts
+   an email to every real platform admin (never an ordinary company admin — a dedicated function,
+   deliberately not reusing `get_admin_emails()`, the exact conflation migration 196 already had to
+   correct once), with a mail or lookup failure recorded to System Health rather than silently lost
+   and the request itself never affected either way. See `HANDOFF.md`'s matching 2026-09-23 entry
+   for full detail and the confirmation status.
+
    **Deliberately still open**: seeding a new company's
    catalog/schedule-templates/notification-rules (E's own "different industries" decision — stays
    genuinely empty, not copied from Ergon Test Workspace); the guided wizard itself; company-level
