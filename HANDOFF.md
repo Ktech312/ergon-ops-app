@@ -931,6 +931,25 @@ this already-large batch); no formal structured requirements schema (stays free 
 priced Catalog item need Sales/Manager sign-off too" -- genuinely not decided here, flagged
 honestly rather than silently resolved).
 
+**Deployed and live-verified in production the same night** (`984c10b`; bundle confirmed via the
+close-tab-then-fresh-tab discipline, and via the same "first hash checked was still an intermediate
+deploy" catch as the Support batch earlier tonight -- grepped the actual bundle for
+`product_request_reviewed` before trusting it): the Engineering tab renders correctly; since
+migration 201 is not applied yet, `loadProductRequests` correctly throws instead of silently
+returning an empty list, and the real error ("Could not find the table 'public.product_requests' in
+the schema cache") shows in the UI's own error banner with a Retry button -- direct, live proof the
+load-error-visibility design (the same discipline Support and the Stage 7 login batch both already
+established) works correctly, not just in a unit test; the New Request modal renders every field,
+including the source-project picker populated with real production project names. Console showed
+several pre-existing, unrelated background-sync errors (a stale JWT on an old tab, `projects`/
+`inventory_items` ON CONFLICT write failures) -- confirmed identical to ones already observed while
+verifying the Support module earlier tonight, not caused by this batch, out of scope for it.
+**Migration 201 has NOT yet been applied to production** -- sent as the next single Supabase
+action. Once confirmed: submit one real `ZZ Test`-prefixed product request through the actual UI,
+run it through a technical review and a prototype test, and release it into the catalog, to prove
+the full round-trip end to end the same way migration 199's notification flow was proven twice
+(before and after) earlier tonight.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
