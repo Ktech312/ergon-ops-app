@@ -2188,20 +2188,27 @@ item remains.
 
 ## 10. Start instruction for the next coder
 
-Read this file, then the top current-status entries in `HANDOFF.md`, then
-`PRODUCT_MASTER_COMPLETION_PLAN.md`. **Queue C2 is fully closed** — migrations 137–145 are all applied
-in production and every one has a passing canonical test (including migration 145, which re-applied
-migration 143's view-logging function bodies after a six-round diagnostic investigation confirmed they
-had been recorded as applied but were never actually live — full trail in "Completed and verified").
-Migration 143 itself was NOT edited or rerun. The internal lifecycle controls UI, the Create & Send RPC
-switch, and the version-comparison status badge are all shipped and deployed. **Do not redo, rerun, or
-resend any of this.** Treat A1–A15, B1–B10, C1, and C2.1–C2.7 as completed records, not a queue with
-open items. Move to Queue B/C's other prepared-but-not-implemented items, or a new task from E, for
-the next unit of work.
+**Superseded, 2026-09-23 — do not follow the two paragraphs below; they are a historical record of
+what was true 2026-09-15/16, kept for the trail, not the current instruction.** Migrations 153 and
+154 were both applied and canonically tested long ago (confirmed 2026-09-16 — see
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §8b/§3, D12 and D9 part 2 are both listed FULLY SHIPPED). Do not
+re-send either. Likewise, D13 (Support) and D14 (Engineering) — approved at the time this section was
+last written and listed there as "not yet started" — are now both **fully shipped**: migrations
+200-202 applied and canonically tested in production, both frontends deployed and live-verified
+(`PRODUCT_MASTER_COMPLETION_PLAN.md` §11 items 8-9). Do not re-send or redesign either.
 
-**Update, 2026-09-16 (later same day):** the above remains true and is now further superseded by the
-Queue R2/R3 batch described in the launchpad above (D5/D6/D8/D9/D12/D18) and by
+**Current instruction: read `HANDOFF.md`'s top entries first, then `PRODUCT_MASTER_COMPLETION_PLAN.md`
+in full — that document is the authoritative, always-current roadmap and is kept reconciled against
+production state, not this file.** This file (`CONTINUOUS_CODER_HANDOFF.md`) is the session-by-session
+queue history and the D1-D18 decision register (§8) — read it for context and precedent, not for
+"what's next." For the actual next unit of work, see the authoritative queue in
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §12 (added 2026-09-23) — it names exact files, scope,
+dependencies, acceptance tests, and whether a migration is required, and supersedes any "next step"
+language anywhere else in this file.
+
+*(Historical record, superseded — kept for the trail:)* "The above remains true and is now further
+superseded by the Queue R2/R3 batch described in the launchpad above (D5/D6/D8/D9/D12/D18) and by
 `PRODUCT_MASTER_COMPLETION_PLAN.md`, which is the authoritative current roadmap. The next concrete
-action for the next coder is the manual-action queue in that document's §5: apply migration 153
-(D12), then its canonical test; only after that is confirmed, apply migration 154 (D9 part 2), then
-its canonical test. Both are one-at-a-time Supabase SQL actions for E, not something the coder runs.
+action for the next coder is the manual-action queue in that document's §5: apply migration 153 (D12),
+then its canonical test; only after that is confirmed, apply migration 154 (D9 part 2), then its
+canonical test." — both actions completed 2026-09-16, see above.

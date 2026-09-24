@@ -6,24 +6,17 @@
 > and exact next task. This document is the authoritative, always-current product roadmap: what's
 > live, what's staged, what's left, in what order, and what's explicitly off-limits without E.
 
-Status: **AUTHORITATIVE, RECONCILED 2026-09-17** (D5/D6/D8/D9/D12/D18 shipped; standing authorization
-given for the full Phase 3 rollout, D11/D13/D14 now approved, see §11 — Stages 1 through 4 in full
-(Clients+Sales, Projects+Tasks, Purchasing/Inventory/Vendors/Warehouses, Documents/Shipments/
-Share-links/Storage/Messaging-channels; migrations 155-162) plus the cross-cutting
-`active_workspace_id()` cleanup (migration 158) are all confirmed applied and tested live; Stage 5
-(workspace-scoped uniqueness, reports, aggregates, functions, triggers, remaining indirect access
-paths) scoping is DONE, and its first migration (163, three real RPC workspace-containment gaps found
-during that scoping) is implemented locally and queued as the current manual-action item; a new
-group-DM feature request from E is tracked separately, not part of Phase 3, see §4) against
-`HANDOFF.md`, `CONTINUOUS_CODER_HANDOFF.md` §8's
-full D1-D18 decision register, every applied migration (115
-through 162, plus 163 pending), and
-`PROPOSAL_PDF_AND_ESIGNATURE_DECISION.md`. This is a **corrective** reconciliation, not additive —
-three rows were found drifted from confirmed production state during this pass (see §7). The
-document consolidates every `PRODUCT_*.md` design/audit file into one ordered roadmap; go to the
-named source document for full detail on any one workstream. **No completion dates are stated or
-implied anywhere in this document** — every date is an authoring or decision date, never a
-projection. Priority and ordering reflect risk and dependency, not calendar time.
+Status: **AUTHORITATIVE, RECONCILED 2026-09-23.** Phase 3 RLS Stages 1 through 6 are all complete —
+the full automated cross-workspace isolation suite passed 51/51 (GATE GREEN, 2026-09-22), lifting the
+standing "no second real workspace" stop boundary (§6). Stage 7 (lightweight company onboarding),
+D13 (Support module first release), and D14 (Engineering/Product Development module first release)
+have all since shipped and been live-verified in production (2026-09-22/23) — see §11 items 7-9.
+D1-D18 decision register: `CONTINUOUS_CODER_HANDOFF.md` §8. This document is reconciled against
+`HANDOFF.md`, that decision register, every applied migration (115 through 202), and every
+`PRODUCT_*.md` design/audit file — go to the named source document for full detail on any one
+workstream. **No completion dates are stated or implied anywhere in this document** — every date is
+an authoring or decision date, never a projection. Priority and ordering reflect risk and dependency,
+not calendar time.
 
 ## 0. Evidence labels — used throughout this document
 
@@ -51,9 +44,11 @@ Marketing → Sales → Proposal/quote acceptance → Billing review & down-paym
 creation & execution → Project closeout → Service & Support → future Engineering/Product
 Development. Ergon today has strong coverage of Project creation/execution, full coverage of
 Sales quote-to-proposal-to-acceptance (pricing, approval gate, Q&A, optional lines, share-link
-lifecycle all shipped), and partial coverage of Project closeout (Client Ledger). Marketing,
-Billing review/down-payment clearance as a real gate, Service/Support as its own module, and
-Engineering/Product Development remain thin placeholders or entirely undesigned.
+lifecycle all shipped), and partial coverage of Project closeout (Client Ledger). Marketing and
+Billing review/down-payment clearance as a real gate remain thin placeholders or entirely undesigned.
+Service/Support (D13) and Engineering/Product Development (D14) each shipped a live-verified first
+release as of 2026-09-23 — see §11 items 8/9 — with further scope (client portal access, automated
+SLA enforcement, and the like) deliberately deferred, not undesigned.
 
 ## 2. Phases and completion gates
 
@@ -87,10 +82,10 @@ the last fully-open tables in the schema (migration 183); a separately-discovere
 where the `catalog-datasheets` Storage bucket never actually existed in production (migration 184);
 and per-workspace admin authorization additively OR'd into 9 admin-gated policies so a company's own
 admin no longer needs a global platform admin for these actions (migration 185, plus its frontend
-companion). **What remains open is genuinely decision-dependent or test-rigor work, not scoping** —
-see §5a for the current, narrow remainder. **The §6 standing stop boundary on creating a second real
-workspace remains in force** until §11 stage 6's full automated cross-workspace isolation suite
-passes — that work is in progress, see recent commits, not yet complete.
+companion). **§11 stage 6's full automated cross-workspace isolation suite passed 51/51 with zero
+findings, 2026-09-22 — GATE GREEN.** The §6 standing stop boundary on creating a second real workspace
+is lifted; Stage 7's self-serve onboarding flow (shipped the same window) is the normal, approved path
+for creating one now, and real additional workspaces already exist in production through it.
 
 ### Phase 3 — Sales → Billing → Project handoff — **GATE PARTIALLY MET**
 Quote-to-project conversion is atomic and idempotent (migrations 127/128). Customer-visible,
@@ -100,10 +95,14 @@ of any kind exists between quote acceptance and project creation — that specif
 phase's gate remains unmet. Commercial Billing itself (§2 Phase 9) is a separate, explicitly
 deferred phase, not part of this gate.
 
-### Phase 4 — Product onboarding and no-code configuration — **DESIGN ONLY**
-`PRODUCT_ONBOARDING_CONFIG.md` is a full 10-step flow + responsibility matrix, **entirely
-undesigned in code**. Blocked in practice on Phase 2/3 RLS landing first or in parallel (onboarding
-a real second company needs isolation to mean something).
+### Phase 4 — Product onboarding and no-code configuration — **LIGHTWEIGHT PATH SHIPPED; GUIDED WIZARD DELIBERATELY DEFERRED**
+Self-serve company signup, platform-admin approval, hardened claim links, and full workspace
+provisioning (workspace + branding + section channels) are all **shipped and confirmed live in
+production, 2026-09-22/23** (migrations 195–199) — see §11 item 7 for full detail. `PRODUCT_ONBOARDING_CONFIG.md`'s
+full 10-step guided wizard + responsibility matrix and industry starter catalog/template data remain
+**deliberately deferred**, per E's own explicit decision: build the guided wizard only "once
+everything actually works and is tested 100." Not blocked on anything — a decision to defer, not an
+unstarted dependency.
 
 ### Phase 5 — Sales presentation/template experience — **GATE MET, two items deliberately scoped closed, not deferred**
 A PM/salesperson can today generate a priced, branded, approval-gated, Q&A-capable, share-link-
@@ -131,14 +130,31 @@ A7 (44px mobile tap targets) all shipped; see §3/§7 item 3. A3's remaining sco
 dual-purpose status-message `<div>`s beyond the class-identified error sites) is a separate, later,
 non-mechanical follow-up, not part of this gate.
 
-### Phase 7 — Service/Support and client ledger expansion — **CLIENT LEDGER RELIABILITY DONE, MODULE NOT DESIGNED**
-Client Ledger's save path is serialized/queued and surfaces failures (Queue A10). No dedicated
-Support/Service module or ticket workflow exists anywhere in the app; `PRODUCT_SUPPORT_MODULE_DESIGN.md`
-is a design document, not started.
+### Phase 7 — Service/Support and client ledger expansion — **FIRST RELEASE (D13) SHIPPED, 2026-09-23**
+Client Ledger's save path is serialized/queued and surfaces failures (Queue A10). The Support module's
+first release — cases linked to client/project/site/asset, statuses (open/in progress/waiting on
+client/resolved/reopened/closed), activity timeline, scheduled visits, parts/labor notes, resolve/
+reopen flows, workspace RLS, notifications, basic reporting — is **shipped**: migration 200 applied
+and canonical-tested in production, frontend deployed and live-verified (see §11 item 8). One real,
+stated limitation: production has zero Client-Ledger-eligible projects today, so the full
+case-creation round trip (status changes, activity log, reopen) has not yet been exercised against
+real data — it will verify itself the first time a real project is closed and ledgered, not a code
+gap. Client portal access and automated SLA enforcement remain out of scope, per the design doc's own
+first-release boundary.
 
-### Phase 8 — Engineering/Product Development — **NOT DESIGNED**
-Not mentioned anywhere in the live app. `PRODUCT_ENGINEERING_MODULE_DESIGN.md` exists as a
-placeholder scoping document.
+### Phase 8 — Engineering/Product Development — **FIRST RELEASE (D14) SHIPPED, 2026-09-23**
+The Engineering/Product Development module's first release — product/solution request, technical
+review, prototype/testing stages, approval/rejection history, release into the Product Catalog,
+workspace containment, permissions, notifications, audit trail — is **shipped**: migration 201
+applied and canonical-tested in production, frontend deployed, and a full live round trip (submit →
+technical review → prototyping → prototype test → release ready → released into the real catalog)
+confirmed end to end (see §11 item 9). A real gap found during that verification — `notification_rules`
+never got a default row for either this module's or Support's notification event, so neither could
+ever fire — was root-caused and fixed (migration 202, applied and confirmed). **Stated limitation**:
+full notification delivery to a *different* recipient's bell could not be exercised live, because
+production currently has one real operator and the notification pipeline correctly excludes the
+acting user from their own notification recipients (`excludingSelf()`) — not a defect, genuinely not
+provable without a second real account.
 
 ### Phase 9 — Commercial SaaS readiness — **EXPLICITLY DEFERRED, standing stop boundary**
 Subscription tiers, usage metering, payment processing for Ergon itself (distinct from a customer's
@@ -495,8 +511,12 @@ built but deliberately held back uncommitted until E confirms this migration is 
 
 ## 5. Manual-action queue for E — one action at a time, in order
 
-**None currently.** Migrations 155 through 192 are all confirmed applied and their canonical tests all
-passed in production, 2026-09-17/21. Migration 189 (channel-guest sender-name resolution) and its
+**None currently.** Migrations 155 through 202 are all confirmed applied and their canonical tests all
+passed in production, 2026-09-17/23 (193/194 — channel canvas/member RLS gaps, 2026-09-22; 195-199 —
+company signup/platform console/login page, 2026-09-22/23; 200/201 — Support/Engineering module first
+releases, 2026-09-23; 202 — notification_rules backfill for both modules' notification events,
+2026-09-23). Full detail for 195-202 lives in `HANDOFF.md`'s matching dated entries, not reproduced
+here. Migration 189 (channel-guest sender-name resolution) and its
 frontend are live. Migrations 190 (channel/DM attachment forwarding), 191 (channel/DM unread + mention
 read-state), and 192 (channel-has-active-guest banner + add-member/guest-invite confirmation dialogs)
 are all confirmed applied and their combined frontend shipped together in one deploy, commit `3e48b64`,
@@ -1028,10 +1048,12 @@ table in place of the fixed pair) plus frontend UI work — tracked here, not sc
   table group at a time, synthetic second-workspace fixtures only inside rolled-back test
   transactions, no persistent second workspace until the isolation suite passes), still govern how
   this work proceeds.
-- **A second real workspace** — do not create one, seed it, or build onboarding flows that assume
-  one exists, until Phase 3 is complete and its full automated cross-workspace isolation suite
-  (§11 stage 6) passes. Still a hard boundary — the standing authorization explicitly defers this to
-  after Phase 3, not alongside it.
+- **A second real workspace** — **boundary satisfied and lifted, 2026-09-22.** §11 stage 6's full
+  automated cross-workspace isolation suite passed 51/51 with zero findings (GATE GREEN), and Stage 7's
+  self-serve company onboarding (§11 item 7) shipped the same window — real additional workspaces
+  (e.g. `ZZ Test Signup Co`, `ZZ Test 199 Notification Co v2`) have since been created through that
+  approved flow and are live in production. No longer a stop boundary; ordinary workspace creation
+  through the shipped onboarding flow is expected, normal operation now.
 - **Commercial SaaS subscription billing** (Phase 9) — no design work begins without an explicit
   go-ahead to even start designing it.
 - **Any claim of legal signature weight beyond today's typed-name + IP + content-hash pattern** —
@@ -1502,8 +1524,7 @@ there, not an oversight.
    built — the Companies table's "Remove company" control is rendered disabled with a tooltip
    naming it future retention/deletion-policy work, so it can never be mistaken for a shipped
    capability. See `HANDOFF.md`'s matching same-night entry for the full item-by-item accounting
-   against E's own numbered review, and for the confirmation status (update both once E has actually
-   run migration 198 in production).
+   against E's own numbered review.
 
    **Branded login/signup landing page + honest Remember Me + real platform-admin signup
    notifications, 2026-09-23.** The signed-out screen was rebuilt as a two-panel branded login page
@@ -1532,7 +1553,7 @@ there, not an oversight.
    genuinely empty, not copied from Ergon Test Workspace); the guided wizard itself; company-level
    branding/subscription/usage-metrics surfaces beyond what's listed here; hard workspace deletion
    (by design, not an oversight — see migration 198 above).
-8. **Support module first release (D13) — IN PROGRESS, backend shipped 2026-09-23.** Design doc
+8. **Support module first release (D13) — SHIPPED, 2026-09-23.** Design doc
    `PRODUCT_SUPPORT_MODULE_DESIGN.md` revalidated against the current schema before implementation
    (two real drifts found and corrected — see `HANDOFF.md`'s matching entry). **Migration 200**
    (`support_cases`/`support_case_assets`/`support_case_activity`, the full six-status lifecycle,
@@ -1657,3 +1678,87 @@ testing.
   meaning "reconciled once" is not "reconciled forever." The next coder should re-verify §3 against
   `CONTINUOUS_CODER_HANDOFF.md` §4's "Current production baseline" before trusting this document's
   own "shipped" claims if meaningful time has passed since 2026-09-15.
+
+## 2026-09-23 reconciliation pass — full current-state audit
+
+Requested explicitly: correct every authoritative status section across this document,
+`CONTINUOUS_CODER_HANDOFF.md`, and `HANDOFF.md`; verify every "open"/"not started"/"deferred" claim
+against current source rather than repeating old work-log prose; produce one short queue for the next
+coder. What was found and fixed:
+
+- **Phase 4/7/8 headings (§2) were stale** — read "DESIGN ONLY"/"NOT DESIGNED" for onboarding/
+  Support/Engineering despite Stage 7, D13, and D14 all having shipped and gone live in production
+  the same week. Rewritten to state the real, current, verified status, including each module's real
+  stated limitations (Client-Ledger-empty for Support; single-operator-account notification-delivery
+  for Engineering) rather than either overclaiming or leaving the stale "not designed" framing.
+- **The §6 "no second real workspace" stop boundary and the matching Phase 2/3 gate text (§2) were
+  both stale** — both still described this as an open, in-force boundary, even though §11 stage 6's
+  own text already recorded the isolation suite passing GREEN on 2026-09-22 and Stage 7's onboarding
+  flow has since created real additional workspaces in production. Both now marked lifted/satisfied,
+  matching what §11 already said.
+- **§11 item 8's own header said "IN PROGRESS, backend shipped" while its own body described a full
+  deployed, live-verified frontend** — a plain header/body mismatch, fixed to "SHIPPED."
+- **The top status banner and §1's product-lifecycle summary were both dated/worded as of
+  2026-09-17**, before Phase 3 Stage 6, Stage 7, D13, and D14 — all rewritten to the current date and
+  state.
+- **A dangling stale parenthetical** ("update both once E has actually run migration 198...") was left
+  in §11 item 7 from before migration 198's live confirmation landed, even though the surrounding
+  sentence already said "confirmed live" — removed.
+- **`HANDOFF.md`'s own "still open" note for the Projects section Discussion tab was stale** — a
+  request cited it as "explicitly open," but the very next (more recent) entry in the same file had
+  already closed it, 2026-09-23 confirmed the feature is real and live in production
+  (`main.tsx:13871-13893`). Corrected in place in `HANDOFF.md` rather than rebuilding an
+  already-shipped feature.
+- **`CONTINUOUS_CODER_HANDOFF.md` §10's "start instruction for the next coder" was pointing at
+  migrations 153/154 as the next action** — both have been shipped and confirmed for a week.
+  Rewritten to point at this document's own §5 (manual-action queue, currently empty through
+  migration 202) and the new §12 below, with the stale paragraphs kept but clearly marked
+  superseded/historical rather than deleted outright (matching this repo's own "don't edit an
+  applied migration, fix forward" philosophy applied to docs).
+- **Not re-audited line-by-line**: the multi-thousand-line dated work-log entries in `HANDOFF.md` and
+  `CONTINUOUS_CODER_HANDOFF.md` prior to 2026-09-16 — each of those is a chronological record of what
+  was true and verified AT THE TIME, already internally self-consistent (dated, tied to a real commit
+  hash), and not the kind of "current status" claim this pass's instruction was aimed at. The stale
+  claims that were actually found and fixed were, without exception, in the small set of
+  *forward-looking* "next step"/"still open" sections that don't carry their own date forward — the
+  same pattern worth checking first in any future reconciliation pass.
+
+## 12. Authoritative queue for the next coder (2026-09-23)
+
+Read this section first for "what's actually next" — it supersedes any "next step" language anywhere
+else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written before 2026-09-23.
+
+1. **Multi-person direct conversations — design and migration drafted, NOT sent to E, one real
+   product decision needed first.** `PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md` (new) is the full
+   design. `backend/supabase/migrations/203_multiperson_direct_conversations.sql` (new, drafted, not
+   run) and `backend/supabase/migration_203_multiperson_direct_conversations_tests.sql` (new, drafted,
+   not run) are ready. **Decision needed from E before sending 203**: is an unnamed, ad-hoc "pick 2+
+   people from the DM picker" group thread actually wanted as a separate surface, or does better
+   discoverability of the existing private group-channel feature (migration 105, `channels.type =
+   'group'`) already cover the same need? See the design doc §0 for the full framing — nothing drafted
+   is wasted either way (the schema/RLS work is correct and needed regardless; only the frontend entry
+   point depends on the answer). **No migration required to get this answer** — it's a product
+   question for E, not a technical one. Once answered: if a new group-DM surface is wanted, migration
+   203 can be sent to E as the next single Supabase action, then its frontend (per the design doc §3)
+   built after confirmation.
+2. **Two pre-existing, recurring, unrelated console errors, confirmed present across multiple
+   sessions and modules this week, never yet root-caused**: `saveProjectSites`/`saveInventoryItems`
+   both fail with `42P10: there is no unique or exclusion constraint matching the ON CONFLICT
+   specification` on `projects`/`inventory_items` writes, and a separate `"Could not set primary
+   role": 400` exception. Neither blocks the features they were observed alongside (Support,
+   Engineering, and the Projects Discussion tab all independently confirmed working despite these).
+   Worth a dedicated root-cause pass: check whether `projects`/`inventory_items` still have the
+   `on_conflict` target column set the client sends, the same bug class migration 202 just fixed
+   for `notification_rules` (a constraint dropped/changed by a later Phase 3 migration without the
+   client-side `on_conflict` param being updated to match). Files: `src/persistence.ts` (`saveProjectSites`/
+   `saveInventoryItems`), and whichever migration most recently touched `projects`/`inventory_items`'s
+   own unique constraints. Acceptance test: reproduce live, fix, confirm the specific error disappears
+   from console on a real save, no migration needed unless the root cause turns out to be a dropped
+   constraint (in which case, same shape as migration 202 — a small, targeted fix, canonical test,
+   one Supabase action).
+3. **Everything else in this document's §5 (manual-action queue) is empty and §11's stage tracker is
+   fully closed through Stage 7** — there is no other outstanding migration or blocked frontend item
+   as of this reconciliation pass. The next unit of work beyond items 1-2 above is either a new
+   request from E, or picking up the guided-onboarding-wizard/industry-starter-data/commercial-billing/
+   hard-workspace-deletion work explicitly deferred in §2 Phase 4/§9 — **do not start any of those
+   without an explicit go-ahead**, per the standing boundaries this document has carried throughout.

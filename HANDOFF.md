@@ -1014,6 +1014,78 @@ for both is now confirmed structurally correct and firing through the real API p
 remaining unproven leg -- an actual cross-user delivery -- requires a second real account that
 doesn't exist in this environment, not further code work).
 
+## 2026-09-23, later still: full doc reconciliation, Projects Discussion tab verified (already shipped), multi-person conversation design drafted
+
+E asked for a full current-state reconciliation across this file, `CONTINUOUS_CODER_HANDOFF.md`, and
+`PRODUCT_MASTER_COMPLETION_PLAN.md`, then to inspect/implement the Projects section Discussion tab,
+then to do a design/source pass on multi-person direct conversations.
+
+**Reconciliation**: `PRODUCT_MASTER_COMPLETION_PLAN.md` got the bulk of the real fixes -- see that
+document's own new "2026-09-23 reconciliation pass" section for the full list (stale Phase 4/7/8
+headings, a stale "no second workspace" stop boundary that should have been lifted a day earlier, a
+header/body mismatch on the Support item, a dangling stale parenthetical, and a rewritten top status
+banner). `CONTINUOUS_CODER_HANDOFF.md` §10's "start instruction for the next coder" was still pointing
+at migrations 153/154 as the next action -- both have been done for a week -- rewritten to point at
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §5/§12 instead, old text kept but marked superseded rather than
+deleted.
+
+**Projects Discussion tab -- already shipped, not rebuilt.** A stale note in this file (search
+"Still open from the phase-1 plan" a few entries below) claimed this was still open; the very next
+entry above it (same night, commit `d9d4ba9`) had already closed it, and that note was never updated
+to say so. Confirmed directly against current source before doing anything else:
+`main.tsx:13871-13893` has a real, live [Overview | Discussion] tab toggle on the Projects list page,
+rendering `ChannelDiscussion` against the real `projects` section channel. Live-verified in
+production (fresh tab, `https://ergon-ops-app.vercel.app/#projects`): clicking Discussion shows the
+real sub-tab bar (Discussion/Photos/Links/Tasks/Canvas) and "No messages yet in this channel -- say
+hello." Console showed only the same pre-existing, unrelated `saveProjectSites`/`saveInventoryItems`
+42P10 errors already documented elsewhere this week -- nothing new, nothing caused by this feature.
+The stale note itself is corrected in place a few entries below, with a pointer to this entry.
+
+**Multi-person direct conversations -- design and migration drafted, not sent to E.** Responds to
+E's own original ask, recorded back in migration 162's header (2026-09-17): "conversations/
+direct_messages... support more than two participants, Slack/Teams-style." New
+`PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md` is the full design. Key finding worth reading first:
+this app already has Slack-style private group channels (migration 105) that cover most of what
+"group messaging" means -- the real, narrower gap is an *unnamed, ad-hoc* thread started the same way
+a 1:1 DM starts today (pick people from the People Picker, no channel-name ceremony). **One concrete
+product decision is flagged for E, not guessed**: is that separate ad-hoc surface actually wanted, or
+would better discoverability of the existing "New Channel" flow satisfy the same need with zero new
+schema? Design, migration, and test are all written so they're correct and useful either way -- only
+the frontend entry point depends on the answer, and no frontend was built this pass (design/migration
+only, per the task's own scope).
+
+Design: additive only, matching this schema's own established philosophy (migration 185's admin-gate
+ORs, migration 187's own workspace predicate). A new `conversation_members` table (identical shape to
+`channel_members`, migration 105) carries N-person membership; every existing 1:1 conversation and
+its `participant_a_id`/`participant_b_id` columns, canonical-pair ordering, and upsert-based
+`getOrCreateConversation()` are completely untouched -- a group conversation instead leaves both
+columns null and lives entirely through the new membership table. Every one of the 11 existing RLS/
+RPC predicates that currently check `participant_a_id = X or participant_b_id = X` (migrations 094,
+113, 187, 190, 191) gets one more OR'd branch checking `conversation_members` -- confirmed by reading
+each one directly from source before drafting, not from memory of the pattern. One genuinely useful
+finding: `message_read_state` (migration 191) needs **zero** changes -- it was already built generic
+over `(user_id, conversation_kind, conversation_id)`, never actually assuming exactly two
+participants, so per-person unread tracking for a group "just works" once membership exists. Workspace
+containment for a new group conversation resolves from the creator's own active workspace
+(`resolve_caller_workspace_id()`, the same resolver used everywhere else in this schema for a
+no-fixed-second-anchor situation), with a new trigger rejecting any added member who isn't an active
+member of that same workspace.
+
+New files: `backend/supabase/migrations/203_multiperson_direct_conversations.sql` (drafted, NOT
+applied, NOT sent to E -- gated on the decision above) and
+`backend/supabase/migration_203_multiperson_direct_conversations_tests.sql` (drafted, NOT run) --
+sections cover the 1:1 regression guard (the whole point of the additive design), a real 3-person
+group's create/read/write plus a same-workspace non-member correctly rejected, a cross-workspace add
+attempt rejected, `message_read_state` tracking all 3 members independently, and reactions on a group
+message following the same membership check. Every function signature and existing policy body the
+migration replaces was read directly from its real, current migration file before writing the
+replacement, not reconstructed from this document's own prose -- `forward_attachment()` (migration
+190) in particular is reproduced in full since Postgres requires the whole function body in a `create
+or replace`, not just the changed lines.
+
+**No frontend work done this pass** -- per the task's own scope (design/source pass, not
+implementation) and because the frontend shape genuinely depends on the decision flagged above.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
@@ -4257,7 +4329,7 @@ E's stated direction, from an overnight planning conversation (research → clar
   - **Phase 1 + Phase 2 of the roadmap are now both complete** (channels core, all 4 section Discussion tabs, per-project tiles, Messages hub). **Next up**: Search (phase 3, extend the existing global search past its current 3 entity types), then Clients (phase 4 -- needs a manual reconciliation pass with E on distinct client-name strings before anything auto-merges, cannot be done unilaterally).
 - **(`d9d4ba9`, migration 101 needs to be run)** — **Projects section-level Discussion tab, live-verified.** Closes the gap flagged in the previous entry -- the Projects section channel existed in migration 101's seed data with no UI. Projects' list view early-returns for its own list/detail mode switch (`projectMode`), so this is a sibling early-return (list mode + `activeDiscussionSection === "projects"`) rather than wrapping the large existing list-view JSX. Independent of the per-project Discussion tiles (those are gated by `projectMode === "detail"`, this by `"list"` -- can't conflict). **All 4 section channels now have live UI**: Inventory & Purchasing, Sales, Marketing, Projects.
 - **(`3bc60d3`, migration 101 needs to be run)** — **Sales and Marketing Discussion tabs, live-verified.** Same pattern as Inventory & Purchasing (commit `22ed92e` above) -- these two didn't already have a sub-tab bar, so each gets a lightweight [Overview | Discussion] toggle instead, reusing the exact same `activeDiscussionSection` state and `ChannelDiscussion` component, no new infrastructure. **All 4 seeded section channels now have a live UI entry point**: Inventory & Purchasing, Projects (section-level tab still pending -- only the per-project tiles exist so far, see below), Sales, Marketing. Live-verified both new tabs show the same honest "run migration 101" fallback pre-migration, no console errors.
-  - **Still open from the phase-1 plan**: a section-level Discussion tab specifically for **Projects** (the section channel was seeded in migration 101 and is real, but no UI surfaces it yet -- only the per-project tiles do). Worth adding the same [list-view tab bar + Discussion] treatment there next, probably alongside the Messages-hub rebuild since they're related.
+  - ~~Still open from the phase-1 plan: a section-level Discussion tab specifically for Projects~~ **-- closed by the very next entry above (commit `d9d4ba9`), same night.** Flagging this specifically because a later request (2026-09-23) cited this exact line as "still explicitly open" without checking the entry immediately above it that closes it -- re-confirmed directly against current source before writing this correction: `main.tsx:13871-13893` has the real, live Overview/Discussion tab toggle on the Projects list page, rendering `ChannelDiscussion` against the real `projects` section channel. Nothing to build here; verify against source, not against an old "still open" note, before trusting either direction.
 - **(`22ed92e`, migration 101 needs to be run)** — **Group channels, phase 1 shipped and live-verified.** See "Long-term roadmap" above for the full design; this entry is the build record. E: "you can start with most of it."
   - Migration 101 SQL is in `backend/supabase/migrations/101_channels.sql` -- copy straight from that file (long enough it's not worth re-pasting here). Run it, then both new surfaces below go from "not set up yet" to actually working with zero further code changes.
   - **Live-verified pre-migration** (2026-08-30): Inventory & Purchasing's new "Discussion" tab (4th button next to Stock/Purchasing/Vendors) and a Project detail page's new "Discussion" tile both render cleanly and show "Discussion channel isn't set up yet -- run migration 101" instead of crashing -- same honest-degradation pattern as every other pre-migration gap this session. Also regression-checked the existing DM feature (Messages) after refactoring its thread UI into a shared component -- no change in behavior, still works.
