@@ -1220,6 +1220,73 @@ suite green (verified after the mock fixes, not just before them). Pushed to pro
 needs no manual Supabase action and no live-verification gate the way the migration-dependent work
 above does, so it ships immediately.
 
+**Live-verified the deploy directly** (polled for the new bundle hash, confirmed it actually
+contains the fix via grep, then loaded the real production Projects page in a fresh tab): the
+42P10 errors are gone from console. **Found a second, more serious bug in the process** -- see next
+entry.
+
+## 2026-09-24, same session: URGENT -- found and fixed a real production outage in admin role management (migration 204)
+
+The improved error visibility on `setPrimaryUserRole` (previous entry) immediately paid off: the
+live console check above surfaced the REAL cause of "Could not set primary role" for the first
+time -- `Bridge functions require exactly one workspace row to exist in total, found 2.` This is
+`active_workspace_id()` (migration 124), a deliberate fail-closed guard written back when exactly
+one workspace existed in the whole database by architectural necessity.
+
+**This was already flagged, by name, as a real risk in this exact document** --
+`PRODUCT_MASTER_COMPLETION_PLAN.md` §11's own "cross-cutting finding" says explicitly: "Stage 6
+(final reconciliation) must confirm every remaining `active_workspace_id()` call site has been
+retired before stage 7 (onboarding) begins -- a second real workspace cannot safely be created
+while any RPC still depends on 'exactly one workspace in the whole database.'" Stage 6 was marked
+GATE GREEN and Stage 7 (onboarding) shipped anyway, and real additional workspaces now exist in
+production (`ZZ Test Signup Co`, `ZZ Test 199 Notification Co v2`) -- this is the confirmed, live
+consequence: **every one of the 5 `bridge_*` functions in migration 124 that calls
+`active_workspace_id()` has been broken for every admin, for every role-management action, since
+the moment the second real workspace was approved.** Setting a primary role, setting secondary
+roles, setting tab permissions, granting admin, and revoking admin have all been failing in
+production. This is a real outage in a core admin capability, not a cosmetic bug.
+
+**Fixed, migration 204** (`backend/supabase/migrations/204_fix_bridge_functions_multi_workspace.sql`)
+-- narrower and much lower-risk than the "migrate away from `app_admins`/`app_user_roles` entirely"
+rework `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 tracks as its own larger, unscheduled item. Each
+function's actual use of the resolved workspace id was re-examined on its own merits, not
+mechanically patched:
+- `bridge_set_primary_role()` / `bridge_grant_admin()` — both may need to CREATE a
+  `workspace_members` row for a target with none yet. Both are gated on `is_app_admin()` (a
+  GLOBAL flag) but invoked from the ordinary per-company Admin page's Team Roster, not the
+  separate `is_platform_admin()`-gated Ergon Platform console -- so `ws_id` now resolves the
+  CALLER's own workspace via `resolve_caller_workspace_id()` (migration 117), the same resolver
+  this exact session already reused for `create_group_conversation()` (migration 203) for the
+  identical "no second anchor" reason.
+- `bridge_set_secondary_roles()` / `bridge_revoke_admin()` — both only ever LOOK UP a target's
+  EXISTING membership, never create one. Neither needs to resolve or assume a single workspace at
+  all -- `active_workspace_id()`'s return value was never even used in either function, it was
+  pure dead-weight blocking gate, now removed outright. `bridge_revoke_admin()`'s final UPDATE now
+  matches on `user_id` alone instead of `workspace_id = ws_id and user_id = ...` -- safer than
+  before, since forcing a target through "the caller's workspace" would be actively wrong for a
+  global admin managing a user in a *different* company than their own.
+- `bridge_set_user_allowed_views()` — writes only to the legacy `app_user_roles` table, no
+  workspace concept involved at all; its `active_workspace_id()` call was equally pure dead weight,
+  removed outright.
+
+`active_workspace_id()` itself is completely untouched -- still correct, still needed by its other
+call sites (`replace_project_bom_lines` and others `PRODUCT_MASTER_COMPLETION_PLAN.md` §11 already
+tracks). Only these 5 functions stop calling it.
+
+Canonical test (`backend/supabase/migration_204_fix_bridge_functions_multi_workspace_tests.sql`)
+deliberately creates 2 real synthetic workspaces -- the exact condition that broke production --
+and exercises all 5 functions against it: set-primary-role now succeeds and lands the new member in
+the CALLER's own workspace (not an arbitrary one); set-secondary-roles and set-allowed-views both
+succeed; revoke-admin correctly finds and updates a target who belongs to a DIFFERENT workspace
+than the caller (proving the fix doesn't wrongly force cross-company management through "my own
+workspace"); the non-admin-rejected and last-admin-protection regression guards are both
+re-confirmed still correct with 2 workspaces in existence.
+
+**Sent to E as the next single Supabase action, ahead of migration 203's own confirmation** --
+this is a live production outage affecting every admin, higher priority than a new feature's own
+migration. `PRODUCT_MASTER_COMPLETION_PLAN.md` §12 updated to reflect this as the new top queue
+item.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
