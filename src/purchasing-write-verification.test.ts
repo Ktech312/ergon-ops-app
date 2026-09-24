@@ -41,7 +41,7 @@ describe("createPurchaseOrder -- purchase_order_lines write no longer fabricates
   function installRouter(lineResponse: ReturnType<typeof respond>) {
     const mock = vi.fn().mockImplementation(async (input, init?: { method?: string }) => {
       const url = String(input);
-      if (url.includes("/vendors?on_conflict=name")) {
+      if (url.includes("/vendors?on_conflict=")) {
         return respond(true, 200, [{ id: "vendor-1" }]);
       }
       if (url.includes("/purchase_orders") && init?.method === "POST") {

@@ -115,7 +115,7 @@ function installFetchRouter(routes: {
 }) {
   const mock = vi.fn().mockImplementation(async (input) => {
     const url = String(input);
-    if (url.includes("/inventory_items?on_conflict=sku")) {
+    if (url.includes("/inventory_items?on_conflict=")) {
       return routes.items ?? respond(true, 200, []);
     }
     if (url.includes("/locations?select=")) {

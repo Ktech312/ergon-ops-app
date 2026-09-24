@@ -1178,6 +1178,48 @@ actual live 1:1-plus-3-person-group verification E asked for (item 4 of the orig
 genuinely has to wait for migration 203's own confirmation -- not further code work, just the
 manual SQL step.
 
+## 2026-09-24, same session: root-caused and fixed the recurring 42P10 ON CONFLICT errors (queue item 2)
+
+Picked up the next authoritative-queue item while migration 203's confirmation was pending. The
+recurring, previously-unexplained `saveProjectSites`/`saveInventoryItems` console errors
+(`42P10: there is no unique or exclusion constraint matching the ON CONFLICT specification`) turned
+out to be the exact same bug class migration 202 just fixed for `notification_rules`, just in the
+frontend instead of a migration: **migration 164** (2026-09-18, Phase 3 Stage 5) dropped 7 tables'
+plain-column unique constraints and replaced them with `(workspace_id, <column>)` composites --
+`clients`, `projects`, `vendors`, `inventory_items`, `purchase_orders`, `purchase_requests`,
+`sales_quotes` -- but `src/persistence.ts`'s own PostgREST `on_conflict=` query parameters were never
+updated to match. Audited every `on_conflict=` call site in the file (18 total) against migration
+164's actual list rather than guessing: 3 were genuinely broken and are now fixed --
+`projects?on_conflict=project_name` -> `workspace_id,project_name` (`saveProjectSites`),
+`inventory_items?on_conflict=sku` -> `workspace_id,sku` (`saveInventoryItems`, both the primary
+attempt and the migration-092 fallback retry), `vendors?on_conflict=name` -> `workspace_id,name`
+(`createVendor` and `getOrCreateVendorId`, both real, separate call sites). The other 4 tables from
+migration 164's list are either not upserted by that column in this file (`clients`, `purchase_orders`,
+`sales_quotes`) or already correctly upsert by `id` (`purchase_requests`), so needed no change --
+confirmed by reading each one, not assumed. Every fix works with zero payload changes: each affected
+table already has its own `<table>_guard_workspace_id` BEFORE INSERT trigger (migrations 156/159)
+that stamps `workspace_id` before Postgres evaluates the ON CONFLICT target, so the composite
+constraint resolves correctly even though none of these payloads set `workspace_id` explicitly.
+**No migration needed** -- the database side was already correct; this was purely a stale frontend
+query parameter, fixable and deployable immediately.
+
+Also improved error visibility on the separate, previously-unexplained `"Could not set primary role":
+400` exception noted alongside the 42P10s in the same queue item -- `setPrimaryUserRole()` was
+discarding the real Supabase/RPC error body and throwing only the bare status code, unlike every
+other write in this file. Now surfaces the real message via the established `readSupabaseError()`
+helper. This alone doesn't root-cause that exception (a genuinely different bug, not the same
+constraint-drift class as the others -- it's an RPC call, not a raw table upsert) -- but the next time
+it fires, the real cause will be visible in the thrown error instead of just "400."
+
+Three existing test files hardcoded the OLD `on_conflict=sku`/`on_conflict=name` URL substrings in
+their own fetch-router mocks (`src/inventory-and-project-write-verification.test.ts`,
+`src/restore-backup-snapshot.test.ts`, `src/purchasing-write-verification.test.ts`) -- loosened to
+match on the `on_conflict=` prefix alone, consistent with how this file's own `/projects?on_conflict=`
+and `/inventory_balances?on_conflict=` mocks were already written. `npx tsc -b` clean, full `vitest`
+suite green (verified after the mock fixes, not just before them). Pushed to production -- this fix
+needs no manual Supabase action and no live-verification gate the way the migration-dependent work
+above does, so it ships immediately.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly

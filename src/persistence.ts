@@ -1073,7 +1073,12 @@ export async function setPrimaryUserRole(userId: string, roleKey: string, access
   });
 
   if (!response.ok) {
-    throw new Error(`Could not set primary role: ${response.status}`);
+    // Was `Could not set primary role: ${response.status}` alone -- discarded the real
+    // Supabase error body, unlike every other write in this file. A recurring, never-yet-
+    // root-caused "Could not set primary role: 400" was observed in production console logs
+    // this week with no further detail to diagnose from; surfacing the real message is the
+    // first step toward actually root-causing it next time it fires (2026-09-24).
+    throw new Error(await readSupabaseError(response, "Could not set primary role"));
   }
 }
 
@@ -7106,7 +7111,15 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
     is_active: !item.retired,
   }));
 
-  let itemResponse = await fetch(supabaseUrl("inventory_items?on_conflict=sku"), {
+  // on_conflict targets workspace_id,sku (migration 164 dropped the old plain-sku
+  // inventory_items_sku_key and replaced it with the composite
+  // inventory_items_workspace_id_sku_key) -- this payload has no workspace_id of its own,
+  // but inventory_items_guard_workspace_id (migration 159) stamps it via a BEFORE INSERT
+  // trigger before the ON CONFLICT check runs, so the composite target still resolves
+  // correctly. Found and fixed 2026-09-24 -- same bug class as migration 202's
+  // notification_rules fix: a later migration changes a unique constraint, the PostgREST
+  // on_conflict= param never gets updated to match, and Postgres refuses with 42P10.
+  let itemResponse = await fetch(supabaseUrl("inventory_items?on_conflict=workspace_id,sku"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(itemPayload),
@@ -7115,7 +7128,7 @@ export async function saveInventoryItems(items: Part[], accessToken?: string): P
   // yet, so the rest of the item still saves.
   if (!itemResponse.ok && itemResponse.status === 400) {
     const fallbackItemPayload = itemPayload.map(({ track_reorder: _trackReorder, ...rest }) => rest);
-    itemResponse = await fetch(supabaseUrl("inventory_items?on_conflict=sku"), {
+    itemResponse = await fetch(supabaseUrl("inventory_items?on_conflict=workspace_id,sku"), {
       method: "POST",
       headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
       body: JSON.stringify(fallbackItemPayload),
@@ -9043,7 +9056,11 @@ export async function saveProjectSites(sites: ProjectSite[], accessToken?: strin
     billing_office_phone: site.billingOfficePhone || null,
   }));
 
-  const projectResponse = await fetch(supabaseUrl("projects?on_conflict=project_name"), {
+  // on_conflict targets workspace_id,project_name -- migration 164 dropped the old plain-name
+  // projects_project_name_key for the composite projects_workspace_id_project_name_key;
+  // projects_guard_workspace_id (migration 156) stamps workspace_id before the ON CONFLICT
+  // check runs, same fix as inventory_items/vendors below. Found and fixed 2026-09-24.
+  const projectResponse = await fetch(supabaseUrl("projects?on_conflict=workspace_id,project_name"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify(projectPayload),
@@ -11240,7 +11257,9 @@ export async function createVendor(
   if (!isRemotePersistenceConfigured() || !accessToken || !input.name.trim()) {
     return null;
   }
-  const response = await fetch(supabaseUrl("vendors?on_conflict=name"), {
+  // on_conflict targets workspace_id,name -- see getOrCreateVendorId's own comment below for
+  // the full explanation (migration 164/159, found and fixed 2026-09-24).
+  const response = await fetch(supabaseUrl("vendors?on_conflict=workspace_id,name"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify({
@@ -11305,7 +11324,11 @@ async function getOrCreateVendorId(name: string, accessToken: string): Promise<s
   if (!trimmed) {
     return null;
   }
-  const response = await fetch(supabaseUrl("vendors?on_conflict=name"), {
+  // on_conflict targets workspace_id,name -- migration 164 dropped the old plain-name
+  // vendors_name_key for the composite vendors_workspace_id_name_key; vendors_guard_workspace_id
+  // (migration 159) stamps workspace_id before the ON CONFLICT check runs. Found and fixed
+  // 2026-09-24 -- same bug class as migration 202's notification_rules fix.
+  const response = await fetch(supabaseUrl("vendors?on_conflict=workspace_id,name"), {
     method: "POST",
     headers: { ...supabaseHeaders(accessToken), prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify({ name: trimmed }),

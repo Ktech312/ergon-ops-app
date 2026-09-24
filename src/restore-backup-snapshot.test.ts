@@ -89,7 +89,7 @@ function installRestoreRouter(routes: Routes) {
   const mock = vi.fn().mockImplementation(async (input, init?: { method?: string; body?: string }) => {
     const url = String(input);
     calls.push({ url, body: init?.body ? JSON.parse(init.body) : undefined });
-    if (url.includes("/inventory_items?on_conflict=sku")) {
+    if (url.includes("/inventory_items?on_conflict=")) {
       return routes.items ?? respond(true, 200, [{ id: "item-1", sku: "SKU-1" }]);
     }
     if (url.includes("/locations?select=")) {

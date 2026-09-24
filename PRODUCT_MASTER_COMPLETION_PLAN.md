@@ -1751,21 +1751,25 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    live yet. **Not yet live-verified** — genuinely blocked on migration 203's confirmation, not on any
    further code work. **Once migration 203 and its canonical test are confirmed applied**:
    deploy/verify a real 1:1 DM plus a real 3-person group DM live in production.
-2. **Two pre-existing, recurring, unrelated console errors, confirmed present across multiple
-   sessions and modules this week, never yet root-caused**: `saveProjectSites`/`saveInventoryItems`
-   both fail with `42P10: there is no unique or exclusion constraint matching the ON CONFLICT
-   specification` on `projects`/`inventory_items` writes, and a separate `"Could not set primary
-   role": 400` exception. Neither blocks the features they were observed alongside (Support,
-   Engineering, and the Projects Discussion tab all independently confirmed working despite these).
-   Worth a dedicated root-cause pass: check whether `projects`/`inventory_items` still have the
-   `on_conflict` target column set the client sends, the same bug class migration 202 just fixed
-   for `notification_rules` (a constraint dropped/changed by a later Phase 3 migration without the
-   client-side `on_conflict` param being updated to match). Files: `src/persistence.ts` (`saveProjectSites`/
-   `saveInventoryItems`), and whichever migration most recently touched `projects`/`inventory_items`'s
-   own unique constraints. Acceptance test: reproduce live, fix, confirm the specific error disappears
-   from console on a real save, no migration needed unless the root cause turns out to be a dropped
-   constraint (in which case, same shape as migration 202 — a small, targeted fix, canonical test,
-   one Supabase action).
+2. **The recurring 42P10 console errors — ROOT-CAUSED AND FIXED, 2026-09-24, no migration
+   needed.** Exactly the bug class predicted here: migration 164 (2026-09-18) dropped 7 tables'
+   plain-column unique constraints for `(workspace_id, <column>)` composites (`clients`, `projects`,
+   `vendors`, `inventory_items`, `purchase_orders`, `purchase_requests`, `sales_quotes`), but
+   `src/persistence.ts`'s own `on_conflict=` query parameters were never updated to match. Audited
+   all 18 `on_conflict=` call sites against migration 164's real list (not guessed): 3 were broken and
+   are now fixed — `saveProjectSites` (`projects?on_conflict=project_name` →
+   `workspace_id,project_name`), `saveInventoryItems` (`inventory_items?on_conflict=sku` →
+   `workspace_id,sku`, both call sites), `createVendor`/`getOrCreateVendorId`
+   (`vendors?on_conflict=name` → `workspace_id,name`, both call sites). The other 4 tables from
+   migration 164's list needed no change (not upserted by that column here, or already keyed on `id`).
+   Every fix works with zero payload changes — each table's own `<table>_guard_workspace_id` trigger
+   (migrations 156/159) stamps `workspace_id` before Postgres evaluates the ON CONFLICT target. Also
+   fixed the separate `"Could not set primary role": 400` exception's error visibility (was
+   discarding the real Supabase error body) — doesn't root-cause it (a different bug class, an RPC
+   call not a raw upsert), but the real message will surface next time it fires. Three test files had
+   stale `on_conflict=sku`/`on_conflict=name` mock URL substrings, loosened to match; full `vitest`
+   suite (627/627) and `npx tsc -b` confirmed clean after. Pushed to production — needed no migration,
+   ships immediately. See `HANDOFF.md`'s matching 2026-09-24 entry for full detail.
 3. **Everything else in this document's §5 (manual-action queue) is empty and §11's stage tracker is
    fully closed through Stage 7** — there is no other outstanding migration or blocked frontend item
    as of this reconciliation pass. The next unit of work beyond items 1-2 above is either a new
