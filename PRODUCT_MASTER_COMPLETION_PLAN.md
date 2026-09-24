@@ -1743,40 +1743,34 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    `eck1679@gmail.com`'s own primary role from Manager to PM and back, both changes genuinely
    persisted (confirmed via full reload in a fresh tab, not just optimistic local state), zero
    console errors either direction. See `HANDOFF.md`'s matching 2026-09-24 entries for full detail.
-1. **Multi-person direct conversations — APPROVED by E 2026-09-23/24, migration 203 APPLIED
-   2026-09-24. Its own canonical test found TWO real bugs in migration 203 itself, fixed forward
-   by migrations 205 and 206 (neither edits or reruns 203, per this repo's standing rule).**
-   205: `wm.status = 'active'` referenced a column `workspace_members` doesn't have -- fixed by
-   joining to `workspaces.status` instead, exactly as migration 187's own function in the same
-   file already did correctly. **APPLIED, confirmed.** 206: `conversations`' and
-   `conversation_members`'s own SELECT policies read each other in plain (non-`SECURITY DEFINER`)
-   subqueries -- a genuine mutual RLS recursion (`42P17`) that only manifests on a real row
-   read/`RETURNING`, not during DDL, which is why it wasn't caught until the test's first live
-   INSERT. Fixed with a new `SECURITY DEFINER` helper (`is_conversation_member()`, same technique
-   as `is_workspace_member()` etc. throughout this schema) that breaks the cycle, swept across 8
-   policies for consistency. **Sent to E as the next single Supabase action.**
-   `PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md`
-   is the full, current design. E's approved shape: "New message" picks 1+ recipients (1 → existing
-   1:1 conversation, 2+ → an ad-hoc group DM, no name required, lives under Direct Messages not
-   Channels, ordinary messages/reactions/attachments/unread/notifications, explicitly no Channel
-   features). **E's own pre-send review caught a real risk in the first draft**: an "add people to an
-   existing group" path would expose new members to prior message history. Corrected: membership is
-   fixed at creation this release (no Add People, no Leave Group — start a new group DM instead); the
-   migration's own re-review pass (requested by E) also caught two real gaps the first draft missed —
-   the `message-attachments` storage.objects policies (migration 100) and `api/_lib/directMessage.js`'s
-   single-recipient notification resolver — both now accounted for (the storage fix is in migration
-   203 itself; the notification resolver fix is frontend/API-layer work, tracked as the next unit of
-   work below). **The compatible frontend and the notification resolver fix are both now built,
-   locally tested, and pushed to production** — `npx tsc -b`/`npx vite build` clean, full `vitest`
-   suite 627/627 passed. See `HANDOFF.md`'s matching 2026-09-24 entry for full detail
-   (persistence.ts/main.tsx changes, the
-   `api/_lib/directMessage.js`/`api/create-notification.js`/`api/send-notification.js` multi-recipient
-   fix, new tests). Deployed ahead of migration 203's own confirmation, per this session's own
-   established pattern (Support/Engineering's frontend shipped ahead of their migrations too) — the
-   code fails visibly (a real Supabase error surfaced in the UI), not silently, if the migration isn't
-   live yet. **Not yet live-verified** — genuinely blocked on migration 203's confirmation, not on any
-   further code work. **Once migration 203 and its canonical test are confirmed applied**:
-   deploy/verify a real 1:1 DM plus a real 3-person group DM live in production.
+1. **Multi-person direct conversations — APPROVED by E 2026-09-23/24, FULLY SHIPPED and
+   live-verified 2026-09-24.** `PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md` is the full design.
+   E's approved shape: "New message" picks 1+ recipients (1 → existing 1:1 conversation, 2+ → an
+   ad-hoc group DM, no name required, lives under Direct Messages not Channels, ordinary
+   messages/reactions/attachments/unread/notifications, explicitly no Channel features).
+   Migrations **203/205/206 all applied and canonically tested in production** — 203 shipped the
+   schema/RLS/RPCs (membership fixed at creation, no Add People/Leave Group this release per E's
+   own pre-send risk review); its canonical test surfaced two more real bugs in 203 itself,
+   neither requiring 203 to be edited or rerun: 205 fixed a `wm.status` column reference that
+   doesn't exist (`workspace_members` has no status column — joins to `workspaces.status`
+   instead, matching migration 187's own established pattern); 206 fixed a genuine mutual RLS
+   recursion between `conversations` and `conversation_members`'s own SELECT policies (`42P17`,
+   only manifests on a real row read/`RETURNING`) via a new `SECURITY DEFINER` helper,
+   `is_conversation_member()`, the same technique this schema already uses everywhere for this
+   shape. Frontend (persistence.ts/main.tsx, the "New message" multi-select flow,
+   `api/_lib/directMessage.js`/`api/create-notification.js`/`api/send-notification.js` multi-
+   recipient notification fix) built and pushed ahead of the migrations' confirmation, per this
+   session's established pattern — `npx tsc -b`/`npx vite build` clean, full `vitest` 627/627.
+   **Live-verified in production**: a 1:1 message through the new picker correctly reused an
+   existing conversation (one more real bug found and fixed along the way — the picker was
+   calling the upsert RPC even for an already-existing pair, hitting an UPDATE path
+   `conversations` has never had an RLS policy for; fixed by checking local state first, no new
+   RLS surface opened); a real 3-person group (Nate/Abhi/Ehren) was created, named correctly from
+   member names, and a real message sent and confirmed persisted server-side. Not independently
+   provable: actual notification delivery to a different recipient's own bell (single-operator-
+   account limitation, same as Engineering's own notification verification) — the recipient-
+   resolution logic itself is covered by new tests instead. See `HANDOFF.md`'s matching
+   2026-09-24 entries for full detail.
 2. **The recurring 42P10 console errors — ROOT-CAUSED AND FIXED, 2026-09-24, no migration
    needed.** Exactly the bug class predicted here: migration 164 (2026-09-18) dropped 7 tables'
    plain-column unique constraints for `(workspace_id, <column>)` composites (`clients`, `projects`,

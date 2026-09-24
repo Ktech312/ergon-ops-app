@@ -1377,6 +1377,40 @@ time: now requires 203, 205, AND 206 all applied before it can run.
 
 Sent to E as the next single Supabase action.
 
+**Migration 206 APPLIED (E, "Success. No rows returned").** The canonical test's next run
+**PASSED completely** ("Success. No rows returned") -- all three of migration 203's real issues
+(the `wm.status` bug, the RLS recursion, and the migration's own test-fixture bugs found along
+the way) are now fully resolved.
+
+**Live-verified the full feature in production, both the 1:1 regression and a real 3-person
+group DM, per the original instruction's own acceptance criteria.** One more real bug found and
+fixed along the way, in the frontend this time: the new "New message" picker called
+`getOrCreateConversation()` even when a 1:1 conversation with that person already existed --
+the OLDER click-a-roster-row UI never exercised that path for an existing pair, so it never hit
+`conversations`' on_conflict=merge-duplicates upsert's UPDATE branch, which the table has never
+had an RLS policy for (migration 094 only ever added SELECT/INSERT). Real error: "new row
+violates row-level security policy (USING expression)". Fixed in `handleStartConversation()` --
+checks local state first and selects the existing conversation directly, matching the roster-row
+click's own established behavior, rather than opening a new write surface on a table that's
+deliberately never needed one. `npx tsc -b` clean, full `vitest` 627/627, `eslint` 0 new errors,
+pushed and deployed.
+
+With that fix live: selected Nate Wolfe through "New message" (1 recipient) -- correctly opened
+the EXISTING 1:1 conversation, zero errors. Started a fresh group with Nate, Abhi, and Ehren (3
+people) -- group created, display name correctly derived from all three members ("Nate Wolfe PM,
+Abhi Manager, Ehren Manager"), appeared in the DM list under Chats (not Channels). Sent a real
+message ("ZZ Test 203: verifying the real 3-person group DM works end to end.") -- delivered with
+zero console errors, confirmed genuinely persisted server-side (survived a full reload in a fresh
+tab, not just optimistic local state). **Not independently provable**: actual delivery of the
+`direct_message_received` notification to a *different* recipient's own bell -- same single-
+operator-account limitation already documented for Engineering's own notification verification;
+the resolution logic itself (which recipients get notified) is directly covered by the new
+`tests/api/create-notification.test.js`/`tests/api/send-push.test.js` group-case tests instead.
+
+**Multi-person direct conversations (D19, if a decision number is ever assigned) is fully
+shipped**: migrations 203/205/206 applied and canonically tested in production, frontend deployed
+and live-verified for both the 1:1 regression and a real group conversation.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
