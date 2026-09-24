@@ -1728,21 +1728,21 @@ coder. What was found and fixed:
 Read this section first for "what's actually next" — it supersedes any "next step" language anywhere
 else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written before 2026-09-23.
 
-0. **URGENT — a real production outage in admin role management, root-caused and fixed,
-   migration 204 SENT to E 2026-09-24, ahead of migration 203.** `active_workspace_id()`
-   (migration 124) requires exactly one `workspaces` row to exist in the whole database — a
-   deliberate guard when written, but Stage 7 onboarding has since made multiple real workspaces
-   normal (exactly the risk this document's own §11 cross-cutting finding predicted: "a second
-   real workspace cannot safely be created while any RPC still depends on 'exactly one workspace
-   in the whole database'"). Every one of the 5 legacy `bridge_*` functions (set primary role,
-   set secondary roles, set tab permissions, grant admin, revoke admin) has been failing for
-   every admin since the second real workspace was approved. `backend/supabase/migrations/204_fix_bridge_functions_multi_workspace.sql`
-   fixes each function on its own merits (resolve the caller's own workspace where one must be
-   created; drop the dead-weight gate entirely where none was ever needed) without touching
-   `active_workspace_id()` itself or any other call site. Canonical test:
-   `backend/supabase/migration_204_fix_bridge_functions_multi_workspace_tests.sql`. See
-   `HANDOFF.md`'s matching 2026-09-24 entry for full detail. **Once confirmed applied: live-verify
-   by actually setting a real user's primary role in production and confirming no error.**
+0. **FIXED — a real production outage in admin role management, fully shipped and
+   live-verified, 2026-09-24.** `active_workspace_id()` (migration 124) required exactly one
+   `workspaces` row to exist in the whole database — a deliberate guard when written, but Stage 7
+   onboarding had since made multiple real workspaces normal (exactly the risk this document's own
+   §11 cross-cutting finding predicted). Every one of the 5 legacy `bridge_*` functions (set
+   primary role, set secondary roles, set tab permissions, grant admin, revoke admin) had been
+   failing for every admin since the second real workspace was approved.
+   **Migration 204** (`backend/supabase/migrations/204_fix_bridge_functions_multi_workspace.sql`) —
+   applied and canonical-tested in production (E, "Success. No rows returned" for both). The
+   canonical test's first run caught a real bug in the test script itself (assumed `app_admins`
+   held only its own fixtures; it's real, already-populated production data) — fixed test-script-
+   only, migration 204 itself never touched. **Live-verified directly in production**: changed
+   `eck1679@gmail.com`'s own primary role from Manager to PM and back, both changes genuinely
+   persisted (confirmed via full reload in a fresh tab, not just optimistic local state), zero
+   console errors either direction. See `HANDOFF.md`'s matching 2026-09-24 entries for full detail.
 1. **Multi-person direct conversations — APPROVED by E 2026-09-23/24, migration 203 corrected per
    E's own review and SENT as the next single Supabase action, 2026-09-24.** `PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md`
    is the full, current design. E's approved shape: "New message" picks 1+ recipients (1 → existing

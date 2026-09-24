@@ -1298,6 +1298,19 @@ unchanged byte-for-byte from migration 124 and already has its own dedicated cov
 `migration_124_bridge_tests.sql`, so re-testing it here added risk (depending on real admin count)
 for zero new coverage. Migration 204 itself was never touched. Corrected test resent to E.
 
+**Corrected test PASSED in production (E, "Success. No rows returned," 2026-09-24).** Live-verified
+directly, not just via the SQL test: opened Admin > Team Roster on the real production app (2 real
+workspaces now confirmed existing), changed `eck1679@gmail.com`'s own primary group from Manager to
+PM, confirmed the change genuinely persisted server-side (survived a full page reload in a fresh
+tab, not just an optimistic local update) with zero console errors, then changed it back to
+Manager and confirmed that round-trip too, again with zero errors, in a genuinely fresh tab (the
+first restore attempt's tab showed 8 stale console errors on reload -- all timestamped from BEFORE
+migration 204 was applied, leftover history accumulated in that tab's own console buffer across
+earlier reloads this session, not from the restore action itself -- resolved by re-checking in a
+freshly opened tab, which showed zero errors and the correctly-restored "Manager" value).
+**Migration 204 is fully shipped: applied, canonically tested, and live-verified.** The real
+production outage in admin role management is closed.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
