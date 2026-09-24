@@ -1548,10 +1548,18 @@ there, not an oversight.
    direct comment reference, Reopen, and an activity timeline/log-activity form). Wired into
    `api/_lib/notificationEvents.js` so reassigning a case's owner fires a real notification through
    the existing hardened route. `npx tsc -b`/`npx vite build` clean, 18 new persistence-layer tests.
-   **Pending as of this entry**: production deploy and live verification (queued immediately after
-   this write-up). See `HANDOFF.md`'s matching 2026-09-23 entry for full detail, including one real
-   bug caught before shipping (both new modals initially used a CSS class, `modal-overlay`, that
-   doesn't exist anywhere in this app — fixed to the real `modal-backdrop` convention, plus wired
+   **Deployed and live-verified in production, 2026-09-23**: the Support tab, its gating (only
+   for roles it was added to), the case list's empty state, and the New Case modal (project picker,
+   priority, owner picker resolving real team emails) all confirmed working directly against
+   production. **One real limitation, not a bug**: full case-creation round-trip (status changes,
+   activity log, reopen) could not be exercised live because production currently has zero projects
+   on the Client Ledger at all (confirmed directly: Client Ledger's own Primary List and Closed
+   Projects queue are both empty) — `create_support_case()`'s own requirement that the target
+   project already be ledger-eligible has nothing to test against yet; this will verify itself
+   naturally the first time a real project is closed and ledgered. See `HANDOFF.md`'s matching
+   2026-09-23 entry for full detail, including one real bug caught before shipping (both new modals
+   initially used a CSS class, `modal-overlay`, that doesn't exist anywhere in this app — fixed to
+   the real `modal-backdrop` convention, plus wired
    into the standing `useModalA11y()` focus-trap hook).
 9. **Engineering/Product Development module first release (D14) — NOT STARTED.** Same gating as
    stage 8. Design doc: `PRODUCT_ENGINEERING_MODULE_DESIGN.md`.

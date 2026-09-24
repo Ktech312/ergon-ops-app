@@ -817,6 +817,27 @@ UI, is the obvious next polish pass, not done here to keep this batch shippable)
 Calendar/any real calendar integration for scheduled visits (it's a plain future-dated activity
 note, exactly as the design doc's §5 scoped it).
 
+**Deployed and live-verified in production the same night** (`695bf0d`, bundle confirmed via the
+close-tab-then-fresh-tab discipline -- the first hash checked after pushing turned out to be an
+intermediate deploy still missing the new code, caught by grepping the actual downloaded bundle for
+`support_case_assigned` before trusting it): the Support nav link appears (confirmed via a direct
+DOM `.click()` -- the browser-automation tool's own coordinate/ref-based click on this specific
+scrollable nav row didn't register a real navigation for reasons unrelated to the app code, direct
+`element.click()` worked immediately); the per-user tab-access grid in Admin now lists "Support" as
+a 13th checkbox for every user, confirming `ALL_TABS` is live; the case list renders its correct
+empty state ("No support cases yet."); the New Case modal renders every field correctly, including
+the owner picker resolving real team member emails via the new `knownUsers` join. **One genuine,
+honest limitation, not a bug**: full case-creation could not be exercised against real data because
+production's Client Ledger is currently completely empty (Primary List and Closed Projects queue
+both show zero rows) -- there is no ledger-eligible project yet for `create_support_case()`'s own
+requirement to have anything real to test against. Fabricating one (closing a real project and
+adding it to the ledger purely to test Support) was deliberately NOT done -- unlike this session's
+disposable `ZZ Test` artifacts (a signup request, a workspace), a fake Closed Project would show up
+in the real Client Ledger, Dashboard metrics, and Projects list, a materially bigger and less
+contained footprint than anything else created for testing today. This will verify itself naturally
+the first time a real project is closed and moved into the ledger -- worth a deliberate follow-up
+check at that point, not before.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
