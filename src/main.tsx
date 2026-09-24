@@ -2781,6 +2781,23 @@ function App() {
     if (!authSession) {
       return;
     }
+    // "New message" (migration 203) can now request a 1:1 with someone who already has a
+    // conversation -- the OLDER click-a-roster-row UI never called getOrCreateConversation for
+    // an existing pair (only ever for a genuinely new person), so its on_conflict=merge-duplicates
+    // upsert's UPDATE path was never actually exercised until this new entry point. Found live,
+    // 2026-09-24: `conversations` has never had an UPDATE policy (migration 094 only ever added
+    // SELECT/INSERT), so that upsert-as-update fails RLS. Rather than opening a new write surface
+    // on a table that's deliberately never needed one, check local state first and just select
+    // the existing conversation directly -- matches the roster-row click's own behavior exactly,
+    // and avoids the network round-trip entirely when the answer is already known.
+    const existing = conversations.find(
+      (entry) => !entry.isGroup && (entry.participantAId === otherUserId || entry.participantBId === otherUserId),
+    );
+    if (existing) {
+      selectConversation(existing.id);
+      setMessagesStatus("");
+      return;
+    }
     try {
       const conversation = await getOrCreateConversation(authSession.userId, otherUserId, authSession.accessToken);
       setConversations((current) => (current.some((entry) => entry.id === conversation.id) ? current : [conversation, ...current]));
