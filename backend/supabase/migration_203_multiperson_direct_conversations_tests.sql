@@ -1,8 +1,8 @@
--- Canonical isolation test for migration 203 (multi-person direct conversations). DRAFT --
--- written alongside the migration, NOT YET RUN, NOT YET SENT TO E (see
--- PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md -- one product decision needs E before this
--- migration itself is sent). Wrapped in begin/rollback -- nothing commits regardless of
--- outcome, safe to run any time once migration 203 is actually applied.
+-- Canonical isolation test for migration 203 (multi-person direct conversations). Wrapped in
+-- begin/rollback -- nothing commits regardless of outcome. Requires BOTH migration 203 AND
+-- migration 205 (its corrective follow-up, fixing a real `wm.status` bug found running this
+-- exact test live, 2026-09-24) to be applied first -- against 203 alone, sections (b)/(c) fail
+-- with "column status of relation workspace_members does not exist."
 --
 -- Sections:
 --   (a) Regression guard: an existing-shape 1:1 conversation still creates/reads/writes
@@ -55,14 +55,20 @@ begin
   insert into auth.users (id, email) values (gen_random_uuid(), 'test203-nonmember@example.com') returning id into non_member_id;
   insert into auth.users (id, email) values (gen_random_uuid(), 'test203-otherws@example.com') returning id into other_ws_user_id;
 
-  insert into public.workspace_members (workspace_id, user_id, status) values
-    (ws_id, user_a_id, 'active'),
-    (ws_id, user_b_id, 'active'),
-    (ws_id, group_creator_id, 'active'),
-    (ws_id, group_member_2_id, 'active'),
-    (ws_id, group_member_3_id, 'active'),
-    (ws_id, non_member_id, 'active');
-  insert into public.workspace_members (workspace_id, user_id, status) values (other_ws_id, other_ws_user_id, 'active');
+  -- workspace_members has NO status column of its own (migration 115: id/workspace_id/user_id/
+  -- is_workspace_admin/created_at/updated_at only) -- "active" is the WORKSPACE's own status
+  -- (already set above), joined in wherever a caller checks "is this an active membership."
+  -- First draft here wrongly tried to set a status column on workspace_members itself -- caught
+  -- live, 2026-09-24, "ERROR: 42703: column status of relation workspace_members does not
+  -- exist" -- same real bug found in migration 203 itself, fixed forward by migration 205.
+  insert into public.workspace_members (workspace_id, user_id) values
+    (ws_id, user_a_id),
+    (ws_id, user_b_id),
+    (ws_id, group_creator_id),
+    (ws_id, group_member_2_id),
+    (ws_id, group_member_3_id),
+    (ws_id, non_member_id);
+  insert into public.workspace_members (workspace_id, user_id) values (other_ws_id, other_ws_user_id);
 
   -- ============================================================
   -- (a) Regression guard -- existing 1:1 shape untouched

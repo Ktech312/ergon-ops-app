@@ -1311,6 +1311,39 @@ freshly opened tab, which showed zero errors and the correctly-restored "Manager
 **Migration 204 is fully shipped: applied, canonically tested, and live-verified.** The real
 production outage in admin role management is closed.
 
+## 2026-09-24, same session: migration 203 applied -- its own canonical test found a real bug in 203 itself (migration 205)
+
+E ran migration 203 ("Success. No rows returned"), then its canonical test, which failed live:
+`ERROR: 42703: column "status" of relation "workspace_members" does not exist`. Root-caused
+immediately, not guessed: two functions in migration 203
+(`guard_conversation_member_workspace_id()`'s trigger check, and `create_group_conversation()`'s
+own inline member-validation loop) checked `wm.status = 'active'` directly against
+`workspace_members` -- that table has never had a `status` column (confirmed from its real create
+table, migration 115: `id`/`workspace_id`/`user_id`/`is_workspace_admin`/`created_at`/`updated_at`
+only). "Active" is a property of the WORKSPACE, not the membership row --
+`workspaces.status = 'active'`, reached via a join -- exactly the pattern migration 187's own
+`guard_conversation_workspace_id_mutation()` already used correctly, in the same file, that this
+one should have copied precisely and didn't. A genuine transcription error while drafting 203, not
+caught by review because the design doc's own citation of 187's pattern was accurate -- the actual
+SQL just didn't follow it faithfully in these two new functions.
+
+**Per this repo's standing rule, migration 203 itself is NOT edited or rerun.** Fixed forward:
+`backend/supabase/migrations/205_fix_conversation_members_workspace_check.sql` re-applies both
+functions via `create or replace function`, adding the missing `join public.workspaces w on w.id =
+wm.workspace_id` and checking `w.status = 'active'` instead of the nonexistent `wm.status` --
+identical in every other respect.
+
+**The canonical test's own fixture had the exact same wrong assumption** -- its
+`insert into workspace_members (workspace_id, user_id, status) values (..., 'active')` tried to
+set a column that doesn't exist. Fixed in the same pass (dropped `status` from those inserts
+entirely -- the fixture workspaces already correctly get `status = 'active'` on the `workspaces`
+row itself, which is all that's needed). Test file's header note updated: it now requires BOTH
+203 and 205 applied before it can run, not 203 alone.
+
+Both migration 205 and the corrected test are sent to E together as the next single Supabase
+action (migration first, then its test, same one-at-a-time discipline as every other migration
+this session).
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly

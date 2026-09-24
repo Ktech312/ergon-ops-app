@@ -1,9 +1,14 @@
 # Multi-person direct conversations — design
 
-Status: **APPROVED by E, 2026-09-23/24. Migration 203 corrected per E's own review and sent as the
-next single Supabase action.** Written in response to E's own long-standing ask (recorded in
-migration 162's header, 2026-09-17: "E also asked for direct_messages/conversations to support more
-than two participants, Slack/Teams-style... a real, separate feature... tracked as a new item").
+Status: **APPROVED by E, 2026-09-23/24. Migration 203 applied 2026-09-24. Its own canonical test
+found a real bug in 203 itself (not just the test) — `wm.status = 'active'` referenced a column
+`workspace_members` doesn't have; "active" is `workspaces.status`, reached by a join, exactly as
+migration 187's own function in the same file already did correctly. Fixed forward by migration
+205 (203 itself was not edited or rerun, per this repo's standing rule) — both now sent to E as
+the next single Supabase action, together.** Written in response to E's own long-standing ask
+(recorded in migration 162's header, 2026-09-17: "E also asked for direct_messages/conversations
+to support more than two participants, Slack/Teams-style... a real, separate feature... tracked as
+a new item").
 
 ## 0. Approved shape (E, 2026-09-23)
 
