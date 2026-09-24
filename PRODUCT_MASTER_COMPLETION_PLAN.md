@@ -1115,7 +1115,7 @@ Only D15 remains genuinely gated on a future E decision.
 | D12 (revised) — e-signature hardening | **APPROVED, FULLY SHIPPED.** Migration 153 confirmed applied and tested in production 2026-09-16. See §3/§9. |
 | D18 — frozen proposal PDF | **APPROVED, FULLY SHIPPED.** See §3/§9 — `d92a114`. |
 | D11 — Phase 3 RLS | **APPROVED 2026-09-16 — standing authorization for the full staged rollout** (Clients/Sales → Projects/BOM → Purchasing/Inventory → Documents/Notifications/Storage → remaining indirect paths → full isolation suite), in that order, one coherent table group at a time. Group 1 (Clients + Sales) implemented — migration 155, §11. |
-| D13/D14 — Support/Engineering modules | **APPROVED 2026-09-16 — first-release scope authorized**, to be built after Phase 3 completes, using the existing design documents (`PRODUCT_SUPPORT_MODULE_DESIGN.md`, `PRODUCT_ENGINEERING_MODULE_DESIGN.md`) and their recommended first-release boundaries. Not yet started — see §11. |
+| D13/D14 — Support/Engineering modules | **APPROVED 2026-09-16 — first-release scope authorized**, built using the existing design documents (`PRODUCT_SUPPORT_MODULE_DESIGN.md`, `PRODUCT_ENGINEERING_MODULE_DESIGN.md`) and their recommended first-release boundaries. **BOTH FULLY SHIPPED 2026-09-23** — migrations 200/201 applied and canonical-tested in production, frontends deployed and live-verified, notification wiring confirmed working (migration 202 fixed a real gap found during verification). See §11. |
 | D15 — Commercial SaaS billing | Still gated — explicitly deferred, no design work without an explicit go-ahead. Not part of this authorization. |
 
 ## 8b. Queue R3 — approved decisions (D5/D6/D9/D12/D18) — ALL IMPLEMENTED (2026-09-16)
@@ -1561,22 +1561,43 @@ there, not an oversight.
    initially used a CSS class, `modal-overlay`, that doesn't exist anywhere in this app — fixed to
    the real `modal-backdrop` convention, plus wired
    into the standing `useModalA11y()` focus-trap hook).
-9. **Engineering/Product Development module first release (D14) — IN PROGRESS, 2026-09-23.** Design
+9. **Engineering/Product Development module first release (D14) — SHIPPED, 2026-09-23.** Design
    doc `PRODUCT_ENGINEERING_MODULE_DESIGN.md` revalidated against the current schema before
    implementation (one real open question — who may trigger the catalog write — resolved via a
    controlled `release_product_request()` RPC rather than widening `product_catalog`'s own
    manager/admin-only write RLS). **Migration 201** (`product_requests`/`product_request_reviews`,
    `create_product_request()`/`log_product_request_review()`/`change_product_request_status()`/
    `release_product_request()`) — canonical test passing (67/67 in the consolidated isolation
-   suite), **sent to E as the next Supabase action, not yet applied to production as of this
-   entry**. Frontend (Engineering nav tab, request list, New Request modal, request detail modal
-   with review/status/release controls) was built in parallel while the migration was pending, per
-   E's own explicit instruction not to stall on the manual SQL step — `npx tsc -b`/`npx vite build`
-   clean, 16 new persistence-layer tests, full suite 616/616. Two real bugs caught and fixed before
-   this reached E: `product_request_reviews.reviewed_at` had the same `now()`-vs-`clock_timestamp()`
-   bug migration 198 already found once; a cross-workspace check in the canonical test itself was
-   copy-pasted against a same-workspace fixture, which would have passed regardless of whether the
-   real check worked. See `HANDOFF.md`'s matching 2026-09-23 entry for full detail.
+   suite), **applied and confirmed live in production** (E, "Success. No rows returned" for both
+   the migration and its test). Frontend (Engineering nav tab, request list, New Request modal,
+   request detail modal with review/status/release controls) was built in parallel while the
+   migration was pending, per E's own explicit instruction not to stall on the manual SQL step —
+   `npx tsc -b`/`npx vite build` clean, 16 new persistence-layer tests, full suite 616/616. Two
+   real bugs caught and fixed before this reached E: `product_request_reviews.reviewed_at` had the
+   same `now()`-vs-`clock_timestamp()` bug migration 198 already found once; a cross-workspace
+   check in the canonical test itself was copy-pasted against a same-workspace fixture, which would
+   have passed regardless of whether the real check worked.
+   **Deployed and live-verified in production, 2026-09-23**: a full round trip of a real test
+   product request (`PR-2026-0001`) through submitted → technical review (pass) → prototyping →
+   prototype test (pass) → release ready → released, confirmed both in the app UI ("Released into
+   the catalog.") and directly in the real Product Catalog (`ZZ-TEST-201-SKU` row, correct name,
+   price, Active status). **One real bug found during that verification and fixed (migration
+   202)**: migrations 200 and 201 each widened `notification_rules`'s CHECK constraint for their
+   new event type but never inserted the paired default row (migration 149's own established
+   pattern) — so `support_case_assigned` and `product_request_reviewed` could never have fired,
+   ever, in any workspace, since each shipped. Fixed and applied (two layers deep: migration 173's
+   workspace-scoping meant the insert needed to be per-workspace, and the table's own
+   anti-spoofing trigger needed disabling for the seed insert only). Confirmed live via direct
+   Supabase REST query and the Admin → Notification Rules panel. Re-tested the actual fix (not
+   just the migration's success message) with a second test request — confirmed the API path now
+   correctly finds the active rule; the bell entry itself was correctly suppressed by
+   `excludingSelf()` since this is a single-operator account (requester and reviewer are
+   unavoidably the same person) — genuinely not further verifiable without a second real user
+   account, not a defect. See `HANDOFF.md`'s matching 2026-09-23 entries for full detail.
+
+**Both Support (D13) and Engineering (D14) first releases are now fully shipped**: schema/RLS/RPCs
+applied and canonical-tested in production, frontends deployed and live-verified, notification
+wiring for both confirmed structurally correct and firing through the real API path.
 
 **Cross-cutting finding from Group 1's revalidation, tracked here so it isn't lost across stages**:
 `active_workspace_id()` (migration 124) is a deliberate, tested, fail-closed guard requiring exactly

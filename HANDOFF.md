@@ -838,7 +838,7 @@ contained footprint than anything else created for testing today. This will veri
 the first time a real project is closed and moved into the ledger -- worth a deliberate follow-up
 check at that point, not before.
 
-## 2026-09-23, later the same night: Engineering/Product Development module first release (D14) -- migration 201, backend + frontend built together, canonical test passing locally
+## 2026-09-23, later the same night: Engineering/Product Development module first release (D14) -- migration 201, backend + frontend built together, applied and confirmed live
 
 Right after Support (D13) shipped, deployed, and was live-verified, E's own instruction ("After
 Support is deployed and live-verified, continue directly into the already-approved Engineering
@@ -944,11 +944,75 @@ including the source-project picker populated with real production project names
 several pre-existing, unrelated background-sync errors (a stale JWT on an old tab, `projects`/
 `inventory_items` ON CONFLICT write failures) -- confirmed identical to ones already observed while
 verifying the Support module earlier tonight, not caused by this batch, out of scope for it.
-**Migration 201 has NOT yet been applied to production** -- sent as the next single Supabase
-action. Once confirmed: submit one real `ZZ Test`-prefixed product request through the actual UI,
-run it through a technical review and a prototype test, and release it into the catalog, to prove
-the full round-trip end to end the same way migration 199's notification flow was proven twice
-(before and after) earlier tonight.
+**Migration 201 APPLIED and its canonical test PASSED in production (E confirmed, 2026-09-23,
+"Success. No rows returned" for both).**
+
+## 2026-09-23, later still: Engineering live round-trip verification -- one real bug found and fixed (migration 202)
+
+Drove a real production product request (`PR-2026-0001`, "ZZ Test 201 Outdoor Housing Revision")
+through its entire lifecycle via direct DOM manipulation against the live app: submitted ->
+`technical_review` (pass) -> auto-advanced to Prototyping -> `prototype_test` (pass) -> auto-advanced
+to Release Ready -> released (`mode=new`, catalog number `ZZ-TEST-201-SKU`, price 149.99) -> status
+Released, UI showed "Released into the catalog." Verified directly in the real Product Catalog
+(Sales tab, filter cleared) that the row exists correctly: `ZZ-TEST-201-SKU`, name, $0 unit cost, 0%
+markup, $150 sell price (149.99 display-rounded), Active. The catalog-write half of D14 is fully
+confirmed correct end to end.
+
+**Real bug found while checking the notification bell:** `product_request_reviewed` never fired.
+Root-caused to a genuine gap in both migrations 200 and 201 -- each widened
+`notification_rules`'s `event_type` CHECK constraint to legalize its new event type but never
+inserted the actual default row, unlike migration 149's paired pattern
+(`insert ... on conflict (event_type) do nothing`) that both migrations' own comments claimed to
+follow. `ruleActive()` (`main.tsx`) looks the event type up by name and treats a missing row as
+"off," so the CHECK-constraint widening alone was cosmetic -- neither `support_case_assigned` nor
+`product_request_reviewed` could ever have fired, in any workspace, since the day each shipped.
+
+Two layers deep once actually fixing it, both confirmed live before landing:
+1. Migration 173 (2026-09-18, Phase 3 Stage 5) had already turned `notification_rules` from a
+   single global table into a workspace-scoped one -- dropped the old
+   `notification_rules_event_type_key` unique constraint and replaced it with
+   `notification_rules_workspace_id_event_type_key`, unique on `(workspace_id, event_type)`. A
+   first attempt at the backfill using migration 149's older `on conflict (event_type)` shape
+   failed immediately with `42P10: there is no unique or exclusion constraint matching the ON
+   CONFLICT specification` -- confirms per-workspace is the correct model (each Ergon Ops
+   workspace is a separate company; this was already E's explicit decision in migration 173, not
+   an open question).
+2. Rewritten to insert one row per existing workspace -- failed a second time with
+   `no workspace membership found for current user`, raised from
+   `resolve_caller_workspace_id()` via `notification_rules_guard_workspace_id`
+   (`guard_workspace_id_mutation()`, migration 117). That trigger unconditionally overwrites
+   `workspace_id` on INSERT with the caller's own resolved workspace -- correct anti-spoofing
+   behavior for an authenticated end user, but the Supabase SQL editor session has no `auth.uid()`
+   workspace membership of its own, so it isn't a valid caller for a table-owned INSERT. Fixed by
+   disabling that one trigger for the duration of the seed insert and re-enabling it immediately
+   after, inside the same migration -- the guard is back in force for every real user-facing write
+   the instant the migration commits.
+
+Migration 202 applied and confirmed (E, "Success. No rows returned"). Confirmed live via direct
+Supabase REST query (both new rows present, `channels: [in_app]`, `is_active: true`, correct
+workspace_id) and via the Admin -> Notification Rules panel (both "product request reviewed" and
+"support case assigned" now list correctly after a hard reload -- the panel's own React state
+doesn't refetch on a bare hash navigation, only a real reload, worth remembering for future
+verification passes).
+
+**Re-tested the actual fix, not just the migration's own success message**: created a second real
+test request (`ZZ Test 202 Notification Rule Verify`) and logged a `technical_review` against it.
+`/api/create-notification` returned 200 and the rule lookup found the now-active row, but no bell
+entry appeared -- root-caused to `excludingSelf()` (`api/_lib/notificationEvents.js`), which
+correctly strips the acting user's own email from the recipient list before creating any
+notification row. Since this is a single-operator production account, every product request's
+`requested_by_email` and every review's actor are unavoidably the same person (`eck1679@gmail.com`),
+so self-exclusion will suppress the bell entry for *any* live test run this way -- this is correct,
+intentional behavior (identical to how `task_assigned` already skips self-assigned tasks), not a
+defect, and it means full delivery-to-a-different-recipient's-bell genuinely cannot be proven live
+without a second real user account. Documenting this honestly as a real verification limit, same
+category as Support's empty-Client-Ledger gap above, rather than overclaiming full coverage.
+
+**Both Support (D13) and Engineering (D14) are now fully shipped**: schema/RLS/RPCs applied and
+canonical-tested in production, frontends deployed and live-verified, and the notification wiring
+for both is now confirmed structurally correct and firing through the real API path (the one
+remaining unproven leg -- an actual cross-user delivery -- requires a second real account that
+doesn't exist in this environment, not further code work).
 
 ## Next coder session
 
