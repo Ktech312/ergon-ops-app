@@ -2154,27 +2154,43 @@ export async function loadAllKnownUsers(accessToken?: string): Promise<KnownUser
 // polls rather than subscribing to Postgres changes; see main.tsx for the
 // poll interval and why.
 
+// isGroup/title/memberUserIds are migration 203 (multi-person direct conversations).
+// participantAId/participantBId stay non-null ONLY for a 1:1 conversation (is_group false) --
+// null for a group, where membership lives entirely in conversation_members instead. Every
+// pre-203 1:1 call site that reads participantAId/participantBId is unaffected: those two
+// columns keep exactly their old values for every 1:1 conversation, old or new.
 export type Conversation = {
   id: string;
-  participantAId: string;
-  participantBId: string;
+  participantAId: string | null;
+  participantBId: string | null;
+  isGroup: boolean;
+  title: string | null;
+  memberUserIds: string[];
   lastMessageAt: string;
   createdAt: string;
 };
 
 type ConversationRow = {
   id: string;
-  participant_a_id: string;
-  participant_b_id: string;
+  participant_a_id: string | null;
+  participant_b_id: string | null;
+  is_group?: boolean;
+  title?: string | null;
   last_message_at: string;
   created_at: string;
 };
 
-function mapConversationRow(row: ConversationRow): Conversation {
+function mapConversationRow(row: ConversationRow, memberUserIds: string[] = []): Conversation {
+  const isGroup = row.is_group ?? false;
   return {
     id: row.id,
     participantAId: row.participant_a_id,
     participantBId: row.participant_b_id,
+    isGroup,
+    title: row.title ?? null,
+    memberUserIds: isGroup
+      ? memberUserIds
+      : [row.participant_a_id, row.participant_b_id].filter((id): id is string => Boolean(id)),
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
   };
@@ -2225,15 +2241,82 @@ export async function loadConversations(userId: string, accessToken?: string): P
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return [];
   }
-  const response = await fetch(
+  // 1:1 conversations: unchanged from before migration 203 -- participant_a_id/participant_b_id
+  // are null on a group row, so this filter naturally never matches one.
+  const oneToOneResponse = await fetch(
     supabaseUrl(`conversations?or=(participant_a_id.eq.${userId},participant_b_id.eq.${userId})&order=last_message_at.desc`),
     { headers: supabaseHeaders(accessToken) },
   );
-  if (!response.ok) {
+  if (!oneToOneResponse.ok) {
     return [];
   }
-  const rows = (await response.json()) as ConversationRow[];
-  return rows.map(mapConversationRow);
+  const oneToOneRows = (await oneToOneResponse.json()) as ConversationRow[];
+
+  // Group conversations: this user's own conversation_members rows name which ones. A 1:1
+  // conversation backfilled into conversation_members (migration 203) can appear here too --
+  // filtered out below by fetching only is_group=true rows.
+  const membershipResponse = await fetch(
+    supabaseUrl(`conversation_members?user_id=eq.${userId}&select=conversation_id`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  const memberships = membershipResponse.ok ? ((await membershipResponse.json()) as { conversation_id: string }[]) : [];
+  const candidateGroupIds = [...new Set(memberships.map((row) => row.conversation_id))];
+  if (candidateGroupIds.length === 0) {
+    return oneToOneRows.map((row) => mapConversationRow(row)).sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  }
+
+  const groupResponse = await fetch(
+    supabaseUrl(`conversations?id=in.(${candidateGroupIds.join(",")})&is_group=eq.true&select=*`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  const groupRows = groupResponse.ok ? ((await groupResponse.json()) as ConversationRow[]) : [];
+  if (groupRows.length === 0) {
+    return oneToOneRows.map((row) => mapConversationRow(row)).sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  }
+
+  const groupIds = groupRows.map((row) => row.id);
+  const membersResponse = await fetch(
+    supabaseUrl(`conversation_members?conversation_id=in.(${groupIds.join(",")})&select=conversation_id,user_id`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  const memberRows = membersResponse.ok ? ((await membersResponse.json()) as { conversation_id: string; user_id: string }[]) : [];
+  const memberIdsByConversation = new Map<string, string[]>();
+  for (const row of memberRows) {
+    const existing = memberIdsByConversation.get(row.conversation_id) ?? [];
+    existing.push(row.user_id);
+    memberIdsByConversation.set(row.conversation_id, existing);
+  }
+
+  const all = [
+    ...oneToOneRows.map((row) => mapConversationRow(row)),
+    ...groupRows.map((row) => mapConversationRow(row, memberIdsByConversation.get(row.id) ?? [])),
+  ];
+  return all.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+}
+
+// p_member_user_ids is every OTHER recipient -- the RPC adds the caller themselves as a
+// member automatically, so creatorUserId is passed separately here purely to build the
+// returned Conversation's own memberUserIds list correctly (the RPC's response row carries no
+// membership list of its own, just the conversation columns).
+export async function createGroupConversation(
+  recipientUserIds: string[],
+  title: string | undefined,
+  creatorUserId: string,
+  accessToken?: string,
+): Promise<Conversation> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/create_group_conversation"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_title: title?.trim() || null, p_member_user_ids: recipientUserIds }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not start group conversation"));
+  }
+  const row = (await response.json()) as ConversationRow;
+  return mapConversationRow(row, [creatorUserId, ...recipientUserIds]);
 }
 
 export async function loadConversationMessages(conversationId: string, accessToken?: string): Promise<DirectMessage[]> {

@@ -351,4 +351,30 @@ describe("create-notification: direct_message_received (directMessageId mode)", 
     expect(insertedRows[0].title).not.toBe("SPOOFED");
     expect(insertedRows[0].body).toBe("the real message");
   });
+
+  it("group conversation (migration 203): notifies every OTHER member, not just one", async () => {
+    const emailsByUserId = {
+      "member-2": "member2@ergon.test",
+      "member-3": "member3@ergon.test",
+    };
+    global.fetch = vi.fn(withNotificationInsert({
+      "/rest/v1/direct_messages": () => jsonResponse(200, [{ id: "m1", conversation_id: "group-1", sender_id: CALLER.id, body: "hello group" }]),
+      "/rest/v1/conversations": () => jsonResponse(200, [{ participant_a_id: null, participant_b_id: null, is_group: true }]),
+      "/rest/v1/conversation_members": () =>
+        jsonResponse(200, [{ user_id: CALLER.id }, { user_id: "member-2" }, { user_id: "member-3" }]),
+      "/rest/v1/app_known_users": (url) => {
+        const match = url.match(/user_id=eq\.([^&]+)/);
+        const id = match ? decodeURIComponent(match[1]) : null;
+        return jsonResponse(200, id && emailsByUserId[id] ? [{ email: emailsByUserId[id] }] : []);
+      },
+    }));
+    const res = createMockRes();
+    await handler(createMockReq({ body: { directMessageId: "m1" }, token: "t" }), res);
+    expect(res.statusCode).toBe(200);
+    const notifiedEmails = res.body.created.map((entry) => entry.recipientEmail).sort();
+    expect(notifiedEmails).toEqual(["member2@ergon.test", "member3@ergon.test"]);
+    // The sender is never notified of their own message -- excluded at resolution time,
+    // not just deduped after the fact.
+    expect(notifiedEmails).not.toContain(CALLER.email);
+  });
 });

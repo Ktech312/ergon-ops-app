@@ -55,11 +55,12 @@ describe("send-push: missing target", () => {
 });
 
 describe("send-push: direct-message mode", () => {
-  function routerFor({ messageRows, conversationRows, subscriptions = [] }) {
+  function routerFor({ messageRows, conversationRows, memberRows = [], subscriptions = [] }) {
     return mockFetchRouter([
       { match: "/auth/v1/user", respond: () => jsonResponse(200, SENDER) },
       { match: "/rest/v1/direct_messages", respond: () => jsonResponse(200, messageRows) },
       { match: "/rest/v1/conversations", respond: () => jsonResponse(200, conversationRows) },
+      { match: "/rest/v1/conversation_members", respond: () => jsonResponse(200, memberRows) },
       { match: "/rest/v1/push_subscriptions", respond: (url, opts) =>
           opts.method === "DELETE" ? jsonResponse(200, []) : jsonResponse(200, subscriptions) },
     ]);
@@ -134,6 +135,25 @@ describe("send-push: direct-message mode", () => {
     expect(res.statusCode).toBe(200);
     const payload = JSON.parse(webpush.sendNotification.mock.calls[0][1]);
     expect(payload.url).toBe("/#messages/real-conversation");
+  });
+
+  it("group conversation (migration 203): pushes to every OTHER member's subscriptions, not just one", async () => {
+    global.fetch = vi.fn(routerFor({
+      messageRows: [{ id: "m1", conversation_id: "group-1", sender_id: SENDER.id, body: "hello group" }],
+      conversationRows: [{ participant_a_id: null, participant_b_id: null, is_group: true }],
+      memberRows: [{ user_id: SENDER.id }, { user_id: "member-2" }, { user_id: "member-3" }],
+      subscriptions: [
+        { id: "sub1", endpoint: "https://fcm.example/1", p256dh: "p", auth_key: "a" },
+        { id: "sub2", endpoint: "https://fcm.example/2", p256dh: "p", auth_key: "a" },
+      ],
+    }));
+    const req = createMockReq({ body: { channel: "push", directMessageId: "m1" }, token: "sender-token" });
+    const res = createMockRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.sent).toBe(true);
+    expect(res.body.count).toBe(2);
+    expect(webpush.sendNotification).toHaveBeenCalledTimes(2);
   });
 });
 

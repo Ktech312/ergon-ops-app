@@ -266,7 +266,10 @@ async function resolveDirectMessagePush(req, res, user, directMessageId, supabas
   const title = `New message from ${resolved.senderEmail}`;
   const body = (resolved.body || (resolved.attachmentFileName ? `Sent a file: ${resolved.attachmentFileName}` : "")).slice(0, 200);
   const url = `/#messages/${resolved.conversationId}`;
-  return { recipientId: resolved.recipientId, title, body, url };
+  // recipientIds (migration 203): every OTHER member of the conversation -- a 1:1 message
+  // resolves to the same single-element array it always did, a group message pushes to
+  // every real member.
+  return { recipientIds: resolved.recipientIds, title, body, url };
 }
 
 async function handlePush(req, res, user) {
@@ -295,7 +298,7 @@ async function handlePush(req, res, user) {
     return;
   }
 
-  let recipientId;
+  let recipientIds;
   let title;
   let body;
   let url;
@@ -309,7 +312,7 @@ async function handlePush(req, res, user) {
     if (!resolved) {
       return; // response already written
     }
-    ({ recipientId, title, body, url } = resolved);
+    ({ recipientIds, title, body, url } = resolved);
   } else {
     if (typeof notificationId !== "string") {
       res.status(400).json({ sent: false, error: "notificationId must be a string." });
@@ -333,7 +336,7 @@ async function handlePush(req, res, user) {
       res.status(200).json({ sent: false, reason: "Recipient has never signed into Ergon -- no push subscription possible." });
       return;
     }
-    recipientId = knownRecipientId;
+    recipientIds = [knownRecipientId];
     title = notification.title;
     body = notification.body || "";
     url =
@@ -354,7 +357,7 @@ async function handlePush(req, res, user) {
 
   try {
     const lookupResponse = await fetch(
-      `${supabaseUrl.replace(/\/$/, "")}/rest/v1/push_subscriptions?user_id=eq.${encodeURIComponent(recipientId)}&select=id,endpoint,p256dh,auth_key`,
+      `${supabaseUrl.replace(/\/$/, "")}/rest/v1/push_subscriptions?user_id=in.(${recipientIds.map(encodeURIComponent).join(",")})&select=id,endpoint,p256dh,auth_key`,
       { headers: { apikey: serviceRoleKey, authorization: `Bearer ${serviceRoleKey}` } },
     );
     if (!lookupResponse.ok) {

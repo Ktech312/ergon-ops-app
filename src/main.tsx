@@ -233,6 +233,7 @@ import {
   loadConversationMessages,
   loadUnreadDirectMessageCounts,
   getOrCreateConversation,
+  createGroupConversation,
   sendDirectMessage,
   buildMessageAttachmentStoragePath,
   uploadMessageAttachment,
@@ -2787,6 +2788,22 @@ function App() {
       setMessagesStatus("");
     } catch (error) {
       setMessagesStatus(error instanceof Error ? error.message : "Could not start conversation.");
+    }
+  }
+
+  // "New message" with 2+ recipients (migration 203) -- mirrors handleStartConversation
+  // above exactly, just via createGroupConversation instead of getOrCreateConversation.
+  async function handleStartGroupConversation(memberUserIds: string[]) {
+    if (!authSession) {
+      return;
+    }
+    try {
+      const conversation = await createGroupConversation(memberUserIds, undefined, authSession.userId, authSession.accessToken);
+      setConversations((current) => (current.some((entry) => entry.id === conversation.id) ? current : [conversation, ...current]));
+      selectConversation(conversation.id);
+      setMessagesStatus("");
+    } catch (error) {
+      setMessagesStatus(error instanceof Error ? error.message : "Could not start group conversation.");
     }
   }
 
@@ -8689,6 +8706,7 @@ function App() {
             pushPermissionState={pushPermissionState}
             onSelectConversation={selectConversation}
             onStartConversation={handleStartConversation}
+            onStartGroupConversation={handleStartGroupConversation}
             onSendMessage={handleSendDirectMessage}
             onToggleReaction={handleToggleDirectMessageReaction}
             onSubscribeToPush={handleSubscribeToPush}
@@ -16967,6 +16985,41 @@ function teamDisplayName(email: string, teamMembers: TeamMember[]): string {
   return member?.roleTitle?.trim() ? `${name} ${member.roleTitle.trim()}` : name;
 }
 
+// The other participant of a 1:1 conversation, or null for a group (migration 203) -- every
+// call site that used to assume exactly one "other" participant goes through this instead of
+// re-deriving the ternary inline, so a group conversation degrades to its own label logic
+// (conversationDisplayName below) rather than silently computing a bogus id.
+function otherConversationParticipantId(conversation: Conversation, myUserId: string): string | null {
+  if (conversation.isGroup) return null;
+  return conversation.participantAId === myUserId ? conversation.participantBId : conversation.participantAId;
+}
+
+// Display label for any conversation row, 1:1 or group: unchanged for 1:1 (the other
+// participant's team display name); for a group, the conversation's own title if one was
+// given, else every other member's display name joined together (E: "no name required...
+// derive the label from participant names by default").
+function conversationDisplayName(
+  conversation: Conversation,
+  myUserId: string,
+  emailByUserId: Map<string, string>,
+  teamMembers: TeamMember[],
+): string {
+  if (!conversation.isGroup) {
+    const otherId = otherConversationParticipantId(conversation, myUserId);
+    const email = otherId ? emailByUserId.get(otherId) : undefined;
+    return email ? teamDisplayName(email, teamMembers) : "Unknown user";
+  }
+  if (conversation.title) return conversation.title;
+  const otherNames = conversation.memberUserIds
+    .filter((id) => id !== myUserId)
+    .map((id) => emailByUserId.get(id))
+    .filter((email): email is string => Boolean(email))
+    .map((email) => teamDisplayName(email, teamMembers));
+  if (otherNames.length === 0) return "Group conversation";
+  if (otherNames.length <= 3) return otherNames.join(", ");
+  return `${otherNames.slice(0, 3).join(", ")} +${otherNames.length - 3} more`;
+}
+
 // "Today" / "Yesterday" / full weekday+date, matching how Teams labels
 // its own date dividers between clusters of messages from different days.
 function formatDateDivider(iso: string): string {
@@ -17325,9 +17378,7 @@ function ForwardPicker({
                 );
               })}
               {conversations.map((conversation) => {
-                const otherId = conversation.participantAId === myUserId ? conversation.participantBId : conversation.participantAId;
-                const email = emailByUserId.get(otherId);
-                const label = email ? teamDisplayName(email, teamMembers) : "Unknown user";
+                const label = conversationDisplayName(conversation, myUserId, emailByUserId, teamMembers);
                 const key = `conversation:${conversation.id}`;
                 return (
                   <button
@@ -19121,6 +19172,7 @@ function Messages({
   pushPermissionState,
   onSelectConversation,
   onStartConversation,
+  onStartGroupConversation,
   onSendMessage,
   onToggleReaction,
   onSubscribeToPush,
@@ -19169,6 +19221,9 @@ function Messages({
   pushPermissionState: "unknown" | "unsupported" | "unsubscribed" | "subscribed";
   onSelectConversation: (conversationId: string | null) => void;
   onStartConversation: (otherUserId: string) => void;
+  // "New message" with 2+ recipients (migration 203) -- exactly 1 recipient still goes
+  // through onStartConversation above, unchanged; this is only for the 2+ case.
+  onStartGroupConversation: (memberUserIds: string[]) => void;
   onSendMessage: (body: string, file?: File) => void;
   onToggleReaction: (messageId: string, emoji: string) => void;
   onSubscribeToPush: () => void;
@@ -19266,6 +19321,34 @@ function Messages({
 
   function toggleNewGroupMember(userId: string) {
     setNewGroupMemberIds((current) => (current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]));
+  }
+
+  // "New message" with 1+ recipients (migration 203) -- E: "New message allows selecting one
+  // or more recipients. One recipient uses the existing deduplicated 1:1 conversation. Two or
+  // more recipients creates an ad-hoc group DM." One picker, one flow, branching only on how
+  // many were picked -- deliberately NOT the "New Channel" flow above (no name required, no
+  // private/unlock, lives in the DM list not Channels).
+  const [showNewMessage, setShowNewMessage] = useState(false);
+  const [newMessageMemberIds, setNewMessageMemberIds] = useState<string[]>([]);
+  const [newMessageStatus, setNewMessageStatus] = useState("");
+
+  function toggleNewMessageMember(userId: string) {
+    setNewMessageMemberIds((current) => (current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]));
+  }
+
+  function handleStartNewMessage() {
+    if (newMessageMemberIds.length === 0) {
+      return;
+    }
+    setShowNewMessage(false);
+    setNewMessageStatus("");
+    const memberIds = newMessageMemberIds;
+    setNewMessageMemberIds([]);
+    if (memberIds.length === 1) {
+      onStartConversation(memberIds[0]);
+    } else {
+      onStartGroupConversation(memberIds);
+    }
   }
 
   async function handleCreateGroup() {
@@ -19395,14 +19478,16 @@ function Messages({
   }
 
   const emailByUserId = new Map(knownUsers.map((user) => [user.userId, user.email]));
-  const otherUserId = (conversation: Conversation) => (conversation.participantAId === myUserId ? conversation.participantBId : conversation.participantAId);
+  const otherUserId = (conversation: Conversation) => otherConversationParticipantId(conversation, myUserId);
 
-  // No more "New Message" search modal -- E: "we shouldn't need this, as a
+  // No more "New Message" search modal for a 1:1 -- E: "we shouldn't need this, as a
   // new person joins, their name should just be added." The team roster is
-  // small and already loaded (knownUsers), so anyone without a conversation
+  // small and already loaded (knownUsers), so anyone without a 1:1 conversation
   // yet is just listed directly below the real conversations -- clicking
   // them starts one on the spot via the same onStartConversation used here.
-  const conversationPartnerIds = new Set(conversations.map(otherUserId));
+  // Group conversations (migration 203) don't have a single "partner" to dedupe the roster
+  // against -- only 1:1s count here.
+  const conversationPartnerIds = new Set(conversations.filter((c) => !c.isGroup).map(otherUserId));
   const rosterWithoutConversation = knownUsers.filter(
     (user) => user.userId !== myUserId && !conversationPartnerIds.has(user.userId),
   );
@@ -19412,8 +19497,13 @@ function Messages({
   // then real conversations by recency, then not-yet-started roster rows.
   const lastSeenByUserId = new Map(knownUsers.map((user) => [user.userId, user.lastSeenAt]));
   type MessageRow = {
-    userId: string;
-    email: string;
+    // userId/email are the single "other participant"'s for a 1:1 row (drives presence
+    // dot/avatar/copy-email), or null for a group row (migration 203) -- a group has no
+    // single person to show any of those for.
+    userId: string | null;
+    email: string | null;
+    label: string;
+    isGroup: boolean;
     conversationId: string | null;
     lastMessageAt: string | null;
     unread: number;
@@ -19422,18 +19512,23 @@ function Messages({
   const allRows: MessageRow[] = [
     ...conversations.map((conversation) => {
       const partnerId = otherUserId(conversation);
+      const pinKey = conversation.isGroup ? conversation.id : (partnerId ?? conversation.id);
       return {
         userId: partnerId,
-        email: emailByUserId.get(partnerId) ?? "Unknown user",
+        email: partnerId ? (emailByUserId.get(partnerId) ?? null) : null,
+        label: conversationDisplayName(conversation, myUserId, emailByUserId, teamMembers),
+        isGroup: conversation.isGroup,
         conversationId: conversation.id,
         lastMessageAt: conversation.lastMessageAt,
         unread: unreadMessageCounts[conversation.id] ?? 0,
-        pinned: pinnedUserIds.includes(partnerId),
+        pinned: pinnedUserIds.includes(pinKey),
       };
     }),
     ...rosterWithoutConversation.map((user) => ({
       userId: user.userId,
       email: user.email,
+      label: teamDisplayName(user.email, teamMembers),
+      isGroup: false,
       conversationId: null,
       lastMessageAt: null,
       unread: 0,
@@ -19444,7 +19539,7 @@ function Messages({
     if (a.lastMessageAt && b.lastMessageAt) return b.lastMessageAt.localeCompare(a.lastMessageAt);
     if (a.lastMessageAt) return -1;
     if (b.lastMessageAt) return 1;
-    return displayNameFor(a.email).localeCompare(displayNameFor(b.email));
+    return a.label.localeCompare(b.label);
   });
 
   const activeConversation = conversations.find((entry) => entry.id === activeConversationId) ?? null;
@@ -19494,8 +19589,10 @@ function Messages({
   const otherRows = filteredRows.filter((row) => !row.pinned);
 
   function renderDmRow(row: MessageRow) {
-    const avatarUrl = avatarUrlFor(row.email, teamMembers);
-    const online = isRecentlyActive(lastSeenByUserId.get(row.userId));
+    const avatarUrl = row.email ? avatarUrlFor(row.email, teamMembers) : null;
+    const online = row.userId ? isRecentlyActive(lastSeenByUserId.get(row.userId)) : false;
+    const pinKey = row.isGroup ? row.conversationId! : row.userId;
+    const rowKey = row.conversationId ?? row.userId ?? row.label;
     // Sidebar unread highlight + @mention marker (migration 191) --
     // additive to row.unread/messages-unread-badge above (the OLDER,
     // DM-only numeric-count mechanism, driven by direct_messages.read_at).
@@ -19503,7 +19600,7 @@ function Messages({
     const wasMentioned = row.conversationId ? mentionedConversationIds.has(row.conversationId) : false;
     return (
       <button
-        key={row.userId}
+        key={rowKey}
         type="button"
         className={`messages-conversation-row ${row.conversationId ? "" : "messages-roster-row"} ${row.conversationId === activeConversationId && row.conversationId ? "active" : ""} ${row.pinned ? "pinned" : ""} ${hasNewActivity ? "has-unread" : ""}`}
         onClick={() => {
@@ -19511,21 +19608,23 @@ function Messages({
           if (row.conversationId) {
             onSelectConversation(row.conversationId);
             onMarkThreadRead("conversation", row.conversationId);
-          } else {
+          } else if (row.userId) {
             onStartConversation(row.userId);
           }
         }}
       >
         <span className="presence-avatar-wrap messages-row-avatar-wrap">
-          {avatarUrl ? (
+          {row.isGroup ? (
+            <span className="people-picker-avatar people-picker-avatar-placeholder"><Users size={12} /></span>
+          ) : avatarUrl ? (
             <img className="people-picker-avatar" src={avatarUrl} alt="" />
           ) : (
             <span className="people-picker-avatar people-picker-avatar-placeholder"><User size={12} /></span>
           )}
-          <span className={`presence-dot ${online ? "presence-dot-online" : "presence-dot-offline"}`} />
+          {!row.isGroup && <span className={`presence-dot ${online ? "presence-dot-online" : "presence-dot-offline"}`} />}
         </span>
-        <span className="messages-conversation-name" title={row.email}>
-          {displayNameFor(row.email)}
+        <span className="messages-conversation-name" title={row.email ?? row.label}>
+          {row.label}
           {wasMentioned && (
             <span className="messages-mention-badge" title="You were mentioned">
               <AtSign size={10} />
@@ -19545,20 +19644,22 @@ function Messages({
             tabIndex={0}
             aria-label={row.pinned ? "Unpin" : "Pin to top"}
             title={row.pinned ? "Unpin" : "Pin to top"}
-            onClick={(event) => togglePin(row.userId, event)}
+            onClick={(event) => pinKey && togglePin(pinKey, event)}
           >
             <Pin size={12} fill={row.pinned ? "currentColor" : "none"} />
           </span>
-          <span
-            className="messages-inline-icon messages-copy-email"
-            role="button"
-            tabIndex={0}
-            aria-label="Copy email"
-            title={`Copy email (${row.email})`}
-            onClick={(event) => copyEmail(row.email, row.userId, event)}
-          >
-            <Copy size={11} />
-          </span>
+          {!row.isGroup && row.email && row.userId && (
+            <span
+              className="messages-inline-icon messages-copy-email"
+              role="button"
+              tabIndex={0}
+              aria-label="Copy email"
+              title={`Copy email (${row.email})`}
+              onClick={(event) => copyEmail(row.email!, row.userId!, event)}
+            >
+              <Copy size={11} />
+            </span>
+          )}
         </span>
       </button>
     );
@@ -19580,10 +19681,41 @@ function Messages({
             <h2>Conversations</h2>
             <p>Direct messages with anyone on the team.</p>
           </div>
+          <button className="secondary-action mini-action" type="button" onClick={() => setShowNewMessage((current) => !current)}>
+            <Plus size={14} /> New Message
+          </button>
           <button className="secondary-action mini-action" type="button" onClick={() => setShowCreateGroup((current) => !current)}>
             <Plus size={14} /> New Channel
           </button>
         </div>
+        {showNewMessage && (
+          <div className="messages-create-group">
+            {newMessageMemberIds.length > 0 && (
+              <div className="people-picker-chips">
+                {newMessageMemberIds.map((userId) => {
+                  const user = knownUsers.find((entry) => entry.userId === userId);
+                  return user ? (
+                    <span key={userId} className="people-picker-chip">
+                      {displayNameFor(user.email)}
+                      <button type="button" onClick={() => toggleNewMessageMember(userId)} aria-label={`Remove ${displayNameFor(user.email)}`}>&times;</button>
+                    </span>
+                  ) : null;
+                })}
+              </div>
+            )}
+            <PeoplePicker knownUsers={knownUsers} teamMembers={teamMembers} excludeUserIds={newMessageMemberIds} onSelect={toggleNewMessageMember} />
+            {newMessageMemberIds.length > 1 && (
+              <p className="messages-create-group-hint">{newMessageMemberIds.length} people selected -- this starts a new group conversation.</p>
+            )}
+            {newMessageStatus && <div className="source-file"><span>{newMessageStatus}</span></div>}
+            <div className="messages-create-group-actions">
+              <button className="secondary-action mini-action" type="button" onClick={() => { setShowNewMessage(false); setNewMessageMemberIds([]); }}>Cancel</button>
+              <button className="primary-action mini-action" type="button" disabled={newMessageMemberIds.length === 0} onClick={handleStartNewMessage}>
+                {newMessageMemberIds.length > 1 ? "Start group" : "Start message"}
+              </button>
+            </div>
+          </div>
+        )}
         {showCreateGroup && (
           <div className="messages-create-group">
             <input
@@ -19670,7 +19802,10 @@ function Messages({
           <>
             <div className="messages-thread-header">
               <button className="icon-button messages-back-button" type="button" onClick={() => onSelectConversation(null)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
-              <strong>{(() => { const email = emailByUserId.get(otherUserId(activeConversation)); return email ? displayNameFor(email) : "Unknown user"; })()}</strong>
+              <strong>
+                {activeConversation.isGroup && <Users size={15} style={{ marginRight: 6, verticalAlign: "middle" }} />}
+                {conversationDisplayName(activeConversation, myUserId, emailByUserId, teamMembers)}
+              </strong>
             </div>
             <div className="segmented-tabs channel-tabs">
               <button className={dmTab === "discussion" ? "active" : ""} type="button" onClick={() => setDmTab("discussion")}>Messages</button>

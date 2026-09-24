@@ -94,9 +94,10 @@ export default async function handler(req, res) {
       relatedEntityType: "conversation",
       title: `New message from ${resolved.senderEmail}`,
       body: (resolved.body || (resolved.attachmentFileName ? `Sent a file: ${resolved.attachmentFileName}` : "")).slice(0, 200),
-      // A recipient id, not an email -- resolve it below. Deliberately no
-      // dedupeExtra: every real message is its own notification.
-      recipientIds: [resolved.recipientId],
+      // Recipient ids, not emails -- resolved below. Deliberately no
+      // dedupeExtra: every real message is its own notification. One id
+      // for a 1:1 conversation, every other member for a group (203).
+      recipientIds: resolved.recipientIds,
     };
   } else {
     if (typeof eventType !== "string" || !SUPPORTED_EVENT_TYPES.includes(eventType)) {

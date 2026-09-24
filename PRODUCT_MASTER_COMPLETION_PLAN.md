@@ -1740,8 +1740,17 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    the `message-attachments` storage.objects policies (migration 100) and `api/_lib/directMessage.js`'s
    single-recipient notification resolver — both now accounted for (the storage fix is in migration
    203 itself; the notification resolver fix is frontend/API-layer work, tracked as the next unit of
-   work below). Once the migration and its canonical test are confirmed applied: build the compatible
-   frontend (§3 of the design doc) and deploy/verify a real 1:1 DM plus a real 3-person group DM live.
+   work below). **The compatible frontend and the notification resolver fix are both now built,
+   locally tested, and pushed to production** — `npx tsc -b`/`npx vite build` clean, full `vitest`
+   suite 627/627 passed. See `HANDOFF.md`'s matching 2026-09-24 entry for full detail
+   (persistence.ts/main.tsx changes, the
+   `api/_lib/directMessage.js`/`api/create-notification.js`/`api/send-notification.js` multi-recipient
+   fix, new tests). Deployed ahead of migration 203's own confirmation, per this session's own
+   established pattern (Support/Engineering's frontend shipped ahead of their migrations too) — the
+   code fails visibly (a real Supabase error surfaced in the UI), not silently, if the migration isn't
+   live yet. **Not yet live-verified** — genuinely blocked on migration 203's confirmation, not on any
+   further code work. **Once migration 203 and its canonical test are confirmed applied**:
+   deploy/verify a real 1:1 DM plus a real 3-person group DM live in production.
 2. **Two pre-existing, recurring, unrelated console errors, confirmed present across multiple
    sessions and modules this week, never yet root-caused**: `saveProjectSites`/`saveInventoryItems`
    both fail with `42P10: there is no unique or exclusion constraint matching the ON CONFLICT

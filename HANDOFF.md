@@ -1125,6 +1125,59 @@ rewritten to match the approved, corrected design exactly -- no longer a draft a
 **Continuing with the compatible frontend and regression tests while awaiting the SQL result**, per
 E's own explicit instruction not to stall on the manual SQL step -- see the next entry.
 
+## 2026-09-24, same session: compatible frontend + notification fix built while migration 203 is pending
+
+Built the full frontend/backend compatibility layer from the design doc's §3, all locally tested,
+before migration 203's confirmation came back -- nothing here touches the database directly, so
+none of it depends on the migration having run yet.
+
+**`src/persistence.ts`**: `Conversation` gained `isGroup`/`title`/`memberUserIds`;
+`participantAId`/`participantBId` are now `string | null` (only ever null for a group).
+`loadConversations()` now does three requests when the caller has any group memberships (unchanged
+one request when they don't) -- the existing 1:1 `or=(participant_a_id.eq.X,...)` filter stays
+exactly as it was, plus a `conversation_members` lookup for this user's group ids, plus a batched
+fetch of those groups' own member lists. New `createGroupConversation()` wraps
+`rpc/create_group_conversation`.
+
+**`src/main.tsx`**: new shared helpers `otherConversationParticipantId()`/`conversationDisplayName()`
+so every one of the (previously) 4 call sites that assumed exactly one "other participant" now
+degrades correctly for a group -- title if set, else every other member's name joined ("+N more"
+past 3). A new "New Message" button next to "New Channel" opens the same `PeoplePicker`
+multi-select pattern the group-CHANNEL flow already uses, but with no name field and no
+private/unlock concept -- exactly 1 person selected calls the existing `onStartConversation`
+unchanged, 2+ calls the new `onStartGroupConversation`. The DM row list, unread-badge sidebar
+highlighting, pin/copy-email actions, and the thread header all render correctly for a group (a
+`Users` icon in place of a single avatar/presence dot, copy-email hidden since there's no single
+email to copy). `npx tsc -b` clean, `npx vite build` clean, full `vitest` suite **627/627 passed** (616 baseline + 9
+new persistence tests in `src/multiperson-conversations.test.ts` + 1 new `create-notification.test.js`
+group case + 1 new `send-push.test.js` group case), `eslint` 0 new errors (92 pre-existing warnings,
+unrelated to this change, confirmed present before it too).
+
+**Backend notification fix** (the gap flagged in the correction pass): `api/_lib/directMessage.js`'s
+`resolveDirectMessage()` now returns `recipientIds` (plural) -- a 1:1 conversation resolves via its
+own `participant_a_id`/`participant_b_id` exactly as before (unchanged code path, wrapped in a
+one-element array); a group conversation (`is_group = true`) resolves via a real
+`conversation_members` query instead, excluding the sender. `api/create-notification.js` needed only
+a one-line change (`recipientIds: resolved.recipientIds` instead of wrapping a single id) -- its own
+recipient-to-email resolution loop was already written generically over an array from the start,
+never actually assuming exactly one. `api/send-notification.js`'s push-notification path (`channel:
+"push"`, merged from the old standalone `send-push.js`) needed a real fix: the `push_subscriptions`
+lookup changed from `user_id=eq.<one id>` to `user_id=in.(<every recipient>)`, and every
+`recipientId`-singular variable renamed to `recipientIds`. New tests in both
+`tests/api/create-notification.test.js` and `tests/api/send-push.test.js` cover a real 3-person group
+message: every other member gets notified/pushed, the sender does not, using mocked
+`conversation_members` data. Both pass alongside the existing 1:1 tests (unchanged, still passing --
+the 1:1 code path was never touched, only extended alongside).
+
+Pushed to production ahead of migration 203's own confirmation, per this session's own established
+pattern (Support/Engineering's frontend shipped ahead of their migrations too, per E's own explicit
+"keep working rather than stall" instruction). Safe to do because the code fails visibly, not
+silently, if the migration isn't live yet (`createGroupConversation` throws a real Supabase error
+that surfaces in the UI, same load-error-visibility discipline as everywhere else in this app). The
+actual live 1:1-plus-3-person-group verification E asked for (item 4 of the original instruction)
+genuinely has to wait for migration 203's own confirmation -- not further code work, just the
+manual SQL step.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
