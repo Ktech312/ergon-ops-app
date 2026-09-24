@@ -9718,6 +9718,245 @@ export async function assignSupportCaseOwner(supportCaseId: string, ownerWorkspa
   return mapSupportCaseRow(await response.json());
 }
 
+// ============================================================
+// Engineering/Product Development module, first release (migration 201,
+// decision D14). See PRODUCT_ENGINEERING_MODULE_DESIGN.md -- revalidated
+// against the current schema before this shipped (2026-09-23), same
+// discipline as the Support module just above.
+// ============================================================
+
+export type ProductRequestStatus =
+  | "submitted"
+  | "requirements_review"
+  | "technical_review"
+  | "prototyping"
+  | "release_ready"
+  | "released"
+  | "declined"
+  | "on_hold";
+export type ProductRequestReviewKind = "technical_review" | "prototype_test" | "release_readiness" | "status_change";
+export type ProductRequestReviewOutcome = "pass" | "fail" | "needs_revision";
+
+export type ProductRequest = {
+  id: string;
+  workspaceId: string;
+  requestNumber: string;
+  title: string;
+  sourceProjectId: string | null;
+  sourceClientName: string | null;
+  requestedByEmail: string;
+  status: ProductRequestStatus;
+  requirements: string | null;
+  releasedCatalogItemId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ProductRequestRow = {
+  id: string;
+  workspace_id: string;
+  request_number: string;
+  title: string;
+  source_project_id: string | null;
+  source_client_name: string | null;
+  requested_by_email: string;
+  status: ProductRequestStatus;
+  requirements: string | null;
+  released_catalog_item_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapProductRequestRow(row: ProductRequestRow): ProductRequest {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    requestNumber: row.request_number,
+    title: row.title,
+    sourceProjectId: row.source_project_id,
+    sourceClientName: row.source_client_name,
+    requestedByEmail: row.requested_by_email,
+    status: row.status,
+    requirements: row.requirements,
+    releasedCatalogItemId: row.released_catalog_item_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+const PRODUCT_REQUEST_SELECT =
+  "id,workspace_id,request_number,title,source_project_id,source_client_name,requested_by_email,status,requirements,released_catalog_item_id,created_at,updated_at";
+
+export async function loadProductRequests(accessToken?: string): Promise<ProductRequest[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl(`product_requests?select=${PRODUCT_REQUEST_SELECT}&order=created_at.desc`), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not load product requests"));
+  }
+  const rows = (await response.json()) as ProductRequestRow[];
+  return rows.map(mapProductRequestRow);
+}
+
+export type ProductRequestReview = {
+  id: string;
+  productRequestId: string;
+  kind: ProductRequestReviewKind;
+  outcome: ProductRequestReviewOutcome | null;
+  notes: string | null;
+  previousStatus: string | null;
+  newStatus: string | null;
+  reviewedByEmail: string;
+  reviewedAt: string;
+};
+
+type ProductRequestReviewRow = {
+  id: string;
+  product_request_id: string;
+  kind: ProductRequestReviewKind;
+  outcome: ProductRequestReviewOutcome | null;
+  notes: string | null;
+  previous_status: string | null;
+  new_status: string | null;
+  reviewed_by_email: string;
+  reviewed_at: string;
+};
+
+function mapProductRequestReviewRow(row: ProductRequestReviewRow): ProductRequestReview {
+  return {
+    id: row.id,
+    productRequestId: row.product_request_id,
+    kind: row.kind,
+    outcome: row.outcome,
+    notes: row.notes,
+    previousStatus: row.previous_status,
+    newStatus: row.new_status,
+    reviewedByEmail: row.reviewed_by_email,
+    reviewedAt: row.reviewed_at,
+  };
+}
+
+const PRODUCT_REQUEST_REVIEW_SELECT = "id,product_request_id,kind,outcome,notes,previous_status,new_status,reviewed_by_email,reviewed_at";
+
+export async function loadProductRequestReviews(productRequestId: string, accessToken?: string): Promise<ProductRequestReview[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(
+    supabaseUrl(`product_request_reviews?product_request_id=eq.${productRequestId}&select=${PRODUCT_REQUEST_REVIEW_SELECT}&order=reviewed_at.asc`),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not load this request's review history"));
+  }
+  const rows = (await response.json()) as ProductRequestReviewRow[];
+  return rows.map(mapProductRequestReviewRow);
+}
+
+export async function createProductRequest(
+  input: { title: string; requirements?: string; sourceProjectId?: string | null; sourceClientName?: string },
+  accessToken?: string,
+): Promise<ProductRequest> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/create_product_request"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({
+      p_title: input.title,
+      p_requirements: input.requirements || null,
+      p_source_project_id: input.sourceProjectId || null,
+      p_source_client_name: input.sourceClientName || null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not submit this product request"));
+  }
+  return mapProductRequestRow(await response.json());
+}
+
+export async function logProductRequestReview(
+  input: { productRequestId: string; kind: "technical_review" | "prototype_test"; outcome: ProductRequestReviewOutcome; notes?: string },
+  accessToken?: string,
+): Promise<ProductRequestReview> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/log_product_request_review"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_product_request_id: input.productRequestId, p_kind: input.kind, p_outcome: input.outcome, p_notes: input.notes || null }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not log this review"));
+  }
+  return mapProductRequestReviewRow(await response.json());
+}
+
+export async function changeProductRequestStatus(
+  productRequestId: string,
+  newStatus: "submitted" | "requirements_review" | "technical_review" | "prototyping" | "on_hold" | "declined",
+  note: string,
+  accessToken?: string,
+): Promise<ProductRequest> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/change_product_request_status"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_product_request_id: productRequestId, p_new_status: newStatus, p_note: note || null }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not change this request's status"));
+  }
+  return mapProductRequestRow(await response.json());
+}
+
+export async function releaseProductRequest(
+  input: {
+    productRequestId: string;
+    mode: "new" | "update";
+    existingCatalogItemId?: string;
+    catalogNumber?: string;
+    productName?: string;
+    salesDescription?: string;
+    technicalDescription?: string;
+    category?: string;
+    defaultSellPrice?: number;
+    notes?: string;
+  },
+  accessToken?: string,
+): Promise<ProductRequest> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/release_product_request"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({
+      p_product_request_id: input.productRequestId,
+      p_mode: input.mode,
+      p_existing_catalog_item_id: input.existingCatalogItemId || null,
+      p_catalog_number: input.catalogNumber || null,
+      p_product_name: input.productName || null,
+      p_sales_description: input.salesDescription || null,
+      p_technical_description: input.technicalDescription || null,
+      p_category: input.category || null,
+      p_default_sell_price: input.defaultSellPrice ?? 0,
+      p_notes: input.notes || null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not release this product request"));
+  }
+  return mapProductRequestRow(await response.json());
+}
+
 // One catalog item + location + install date, many serials at once -- a
 // garage can easily have 50+ sensors, so the add form supports pasting a
 // whole list of serials (one per line) rather than one round trip each.

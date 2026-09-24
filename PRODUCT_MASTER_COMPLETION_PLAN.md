@@ -1561,8 +1561,22 @@ there, not an oversight.
    initially used a CSS class, `modal-overlay`, that doesn't exist anywhere in this app — fixed to
    the real `modal-backdrop` convention, plus wired
    into the standing `useModalA11y()` focus-trap hook).
-9. **Engineering/Product Development module first release (D14) — NOT STARTED.** Same gating as
-   stage 8. Design doc: `PRODUCT_ENGINEERING_MODULE_DESIGN.md`.
+9. **Engineering/Product Development module first release (D14) — IN PROGRESS, 2026-09-23.** Design
+   doc `PRODUCT_ENGINEERING_MODULE_DESIGN.md` revalidated against the current schema before
+   implementation (one real open question — who may trigger the catalog write — resolved via a
+   controlled `release_product_request()` RPC rather than widening `product_catalog`'s own
+   manager/admin-only write RLS). **Migration 201** (`product_requests`/`product_request_reviews`,
+   `create_product_request()`/`log_product_request_review()`/`change_product_request_status()`/
+   `release_product_request()`) — canonical test passing (67/67 in the consolidated isolation
+   suite), **sent to E as the next Supabase action, not yet applied to production as of this
+   entry**. Frontend (Engineering nav tab, request list, New Request modal, request detail modal
+   with review/status/release controls) was built in parallel while the migration was pending, per
+   E's own explicit instruction not to stall on the manual SQL step — `npx tsc -b`/`npx vite build`
+   clean, 16 new persistence-layer tests, full suite 616/616. Two real bugs caught and fixed before
+   this reached E: `product_request_reviews.reviewed_at` had the same `now()`-vs-`clock_timestamp()`
+   bug migration 198 already found once; a cross-workspace check in the canonical test itself was
+   copy-pasted against a same-workspace fixture, which would have passed regardless of whether the
+   real check worked. See `HANDOFF.md`'s matching 2026-09-23 entry for full detail.
 
 **Cross-cutting finding from Group 1's revalidation, tracked here so it isn't lost across stages**:
 `active_workspace_id()` (migration 124) is a deliberate, tested, fail-closed guard requiring exactly

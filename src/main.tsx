@@ -8,6 +8,7 @@ import {
   Archive,
   BarChart3,
   LifeBuoy,
+  FlaskConical,
   Bell,
   BookOpen,
   BookUser,
@@ -486,13 +487,23 @@ import {
   changeSupportCaseStatus,
   reopenSupportCase,
   assignSupportCaseOwner,
+  loadProductRequests,
+  loadProductRequestReviews,
+  type ProductRequest,
+  type ProductRequestReview,
+  type ProductRequestStatus,
+  type ProductRequestReviewOutcome,
+  createProductRequest,
+  logProductRequestReview,
+  changeProductRequestStatus,
+  releaseProductRequest,
 } from "./persistence";
 import { DataLoadErrorBanner } from "./components/DataLoadErrorBanner";
 import { runClosedWonConversionFlow, buildProjectConversionStatusMessage } from "./quote-conversion-flow";
 import { parseWorkbookSheetToRows } from "./xlsx-import";
 import "./styles.css";
 
-type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "support" | "messages" | "search" | "profile";
+type View = "dashboard" | "purchasing" | "inventory" | "vendors" | "projects" | "sales" | "tasks" | "reports" | "saas_calendar" | "admin" | "library" | "marketing" | "client_ledger" | "support" | "engineering_requests" | "messages" | "search" | "profile";
 
 // PurchaseUrl, PriceHistoryEntry, and Part used to be defined locally; as of
 // Phase 10c they're imported from persistence.ts (see the import block
@@ -568,7 +579,7 @@ type RoleMode = "warehouse" | "purchasing" | "pm" | "manager" | "sales" | "engin
 
 const ALL_ROLE_KEYS: RoleMode[] = ["warehouse", "purchasing", "pm", "manager", "sales", "engineering", "product_development", "implementation", "support", "marketing"];
 
-const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "support", "messages"];
+const ALL_TABS: View[] = ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "support", "engineering_requests", "messages"];
 
 // Plain-language labels for criticalLoadErrors so a real failure names
 // the actual screen it affects (in the sync pill's tooltip and each
@@ -688,6 +699,7 @@ const TAB_LABELS: Record<View, string> = {
   library: "Library",
   client_ledger: "Client Ledger",
   support: "Support",
+  engineering_requests: "Engineering",
   messages: "Messages",
   search: "Search Results",
   profile: "Profile",
@@ -704,10 +716,10 @@ const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
   warehouse: ["dashboard", "inventory", "projects", "tasks", "messages"],
   purchasing: ["dashboard", "purchasing", "inventory", "vendors", "tasks", "reports", "messages"],
   pm: ["dashboard", "projects", "inventory", "sales", "tasks", "reports", "saas_calendar", "support", "messages"],
-  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "support", "messages"],
+  manager: ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "client_ledger", "support", "engineering_requests", "messages"],
   sales: ["dashboard", "sales", "marketing", "tasks", "reports", "saas_calendar", "messages"],
-  engineering: ["dashboard", "projects", "inventory", "tasks", "reports", "support", "messages"],
-  product_development: ["dashboard", "projects", "tasks", "reports", "messages"],
+  engineering: ["dashboard", "projects", "inventory", "tasks", "reports", "support", "engineering_requests", "messages"],
+  product_development: ["dashboard", "projects", "tasks", "reports", "engineering_requests", "messages"],
   implementation: ["dashboard", "projects", "purchasing", "inventory", "vendors", "tasks", "support", "messages"],
   support: ["dashboard", "support", "tasks", "reports", "messages"],
   marketing: ["dashboard", "marketing", "reports", "tasks", "messages"],
@@ -756,6 +768,7 @@ const MOBILE_NAV_TAB_ICON: Record<View, (size: number) => React.ReactNode> = {
   library: (size) => <BookOpen size={size} />,
   client_ledger: (size) => <Archive size={size} />,
   support: (size) => <LifeBuoy size={size} />,
+  engineering_requests: (size) => <FlaskConical size={size} />,
   messages: (size) => <MessageCircle size={size} />,
   search: (size) => <Search size={size} />,
   profile: (size) => <User size={size} />,
@@ -1064,7 +1077,7 @@ function projectSlug(projectName: string) {
 
 function viewFromHash(hash = window.location.hash): View {
   const viewKey = hash.replace(/^#/, "").split("/")[0];
-  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library", "client_ledger", "support", "messages", "search", "profile"].includes(viewKey) ? (viewKey as View) : "dashboard";
+  return ["dashboard", "purchasing", "inventory", "vendors", "projects", "sales", "marketing", "tasks", "reports", "saas_calendar", "admin", "library", "client_ledger", "support", "engineering_requests", "messages", "search", "profile"].includes(viewKey) ? (viewKey as View) : "dashboard";
 }
 
 function savedView() {
@@ -7958,6 +7971,12 @@ function App() {
   // the RPC is still the authoritative check either way.
   const canManageSubmittalLinks = authChecksReady && (isAdmin || roleMode === "pm" || ownRoleKeys.includes("pm"));
   const canManageProposalLinks = authChecksReady && (isAdmin || isManagerRole || roleMode === "sales" || ownRoleKeys.includes("sales"));
+  // Mirrors can_review_product_requests() (migration 201) exactly -- kept
+  // in sync deliberately, purely a UI convenience (hide controls the
+  // RPC would reject anyway); the RPC's own check is what's actually
+  // authoritative either way.
+  const canReviewProductRequests =
+    authChecksReady && (isAdmin || roleMode === "engineering" || roleMode === "product_development" || ownRoleKeys.includes("engineering") || ownRoleKeys.includes("product_development"));
   const criticalLoadErrorDomains = Object.keys(criticalLoadErrors);
   const hasCriticalLoadErrors = criticalLoadErrorDomains.length > 0;
   const criticalLoadErrorSummary = criticalLoadErrorDomains
@@ -8010,6 +8029,9 @@ function App() {
             {allowedTabs.includes("saas_calendar") && <NavButton icon={<CalendarDays size={16} />} label="SaaS Calendar" active={view === "saas_calendar"} onClick={() => navigateToView("saas_calendar")} />}
             {allowedTabs.includes("client_ledger") && <NavButton icon={<Archive size={16} />} label="Client Ledger" active={view === "client_ledger"} onClick={() => navigateToView("client_ledger")} />}
             {allowedTabs.includes("support") && <NavButton icon={<LifeBuoy size={16} />} label="Support" active={view === "support"} onClick={() => navigateToView("support")} />}
+            {allowedTabs.includes("engineering_requests") && (
+              <NavButton icon={<FlaskConical size={16} />} label="Engineering" active={view === "engineering_requests"} onClick={() => navigateToView("engineering_requests")} />
+            )}
             {allowedTabs.includes("messages") && <NavButton icon={<MessageCircle size={16} />} label="Messages" iconOnly active={view === "messages"} onClick={() => navigateToView("messages")} hasUnread={totalUnreadMessages > 0} />}
           </nav>
           <div className="top-nav-actions">
@@ -8639,6 +8661,15 @@ function App() {
         {view === "support" && allowedTabs.includes("support") && (
           <SupportCasesPage accessToken={authSession?.accessToken} knownUsers={knownUsers} projectSites={projectSites} onNotify={triggerNotification} />
         )}
+        {view === "engineering_requests" && allowedTabs.includes("engineering_requests") && (
+          <EngineeringRequestsPage
+            accessToken={authSession?.accessToken}
+            projectSites={projectSites}
+            catalogItems={catalogItems}
+            canReview={canReviewProductRequests}
+            onNotify={triggerNotification}
+          />
+        )}
         {view === "messages" && allowedTabs.includes("messages") && (
           <Messages
             myUserId={authSession?.userId ?? ""}
@@ -9063,6 +9094,7 @@ function pageTitle(view: View) {
     messages: "Messages",
     client_ledger: "Client Ledger",
     support: "Support",
+    engineering_requests: "Engineering",
     search: "Search Results",
     profile: "Profile",
   };
@@ -9092,6 +9124,7 @@ function pageSubtitle(view: View) {
     library: "Reference guides and onboarding materials.",
     client_ledger: "The permanent record for a site once it closes out -- lifecycle, financials, hardware, and final documents.",
     support: "Service cases linked to closed, ledger-added projects.",
+    engineering_requests: "Product/solution requests, technical review, and release into the catalog.",
     messages: "Direct messages with anyone on the team.",
     search: "Everything that matches, filterable by type.",
     profile: "Your photo, name, and contact info -- how you show up to everyone else.",
@@ -16368,6 +16401,535 @@ function SupportCaseDetailModal({
           <button className="secondary-action mini-action" type="button" disabled={busy} onClick={handleAddActivity}>
             Log
           </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// Engineering/Product Development module, first release (migration 201,
+// decision D14). Same self-contained shape as SupportCasesPage just
+// above -- loads its own data on mount, not threaded through App's own
+// top-level state.
+
+const PRODUCT_REQUEST_STATUS_LABELS: Record<ProductRequestStatus, string> = {
+  submitted: "Submitted",
+  requirements_review: "Requirements Review",
+  technical_review: "Technical Review",
+  prototyping: "Prototyping",
+  release_ready: "Release Ready",
+  released: "Released",
+  declined: "Declined",
+  on_hold: "On Hold",
+};
+
+const PRODUCT_REQUEST_STATUS_ORDER: ProductRequestStatus[] = [
+  "submitted",
+  "requirements_review",
+  "technical_review",
+  "prototyping",
+  "release_ready",
+  "released",
+  "declined",
+  "on_hold",
+];
+
+function productRequestStatusClass(status: ProductRequestStatus): string {
+  if (status === "released") return "ok";
+  if (status === "declined") return "warn";
+  return "";
+}
+
+function EngineeringRequestsPage({
+  accessToken,
+  projectSites,
+  catalogItems,
+  canReview,
+  onNotify,
+}: {
+  accessToken?: string;
+  projectSites: ProjectSite[];
+  catalogItems: CatalogItem[];
+  canReview: boolean;
+  onNotify: (eventType: string, relatedEntityId: string) => Promise<void>;
+}) {
+  const [requests, setRequests] = useState<ProductRequest[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<ProductRequestStatus | "all">("all");
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [status, setStatus] = useState("");
+
+  async function refresh() {
+    setLoadError(null);
+    try {
+      const rows = await loadProductRequests(accessToken);
+      setRequests(rows);
+      setLoaded(true);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load product requests.");
+      setLoaded(true);
+    }
+  }
+
+  useEffect(() => {
+    if (accessToken && !loaded) {
+      refresh();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, loaded]);
+
+  function projectNameFor(projectId: string | null): string {
+    if (!projectId) return "--";
+    return projectSites.find((p) => p.id === projectId)?.name ?? "Project";
+  }
+
+  const filteredRequests = requests.filter((r) => statusFilter === "all" || r.status === statusFilter);
+  const selectedRequest = selectedRequestId ? requests.find((r) => r.id === selectedRequestId) ?? null : null;
+
+  return (
+    <div className="content-grid">
+      <section className="panel wide">
+        <PanelHeader title="Engineering" label="Product/solution requests, technical review, and release into the catalog." />
+        <div className="report-filter-row">
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as ProductRequestStatus | "all")}>
+            <option value="all">All statuses</option>
+            {PRODUCT_REQUEST_STATUS_ORDER.map((s) => (
+              <option key={s} value={s}>{PRODUCT_REQUEST_STATUS_LABELS[s]}</option>
+            ))}
+          </select>
+          <button className="secondary-action mini-action" type="button" onClick={() => setLoaded(false)}>Refresh</button>
+          <button className="primary-action mini-action" type="button" onClick={() => setShowCreateModal(true)}>New Request</button>
+          {status && <span className="muted">{status}</span>}
+        </div>
+        {loadError ? (
+          <div className="empty-compact-state" role="alert">
+            Could not load product requests: {loadError}{" "}
+            <button className="secondary-action mini-action" type="button" onClick={() => setLoaded(false)}>Retry</button>
+          </div>
+        ) : (
+          <table className="stack-table-mobile">
+            <thead>
+              <tr>
+                <th>Request</th>
+                <th>Title</th>
+                <th>Source Project</th>
+                <th>Status</th>
+                <th>Requested By</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRequests.map((request) => (
+                <tr key={request.id} className="clickable-row" onClick={() => setSelectedRequestId(request.id)}>
+                  <td>{request.requestNumber}</td>
+                  <td data-label="Title">{request.title}</td>
+                  <td data-label="Source Project">{projectNameFor(request.sourceProjectId)}</td>
+                  <td data-label="Status">
+                    <span className={`status ${productRequestStatusClass(request.status)}`}>{PRODUCT_REQUEST_STATUS_LABELS[request.status]}</span>
+                  </td>
+                  <td data-label="Requested By">{request.requestedByEmail}</td>
+                  <td data-label="Created">{new Date(request.createdAt).toLocaleDateString()}</td>
+                </tr>
+              ))}
+              {filteredRequests.length === 0 && loaded && (
+                <tr>
+                  <td colSpan={6} className="empty-compact-state">
+                    No product requests{statusFilter !== "all" ? " match this filter" : " yet"}.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </section>
+      {requests.length > 0 && (
+        <section className="panel">
+          <h3>Requests by status</h3>
+          <div className="metric-grid">
+            {PRODUCT_REQUEST_STATUS_ORDER.map((s) => (
+              <div className="metric" key={s}>
+                <span>{PRODUCT_REQUEST_STATUS_LABELS[s]}</span>
+                <strong>{requests.filter((r) => r.status === s).length}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      {showCreateModal && (
+        <NewProductRequestModal
+          accessToken={accessToken}
+          projectSites={projectSites}
+          onClose={() => setShowCreateModal(false)}
+          onCreated={(newRequest) => {
+            setShowCreateModal(false);
+            setStatus(`Submitted ${newRequest.requestNumber}.`);
+            setLoaded(false);
+            setSelectedRequestId(newRequest.id);
+          }}
+        />
+      )}
+      {selectedRequest && (
+        <ProductRequestDetailModal
+          accessToken={accessToken}
+          productRequest={selectedRequest}
+          projectName={projectNameFor(selectedRequest.sourceProjectId)}
+          catalogItems={catalogItems}
+          canReview={canReview}
+          onClose={() => setSelectedRequestId(null)}
+          onChanged={(updated) => {
+            setRequests((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+          }}
+          onNotify={onNotify}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewProductRequestModal({
+  accessToken,
+  projectSites,
+  onClose,
+  onCreated,
+}: {
+  accessToken?: string;
+  projectSites: ProjectSite[];
+  onClose: () => void;
+  onCreated: (newRequest: ProductRequest) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [requirements, setRequirements] = useState("");
+  const [sourceProjectId, setSourceProjectId] = useState("");
+  const [sourceClientName, setSourceClientName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const panelRef = useModalA11y(true, onClose);
+
+  const projectsWithId = projectSites.filter((p): p is ProjectSite & { id: string } => Boolean(p.id));
+
+  async function handleSubmit() {
+    if (!title.trim()) {
+      setError("A title is required.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      const newRequest = await createProductRequest(
+        { title: title.trim(), requirements: requirements.trim() || undefined, sourceProjectId: sourceProjectId || undefined, sourceClientName: sourceClientName.trim() || undefined },
+        accessToken,
+      );
+      onCreated(newRequest);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not submit this product request.");
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <section
+        ref={panelRef as React.Ref<HTMLElement>}
+        tabIndex={-1}
+        className="modal-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-product-request-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-header">
+          <h2 id="new-product-request-title">New Product Request</h2>
+          <button className="icon-button" type="button" aria-label="Close" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="modal-section">
+          <label className="form-field">
+            Title
+            <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What's the product or solution?" />
+          </label>
+          <label className="form-field">
+            Requirements (optional)
+            <textarea value={requirements} onChange={(event) => setRequirements(event.target.value)} rows={3} />
+          </label>
+          <label className="form-field">
+            Source project (optional)
+            <select value={sourceProjectId} onChange={(event) => setSourceProjectId(event.target.value)}>
+              <option value="">None</option>
+              {projectsWithId.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="form-field">
+            Source client name (optional)
+            <input value={sourceClientName} onChange={(event) => setSourceClientName(event.target.value)} placeholder="Client name, if this came from one" />
+          </label>
+          {error && <small className="error-text" role="alert">{error}</small>}
+          <div className="modal-actions">
+            <button className="primary-action" type="button" disabled={submitting || !title.trim()} onClick={handleSubmit}>
+              {submitting ? "Submitting..." : "Submit Request"}
+            </button>
+            <button className="secondary-action" type="button" onClick={onClose}>Cancel</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ProductRequestDetailModal({
+  accessToken,
+  productRequest,
+  projectName,
+  catalogItems,
+  canReview,
+  onClose,
+  onChanged,
+  onNotify,
+}: {
+  accessToken?: string;
+  productRequest: ProductRequest;
+  projectName: string;
+  catalogItems: CatalogItem[];
+  canReview: boolean;
+  onClose: () => void;
+  onChanged: (updated: ProductRequest) => void;
+  onNotify: (eventType: string, relatedEntityId: string) => Promise<void>;
+}) {
+  const [reviews, setReviews] = useState<ProductRequestReview[]>([]);
+  const [reviewsLoaded, setReviewsLoaded] = useState(false);
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const panelRef = useModalA11y(true, onClose);
+
+  const [reviewKind, setReviewKind] = useState<"technical_review" | "prototype_test">("technical_review");
+  const [reviewOutcome, setReviewOutcome] = useState<ProductRequestReviewOutcome>("pass");
+  const [reviewNotes, setReviewNotes] = useState("");
+
+  const [statusTarget, setStatusTarget] = useState<"submitted" | "requirements_review" | "technical_review" | "prototyping" | "on_hold" | "declined" | "">("");
+  const [statusNote, setStatusNote] = useState("");
+
+  const [releaseMode, setReleaseMode] = useState<"new" | "update">("new");
+  const [releaseCatalogItemId, setReleaseCatalogItemId] = useState("");
+  const [releaseCatalogNumber, setReleaseCatalogNumber] = useState("");
+  const [releaseProductName, setReleaseProductName] = useState(productRequest.title);
+  const [releasePrice, setReleasePrice] = useState("0");
+  const [releaseNotes, setReleaseNotes] = useState("");
+
+  async function refreshReviews() {
+    const rows = await loadProductRequestReviews(productRequest.id, accessToken);
+    setReviews(rows);
+    setReviewsLoaded(true);
+  }
+
+  useEffect(() => {
+    if (accessToken && !reviewsLoaded) {
+      refreshReviews();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, reviewsLoaded]);
+
+  async function afterChange(updated: ProductRequest, message: string) {
+    onChanged(updated);
+    setStatus(message);
+    await refreshReviews();
+    await onNotify("product_request_reviewed", productRequest.id);
+  }
+
+  async function handleLogReview() {
+    setBusy(true);
+    setStatus("Logging review...");
+    try {
+      await logProductRequestReview({ productRequestId: productRequest.id, kind: reviewKind, outcome: reviewOutcome, notes: reviewNotes }, accessToken);
+      setReviewNotes("");
+      const [updated] = await loadProductRequests(accessToken).then((rows) => rows.filter((r) => r.id === productRequest.id));
+      if (updated) await afterChange(updated, "Review logged.");
+      else await refreshReviews();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not log this review.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleChangeStatus() {
+    if (!statusTarget) return;
+    setBusy(true);
+    setStatus("Updating status...");
+    try {
+      const updated = await changeProductRequestStatus(productRequest.id, statusTarget, statusNote, accessToken);
+      setStatusTarget("");
+      setStatusNote("");
+      await afterChange(updated, `Status changed to ${PRODUCT_REQUEST_STATUS_LABELS[updated.status]}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not change the status.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRelease() {
+    setBusy(true);
+    setStatus("Releasing...");
+    try {
+      const updated = await releaseProductRequest(
+        {
+          productRequestId: productRequest.id,
+          mode: releaseMode,
+          existingCatalogItemId: releaseMode === "update" ? releaseCatalogItemId : undefined,
+          catalogNumber: releaseMode === "new" ? releaseCatalogNumber : undefined,
+          productName: releaseProductName,
+          defaultSellPrice: Number(releasePrice) || 0,
+          notes: releaseNotes,
+        },
+        accessToken,
+      );
+      await afterChange(updated, "Released into the catalog.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not release this request.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const manualStatusOptions = (["submitted", "requirements_review", "technical_review", "prototyping", "on_hold", "declined"] as const).filter(
+    (s) => s !== productRequest.status,
+  );
+  const isTerminal = productRequest.status === "released" || productRequest.status === "declined";
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <section
+        ref={panelRef as React.Ref<HTMLElement>}
+        tabIndex={-1}
+        className="modal-panel modal-panel-wide"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="product-request-detail-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-header">
+          <div>
+            <h2 id="product-request-detail-title">{productRequest.requestNumber}</h2>
+            <p className="muted">{projectName !== "--" ? projectName : productRequest.sourceClientName || "No source"}</p>
+          </div>
+          <button className="icon-button" type="button" aria-label="Close" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="modal-section">
+          <p><strong>{productRequest.title}</strong></p>
+          {productRequest.requirements && <p className="muted">{productRequest.requirements}</p>}
+          <div className="report-filter-row">
+            <span className={`status ${productRequestStatusClass(productRequest.status)}`}>{PRODUCT_REQUEST_STATUS_LABELS[productRequest.status]}</span>
+            <span className="muted">Requested by {productRequest.requestedByEmail}</span>
+            <span className="muted">Created {new Date(productRequest.createdAt).toLocaleString()}</span>
+          </div>
+
+          {!canReview && (
+            <p className="muted">Only Engineering, Product Development, or an admin can review or release this request.</p>
+          )}
+
+          {canReview && !isTerminal && (
+            <>
+              <h3>Log a review</h3>
+              <div className="roster-add-row">
+                <select value={reviewKind} onChange={(event) => setReviewKind(event.target.value as typeof reviewKind)}>
+                  <option value="technical_review">Technical review</option>
+                  <option value="prototype_test">Prototype test</option>
+                </select>
+                <select value={reviewOutcome} onChange={(event) => setReviewOutcome(event.target.value as ProductRequestReviewOutcome)}>
+                  <option value="pass">Pass</option>
+                  <option value="fail">Fail</option>
+                  <option value="needs_revision">Needs revision</option>
+                </select>
+                <input value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} placeholder="Notes (optional)" />
+                <button className="secondary-action mini-action" type="button" disabled={busy} onClick={handleLogReview}>Log review</button>
+              </div>
+
+              <h3>Manual status move</h3>
+              <div className="roster-add-row">
+                <select value={statusTarget} onChange={(event) => setStatusTarget(event.target.value as typeof statusTarget)}>
+                  <option value="">Change status to...</option>
+                  {manualStatusOptions.map((s) => (
+                    <option key={s} value={s}>{PRODUCT_REQUEST_STATUS_LABELS[s]}</option>
+                  ))}
+                </select>
+                <input value={statusNote} onChange={(event) => setStatusNote(event.target.value)} placeholder="Note (optional)" />
+                <button className="secondary-action mini-action" type="button" disabled={busy || !statusTarget} onClick={handleChangeStatus}>Confirm</button>
+              </div>
+
+              {productRequest.status === "release_ready" && (
+                <>
+                  <h3>Release into the catalog</h3>
+                  <label className="form-field">
+                    Mode
+                    <select value={releaseMode} onChange={(event) => setReleaseMode(event.target.value as "new" | "update")}>
+                      <option value="new">Create a new catalog item</option>
+                      <option value="update">Update an existing catalog item</option>
+                    </select>
+                  </label>
+                  {releaseMode === "new" ? (
+                    <label className="form-field">
+                      Catalog number
+                      <input value={releaseCatalogNumber} onChange={(event) => setReleaseCatalogNumber(event.target.value)} placeholder="e.g. CAM-1042" />
+                    </label>
+                  ) : (
+                    <label className="form-field">
+                      Existing catalog item
+                      <select value={releaseCatalogItemId} onChange={(event) => setReleaseCatalogItemId(event.target.value)}>
+                        <option value="">Select...</option>
+                        {catalogItems.map((item) => (
+                          <option key={item.id} value={item.id}>{item.catalogNumber} -- {item.productName}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <label className="form-field">
+                    Product name
+                    <input value={releaseProductName} onChange={(event) => setReleaseProductName(event.target.value)} />
+                  </label>
+                  <label className="form-field">
+                    Default sell price
+                    <input type="number" min="0" step="0.01" value={releasePrice} onChange={(event) => setReleasePrice(event.target.value)} />
+                  </label>
+                  <label className="form-field">
+                    Release notes (optional)
+                    <textarea value={releaseNotes} onChange={(event) => setReleaseNotes(event.target.value)} rows={2} />
+                  </label>
+                  <button
+                    className="primary-action mini-action"
+                    type="button"
+                    disabled={busy || (releaseMode === "new" ? !releaseCatalogNumber.trim() : !releaseCatalogItemId)}
+                    onClick={handleRelease}
+                  >
+                    Release
+                  </button>
+                </>
+              )}
+            </>
+          )}
+          {status && <p className="muted">{status}</p>}
+
+          <h3>Review history</h3>
+          <ul className="activity-feed">
+            {reviews.map((review) => (
+              <li key={review.id}>
+                <strong>
+                  {review.kind === "technical_review" ? "Technical review" : review.kind === "prototype_test" ? "Prototype test" : review.kind === "release_readiness" ? "Release" : "Status change"}
+                </strong>{" "}
+                <span className="muted">{review.reviewedByEmail} -- {new Date(review.reviewedAt).toLocaleString()}</span>
+                {review.outcome && <div className="muted">Outcome: {review.outcome.replace(/_/g, " ")}</div>}
+                {review.previousStatus && review.newStatus && (
+                  <div className="muted">
+                    {PRODUCT_REQUEST_STATUS_LABELS[review.previousStatus as ProductRequestStatus] ?? review.previousStatus} -&gt;{" "}
+                    {PRODUCT_REQUEST_STATUS_LABELS[review.newStatus as ProductRequestStatus] ?? review.newStatus}
+                  </div>
+                )}
+                {review.notes && <div>{review.notes}</div>}
+              </li>
+            ))}
+            {reviews.length === 0 && reviewsLoaded && <li className="empty-compact-state">No review activity yet.</li>}
+          </ul>
         </div>
       </section>
     </div>

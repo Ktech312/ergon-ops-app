@@ -184,6 +184,25 @@ const HANDLERS = {
     };
   },
 
+  // Engineering module first release (migration 201, decision D14).
+  // Fires after a review is logged or a status changes, notifying the
+  // ORIGINAL requester (requested_by_email, captured as a plain string
+  // at submission time -- no workspace_members hop needed, unlike
+  // support_case_assigned above) so they don't have to keep re-checking
+  // the request themselves.
+  async product_request_reviewed(ctx) {
+    const request = await fetchOne(ctx, "product_requests", ctx.relatedEntityId, "id,request_number,title,status,requested_by_email");
+    if (!request) {
+      return err(404, "Product request not found.");
+    }
+    return {
+      relatedEntityType: "product_request",
+      title: "Update on your product request",
+      body: `${request.request_number}: "${request.title}" is now ${request.status.replace(/_/g, " ")}.`,
+      recipients: excludingSelf(ctx, request.requested_by_email ? [request.requested_by_email] : []),
+    };
+  },
+
   async task_assigned(ctx) {
     const task = await fetchOne(ctx, "tasks", ctx.relatedEntityId, "id,title,assignee_email,assigned_role_key,deleted_at");
     if (!task || task.deleted_at) {

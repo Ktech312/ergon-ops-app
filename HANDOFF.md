@@ -838,6 +838,99 @@ contained footprint than anything else created for testing today. This will veri
 the first time a real project is closed and moved into the ledger -- worth a deliberate follow-up
 check at that point, not before.
 
+## 2026-09-23, later the same night: Engineering/Product Development module first release (D14) -- migration 201, backend + frontend built together, canonical test passing locally
+
+Right after Support (D13) shipped, deployed, and was live-verified, E's own instruction ("After
+Support is deployed and live-verified, continue directly into the already-approved Engineering
+module first release (D14)... Do not ask what to work on next until Support and Engineering are
+both shipped, or until a specific unresolved business decision blocks every remaining independent
+task") authorized continuing immediately, without a pause. `PRODUCT_ENGINEERING_MODULE_DESIGN.md`
+(Queue B8) revalidated against the current schema first, same discipline as Support -- one real
+drift found and resolved, not implemented ambiguously:
+- The design doc's own §6 flags "who may trigger the Catalog write" as genuinely undecided.
+  `product_catalog`'s real write RLS (migration 176) is `is_app_admin() or has_role('manager')`
+  ONLY -- `engineering` has no direct catalog-write access today. Resolved here as: `engineering`
+  (or an app admin) triggers release through a dedicated `release_product_request()` RPC that
+  performs the catalog write as SECURITY DEFINER, rather than widening `product_catalog`'s own raw
+  RLS to a role with no other reason to write there -- matches this schema's own repeated
+  preference for a controlled RPC over widened raw table access.
+- `catalog_number` is confirmed a plain, manually-entered, unique-per-workspace field today (not
+  auto-generated) -- `release_product_request()`'s "new product" mode takes an explicit
+  `p_catalog_number` parameter rather than inventing a new auto-numbering scheme.
+- Two of the design doc's own other open permission questions are resolved explicitly rather than
+  left ambiguous: submission is open to ANY active workspace member (design doc's own "recommended
+  yes, submission is lower-stakes than review"); review/status-transition/release actions are
+  gated to `engineering`/`product_development`/an app admin (the read/write split their existing
+  Inventory permissions already imply).
+
+**Migration `201_engineering_module_first_release.sql`** -- `product_requests` (own `workspace_id`,
+root-table shape matching `product_catalog`/`projects`, `request_number` "PR-<year>-####" via a
+workspace-scoped ref counter identical in shape to migration 200's, cross-checked source
+project against the caller's own workspace); `product_request_reviews` (append-only, same
+SELECT-only-via-RPC-INSERT shape as `support_case_activity` -- `kind` in `technical_review`/
+`prototype_test`/`release_readiness`/`status_change`, `reviewed_by_email` always server-resolved).
+RPCs: `create_product_request()` (open to any active member); `log_product_request_review()`
+(technical_review/prototype_test only -- an outcome automatically advances or holds the request's
+own status, with a paired `status_change` audit row logged in the same call so "why did this
+change" is always answerable right next to "what changed"); `change_product_request_status()`
+(manual moves not driven by a review outcome -- explicitly rejects reaching `released` directly and
+rejects acting on an already-`released`/`declined` request, both terminal, no reopen concept for
+product requests unlike Support's cases); `release_product_request()` (only from `release_ready`,
+`mode=new` creates a real `product_catalog` row, `mode=update` updates an existing one cross-checked
+to the same workspace, either way sets `released_catalog_item_id` and logs a `release_readiness`
+review row -- the ONLY place a request reaches `released`).
+
+**Two real bugs caught and fixed while writing this, before it ever reached E** (same "verify before
+handing off" discipline as every migration this session):
+1. `product_request_reviews.reviewed_at` defaulted to `now()`, the exact same class of bug
+   migration 198 already found and fixed for `company_admin_audit_log` -- inside one transaction
+   (this migration's own canonical test, and any real multi-step RPC call like
+   `log_product_request_review()` itself, which writes a review row and a status_change row back to
+   back), `now()` is frozen for the whole transaction, so two rows written moments apart get an
+   identical timestamp and any `order by ... desc limit 1` query becomes non-deterministic. Fixed at
+   the source: `default clock_timestamp()`, same fix as migration 198.
+2. In the test itself (not the migration): a cross-workspace "release into an existing catalog
+   item" check was written against a catalog item that actually belonged to the SAME workspace as
+   the release attempt (a copy-paste mistake from an earlier draft), so the assertion would have
+   passed regardless of whether the real cross-workspace check worked or not -- caught during review
+   before running it, fixed by inserting a genuinely separate workspace-B catalog item and
+   targeting that one instead.
+
+Full consolidated isolation suite (migrations 001-201): **67/67 passed.** Sent to E as the next
+single Supabase action -- **not yet applied to production as of this entry.**
+
+**Frontend built in parallel while migration 201 was pending**, per E's own explicit instruction to
+keep working rather than stall on the manual SQL step: a new **Engineering** nav tab (`FlaskConical`
+icon, gated into `engineering`/`product_development`/`manager`'s default tab sets), a request list
+with a status filter and a status-count summary, a New Request modal (title, requirements, optional
+source project/client -- NOT restricted to Client-Ledger projects, unlike Support's case creation,
+since the design doc never ties product requests to the ledger), and a request detail modal (log a
+review with kind+outcome+notes, a manual status-move control, and -- shown only once the request
+reaches `release_ready` -- the release form itself, mode new-vs-update, catalog fields, price). A
+`canReviewProductRequests` flag (mirroring `can_review_product_requests()` client-side, purely to
+hide controls the RPC would reject anyway, never the real authorization boundary) hides the
+review/status/release controls entirely for a signed-in user without the right role, showing a
+plain explanatory line instead. `assign`-style notification: `product_request_reviewed` fires to
+the ORIGINAL requester's own email (captured as a plain string at submission time, no
+`workspace_members` hop needed, unlike Support's owner-assignment notification) after any review or
+status change, added to `api/_lib/notificationEvents.js` and the `notification_rules` event_type
+list.
+
+New `src/product-requests.test.ts` (16 tests): the load-error-vs-empty-list distinction, and every
+RPC-calling function's exact request-body shape plus real-error-surfacing (a cross-workspace source
+project, an invalid `release_readiness` kind on the wrong function, reaching `released` directly, a
+cross-workspace catalog item, releasing a not-yet-`release_ready` request). `npx tsc -b` and
+`npx vite build` both clean; full `vitest` suite **616/616 passed clean (600 baseline + 16 new)**.
+
+**Deliberately still open for this first release** (unchanged from the design doc's own §7, not
+newly discovered gaps): no Support-case handoff link (Support, migration 200, now exists, but this
+module deliberately does not add that FK yet -- a real, small, additive follow-up, not attempted in
+this already-large batch); no formal structured requirements schema (stays free text, matching
+`bundle_components`'s own still-open precedent); pricing sign-off on release stays
+`engineering`-only in this release (the design doc's own §6 third open question -- "does releasing a
+priced Catalog item need Sales/Manager sign-off too" -- genuinely not decided here, flagged
+honestly rather than silently resolved).
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
