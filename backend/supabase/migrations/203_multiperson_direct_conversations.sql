@@ -1,10 +1,33 @@
--- Migration 203: multi-person direct conversations (DRAFT -- NOT YET SENT TO E).
--- See PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md for the full design and the one open
--- decision that needs E before this ships (an ad-hoc "New Direct Message with 2+ people"
--- surface vs. better discoverability of the existing group-channel feature, migration 105).
--- Responds to E's own long-standing ask, recorded in migration 162's header (2026-09-17):
--- "conversations/direct_messages... support more than two participants, Slack/Teams-style...
--- a real, separate feature... tracked as a new item, not part of Phase 3."
+-- Migration 203: multi-person direct conversations. **APPROVED by E, 2026-09-23/24** -- a
+-- separate ad-hoc group-DM surface, distinct from the existing named group-channel feature
+-- (migration 105). Responds to E's own long-standing ask, recorded in migration 162's header
+-- (2026-09-17): "conversations/direct_messages... support more than two participants,
+-- Slack/Teams-style... a real, separate feature... tracked as a new item, not part of Phase 3."
+--
+-- E's approved shape (see PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md for full detail):
+-- "New message" picks 1+ recipients -- exactly 1 uses the existing deduplicated 1:1
+-- conversation, 2+ creates an ad-hoc group DM, no name required (title is optional, the
+-- frontend derives a label from participant names by default). Lives under Direct Messages,
+-- not Channels. Ordinary messages/reactions/attachments/unread/notifications; explicitly NOT
+-- Tasks/Files/Canvas/public-private/guest access -- those stay channel-only features.
+-- Workspace containment stays exactly as migration 187 established it (2026-09-17 reversal of
+-- the OLDER "conversations stay cross-workspace" decision, migration 162's original header) --
+-- this migration does not reopen or revert that; every branch below builds on top of it.
+--
+-- **CORRECTED before sending, per E's own explicit review, 2026-09-24: membership is FIXED at
+-- creation for this first release.** The original draft included an "add people to an existing
+-- group" path (a member-add RLS policy + an add_conversation_member() RPC) -- E flagged the
+-- real risk directly: adding a new participant to an existing group would expose that new
+-- participant to the group's entire PRIOR message history (direct_messages carries no
+-- per-message "who could see this when it was sent" boundary -- every read policy below is
+-- "are you a member NOW," not "were you a member THEN"). Both the member-add and member-leave
+-- paths are removed from this migration. `conversation_members` has NO insert/delete RLS
+-- policy at all beyond SELECT -- the only way a row is ever created is
+-- create_group_conversation()'s own atomic, SECURITY DEFINER insert of every starting member
+-- at creation time, in the same transaction as the conversation row itself. To change who's in
+-- a group, a user starts a new group DM -- Add People and Leave Group are deliberately not
+-- built this release (see design doc for the follow-up this unblocks once real membership-
+-- history semantics are designed).
 --
 -- Design summary (full detail in the design doc): additive only. Every existing 1:1
 -- conversation, and every future 1:1 conversation created via getOrCreateConversation()'s
@@ -12,11 +35,12 @@
 -- same unique constraint, same canonical-pair ordering, zero behavior change. A new group
 -- conversation (is_group = true) leaves participant_a_id/participant_b_id null and expresses
 -- membership entirely through a new conversation_members table (identical shape to
--- channel_members, migration 105). Every existing RLS policy/RPC predicate that currently
--- reads "participant_a_id = X or participant_b_id = X" (11 occurrences across migrations 094,
--- 113, 187, 190, 191) gets one more OR'd branch checking conversation_members -- the original
--- two-column check stays exactly as it is today, so an existing 1:1 conversation's access
--- control is provably unchanged by this migration.
+-- channel_members, migration 105, minus channel_members' own insert/delete policies -- see
+-- above for why those are deliberately not carried over). Every existing RLS policy/RPC
+-- predicate that currently reads "participant_a_id = X or participant_b_id = X" (11
+-- occurrences across migrations 094, 113, 187, 190, 191) gets one more OR'd branch checking
+-- conversation_members -- the original two-column check stays exactly as it is today, so an
+-- existing 1:1 conversation's access control is provably unchanged by this migration.
 --
 -- message_read_state (migration 191) needs ZERO changes -- it was already built generic over
 -- (user_id, conversation_kind, conversation_id), never actually assuming exactly two
@@ -83,29 +107,17 @@ create policy "workspace members read conversation_members"
     )
   );
 
--- Only an existing member may add another (the initial creator + starting members are
--- inserted by create_group_conversation() below, a SECURITY DEFINER RPC that bypasses this
--- policy for that one atomic step -- this policy governs "add people to an existing group"
--- going forward, mirroring channel_members' own "add people" posture but membership-gated
--- rather than fully open).
+-- Deliberately NO insert or delete policy on conversation_members beyond the SELECT above.
+-- Membership is fixed at creation for this first release (see this file's header) -- the only
+-- row-creating path is create_group_conversation()'s own SECURITY DEFINER insert, which runs
+-- as the function owner and so is unaffected by RLS regardless of policy state. With zero
+-- insert/delete policies, Postgres RLS defaults to deny for both commands via any other route
+-- (a raw PostgREST insert/delete against this table), which is exactly the intended posture --
+-- not an oversight. Adding "add a member"/"leave" policies is real follow-up work, gated on
+-- designing real per-message visibility semantics first (a new member must never see history
+-- from before they joined) -- explicitly not attempted here.
 drop policy if exists "existing members add conversation_members" on public.conversation_members;
-create policy "existing members add conversation_members"
-  on public.conversation_members for insert to authenticated
-  with check (
-    exists (
-      select 1 from public.conversation_members cm
-      where cm.conversation_id = conversation_members.conversation_id
-        and cm.user_id = auth.uid()
-    )
-  );
-
--- Leaving a group: a member may remove only their own row. Removing SOMEONE ELSE (an
--- admin/creator "kick" action) is deliberately not designed here -- see the design doc §5 --
--- channel_members has no settled precedent for this either.
 drop policy if exists "members leave conversation_members" on public.conversation_members;
-create policy "members leave conversation_members"
-  on public.conversation_members for delete to authenticated
-  using (user_id = auth.uid());
 
 -- ============================================================
 -- Section 2 -- workspace containment. A 1:1 conversation keeps the exact existing
@@ -437,11 +449,55 @@ revoke execute on function public.forward_attachment(text, uuid, text, uuid, tex
 grant execute on function public.forward_attachment(text, uuid, text, uuid, text) to authenticated;
 
 -- ============================================================
--- Section 4 -- create_group_conversation()/add_conversation_member(): the only two new
--- write paths a group conversation needs. Both SECURITY DEFINER so the initial multi-row
--- membership insert (creator + every starting member) can happen atomically -- the raw
--- conversation_members INSERT policy above only allows an EXISTING member to add someone,
--- which is right for "add people later" but cannot bootstrap the very first members.
+-- Section 3b -- message-attachments storage.objects policies (migration 100). Found during
+-- the "review against every current conversation/message/reaction/attachment/read-state
+-- policy" pass E asked for before sending this migration -- these two were missed in the
+-- first draft. Migration 187's header explicitly left them untouched at the time because they
+-- "already key off actual conversation PARTICIPANCY," which was true and sufficient for a
+-- fixed two-participant world -- but a real GROUP member needs the same OR'd branch every
+-- other conversation-scoped policy in this migration already gets, or they could never
+-- upload/view their own group's attachments at all.
+-- ============================================================
+
+drop policy if exists "conversation participants read message-attachments" on storage.objects;
+create policy "conversation participants read message-attachments"
+  on storage.objects for select to authenticated
+  using (
+    bucket_id = 'message-attachments'
+    and exists (
+      select 1 from public.conversations c
+      where (
+        c.participant_a_id = auth.uid() or c.participant_b_id = auth.uid()
+        or exists (select 1 from public.conversation_members cm where cm.conversation_id = c.id and cm.user_id = auth.uid())
+      )
+        and name like c.id::text || '/%'
+    )
+  );
+
+drop policy if exists "conversation participants write message-attachments" on storage.objects;
+create policy "conversation participants write message-attachments"
+  on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'message-attachments'
+    and exists (
+      select 1 from public.conversations c
+      where (
+        c.participant_a_id = auth.uid() or c.participant_b_id = auth.uid()
+        or exists (select 1 from public.conversation_members cm where cm.conversation_id = c.id and cm.user_id = auth.uid())
+      )
+        and name like c.id::text || '/%'
+    )
+  );
+
+-- ============================================================
+-- Section 4 -- create_group_conversation(): the ONLY write path that can ever create a
+-- conversation_members row this release (see this file's header -- membership fixed at
+-- creation, no add/remove). SECURITY DEFINER so the initial multi-row membership insert
+-- (creator + every starting member) happens atomically, in the same transaction as the
+-- conversation row itself -- there is deliberately no separate "add people" RPC.
+-- p_title is optional (nullable) -- the first-release frontend does not require or prompt for
+-- one; the DM list derives a display label from participant names by default, same as it
+-- already does for a 1:1 conversation's "other participant" name today.
 -- ============================================================
 
 create or replace function public.create_group_conversation(p_title text, p_member_user_ids uuid[])
@@ -495,49 +551,5 @@ $$;
 revoke all on function public.create_group_conversation(text, uuid[]) from public;
 revoke execute on function public.create_group_conversation(text, uuid[]) from anon;
 grant execute on function public.create_group_conversation(text, uuid[]) to authenticated;
-
-create or replace function public.add_conversation_member(p_conversation_id uuid, p_user_id uuid)
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_actor_id uuid := auth.uid();
-  v_conversation public.conversations;
-begin
-  if v_actor_id is null then
-    raise exception 'Must be signed in';
-  end if;
-
-  select * into v_conversation from public.conversations where id = p_conversation_id;
-  if v_conversation.id is null then
-    raise exception 'Conversation not found.';
-  end if;
-  if not v_conversation.is_group then
-    raise exception 'Cannot add a member to a 1:1 conversation.';
-  end if;
-  if not exists (
-    select 1 from public.conversation_members cm
-    where cm.conversation_id = p_conversation_id and cm.user_id = v_actor_id
-  ) then
-    raise exception 'Only an existing member may add someone to this conversation.' using errcode = '42501';
-  end if;
-  if not exists (
-    select 1 from public.workspace_members wm
-    where wm.user_id = p_user_id and wm.workspace_id = v_conversation.workspace_id and wm.status = 'active'
-  ) then
-    raise exception 'The person you are adding must be an active member of this workspace.';
-  end if;
-
-  insert into public.conversation_members (conversation_id, user_id)
-  values (p_conversation_id, p_user_id)
-  on conflict (conversation_id, user_id) do nothing;
-end;
-$$;
-
-revoke all on function public.add_conversation_member(uuid, uuid) from public;
-revoke execute on function public.add_conversation_member(uuid, uuid) from anon;
-grant execute on function public.add_conversation_member(uuid, uuid) to authenticated;
 
 commit;

@@ -1086,6 +1086,45 @@ or replace`, not just the changed lines.
 **No frontend work done this pass** -- per the task's own scope (design/source pass, not
 implementation) and because the frontend shape genuinely depends on the decision flagged above.
 
+## 2026-09-24: multi-person conversations approved, migration 203 corrected and sent
+
+E approved the flagged decision directly: a separate ad-hoc group-DM surface, exact shape specified
+(1+ recipients in "New message," 1 uses the existing 1:1 conversation, 2+ creates a group, no name
+required, lives under Direct Messages not Channels, ordinary messages/reactions/attachments/unread/
+notifications, no Channel features).
+
+**E's own review of the draft caught a real risk before it was sent**: the first draft let an
+existing member add someone new to a group after the fact -- E pointed out directly that this would
+expose the new member to the group's entire prior message history, since `direct_messages`' read
+policies only ever check "are you a member now," never "were you a member when this was sent."
+Corrected: `conversation_members` now has no insert or delete policy at all beyond SELECT -- the only
+way a membership row is ever created is `create_group_conversation()`'s own atomic insert of every
+starting member, in the same transaction as the conversation row. Add People and Leave Group are not
+built this release; to change who's in a group, start a new one. The canonical test's section (c) was
+rewritten to prove this directly (a real member's own attempt to INSERT or DELETE a
+`conversation_members` row is rejected), not just to test the now-removed `add_conversation_member()`
+RPC's own internal logic.
+
+**The requested re-review against every current conversation/message/reaction/attachment/read-state
+policy and RPC caught two more real gaps the first draft missed**:
+- `message-attachments`' `storage.objects` SELECT/INSERT policies (migration 100) still only checked
+  the two fixed participant columns, with no group-membership branch -- a real group member could
+  never have uploaded or viewed their own group's attachments. Fixed in migration 203 itself.
+- `api/_lib/directMessage.js`'s `resolveDirectMessage()` (shared by `api/send-push.js` and
+  `api/create-notification.js`) derives a single `recipientId` from "whichever participant column
+  isn't the sender" -- both columns are null on a group conversation, so this would have silently
+  resolved `recipientId = null` and notified nobody. This is frontend/API-layer code, not a migration
+  -- fix is the next unit of work (design doc §3), building alongside the rest of the frontend while
+  migration 203 is pending.
+
+`backend/supabase/migrations/203_multiperson_direct_conversations.sql` and
+`backend/supabase/migration_203_multiperson_direct_conversations_tests.sql` are corrected and
+**sent to E as the next single Supabase action**. `PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md` is
+rewritten to match the approved, corrected design exactly -- no longer a draft awaiting a decision.
+
+**Continuing with the compatible frontend and regression tests while awaiting the SQL result**, per
+E's own explicit instruction not to stall on the manual SQL step -- see the next entry.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly

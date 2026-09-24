@@ -1728,19 +1728,20 @@ coder. What was found and fixed:
 Read this section first for "what's actually next" — it supersedes any "next step" language anywhere
 else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written before 2026-09-23.
 
-1. **Multi-person direct conversations — design and migration drafted, NOT sent to E, one real
-   product decision needed first.** `PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md` (new) is the full
-   design. `backend/supabase/migrations/203_multiperson_direct_conversations.sql` (new, drafted, not
-   run) and `backend/supabase/migration_203_multiperson_direct_conversations_tests.sql` (new, drafted,
-   not run) are ready. **Decision needed from E before sending 203**: is an unnamed, ad-hoc "pick 2+
-   people from the DM picker" group thread actually wanted as a separate surface, or does better
-   discoverability of the existing private group-channel feature (migration 105, `channels.type =
-   'group'`) already cover the same need? See the design doc §0 for the full framing — nothing drafted
-   is wasted either way (the schema/RLS work is correct and needed regardless; only the frontend entry
-   point depends on the answer). **No migration required to get this answer** — it's a product
-   question for E, not a technical one. Once answered: if a new group-DM surface is wanted, migration
-   203 can be sent to E as the next single Supabase action, then its frontend (per the design doc §3)
-   built after confirmation.
+1. **Multi-person direct conversations — APPROVED by E 2026-09-23/24, migration 203 corrected per
+   E's own review and SENT as the next single Supabase action, 2026-09-24.** `PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md`
+   is the full, current design. E's approved shape: "New message" picks 1+ recipients (1 → existing
+   1:1 conversation, 2+ → an ad-hoc group DM, no name required, lives under Direct Messages not
+   Channels, ordinary messages/reactions/attachments/unread/notifications, explicitly no Channel
+   features). **E's own pre-send review caught a real risk in the first draft**: an "add people to an
+   existing group" path would expose new members to prior message history. Corrected: membership is
+   fixed at creation this release (no Add People, no Leave Group — start a new group DM instead); the
+   migration's own re-review pass (requested by E) also caught two real gaps the first draft missed —
+   the `message-attachments` storage.objects policies (migration 100) and `api/_lib/directMessage.js`'s
+   single-recipient notification resolver — both now accounted for (the storage fix is in migration
+   203 itself; the notification resolver fix is frontend/API-layer work, tracked as the next unit of
+   work below). Once the migration and its canonical test are confirmed applied: build the compatible
+   frontend (§3 of the design doc) and deploy/verify a real 1:1 DM plus a real 3-person group DM live.
 2. **Two pre-existing, recurring, unrelated console errors, confirmed present across multiple
    sessions and modules this week, never yet root-caused**: `saveProjectSites`/`saveInventoryItems`
    both fail with `42P10: there is no unique or exclusion constraint matching the ON CONFLICT

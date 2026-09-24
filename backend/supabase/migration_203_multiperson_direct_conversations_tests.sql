@@ -9,7 +9,11 @@
 --       exactly as before this migration -- the whole point of the additive design.
 --   (b) A 3-person group conversation: all 3 real members can read/send; a 4th, real,
 --       same-workspace but non-member user cannot.
---   (c) A cross-workspace add attempt to conversation_members is rejected.
+--   (c) create_group_conversation() rejects a cross-workspace member at creation time, AND
+--       fixed-membership is actually enforced: a real, current member cannot directly INSERT
+--       a new row into conversation_members (no such policy exists any more, per E's
+--       2026-09-24 correction -- membership is fixed at creation, no Add People this release),
+--       and cannot DELETE their own row either (no Leave Group this release).
 --   (d) message_read_state tracks per-person unread across all 3 group members
 --       independently -- proves migration 191's table needed zero changes, not just by
 --       inspection.
@@ -132,19 +136,47 @@ begin
   get diagnostics affected_rows = row_count;
 
   -- ============================================================
-  -- (c) Cross-workspace add rejected
+  -- (c) Cross-workspace member rejected at CREATION time (no add_conversation_member() exists
+  -- any more to test separately), and fixed-membership is really enforced: no direct write
+  -- path into conversation_members exists beyond create_group_conversation() itself.
   -- ============================================================
   perform set_config('request.jwt.claims', json_build_object('sub', group_creator_id, 'role', 'authenticated')::text, true);
   set local role authenticated;
   begin
-    perform public.add_conversation_member(group_conv.id, other_ws_user_id);
-    raise exception 'TEST FAILED (c): add_conversation_member accepted a user from a DIFFERENT workspace';
+    perform public.create_group_conversation('ZZ Test 203 Cross-WS', array[group_member_2_id, other_ws_user_id]);
+    raise exception 'TEST FAILED (c): create_group_conversation accepted a member from a DIFFERENT workspace';
   exception when others then
-    if sqlerrm not like '%active member of this workspace%' then
+    if sqlerrm not like '%active member of your own workspace%' then
       raise exception 'TEST FAILED (c): rejected for the wrong reason: %', sqlerrm;
     end if;
   end;
+
+  -- Fixed membership, part 2: an existing, real member of the (successfully created) group
+  -- cannot directly INSERT a new row into conversation_members -- no such policy exists.
+  begin
+    insert into public.conversation_members (conversation_id, user_id) values (group_conv.id, non_member_id);
+    raise exception 'TEST FAILED (c): a group member could directly INSERT a new conversation_members row -- Add People must not exist this release';
+  exception when insufficient_privilege or others then
+    null; -- expected: RLS rejects it, zero insert policy for this action
+  end;
+
+  -- Fixed membership, part 3: a real member cannot DELETE even their OWN row -- no Leave
+  -- Group this release either. Unlike INSERT (which must evaluate a WITH CHECK against the
+  -- one proposed row and so raises), a DELETE with zero matching policies simply sees zero
+  -- eligible rows and silently affects 0 rows -- same "no-delete-policy-means-silent-RLS-
+  -- denial" pattern this schema's own migration 200/201 tests already established, checked
+  -- via GET DIAGNOSTICS, not an expected exception.
+  delete from public.conversation_members where conversation_id = group_conv.id and user_id = group_creator_id;
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then
+    raise exception 'TEST FAILED (c): a group member DELETEd their own conversation_members row (% rows affected) -- Leave Group must not exist this release', affected_rows;
+  end if;
+
   set local role postgres;
+  select count(*) into v_count from public.conversation_members where conversation_id = group_conv.id;
+  if v_count <> 3 then
+    raise exception 'TEST FAILED (c): conversation_members row count for the group changed after the rejected insert/delete attempts -- expected still exactly 3, found %', v_count;
+  end if;
 
   -- ============================================================
   -- (d) message_read_state tracks all 3 group members independently -- migration 191's
