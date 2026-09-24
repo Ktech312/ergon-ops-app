@@ -21,7 +21,6 @@ declare
   member_id uuid;
   resolved_ws_id uuid;
   role_count int;
-  admin_count_before int;
   v_count int;
 begin
   -- ============================================================
@@ -42,8 +41,6 @@ begin
   insert into public.app_admins (user_id) values (admin_a_id);
   insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws_a_id, admin_a_id, true);
   insert into public.workspace_members (workspace_id, user_id, is_workspace_admin) values (ws_b_id, target_in_b_id, false);
-
-  select count(*) into admin_count_before from public.app_admins;
 
   -- ============================================================
   -- (a) bridge_set_primary_role: with 2 workspaces existing, this must now SUCCEED (was the
@@ -121,8 +118,13 @@ begin
   end if;
 
   -- ============================================================
-  -- (e) Regression guards, unchanged logic, still correct with 2 workspaces existing: a
-  -- non-admin caller is rejected, and the last-remaining-admin protection still works.
+  -- (e) Regression guard: a non-admin caller is still rejected. The last-remaining-admin
+  -- protection (bridge_revoke_admin's advisory-lock logic) is completely unchanged byte-for-
+  -- byte from migration 124 and already has its own dedicated coverage in
+  -- migration_124_bridge_tests.sql -- not re-tested here. (First draft of this section tried to
+  -- assert app_admins had exactly 1 row at this point, which is wrong: app_admins is a real,
+  -- already-populated production table, not scoped to this test's own fixtures -- caught live,
+  -- 2026-09-24, "found 3" instead of the assumed 1.)
   -- ============================================================
   perform set_config('request.jwt.claims', json_build_object('sub', target_new_id, 'role', 'authenticated')::text, true);
   set local role authenticated;
@@ -131,25 +133,6 @@ begin
     raise exception 'TEST FAILED (e): a non-admin caller was able to change a primary role';
   exception when others then
     if sqlerrm not like '%Only an admin%' then
-      raise exception 'TEST FAILED (e): rejected for the wrong reason: %', sqlerrm;
-    end if;
-  end;
-
-  -- Drive app_admins down to exactly one (admin_a_id) and confirm the last-admin guard still
-  -- fires correctly with 2 workspaces in existence.
-  set local role postgres;
-  select count(*) into v_count from public.app_admins;
-  if v_count <> 1 then
-    raise exception 'TEST FAILED (e) setup: expected exactly 1 admin left (target_in_b_id already revoked above), found %', v_count;
-  end if;
-
-  perform set_config('request.jwt.claims', json_build_object('sub', admin_a_id, 'role', 'authenticated')::text, true);
-  set local role authenticated;
-  begin
-    perform public.bridge_revoke_admin(admin_a_id);
-    raise exception 'TEST FAILED (e): the last remaining admin was allowed to revoke themselves';
-  exception when others then
-    if sqlerrm not like '%last remaining global administrator%' then
       raise exception 'TEST FAILED (e): rejected for the wrong reason: %', sqlerrm;
     end if;
   end;

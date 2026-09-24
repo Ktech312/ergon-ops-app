@@ -1287,6 +1287,17 @@ this is a live production outage affecting every admin, higher priority than a n
 migration. `PRODUCT_MASTER_COMPLETION_PLAN.md` §12 updated to reflect this as the new top queue
 item.
 
+**Migration 204 APPLIED and confirmed live in production (E, "Success. No rows returned 204",
+2026-09-24).** Its canonical test's first run found a real bug in the TEST SCRIPT itself, not the
+migration -- `ERROR: P0001: TEST FAILED (e) setup: expected exactly 1 admin left..., found 3`.
+Section (e)'s last-admin-protection check wrongly assumed `app_admins` would contain only this
+test's own synthetic fixtures; it's a real, already-populated production table, so the count
+included every genuine existing admin plus the two synthetic ones. Fixed by dropping that part of
+section (e) entirely -- `bridge_revoke_admin`'s last-admin-protection logic is completely
+unchanged byte-for-byte from migration 124 and already has its own dedicated coverage in
+`migration_124_bridge_tests.sql`, so re-testing it here added risk (depending on real admin count)
+for zero new coverage. Migration 204 itself was never touched. Corrected test resent to E.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
