@@ -1744,14 +1744,17 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    persisted (confirmed via full reload in a fresh tab, not just optimistic local state), zero
    console errors either direction. See `HANDOFF.md`'s matching 2026-09-24 entries for full detail.
 1. **Multi-person direct conversations — APPROVED by E 2026-09-23/24, migration 203 APPLIED
-   2026-09-24, its own canonical test found a real bug in 203 itself (fixed forward by migration
-   205, both now sent to E together as the next single Supabase action).** `wm.status = 'active'`
-   referenced a column `workspace_members` doesn't have -- "active" is `workspaces.status`,
-   reached by a join, exactly as migration 187's own function in the same file already did
-   correctly. Migration 203 itself was not edited or rerun, per this repo's standing rule; 205
-   re-applies the two affected functions (`guard_conversation_member_workspace_id()`,
-   `create_group_conversation()`) via `create or replace function` with the missing join added.
-   The canonical test's own fixture had the identical wrong assumption, fixed in the same pass.
+   2026-09-24. Its own canonical test found TWO real bugs in migration 203 itself, fixed forward
+   by migrations 205 and 206 (neither edits or reruns 203, per this repo's standing rule).**
+   205: `wm.status = 'active'` referenced a column `workspace_members` doesn't have -- fixed by
+   joining to `workspaces.status` instead, exactly as migration 187's own function in the same
+   file already did correctly. **APPLIED, confirmed.** 206: `conversations`' and
+   `conversation_members`'s own SELECT policies read each other in plain (non-`SECURITY DEFINER`)
+   subqueries -- a genuine mutual RLS recursion (`42P17`) that only manifests on a real row
+   read/`RETURNING`, not during DDL, which is why it wasn't caught until the test's first live
+   INSERT. Fixed with a new `SECURITY DEFINER` helper (`is_conversation_member()`, same technique
+   as `is_workspace_member()` etc. throughout this schema) that breaks the cycle, swept across 8
+   policies for consistency. **Sent to E as the next single Supabase action.**
    `PRODUCT_MULTIPERSON_CONVERSATIONS_DESIGN.md`
    is the full, current design. E's approved shape: "New message" picks 1+ recipients (1 → existing
    1:1 conversation, 2+ → an ad-hoc group DM, no name required, lives under Direct Messages not

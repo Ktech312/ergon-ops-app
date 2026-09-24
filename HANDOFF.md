@@ -1344,6 +1344,39 @@ Both migration 205 and the corrected test are sent to E together as the next sin
 action (migration first, then its test, same one-at-a-time discipline as every other migration
 this session).
 
+**Migration 205 APPLIED (E, "Success. No rows returned").** The corrected test's next run found a
+SECOND real bug in migration 203 -- `ERROR: 42P17: infinite recursion detected in policy for
+relation "conversations"`, raised on the test's very first statement, a plain 1:1 `insert into
+conversations ... returning id`.
+
+**Root cause**: `conversations`' own SELECT policy (migration 203) reads `conversation_members` in
+a plain subquery to check group membership; `conversation_members`'s own SELECT policy (migration
+203) reads `conversations` right back to check workspace membership. Neither is `SECURITY
+DEFINER`, so each subquery runs under the CALLER's own role and re-triggers the OTHER table's RLS
+policy -- a genuine mutual-recursion cycle. It only manifests when a real row is actually read or
+`RETURNING`'d (an `INSERT ... RETURNING` evaluates the SELECT policy on the new row to decide what
+to hand back) -- never during the migration's own DDL, which is why this wasn't caught until the
+very first live INSERT against the table.
+
+**Fixed, migration 206** (`backend/supabase/migrations/206_fix_conversations_rls_recursion.sql`) --
+the same technique this schema already uses everywhere for exactly this shape
+(`is_workspace_member()`, `is_active_workspace_member()`, etc.): a new `SECURITY DEFINER` helper,
+`is_conversation_member()`, that reads `conversation_members` bypassing RLS internally (a security
+definer function's own queries run as the function owner, never re-triggering RLS on the tables it
+touches). `conversations`' SELECT policy now calls this function instead of inlining the raw
+subquery -- breaks the cycle at its source. Also swept every OTHER policy that inlined the
+identical now-redundant pattern for consistency and to avoid an extra RLS-checked subquery on
+every message read/write, even though none of the others were themselves part of the actual
+recursion (`direct_messages` SELECT/INSERT/UPDATE, `direct_message_reactions` SELECT/INSERT, the
+`message-attachments` storage.objects read/write policies -- 8 policies total, all `drop policy` +
+`create policy` pairs, structurally confirmed balanced before sending).
+`forward_attachment()`/`create_group_conversation()` were untouched -- both are themselves
+`SECURITY DEFINER`, so their own internal queries were never part of this recursion in the first
+place. Migration 203 itself again NOT edited or rerun. Test file's header note updated a second
+time: now requires 203, 205, AND 206 all applied before it can run.
+
+Sent to E as the next single Supabase action.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly

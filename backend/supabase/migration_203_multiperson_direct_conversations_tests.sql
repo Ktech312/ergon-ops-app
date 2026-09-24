@@ -1,8 +1,13 @@
 -- Canonical isolation test for migration 203 (multi-person direct conversations). Wrapped in
--- begin/rollback -- nothing commits regardless of outcome. Requires BOTH migration 203 AND
--- migration 205 (its corrective follow-up, fixing a real `wm.status` bug found running this
--- exact test live, 2026-09-24) to be applied first -- against 203 alone, sections (b)/(c) fail
--- with "column status of relation workspace_members does not exist."
+-- begin/rollback -- nothing commits regardless of outcome. Requires migrations 203, 205, AND 206
+-- all applied first:
+--   - 205 fixes a real `wm.status` bug (`workspace_members` has no such column) found running
+--     this exact test live -- without it, sections (b)/(c) fail with "column status of relation
+--     workspace_members does not exist."
+--   - 206 fixes a real mutual RLS recursion between `conversations` and `conversation_members`'
+--     own SELECT policies, found running this exact test live (after 205) -- without it, even
+--     section (a)'s plain 1:1 conversation insert fails with "42P17: infinite recursion detected
+--     in policy for relation conversations."
 --
 -- Sections:
 --   (a) Regression guard: an existing-shape 1:1 conversation still creates/reads/writes
