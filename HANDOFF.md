@@ -1531,6 +1531,50 @@ single Supabase SQL editor action, then its canonical test
 (`backend/supabase/migration_207_notification_event_types_and_auto_provisioning_tests.sql`), same
 one-at-a-time order as every other migration this session.
 
+## 2026-09-25: URGENT live regression found + fixed (migration 208) while running the consolidated suite before the real second-company acceptance test
+
+Before starting the real end-to-end second-company onboarding acceptance test (E's own instruction,
+`PRODUCT_SECOND_COMPANY_ACCEPTANCE_CHECKLIST.md`), ran the full consolidated isolation suite fresh --
+it had 3 failures, not the 0 the suite is supposed to guarantee. All 3 traced to real, understood
+causes; only one was an actual bug.
+
+**Migration 208 (`bridge_set_primary_role`'s manager branch, silently dropped by migration 204) is a
+real, live regression, confirmed applied to production since 2026-09-24.** Migration 133 deliberately
+widened this function's authorization from admin-only to `is_app_admin() OR (caller holds 'manager')`
+-- its own header explicitly states this was NOT extended to the other three bridge functions. Migration
+204 (the same-day fix for the real "second workspace breaks every bridge_* function" outage) redefined
+this same function to resolve the CALLER's own workspace instead of the removed
+`active_workspace_id()` database-wide guard -- correct -- but based its "everything else byte-for-byte
+identical" claim on migration 124's *original* text rather than the function's real, migration-133-
+amended live state, silently reverting the manager branch back to admin-only. **Net effect: any real
+manager (non-admin) who could set a user's primary role before 2026-09-24 has been unable to since.**
+Fixed by restoring migration 133's exact condition verbatim while keeping 204's real workspace-
+resolution fix unchanged. Migrations 133/204 themselves untouched. No new dedicated test file --
+migration 133's own canonical test (`migration_133_manager_primary_role_and_admin_bootstrap_tests.sql`)
+already fully proves this exact behavior and needed zero fixture changes, only for the function to
+actually work again.
+
+**Two test-file-only corrections, migrations 124/203 themselves untouched:**
+- `migration_124_bridge_tests.sql` -- Section 6 (and its structural pg_get_functiondef check in Section
+  9b) both asserted the OLD workspace-count guard on `bridge_set_user_allowed_views()` that migration
+  204 deliberately and correctly removed (that function writes only to the legacy, non-workspace-scoped
+  `app_user_roles` table -- the guard "was purely a blocking gate with zero functional purpose," per
+  204's own header). Rewrote both to prove the opposite, now-correct behavior: the call succeeds with
+  any workspace count/status, and the guard call is genuinely absent from the deployed function source.
+- `migration_203_multiperson_direct_conversations_tests.sql` -- final success notice read "ALL SECTIONS
+  PASSED (a)-(e) for migration 203." instead of matching the consolidated suite's expected `ALL
+  MIGRATION \d+.*PASSED` pattern (`run_all.mjs:223`) -- a harness text-match miss, every section had
+  genuinely passed. Corrected the notice text.
+
+**Full consolidated isolation suite re-run after all three fixes: 70/70 passing, zero known failures.**
+This is the trustworthy baseline the real second-company acceptance test's own re-run (checklist's
+"after the real workspace exists" step) will be compared against.
+
+— *Not yet applied to production.* Send `backend/supabase/migrations/208_restore_bridge_set_primary_role_manager_branch.sql`
+to E next, immediately after (or alongside) migration 207 -- both are queued, in either order, since
+they touch unrelated functions. **This is the higher-priority of the two** (URGENT, live regression
+affecting real manager accounts today) even though 207 was drafted first.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
