@@ -564,13 +564,29 @@ begin
     delete from public.app_user_roles where user_id = non_admin_user_id and role_key = 'marketing';
 
     -- ============================================================
-    -- Section 6: bridge_set_user_allowed_views' own workspace-guard
-    -- coverage -- second active, second suspended, sole workspace
-    -- suspended (three of the four required scenarios). The fourth,
-    -- "zero workspaces," is deliberately NEVER exercised at runtime
-    -- anywhere in this script -- see the note at Section 9 for why, and
-    -- Section 9b for how that case is verified instead (structural
-    -- source-code inspection, not a live DELETE).
+    -- Section 6: bridge_set_user_allowed_views' workspace-COUNT
+    -- INDEPENDENCE -- corrected 2026-09-25, per migration 204 (found live
+    -- in production, 2026-09-24: a second real workspace, e.g. a real
+    -- company onboarded through Stage 7, broke every bridge_* function
+    -- that still called active_workspace_id()'s "exactly one workspace in
+    -- the whole database" fail-closed guard). Migration 204's own header
+    -- states plainly that bridge_set_user_allowed_views()'s
+    -- active_workspace_id() call "was also purely a blocking gate with
+    -- zero functional purpose" and was "removed outright" -- the function
+    -- writes only to the legacy, non-workspace-scoped app_user_roles
+    -- table and never resolves or uses a workspace id at all. This
+    -- section originally asserted the OLD guard's rejection in all three
+    -- scenarios below; that behavior was deliberately and correctly
+    -- superseded by migration 204, discovered when the consolidated
+    -- isolation suite ran this file against a real multi-workspace
+    -- schema for the first time. Migration 124 itself is untouched --
+    -- only this test's own expectation is corrected, the same class of
+    -- fix as every other "assertion superseded by a later, legitimate
+    -- migration" case already documented throughout this suite (e.g.
+    -- migration 166's schedule_template_phase, migration 191's mention
+    -- token). Now proves the OPPOSITE of what it originally proved: the
+    -- call SUCCEEDS regardless of how many workspaces exist or their
+    -- status, because the function genuinely has no workspace concept.
     --
     -- Run against non_admin_user_id, who has a clean single primary role
     -- at this point. Restored between each sub-case so later sections
@@ -578,16 +594,17 @@ begin
     -- ============================================================
     if real_workspace_id is null then
       skipped_count := skipped_count + 1;
-      skipped_names := array_append(skipped_names, 'allowed-views workspace-guard tests (no workspace row found)');
+      skipped_names := array_append(skipped_names, 'allowed-views workspace-independence tests (no workspace row found)');
     else
       select count(*) into row_count from public.workspaces where status = 'active';
       if row_count <> 1 or (select count(*) from public.workspaces) <> 1 then
         skipped_count := skipped_count + 1;
-        skipped_names := array_append(skipped_names, format('allowed-views workspace-guard tests (expected a clean one-active-workspace baseline, found %s active of %s total)', row_count, (select count(*) from public.workspaces)));
+        skipped_names := array_append(skipped_names, format('allowed-views workspace-independence tests (expected a clean one-active-workspace baseline, found %s active of %s total)', row_count, (select count(*) from public.workspaces)));
       else
         select allowed_views into allowed_views_before from public.app_user_roles where user_id = non_admin_user_id and is_primary;
 
-        -- Second active workspace.
+        -- Second active workspace -- the call must now SUCCEED (migration
+        -- 204's fix), and the write must actually land.
         insert into public.workspaces (name, slug, status)
         values ('Test Second Workspace -- ACTIVE (never committed)', 'test-second-workspace-active-avtest-' || gen_random_uuid()::text, 'active')
         returning id into test_workspace_id;
@@ -596,19 +613,19 @@ begin
         perform set_config('role', 'authenticated', true);
         caught := false;
         begin
-          perform public.bridge_set_user_allowed_views(non_admin_user_id, array['second-active-should-not-write']);
+          perform public.bridge_set_user_allowed_views(non_admin_user_id, array['second-active-should-write']);
         exception when others then
           caught := true;
         end;
         perform set_config('role', original_role, true);
         select allowed_views into allowed_views_after from public.app_user_roles where user_id = non_admin_user_id and is_primary;
-        if not caught then
-          raise exception 'TEST FAILED: bridge_set_user_allowed_views should be rejected with a second active workspace present';
+        if caught then
+          raise exception 'TEST FAILED: bridge_set_user_allowed_views was rejected with a second active workspace present -- migration 204''s workspace-count-independence fix regressed';
         end if;
-        if allowed_views_before is distinct from allowed_views_after then
-          raise exception 'TEST FAILED: allowed_views changed despite the second-active-workspace guard rejecting the call';
+        if allowed_views_after is distinct from array['second-active-should-write'] then
+          raise exception 'TEST FAILED: bridge_set_user_allowed_views succeeded but did not actually write the new allowed_views value (got %)', allowed_views_after;
         end if;
-        raise notice 'TEST PASSED: bridge_set_user_allowed_views rejected with a second active workspace, no write occurred';
+        raise notice 'TEST PASSED: bridge_set_user_allowed_views succeeds with a second active workspace present, and the write actually lands (migration 204)';
 
         -- CONSOLIDATED-SUITE FINDING (found running the full 001-185
         -- replay, not visible to migration 124's own isolated
@@ -623,7 +640,7 @@ begin
         delete from public.company_branding where workspace_id = test_workspace_id;
         delete from public.workspaces where id = test_workspace_id;
 
-        -- Second suspended workspace.
+        -- Second suspended workspace -- same independence, must still succeed.
         insert into public.workspaces (name, slug, status)
         values ('Test Second Workspace -- SUSPENDED (never committed)', 'test-second-workspace-suspended-avtest-' || gen_random_uuid()::text, 'suspended')
         returning id into test_workspace_id;
@@ -632,47 +649,50 @@ begin
         perform set_config('role', 'authenticated', true);
         caught := false;
         begin
-          perform public.bridge_set_user_allowed_views(non_admin_user_id, array['second-suspended-should-not-write']);
+          perform public.bridge_set_user_allowed_views(non_admin_user_id, array['second-suspended-should-write']);
         exception when others then
           caught := true;
         end;
         perform set_config('role', original_role, true);
         select allowed_views into allowed_views_after from public.app_user_roles where user_id = non_admin_user_id and is_primary;
-        if not caught then
-          raise exception 'TEST FAILED: bridge_set_user_allowed_views should be rejected with a second suspended workspace present';
+        if caught then
+          raise exception 'TEST FAILED: bridge_set_user_allowed_views was rejected with a second suspended workspace present -- migration 204''s workspace-count-independence fix regressed';
         end if;
-        if allowed_views_before is distinct from allowed_views_after then
-          raise exception 'TEST FAILED: allowed_views changed despite the second-suspended-workspace guard rejecting the call';
+        if allowed_views_after is distinct from array['second-suspended-should-write'] then
+          raise exception 'TEST FAILED: bridge_set_user_allowed_views succeeded but did not actually write the new allowed_views value with a second suspended workspace present (got %)', allowed_views_after;
         end if;
-        raise notice 'TEST PASSED: bridge_set_user_allowed_views rejected with a second (suspended) workspace, no write occurred';
+        raise notice 'TEST PASSED: bridge_set_user_allowed_views succeeds with a second (suspended) workspace present, and the write actually lands';
 
         -- See the company_branding cleanup comment above (consolidated-
         -- suite finding re: migration 182's auto-seed trigger).
         delete from public.company_branding where workspace_id = test_workspace_id;
         delete from public.workspaces where id = test_workspace_id;
 
-        -- Sole workspace suspended.
+        -- Sole workspace suspended -- same independence, must still succeed
+        -- (the function never touches workspaces at all).
         update public.workspaces set status = 'suspended' where id = real_workspace_id;
 
         perform set_config('request.jwt.claims', json_build_object('sub', admin_user_id::text)::text, true);
         perform set_config('role', 'authenticated', true);
         caught := false;
         begin
-          perform public.bridge_set_user_allowed_views(non_admin_user_id, array['sole-suspended-should-not-write']);
+          perform public.bridge_set_user_allowed_views(non_admin_user_id, array['sole-suspended-should-write']);
         exception when others then
           caught := true;
         end;
         perform set_config('role', original_role, true);
         select allowed_views into allowed_views_after from public.app_user_roles where user_id = non_admin_user_id and is_primary;
-        if not caught then
-          raise exception 'TEST FAILED: bridge_set_user_allowed_views should be rejected when the sole workspace is suspended';
+        if caught then
+          raise exception 'TEST FAILED: bridge_set_user_allowed_views was rejected when the sole workspace is suspended -- migration 204''s workspace-count-independence fix regressed';
         end if;
-        if allowed_views_before is distinct from allowed_views_after then
-          raise exception 'TEST FAILED: allowed_views changed despite the sole-workspace-suspended guard rejecting the call';
+        if allowed_views_after is distinct from array['sole-suspended-should-write'] then
+          raise exception 'TEST FAILED: bridge_set_user_allowed_views succeeded but did not actually write the new allowed_views value when the sole workspace is suspended (got %)', allowed_views_after;
         end if;
-        raise notice 'TEST PASSED: bridge_set_user_allowed_views rejected when the sole workspace is suspended, no write occurred';
+        raise notice 'TEST PASSED: bridge_set_user_allowed_views succeeds when the sole workspace is suspended, and the write actually lands';
 
         update public.workspaces set status = 'active' where id = real_workspace_id;
+        allowed_views_after := allowed_views_before;
+        update public.app_user_roles set allowed_views = allowed_views_before where user_id = non_admin_user_id and is_primary;
       end if;
     end if;
 
@@ -963,21 +983,31 @@ begin
     end if;
     raise notice 'TEST PASSED: active_workspace_id() source confirmed (via pg_get_functiondef) to count ALL workspace rows regardless of status and reject on total_count <> 1 -- combined with the executed two-workspace tests above, this proves the zero-workspace case is rejected by the same code path, without ever deleting the real workspace row';
 
+    -- Corrected 2026-09-25 per migration 204 (see Section 6's own header
+    -- comment above for the full story): bridge_set_user_allowed_views()
+    -- writes only to the legacy, non-workspace-scoped app_user_roles
+    -- table and never had a genuine functional need for a workspace-count
+    -- guard -- migration 204's own header states its active_workspace_id()
+    -- call "was also purely a blocking gate with zero functional purpose"
+    -- and was "removed outright." This structural check now proves the
+    -- OPPOSITE of what it originally proved: the call is genuinely GONE
+    -- from the deployed source (not merely untriggered), so the function
+    -- cannot ever again reject a legitimate call purely because of how
+    -- many workspaces happen to exist -- matching Section 6's own
+    -- executed proof that the call succeeds with 0, 1, or 2+ workspaces
+    -- in any status.
     select pg_get_functiondef('public.bridge_set_user_allowed_views(uuid, text[])'::regprocedure) into allowed_views_def;
 
     perform_pos := position('active_workspace_id' in allowed_views_def);
     update_pos := position('update public.app_user_roles' in allowed_views_def);
 
-    if perform_pos = 0 then
-      raise exception 'TEST FAILED: bridge_set_user_allowed_views() source no longer calls active_workspace_id() at all -- the workspace guard has been removed';
+    if perform_pos <> 0 then
+      raise exception 'TEST FAILED: bridge_set_user_allowed_views() source still calls active_workspace_id() -- migration 204''s workspace-count-independence fix regressed';
     end if;
     if update_pos = 0 then
       raise exception 'TEST FAILED: bridge_set_user_allowed_views() source does not contain the expected UPDATE public.app_user_roles statement -- structural assumption broken';
     end if;
-    if perform_pos > update_pos then
-      raise exception 'TEST FAILED: bridge_set_user_allowed_views() calls active_workspace_id() AFTER its UPDATE, not before -- the guard would not actually protect the write';
-    end if;
-    raise notice 'TEST PASSED: bridge_set_user_allowed_views() source confirmed (via pg_get_functiondef) to call active_workspace_id() before its UPDATE statement -- the zero-workspace guard genuinely protects this write, verified without ever deleting the real workspace row';
+    raise notice 'TEST PASSED: bridge_set_user_allowed_views() source confirmed (via pg_get_functiondef) to no longer call active_workspace_id() at all, and still contains its real UPDATE public.app_user_roles statement -- migration 204''s workspace-count independence is structurally confirmed, not just behaviorally observed above';
   end;
 
   -- ============================================================

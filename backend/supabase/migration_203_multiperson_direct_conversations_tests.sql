@@ -226,7 +226,7 @@ begin
   end if;
 
   set local role postgres;
-  raise notice 'ALL SECTIONS PASSED (a)-(e) for migration 203.';
+  raise notice 'ALL MIGRATION 203 MULTIPERSON DIRECT CONVERSATIONS TESTS PASSED -- ZERO SECTIONS SKIPPED';
 end $$;
 
 rollback;
