@@ -1411,6 +1411,126 @@ the resolution logic itself (which recipients get notified) is directly covered 
 shipped**: migrations 203/205/206 applied and canonically tested in production, frontend deployed
 and live-verified for both the 1:1 regression and a real group conversation.
 
+## 2026-09-25: a brand-new company signup gets zero notification_rules rows -- closed (migration 207)
+
+**The gap, confirmed directly from source, not assumed**: migration 195's own header
+(`195_company_signup_requests.sql:72-74`) documents that `approve_company_signup()` deliberately does
+NOT seed `notification_rules` for a newly-provisioned workspace ("Deliberately NOT seeded... product_
+catalog, notification_rules... a workspace with zero rows... is a correct, honest 'not configured yet'
+state"), and migration 173's own header (point 4) flagged the identical thing as a known gap pending
+"Stage 7's own reviewed provisioning procedure." The Admin "Notification Rules" panel (`src/main.tsx`,
+~line 22279, `notificationRules.map(...)`) has no "add a rule" affordance anywhere in it -- it only ever
+renders rows that already exist. Net effect: a brand-new company's panel is permanently empty, with no
+way for anyone -- including that company's own admin -- to ever turn on a single notification, for any
+event type, without a developer manually inserting a database row. E's decision (verbatim): "Choose
+Option 2: Auto-seed every event type on workspace creation... Use one shared provisioning function for
+existing and future workspaces. Backfill missing rules without overwriting existing settings. Add tests
+proving every valid event type is provisioned. Automatically include future event types so this gap
+does not recur. An 'Add rule' picker can be added later, but it should not be required for basic
+notifications to function."
+
+**Step 1 -- the complete, current event_type list, confirmed from source.** `notification_rules.
+event_type`'s CHECK constraint was widened 9 times total across this migration history (024's original
+7, then 046/049/054/095/108/110/149/200/201). Migration 173's own header already independently
+confirmed the count stood at 14 immediately before 200/201; 200 added `support_case_assigned`, 201
+added `product_request_reviewed` -- read directly from 201's own final `check (event_type in (...))`
+statement, the LAST migration on disk to touch this constraint (203-206 never reference
+`notification_rules`). The real, live, complete list is exactly these 16 values: `build_stage_changed`,
+`catalog_price_change_requested`, `catalog_price_change_reviewed`, `direct_message_received`,
+`low_stock_reached`, `mentioned`, `purchase_request_status_changed`, `quote_proposal_responded`,
+`submittal_responded`, `task_assigned`, `task_overdue`, `task_status_changed`, `user_signup_pending`,
+`proposal_question_received`, `support_case_assigned`, `product_request_reviewed`. Cross-checked
+against `api/_lib/notificationEvents.js`'s real `HANDLERS` object (the events the app's generic
+dispatcher actually fires): 11 of the 16 are HANDLERS keys; the other 5 (`task_overdue`,
+`direct_message_received`, `quote_proposal_responded`, `submittal_responded`,
+`proposal_question_received`) are real, live events fired through other, already-secured code paths
+instead (a cron job, `create-notification.js`'s own dedicated DM mode, and dedicated RPCs from
+migrations 119/121/122/149) -- none of the 16 is dead or unused.
+
+**Step 2 decision -- FK replacing CHECK, not kept alongside it.** The CHECK-widening pattern is exactly
+what caused this bug twice already: migrations 200 and 201 each correctly widened the CHECK constraint
+and each forgot the equally-necessary "seed a default row" step, only caught afterward by migration
+202's own manual forensic pass. A new table, `notification_event_types (event_type primary key,
+default_channels text[], default_is_active boolean, created_at)`, is now the single source of truth --
+seeded with all 16 event types, each one's `default_channels`/`default_is_active` reproducing this
+schema's own ACTUAL historical first-seed values (024/046/049/054/095-corrected-by-110/108/149/202), not
+an arbitrary uniform choice. `notification_rules.event_type`'s old CHECK constraint is DROPPED and
+replaced with a real `notification_rules_event_type_fkey` foreign key into this table -- chosen over
+keeping both, specifically because keeping both would mean every future event type still has to be
+added in two separate places, the identical redundant-bookkeeping trap that already bit 200/201 once.
+This is low-risk to apply immediately: every value `notification_rules.event_type` could already hold
+is, by construction, one of the same 16 values now seeded into `notification_event_types` before the FK
+is created, so it validates instantly against real data. New standing convention, stated in the
+migration's own header: any FUTURE migration that adds a notification event type inserts ONE row into
+`notification_event_types` (and re-runs the provisioning function over existing workspaces if it should
+apply retroactively) -- it never touches a CHECK constraint on `notification_rules` again.
+
+**Step 3 -- the shared function.** `provision_default_notification_rules(p_workspace_id uuid)`,
+`security definer`, idempotent (`on conflict (workspace_id, event_type) do nothing` against the
+existing `notification_rules_workspace_id_event_type_key` unique constraint, migration 173) -- backfills
+only genuinely missing event types, never touches an existing customized row's `channels`/`is_active`.
+`notification_rules`'s existing workspace_id guard trigger (shared `guard_workspace_id_mutation()` since
+migration 173) unconditionally overwrites a caller-supplied `workspace_id` with
+`resolve_caller_workspace_id()` on INSERT -- the exact obstacle migration 202's own header already hit
+for its one-time manual backfill, and the exact obstacle migration 195's
+`guard_channel_workspace_id_mutation()` already solved for `channels` via a transaction-local
+escape-hatch GUC (`app.provisioning_workspace_id`). This migration reuses that same GUC name/pattern for
+`notification_rules`, but through a NEW dedicated trigger function
+(`guard_notification_rules_workspace_id_mutation()`) rather than editing the shared
+`guard_workspace_id_mutation()` that `clients`/`sales_quotes`/`standard_install_times`/
+`project_schedule_templates` still rely on unmodified -- confirmed directly from `src/persistence.ts`
+(`loadNotificationRules`/`updateNotificationRule`, ~lines 4865-4905) that the frontend has NO insert path
+onto `notification_rules` at all today, so this changes behavior for zero existing real write paths,
+only for provisioning. `provision_default_notification_rules()` is granted to NEITHER `anon` nor
+`authenticated` (same posture as `submit_company_signup_request`, migration 195) -- it fully bypasses
+the normal admin/manager-gated RLS write policy via the GUC escape hatch, so a direct grant would let
+any signed-in user force-seed rows into an arbitrary workspace of their choosing. It's reachable only
+from other `security definer` functions calling it internally (no grant needed, same reasoning already
+documented in migration 117's header) and from this migration's own one-time backfill.
+`approve_company_signup()` (migrations 195/196) is redefined to call it right after seeding the 4
+default section channels -- everything else in that function reproduced verbatim from 196's current,
+live body. The migration also runs the provisioning function once, directly, for every EXISTING
+workspace -- safe alongside migration 202's own 2-row manual seed (already-existing rows are skipped via
+`ON CONFLICT DO NOTHING`; every other missing event type gets filled in for that workspace, and all 16
+get seeded for `ZZ Test Signup Co` and any other workspace created since).
+
+**Verification**: `backend/supabase/migration_207_notification_event_types_and_auto_provisioning_tests.
+sql`, six sections, fully synthetic (`ZZ Test 207` prefix) -- (a) a fresh workspace with zero
+`notification_rules` rows gets exactly 16 rows, one per `notification_event_types` row, verified by both
+an exact count AND a real per-type anti-join; (b) re-running against a workspace with one customized row
+(`task_assigned` set to `{email}`/false) and one genuinely deleted row (`low_stock_reached`) only
+refills the missing one -- the customized row's values are byte-for-byte unchanged; (c) the REAL
+`approve_company_signup` -> `accept_company_signup` end-to-end flow (not the provisioning function in
+isolation) leaves the new company with all 16 rows, and the rest of 195/196's signup/accept behavior
+(founding workspace-admin membership, `outcome = 'accepted'`) still works with this migration's one new
+call inserted into it; (d) inserting a brand-new, never-seen-before row into `notification_event_types`
+(`zz_test_207_future_event`) and re-running provisioning against an EXISTING workspace picks it up
+automatically -- an empirical proof of "automatically include future event types," not just an
+architecture claim; (e) the new FK actually rejects an `event_type` with no matching
+`notification_event_types` row; (f) the new dedicated guard trigger still fail-closes a normal,
+non-provisioning insert exactly like the original shared trigger did -- a caller-supplied `workspace_id`
+is silently overwritten with the caller's own real, resolved workspace, proving the escape hatch didn't
+weaken the pre-existing spoofing protection. Full `node backend/supabase/consolidated_isolation_suite/
+run_all.mjs` replay: 70 canonical test files (up from 69, exactly the one new file), the new migration
+207 test PASSES, and the pre-existing 124/133/203 failures are confirmed unrelated and unchanged
+(reproduced identically with migration 207 and its test file both temporarily removed from disk, then
+restored) -- zero regressions caused by this change.
+
+**Frontend**: checked, no change needed. `NotificationRule`'s type (`src/persistence.ts:4842`) is
+`eventType: string`, not a literal union -- it already renders whatever rows exist generically.
+`loadNotificationRules()` does a plain `select=*` and `updateNotificationRule()` a plain `PATCH` by id --
+neither assumes a fixed row count or a fixed set of event types. The Admin panel row
+(`src/main.tsx:22279-22288`) renders `rule.eventType.replace(/_/g, " ")` directly, with no event-type
+label lookup table to keep in sync -- a new company having 16 rows instead of 0, or a future company
+having 17, requires zero frontend code change.
+
+**Not yet applied to production** -- prepared and locally verified only (this session had no live
+Supabase access). Per this repo's established one-migration-at-a-time discipline, send
+`backend/supabase/migrations/207_notification_event_types_and_auto_provisioning.sql` to E as the next
+single Supabase SQL editor action, then its canonical test
+(`backend/supabase/migration_207_notification_event_types_and_auto_provisioning_tests.sql`), same
+one-at-a-time order as every other migration this session.
+
 ## Next coder session
 
 For a long unattended session, start with **`OVERNIGHT_CODER_PLAN_2026-09-13.md`**. It explicitly
