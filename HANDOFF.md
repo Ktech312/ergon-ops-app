@@ -1411,7 +1411,7 @@ the resolution logic itself (which recipients get notified) is directly covered 
 shipped**: migrations 203/205/206 applied and canonically tested in production, frontend deployed
 and live-verified for both the 1:1 regression and a real group conversation.
 
-## 2026-09-25: a brand-new company signup gets zero notification_rules rows -- closed (migration 207)
+## 2026-09-25: a brand-new company signup gets zero notification_rules rows -- closed (migration 207, `449a7de`)
 
 **The gap, confirmed directly from source, not assumed**: migration 195's own header
 (`195_company_signup_requests.sql:72-74`) documents that `approve_company_signup()` deliberately does
