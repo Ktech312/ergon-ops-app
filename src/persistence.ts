@@ -713,8 +713,18 @@ export async function signInWithPassword(email: string, password: string, rememb
   return session;
 }
 
-export async function signUpWithPassword(email: string, password: string): Promise<AuthSession | null> {
-  const response = await fetch(supabaseAuthUrl("signup"), {
+// redirectTo (item 7 of E's own review, migration 209): where Supabase's
+// confirmation email link lands the browser that clicks it -- which may
+// be a completely different tab or device than the one that submitted
+// this form. Passed straight through as GoTrue's own `redirect_to` query
+// param, same mechanism requestPasswordReset already uses below. This is
+// a UX nicety, not the actual claim-completion mechanism -- that's
+// claimOwnPendingCompanySignup, called unconditionally on whatever
+// browser eventually signs the person in for real, regardless of whether
+// this redirect_to survived the round trip.
+export async function signUpWithPassword(email: string, password: string, redirectTo?: string): Promise<AuthSession | null> {
+  const url = redirectTo ? `${supabaseAuthUrl("signup")}?redirect_to=${encodeURIComponent(redirectTo)}` : supabaseAuthUrl("signup");
+  const response = await fetch(url, {
     method: "POST",
     headers: supabaseHeaders(),
     body: JSON.stringify({ email, password }),
@@ -732,6 +742,25 @@ export async function signUpWithPassword(email: string, password: string): Promi
   const session = normalizeAuthSession(payload);
   saveAuthSession(session);
   return session;
+}
+
+// Item 6 of E's own review: the "check your email" state must offer a
+// real resend action, not just static text. GoTrue's own resend endpoint
+// re-sends the same confirmation email (a fresh redirect_to travels with
+// it, same reasoning as signUpWithPassword above).
+export async function resendSignupConfirmationEmail(email: string, redirectTo?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured()) {
+    throw new Error("Not configured.");
+  }
+  const url = redirectTo ? `${supabaseAuthUrl("resend")}?redirect_to=${encodeURIComponent(redirectTo)}` : supabaseAuthUrl("resend");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ type: "signup", email }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not resend the confirmation email"));
+  }
 }
 
 export async function refreshAuthSession(session: AuthSession): Promise<AuthSession> {
@@ -1708,13 +1737,20 @@ export type CompanySignupTokenStatus = "not_found" | "expired" | "revoked" | "us
 export type CompanySignupTokenLookup = {
   companyName: string | null;
   status: CompanySignupTokenStatus;
+  // Migration 209, item 3 of E's own review: the claim page must already
+  // know the approved email and lock the field, never show a blank
+  // editable one. Item 4/5: accountExists lets the page branch to a
+  // "sign in to claim" form upfront instead of discovering the account
+  // already exists only after a failed signup attempt.
+  requesterEmail: string | null;
+  accountExists: boolean;
 };
 
 const COMPANY_SIGNUP_TOKEN_STATUSES: readonly CompanySignupTokenStatus[] = ["not_found", "expired", "revoked", "used", "valid"];
 
 export async function fetchCompanySignupByToken(token: string): Promise<CompanySignupTokenLookup> {
   if (!isRemotePersistenceConfigured() || !token) {
-    return { companyName: null, status: "not_found" };
+    return { companyName: null, status: "not_found", requesterEmail: null, accountExists: false };
   }
   const response = await fetch(supabaseUrl("rpc/get_company_signup_by_token"), {
     method: "POST",
@@ -1722,15 +1758,44 @@ export async function fetchCompanySignupByToken(token: string): Promise<CompanyS
     body: JSON.stringify({ p_token: token }),
   });
   if (!response.ok) {
-    return { companyName: null, status: "not_found" };
+    return { companyName: null, status: "not_found", requesterEmail: null, accountExists: false };
   }
-  const rows = (await response.json()) as Array<{ company_name: string; status: string }>;
+  const rows = (await response.json()) as Array<{ company_name: string; status: string; requester_email: string | null; account_exists: boolean }>;
   if (!rows.length) {
-    return { companyName: null, status: "not_found" };
+    return { companyName: null, status: "not_found", requesterEmail: null, accountExists: false };
   }
   const row = rows[0];
   const status = (COMPANY_SIGNUP_TOKEN_STATUSES as readonly string[]).includes(row.status) ? (row.status as CompanySignupTokenStatus) : "not_found";
-  return { companyName: row.company_name, status };
+  return { companyName: row.company_name, status, requesterEmail: row.requester_email, accountExists: !!row.account_exists };
+}
+
+// Migration 209: resolves and accepts a company signup purely from the
+// caller's own authenticated, confirmed email -- no token needed. Called
+// unconditionally after every successful sign-in (email/password and
+// Google alike, see main.tsx's two post-signin effects) so the claim
+// completes regardless of which browser or tab actually confirmed the
+// account -- closing the cross-tab/cross-browser gap a purely
+// localStorage-based pending-token flag could never close. Returns
+// "none_pending" (not an error) for the overwhelming majority of ordinary
+// sign-ins that have nothing to do with a company signup at all.
+export async function claimOwnPendingCompanySignup(accessToken: string): Promise<{ outcome: CompanySignupAcceptOutcome | "none_pending" | "not_signed_in"; workspaceId: string | null }> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return { outcome: "none_pending", workspaceId: null };
+  }
+  const response = await fetch(supabaseUrl("rpc/claim_own_pending_company_signup"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    return { outcome: "none_pending", workspaceId: null };
+  }
+  const rows = (await response.json()) as Array<{ outcome: string; joined_workspace_id: string | null }>;
+  const row = rows[0];
+  if (!row) {
+    return { outcome: "none_pending", workspaceId: null };
+  }
+  return { outcome: row.outcome as CompanySignupAcceptOutcome | "none_pending" | "not_signed_in", workspaceId: row.joined_workspace_id };
 }
 
 // Called with the prospect's own freshly-created session, right after

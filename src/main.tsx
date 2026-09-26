@@ -204,7 +204,8 @@ import {
   regenerateCompanySignupToken,
   requestCompanySignup,
   fetchCompanySignupByToken,
-  acceptCompanySignup,
+  claimOwnPendingCompanySignup,
+  resendSignupConfirmationEmail,
   companySignupTokenState,
   checkIsPlatformAdmin,
   loadPlatformWorkspaces,
@@ -1621,17 +1622,24 @@ function App() {
               inviteFailure = error instanceof Error ? error.message : "Could not finish accepting your channel guest invite.";
             }
           }
-          const pendingCompanySignupToken = window.localStorage.getItem("pendingCompanySignupToken");
-          if (pendingCompanySignupToken) {
-            window.localStorage.removeItem("pendingCompanySignupToken");
-            try {
-              const result = await acceptCompanySignup(pendingCompanySignupToken, session.accessToken);
-              if (result.outcome !== "accepted" || !result.workspaceId) {
-                inviteFailure = companySignupAcceptOutcomeMessage(result.outcome);
-              }
-            } catch (error) {
-              inviteFailure = error instanceof Error ? error.message : "Could not finish setting up your company.";
+          // Migration 209 fix: resolved purely from the caller's own
+          // authenticated email server-side, not from a localStorage flag --
+          // completes regardless of which browser/tab actually confirmed
+          // the account (item 7/8 of E's own review). "none_pending"/
+          // "not_signed_in" are the normal, silent no-op case for every
+          // ordinary sign-in that has nothing to do with a company signup.
+          try {
+            const result = await claimOwnPendingCompanySignup(session.accessToken);
+            if (result.outcome !== "accepted" && result.outcome !== "none_pending" && result.outcome !== "not_signed_in") {
+              inviteFailure = companySignupAcceptOutcomeMessage(result.outcome as CompanySignupAcceptOutcome);
             }
+          } catch (error) {
+            // Runs on EVERY sign-in, not just company-signup ones (see
+            // comment above) -- a network hiccup here almost always has
+            // nothing to do with this particular user, so it's logged, not
+            // surfaced as a scary "your invite could not be applied"
+            // message to someone who never had one.
+            console.error("claimOwnPendingCompanySignup failed:", error);
           }
           setAuthSession(session);
           setAuthStatus(
@@ -7662,20 +7670,20 @@ function App() {
           inviteFailure = error instanceof Error ? error.message : "Could not finish accepting your channel guest invite.";
         }
       }
-      // Same deferred-application pattern again, for a company signup
-      // that couldn't be applied at signup time because "confirm email"
-      // was on (see CompanySignupLandingPage's own comment).
-      const pendingCompanySignupToken = window.localStorage.getItem("pendingCompanySignupToken");
-      if (pendingCompanySignupToken) {
-        window.localStorage.removeItem("pendingCompanySignupToken");
-        try {
-          const result = await acceptCompanySignup(pendingCompanySignupToken, session.accessToken);
-          if (result.outcome !== "accepted" || !result.workspaceId) {
-            inviteFailure = companySignupAcceptOutcomeMessage(result.outcome);
-          }
-        } catch (error) {
-          inviteFailure = error instanceof Error ? error.message : "Could not finish setting up your company.";
+      // Migration 209 fix: resolved purely from the caller's own
+      // authenticated email server-side, not from a localStorage flag --
+      // completes regardless of which browser/tab actually confirmed the
+      // account (item 7/8 of E's own review). Runs on EVERY plain
+      // sign-in; "none_pending"/"not_signed_in" is the normal, silent
+      // no-op case for the overwhelming majority that have nothing to do
+      // with a company signup.
+      try {
+        const result = await claimOwnPendingCompanySignup(session.accessToken);
+        if (result.outcome !== "accepted" && result.outcome !== "none_pending" && result.outcome !== "not_signed_in") {
+          inviteFailure = companySignupAcceptOutcomeMessage(result.outcome as CompanySignupAcceptOutcome);
         }
+      } catch (error) {
+        console.error("claimOwnPendingCompanySignup failed:", error);
       }
       setAuthSession(session);
       setAuthPassword("");
@@ -30982,23 +30990,30 @@ function companySignupAcceptOutcomeMessage(outcome: CompanySignupAcceptOutcome):
 }
 
 function CompanySignupLandingPage({ token }: { token: string }) {
-  // Item 2/3 of E's own review: distinct states for every real token
-  // status, and the account-creation form only ever renders for "ready"
-  // (the exact-"valid" case) -- never for any of the others, even
-  // momentarily.
-  const [phase, setPhase] = useState<"loading" | "not_found" | "expired" | "revoked" | "used" | "ready" | "submitting" | "done">("loading");
+  // Migration 209 rewrite, after the real K-Tech Systems onboarding test
+  // failed to complete end-to-end. Item 3 of E's own review: the page
+  // already knows the approved email (server-supplied, never a blank
+  // editable field) -- "create_account" vs "sign_in" is now decided
+  // upfront from account_exists (item 4/5), not discovered after a failed
+  // signup attempt. "check_email" (item 6) replaces the old inline
+  // formError string with a real state: destination address, a working
+  // resend action, and a Continue-to-sign-in action.
+  const [phase, setPhase] = useState<"loading" | "not_found" | "expired" | "revoked" | "used" | "create_account" | "sign_in" | "check_email" | "done">("loading");
   const [companyName, setCompanyName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [formError, setFormError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resendStatus, setResendStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
 
   useEffect(() => {
     fetchCompanySignupByToken(token)
       .then((result) => {
         setCompanyName(result.companyName ?? "");
+        setEmail(result.requesterEmail ?? "");
         if (result.status === "valid") {
-          setPhase("ready");
+          setPhase(result.accountExists ? "sign_in" : "create_account");
         } else if (result.status === "expired" || result.status === "revoked" || result.status === "used") {
           setPhase(result.status);
         } else {
@@ -31008,11 +31023,36 @@ function CompanySignupLandingPage({ token }: { token: string }) {
       .catch(() => setPhase("not_found"));
   }, [token]);
 
-  async function handleAccept() {
-    if (!email.trim()) {
-      setFormError("Enter your email.");
-      return;
+  // Item 7: where the confirmation email link lands, on whatever browser
+  // or device actually clicks it -- carries the token along so a fresh
+  // page load there still knows which company is being claimed, even
+  // though completeClaim below no longer strictly depends on that (it
+  // resolves purely from the confirmed session's own email either way).
+  function claimRedirectTo() {
+    return `${window.location.origin}${window.location.pathname}?company-signup=${token}`;
+  }
+
+  // Item 8: delegates to claimOwnPendingCompanySignup (migration 209) --
+  // resolved from the caller's own authenticated email, not the token --
+  // so this succeeds even if this exact tab's token got out of sync with
+  // reality (e.g. a second attempt in another tab already claimed it).
+  async function completeClaim(accessToken: string) {
+    try {
+      const result = await claimOwnPendingCompanySignup(accessToken);
+      if (result.outcome !== "accepted" || !result.workspaceId) {
+        setFormError(companySignupAcceptOutcomeMessage(result.outcome as CompanySignupAcceptOutcome));
+        setIsSubmitting(false);
+        return;
+      }
+      setPhase("done");
+      window.location.href = "/";
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Could not finish setting up your company.");
+      setIsSubmitting(false);
     }
+  }
+
+  async function handleCreateAccount() {
     if (password.length < 8) {
       setFormError("Password must be at least 8 characters.");
       return;
@@ -31022,56 +31062,67 @@ function CompanySignupLandingPage({ token }: { token: string }) {
       return;
     }
     setFormError("");
-    setPhase("submitting");
+    setIsSubmitting(true);
     try {
-      let session;
+      let session: Awaited<ReturnType<typeof signUpWithPassword>>;
       try {
-        session = await signUpWithPassword(email.trim(), password);
+        session = await signUpWithPassword(email, password, claimRedirectTo());
       } catch (error) {
-        // BUG FIX, found live (2026-09-26): a real account can already exist
-        // for this email with no session ever having been applied yet --
-        // e.g. an earlier attempt on this same page created the account,
-        // then something else (Google sign-in from the plain sign-in page,
-        // which had its own separate bug -- see consumeOAuthRedirectSession's
-        // own fix note) consumed and cleared the pending token without
-        // actually finishing acceptance, or the account got confirmed but
-        // the person never came back through this exact page. Supabase's
-        // own signup endpoint rejects re-signup for an existing email with
-        // a distinct "already registered" error -- when that's what
-        // happened, fall back to signing IN with the same credentials
-        // instead of treating it as a hard failure. This is a genuine
-        // recovery path, not a workaround: it lets someone who got
-        // interrupted midway finish the exact same real flow by just
-        // retrying with the password they already set, instead of being
-        // stuck with no way to ever complete their own signup.
+        // Defense in depth: account_exists already routes a known-existing
+        // email straight to the sign-in form (below), but if it raced with
+        // another tab creating the same account moments earlier, Supabase's
+        // own signup endpoint still rejects re-signup with a distinct
+        // "already registered" error -- recover into the sign-in form
+        // instead of hard-failing.
         const message = error instanceof Error ? error.message : "";
         if (!/already\s*(registered|exists)/i.test(message)) {
           throw error;
         }
-        session = await signInWithPassword(email.trim(), password);
+        setPhase("sign_in");
+        setFormError("This email already has an account. Enter its password to sign in and finish claiming your company.");
+        setIsSubmitting(false);
+        return;
       }
       if (!session) {
-        // "Confirm email" is enabled on this project -- no session yet to
-        // call accept_company_signup with. Stash the token so
-        // handleSignIn can finish applying it once they confirm and sign
-        // in for real, same pattern as pendingInviteToken/
-        // pendingChannelGuestToken.
-        window.localStorage.setItem("pendingCompanySignupToken", token);
-        setFormError("Account created. Check your email to confirm it, then come back and sign in -- your company will finish setting up automatically.");
-        setPhase("ready");
+        // "Confirm email" is enabled on this project -- no session yet.
+        // completeClaim runs automatically once a real session exists,
+        // from claimOwnPendingCompanySignup's own unconditional call on
+        // every sign-in (main.tsx's two post-signin effects) -- regardless
+        // of which browser or tab actually confirms the address.
+        setPhase("check_email");
+        setIsSubmitting(false);
         return;
       }
-      const result = await acceptCompanySignup(token, session.accessToken);
-      if (result.outcome !== "accepted" || !result.workspaceId) {
-        setFormError(companySignupAcceptOutcomeMessage(result.outcome));
-        setPhase("ready");
-        return;
-      }
-      setPhase("done");
-      window.location.href = "/";
+      await completeClaim(session.accessToken);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Could not create your account.");
-      setPhase("ready");
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleSignInToClaim() {
+    if (!password) {
+      setFormError("Enter your password.");
+      return;
+    }
+    setFormError("");
+    setIsSubmitting(true);
+    try {
+      const session = await signInWithPassword(email, password);
+      await completeClaim(session.accessToken);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Sign in failed.");
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleResend() {
+    setResendStatus("sending");
+    try {
+      await resendSignupConfirmationEmail(email, claimRedirectTo());
+      setResendStatus("sent");
+    } catch {
+      setResendStatus("error");
     }
   }
 
@@ -31088,6 +31139,7 @@ function CompanySignupLandingPage({ token }: { token: string }) {
       <div className="submittal-public-page">
         <h1>Signup link not found</h1>
         <p>This link is invalid or hasn't been approved yet. Contact whoever approved your company.</p>
+        <button className="link-button auth-link-tap" type="button" onClick={() => { window.location.href = "/"; }}>Back to sign in</button>
       </div>
     );
   }
@@ -31097,6 +31149,7 @@ function CompanySignupLandingPage({ token }: { token: string }) {
       <div className="submittal-public-page">
         <h1>Signup link expired</h1>
         <p>This link has expired. Contact whoever approved your company for a new one.</p>
+        <button className="link-button auth-link-tap" type="button" onClick={() => { window.location.href = "/"; }}>Back to sign in</button>
       </div>
     );
   }
@@ -31106,6 +31159,7 @@ function CompanySignupLandingPage({ token }: { token: string }) {
       <div className="submittal-public-page">
         <h1>Signup link revoked</h1>
         <p>This link was revoked. Contact whoever approved your company for a new one.</p>
+        <button className="link-button auth-link-tap" type="button" onClick={() => { window.location.href = "/"; }}>Back to sign in</button>
       </div>
     );
   }
@@ -31114,7 +31168,57 @@ function CompanySignupLandingPage({ token }: { token: string }) {
     return (
       <div className="submittal-public-page">
         <h1>Already set up</h1>
-        <p>This company has already finished setting up. If that wasn't you, contact whoever approved your company.</p>
+        <p>This company has already finished setting up. If that was you, sign in normally below. If it wasn't, contact whoever approved your company.</p>
+        <button className="link-button auth-link-tap" type="button" onClick={() => { window.location.href = "/"; }}>Continue to sign in</button>
+      </div>
+    );
+  }
+
+  if (phase === "check_email") {
+    return (
+      <div className="submittal-public-page">
+        <header className="submittal-public-header">
+          <h1>Check your email</h1>
+          <p>We sent a confirmation link to <strong>{email}</strong>. Click it on any device to confirm your account -- <strong>{companyName}</strong> will finish setting up automatically as soon as you're signed in.</p>
+        </header>
+        <section className="submittal-public-section submittal-response-form">
+          {formError && <small className="error-text" role="alert">{formError}</small>}
+          {resendStatus === "error" && <small className="error-text" role="alert">Could not resend the email. Try again in a moment.</small>}
+          <div className="submittal-response-actions">
+            <button type="button" className="link-button auth-link-tap" disabled={resendStatus === "sending"} onClick={handleResend}>
+              {resendStatus === "sending" ? "Resending..." : resendStatus === "sent" ? "Confirmation email resent" : "Resend confirmation email"}
+            </button>
+            <button type="button" className="primary-action" onClick={() => { window.location.href = "/"; }}>
+              Continue to sign in
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  if (phase === "sign_in") {
+    return (
+      <div className="submittal-public-page">
+        <header className="submittal-public-header">
+          <h1>Welcome back</h1>
+          <p>An account already exists for <strong>{email}</strong>. Sign in to finish claiming <strong>{companyName}</strong> -- you'll be this company's first admin.</p>
+        </header>
+        <section className="submittal-public-section submittal-response-form">
+          <label>Email<input value={email} disabled /></label>
+          <label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
+          {formError && <small className="error-text" role="alert">{formError}</small>}
+          <div className="submittal-response-actions">
+            <button
+              type="button"
+              className="primary-action"
+              disabled={isSubmitting || !password}
+              onClick={handleSignInToClaim}
+            >
+              {isSubmitting ? "Signing in..." : `Sign in to claim ${companyName}`}
+            </button>
+          </div>
+        </section>
       </div>
     );
   }
@@ -31126,7 +31230,7 @@ function CompanySignupLandingPage({ token }: { token: string }) {
         <p>Set up your account to finish bringing <strong>{companyName}</strong> onto Ergon. You'll be this company's first admin.</p>
       </header>
       <section className="submittal-public-section submittal-response-form">
-        <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" /></label>
+        <label>Email<input value={email} disabled /></label>
         <label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
         <label>Confirm password<input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" /></label>
         {formError && <small className="error-text" role="alert">{formError}</small>}
@@ -31134,10 +31238,10 @@ function CompanySignupLandingPage({ token }: { token: string }) {
           <button
             type="button"
             className="primary-action"
-            disabled={phase === "submitting" || !email || !password || !confirmPassword}
-            onClick={handleAccept}
+            disabled={isSubmitting || !password || !confirmPassword}
+            onClick={handleCreateAccount}
           >
-            {phase === "submitting" ? "Setting up..." : "Create my account"}
+            {isSubmitting ? "Setting up..." : "Create my account"}
           </button>
         </div>
       </section>

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   fetchCompanySignupByToken,
   acceptCompanySignup,
+  claimOwnPendingCompanySignup,
+  resendSignupConfirmationEmail,
   companySignupTokenState,
   revokeCompanySignupToken,
   regenerateCompanySignupToken,
@@ -28,32 +30,45 @@ beforeEach(() => {
 });
 
 describe("fetchCompanySignupByToken -- maps get_company_signup_by_token's real status", () => {
-  it("maps a valid, unused, unexpired token to status: valid", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, [{ company_name: "Acme Co", status: "valid" }]));
+  it("maps a valid, unused, unexpired token to status: valid, carrying requesterEmail and accountExists through", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      respond(true, 200, [{ company_name: "Acme Co", status: "valid", requester_email: "founder@acmeco.com", account_exists: false }])
+    );
     const result = await fetchCompanySignupByToken("11111111-1111-1111-1111-111111111111");
-    expect(result).toEqual({ companyName: "Acme Co", status: "valid" });
+    expect(result).toEqual({ companyName: "Acme Co", status: "valid", requesterEmail: "founder@acmeco.com", accountExists: false });
+  });
+
+  // Migration 209, item 4/5 of E's own review: the claim page must branch
+  // to a "sign in to claim" form upfront when an account already exists
+  // for the approved email, not just recover from a failed signup attempt.
+  it("carries account_exists=true through so the claim page can offer sign-in instead of account creation", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      respond(true, 200, [{ company_name: "Acme Co", status: "valid", requester_email: "founder@acmeco.com", account_exists: true }])
+    );
+    const result = await fetchCompanySignupByToken("11111111-1111-1111-1111-111111111111");
+    expect(result.accountExists).toBe(true);
   });
 
   it.each(["expired", "revoked", "used"])("maps status: %s through unchanged", async (status) => {
-    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, [{ company_name: "Acme Co", status }]));
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, [{ company_name: "Acme Co", status, requester_email: "founder@acmeco.com", account_exists: false }]));
     const result = await fetchCompanySignupByToken("11111111-1111-1111-1111-111111111111");
-    expect(result).toEqual({ companyName: "Acme Co", status });
+    expect(result).toEqual({ companyName: "Acme Co", status, requesterEmail: "founder@acmeco.com", accountExists: false });
   });
 
   it("maps zero rows (a token that never matched anything) to not_found with no company name", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, []));
     const result = await fetchCompanySignupByToken("11111111-1111-1111-1111-111111111111");
-    expect(result).toEqual({ companyName: null, status: "not_found" });
+    expect(result).toEqual({ companyName: null, status: "not_found", requesterEmail: null, accountExists: false });
   });
 
   it("maps a non-ok response to not_found rather than throwing", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(respond(false, 500, { message: "db error" }));
     const result = await fetchCompanySignupByToken("11111111-1111-1111-1111-111111111111");
-    expect(result).toEqual({ companyName: null, status: "not_found" });
+    expect(result).toEqual({ companyName: null, status: "not_found", requesterEmail: null, accountExists: false });
   });
 
   it("falls back to not_found for an unrecognized status value rather than trusting it blindly", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, [{ company_name: "Acme Co", status: "some_future_value_this_client_does_not_know_about" }]));
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, [{ company_name: "Acme Co", status: "some_future_value_this_client_does_not_know_about", requester_email: "founder@acmeco.com", account_exists: false }]));
     const result = await fetchCompanySignupByToken("11111111-1111-1111-1111-111111111111");
     expect(result.status).toBe("not_found");
   });
@@ -62,8 +77,57 @@ describe("fetchCompanySignupByToken -- maps get_company_signup_by_token's real s
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock;
     const result = await fetchCompanySignupByToken("");
-    expect(result).toEqual({ companyName: null, status: "not_found" });
+    expect(result).toEqual({ companyName: null, status: "not_found", requesterEmail: null, accountExists: false });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("claimOwnPendingCompanySignup -- resolved from the caller's own session, no token argument", () => {
+  it.each([
+    "accepted",
+    "none_pending",
+    "not_signed_in",
+    "expired",
+    "revoked",
+    "already_used",
+    "email_not_confirmed",
+    "email_mismatch",
+    "already_member_of_another_workspace",
+  ])("passes through outcome: %s unchanged", async (outcome) => {
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, [{ outcome, joined_workspace_id: outcome === "accepted" ? "ws-1" : null }]));
+    const result = await claimOwnPendingCompanySignup("token-abc");
+    expect(result.outcome).toBe(outcome);
+    expect(result.workspaceId).toBe(outcome === "accepted" ? "ws-1" : null);
+  });
+
+  // This call runs unconditionally on EVERY sign-in (main.tsx's two
+  // post-signin effects), not just company-signup ones -- a transient
+  // backend error here must never surface as a hard failure to an
+  // ordinary user who never had a pending claim at all.
+  it("degrades to none_pending on a non-ok response rather than throwing", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(false, 500, { message: "db error" }));
+    const result = await claimOwnPendingCompanySignup("token-abc");
+    expect(result).toEqual({ outcome: "none_pending", workspaceId: null });
+  });
+
+  it("degrades to none_pending when called with no access token, never calling fetch", async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+    const result = await claimOwnPendingCompanySignup("");
+    expect(result).toEqual({ outcome: "none_pending", workspaceId: null });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("resendSignupConfirmationEmail", () => {
+  it("succeeds silently on a 200", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(true, 200, {}));
+    await expect(resendSignupConfirmationEmail("founder@acmeco.com", "https://app.example.com/?company-signup=abc")).resolves.toBeUndefined();
+  });
+
+  it("throws with the real error detail on a non-ok response", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(respond(false, 429, { message: "Rate limit exceeded" }));
+    await expect(resendSignupConfirmationEmail("founder@acmeco.com")).rejects.toThrow("Rate limit exceeded");
   });
 });
 

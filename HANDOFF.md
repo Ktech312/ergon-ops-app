@@ -1,5 +1,107 @@
 # Ergon Ops — Handoff Doc
 
+## 2026-09-25/26: K-Tech Systems onboarding test paused after failing to complete end-to-end; claim flow rebuilt (migration 209, NOT yet applied)
+
+The real K-Tech Systems onboarding test (see the earlier 2026-09-26 entries below for the two live
+bugs found and fixed mid-test, `08f62da`/`056aa3e`) never actually completed -- `vltdadmin@gmail.com`
+still had no `workspace_members` row and the K-Tech workspace was still `pending` after both fixes
+shipped. E paused further live retries and gave a precise, numbered spec instead of continuing to
+troubleshoot manually: diagnose read-only first, repair without duplicating, then rebuild the claim
+UX properly (10 numbered requirements) plus an automated E2E test, and never commit E's real email
+address in a diagnostic file. Full verbatim instruction preserved in this session's own record, not
+restated here.
+
+**Diagnosis, resolved 2026-09-26: the claim had already succeeded.** The two prior single-purpose
+diagnostic files (never committed, contained E's real email) were replaced with one consolidated,
+single-query diagnostic covering all 5 of E's questions in one result row (both versions deleted
+after use, neither ever committed, per E's explicit instruction). The combined result: `auth.users`
+confirmed (`last_sign_in_at` 2026-09-26 04:01:53), `company_signup_requests.signup_token_used_at`
+set to 2026-09-26 04:01:54 (one second later), the K-Tech workspace's own `status` is **active** (not
+`pending`), and a real `workspace_members` row exists for `vltdadmin@gmail.com` with
+`is_workspace_admin = true`, `created_at` the same 04:01:54 timestamp -- all internally consistent
+with one successful `accept_company_signup` transaction. **The retry E asked for right before pausing
+must have actually gone through** (most likely via the `056aa3e` sign-in-fallback fix), just without
+clear on-screen confirmation, which is why the pause instruction was written against stale
+assumptions. **Net: no data-level repair was needed or performed.** K-Tech Systems is a real, live,
+correctly-isolated second company with its own founding admin -- the remaining acceptance-checklist
+items (branding, section channels, notification rules, teammate invite, suspend/reactivate, zero
+cross-contamination with Ergon Test Workspace) are still worth a real confirmation pass against this
+actual account, not re-claiming anything.
+
+**Root architecture fix, not just another patch: migration 209
+(`209_company_signup_claim_ux_hardening.sql`, canonical test
+`migration_209_company_signup_claim_ux_hardening_tests.sql`, 71/71 clean against the consolidated
+isolation suite, real Playwright + vitest coverage below -- confirmed applied by E, 2026-09-26).**
+Two backend changes:
+
+1. `get_company_signup_by_token` now also returns `requester_email` and `account_exists` (does an
+   `auth.users` row already exist for that exact, already-approved email) -- safe to disclose because
+   only the holder of that one request's own unguessable token can ask, and only about the one email
+   that request was already approved for, never an arbitrary one. This is what lets the claim page
+   pre-fill and LOCK the email field and decide upfront whether to show "create account" or "sign in
+   to claim" -- closing E's item 3/4/5.
+2. New `claim_own_pending_company_signup()` (authenticated, **no token argument at all** -- resolves
+   the caller's own pending approved request purely from their confirmed `auth.users.email`, then
+   delegates straight to the existing, already-hardened `accept_company_signup(token)` for every real
+   check migration 196 established). This replaces the old design's entire dependence on a
+   `pendingCompanySignupToken` localStorage flag, which is why the K-Tech test kept landing on the
+   generic "waiting for approval" screen: that flag only survives in the ONE browser/tab that set it,
+   so confirming email or signing in from a different tab/device/Google-vs-password path lost it
+   every time. Keying the claim off "who did you just authenticate as" instead closes that gap
+   structurally, not with another special-cased localStorage key (closes item 7/8). Called
+   unconditionally from both post-signin paths in `main.tsx` (plain email/password `handleSignIn`,
+   and the Google/OAuth redirect completion effect) -- degrades silently to `none_pending` for the
+   overwhelming majority of ordinary sign-ins that have nothing to do with a company signup, so it
+   adds one cheap indexed lookup to every login, not a new failure mode.
+
+**Frontend rewrite (`CompanySignupLandingPage`, `main.tsx`; `persistence.ts` gets
+`claimOwnPendingCompanySignup`, `resendSignupConfirmationEmail`, and a `redirectTo` param on
+`signUpWithPassword`):**
+- Email field is now always pre-filled and disabled, never blank/editable (item 3).
+- Branches to a distinct "sign in to claim" form (email locked, password only, no confirm-password)
+  when `account_exists` is true, instead of only discovering that after a failed signup attempt --
+  the old try/catch "already registered" recovery (`056aa3e`) is kept as defense-in-depth for a race,
+  not the primary path anymore (item 4/5).
+- A real "check your email" screen replaces the old inline formError string: shows the destination
+  address, a working **Resend confirmation email** button (new GoTrue `/auth/v1/resend` call), and a
+  **Continue to sign in** action -- no more dead end (item 6).
+- `signUpWithPassword`/`resendSignupConfirmationEmail` now pass `redirect_to=<origin+path>?company-
+  signup=<token>` to GoTrue, same mechanism `requestPasswordReset` already used, so confirming on a
+  different device/browser still lands back on the right claim context (item 7) -- though completion
+  itself no longer strictly depends on this, since `claimOwnPendingCompanySignup` resolves from the
+  session alone regardless of the URL.
+- Terminal states (not_found/expired/revoked/used) each got a "back to sign in"/"continue to sign in"
+  action added -- item 9.
+
+**Verification, all real, none skipped:** `npx tsc -b` and `npx vite build` clean; full vitest suite
+641/641 (52 files, including `company-signup-lifecycle.test.ts`'s updated/new coverage for the changed
+`fetchCompanySignupByToken` shape and the two new persistence functions); PGlite consolidated
+isolation suite 71/71 including migration 209's own 7-section canonical test (account_exists before/
+after a real account exists, anonymous rejection, ordinary-user no-op, the real no-token success path,
+delegated rejection for an unconfirmed account, and idempotent replay). **New: `npm run test:smoke`**
+now includes `tests/smoke/company-signup-claim.spec.ts` (item 10 -- a real Playwright browser test
+against the actual rendered claim-page component, network calls intercepted at the boundary, not
+mocked inside the component) -- 7/7 passing, covering every terminal state, the locked-email create-
+account form, the check-email/resend screen, and the sign-in-to-claim path completing a claim and
+leaving the stale `?company-signup=` URL behind entirely. **Honest scoping, not glossed over:** this
+covers "account creation -> confirmation -> claim -> first login" in a real browser; "request ->
+approval" stays covered at the RPC level only (migration 195/196/209's own PGlite tests), since this
+repo has no staging Supabase project or test-email interception wired into CI to drive that half in a
+real browser -- standing that up is real infrastructure, not invented here.
+
+**Found in passing, NOT fixed here, flagged separately (spawned as its own background-task
+suggestion, `task_7b5e0bc2`):** `tests/smoke/auth-gate.spec.ts` fails on current `main`, confirmed via
+`git stash` to isolate it from this session's changes -- the real sign-in gate renders correctly but
+`.auth-gate` no longer matches any element. Pre-existing, unrelated to the company-signup work.
+
+Committed as `(pending commit -- filled in immediately after, same turn, per the standing rule below)`
+and pushed once migration 209 was confirmed applied -- the earlier hold (a "held back" commit still
+rides out on the next unrelated `git push`) no longer applies now that the dependency is real.
+
+**Still separate, still not started, per E's own explicit instruction not to conflate the two:**
+building multi-company switching so `eck1679@gmail.com` can access both the real Ergon Test Workspace
+and K-Tech Systems from one login. Tracked, not begun.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
