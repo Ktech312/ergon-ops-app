@@ -1251,6 +1251,26 @@ function isArray<T>(value: unknown, fallback: T[]) {
   return Array.isArray(value) ? (value as T[]) : fallback;
 }
 
+// GoTrue's own "Invalid login credentials" is deliberately vague by
+// design (it never distinguishes wrong password / no password ever set
+// for this account (e.g. it was created via Google only) / no account at
+// all -- all three look identical to a client, to avoid leaking which
+// case applies to a stranger probing an email). That ambiguity is real
+// and can't be resolved client-side -- but "reset your password" fixes
+// EVERY one of those causes uniformly (GoTrue's recovery flow can set a
+// fresh password on an account regardless of how it was created), so
+// surfacing that as the one concrete next action, right on the failure,
+// is a real reusable fix for whichever founder hits this next -- not
+// just this one account. See HANDOFF.md's 2026-09-26 entry for the
+// specific account this was written for.
+function signInFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Sign in failed.";
+  if (/invalid login credentials/i.test(message)) {
+    return `${message} If you're not sure this account ever had a password set (e.g. it was created with Google), use "Forgot password?" below to set one, or try "Sign in with Google" instead.`;
+  }
+  return message;
+}
+
 function App() {
   const localState = loadLocalAppState();
   const [view, setView] = useState<View>(() => (window.location.hash ? viewFromHash() : savedView()));
@@ -7694,7 +7714,7 @@ function App() {
       );
       setSyncStatus(inviteFailure ? "error" : "loading");
     } catch (error) {
-      setAuthStatus(error instanceof Error ? error.message : "Sign in failed.");
+      setAuthStatus(signInFailureMessage(error));
       setSyncStatus("error");
     }
   }

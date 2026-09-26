@@ -103,6 +103,48 @@ dependency is real.
 building multi-company switching so `eck1679@gmail.com` can access both the real Ergon Test Workspace
 and K-Tech Systems from one login. Tracked, not begun.
 
+## 2026-09-26 continued: production login for vltdadmin@gmail.com still failing despite a fully-claimed workspace
+
+Despite everything above being confirmed correct (workspace active, founding membership present,
+migration 209 live and its canonical test clean against production), E reported the actual production
+login still fails -- so onboarding acceptance is NOT yet met, whatever the database rows say. Root
+cause not yet identified: a read-only diagnostic (`auth.users` full state minus the password value,
+`auth.identities` -- which providers this account actually has a usable credential for, and
+`auth.audit_log_entries` for the real recorded reason GoTrue rejected the attempt) was sent to E,
+still awaited. **Never inspects, requests, or guesses the password itself**, per E's own explicit
+instruction.
+
+**Traced the real client-side auth path while waiting:** `signInWithPassword` already surfaces
+GoTrue's own real `error_description` via `readSupabaseError` (`persistence.ts`) -- nothing in this
+app's frontend is swallowing or genericizing the server's error. The vague "Invalid login
+credentials" text is GoTrue's OWN deliberately uninformative message, by design, since it never
+distinguishes a wrong password from an account that has no password identity at all (e.g. created via
+Google only) from a nonexistent account -- to prevent account enumeration. That ambiguity genuinely
+cannot be resolved client-side; only the diagnostic above can.
+
+**Built the one reusable fix available without knowing the specific cause yet** (`signInFailureMessage`,
+`main.tsx`): since a password reset uniformly fixes every one of those three underlying causes
+(GoTrue's recovery flow can set a fresh password on an account regardless of how it was originally
+created), a failed sign-in with this specific message now appends a concrete next action -- try
+"Forgot password?" or "Sign in with Google" -- instead of a dead end. This is written to help
+whichever founder hits this next, not just this one account. Two new Playwright specs:
+`tests/smoke/sign-in-failure-recovery.spec.ts` (the enhanced message + a working, single-call
+"Forgot password?" resend) and `tests/smoke/password-reset-into-claimed-workspace.spec.ts` (signing
+back in after a company signup is already claimed lands cleanly signed in, no error, no re-claim,
+`claim_own_pending_company_signup` called exactly once). Both mock at `context.route` with a regex,
+not `page.route` with a glob string -- empirically the glob match was unreliable against this fake
+cross-origin host specifically from the plain root page in this dev-server setup (worked fine from
+the company-signup landing page in the earlier spec); not fully root-caused since it's a test-harness
+quirk, not a product bug. Full vitest (641/641), full Playwright smoke suite (15/16, only the
+already-flagged pre-existing `auth-gate.spec.ts` failure -- `task_7b5e0bc2` -- remains), `tsc`/build
+all clean.
+
+**Explicitly not yet done, per E's own instruction:** nothing has been sent to vltdadmin@gmail.com's
+inbox yet, and no password-reset/confirmation action has been triggered -- that only happens once the
+diagnostic identifies whether it's actually the right remedy (vs., say, an account that should sign in
+with Google instead, needing no email at all). Onboarding stays NOT accepted until this account can
+actually authenticate into K-Tech Systems.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
