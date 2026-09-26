@@ -316,12 +316,39 @@ across sign-out/sign-in, exactly what `mark_own_welcome_seen()` was built to fix
 fixes (isApproved gate, welcome-seen persistence, Package Matrix gating) are now live-confirmed by E
 directly, not just inferred from database rows or local tests.
 
-**Still open from the original acceptance checklist, not yet confirmed:** founding-admin permissions
-actually functional (admin settings reachable, teammate invite works), zero cross-contamination with
-Ergon Test Workspace data, the 4 default section channels present and correctly scoped, Support/
+**Still open from the original acceptance checklist, not yet confirmed:** zero cross-contamination
+with Ergon Test Workspace data, the 4 default section channels present and correctly scoped, Support/
 Engineering notification rules provisioned, suspend/reactivate with audit log, and no Billing/
 subscription/trial/usage-metering surface anywhere. Multi-company switching for `eck1679@gmail.com`
 remains explicitly separate, not started.
+
+## 2026-09-26, a proactive audit: a fourth instance of the same bug class, found before E hit it live
+
+E said "carry on" -- used the time to proactively audit for another instance of today's recurring
+pattern (a gate/policy checking the legacy, pre-multi-tenancy `app_admins`/`is_app_manager()` flags
+with no `is_workspace_admin(workspace_id)` fallback) rather than waiting for the next live incident.
+Checked `allowedTabs` (main.tsx) first -- **not actually broken**: a founding admin with no role
+assigned yet defaults to `roleMode = "manager"`, and `DEFAULT_TABS_BY_ROLE.manager` already covers
+nearly the whole app; the Admin page itself is separately and correctly gated by `canReviewApprovals`,
+which migration 185 already widened to include `isWorkspaceAdmin`. No fix needed there.
+
+**Found a real one: `user_invites`' own read AND write RLS policies (migration 181) require
+`is_app_admin(auth.uid())` ONLY** -- no `is_workspace_admin(workspace_id)` OR-branch at all, unlike
+every other table migration 185 already widened for exactly this reason. A real K-Tech Systems
+founding admin can neither see nor create ANY invite for their own company today -- acceptance
+requirement #9 ("the new company can invite a teammate") is currently false for every self-serve
+company, not just K-Tech.
+
+**Fix (migration 212, `212_workspace_admin_manage_user_invites.sql`, canonical test
+`migration_212_workspace_admin_manage_user_invites_tests.sql`, 74/74 clean against the consolidated
+isolation suite -- NOT YET APPLIED, needs E to run it):** exactly migration 185's own established
+pattern, applied to the two policies it missed -- adds `or public.is_workspace_admin(workspace_id)` to
+both. Pure backend fix, no frontend change needed at all (`createInvite`/`loadInvites` were already
+correct; they were only ever blocked by RLS). Canonical test covers the actual bug (a workspace-admin-
+only user reading/creating their own workspace's invites, via the real no-`workspace_id`-supplied
+insert path createInvite itself uses), cross-workspace isolation staying intact both directions, an
+ordinary non-admin member still correctly locked out, and a suspended workspace's own admin keeping
+read access to a pending invite while losing write access -- unaffected by this fix.
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 

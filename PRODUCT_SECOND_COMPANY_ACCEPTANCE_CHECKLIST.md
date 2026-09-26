@@ -34,20 +34,57 @@ For each row, record the result using this doc's own three-tier standard (do not
 
 | # | Requirement | Code/test verified | Production verified | Verified by 2nd-company user |
 |---|---|---|---|---|
-| 1 | Correct company name and branding appear after sign-in | | | |
-| 2 | Ergon remains the platform branding on signed-out pages | | | |
-| 3 | Workspace status is `active` | | | |
-| 4 | Founding user is a workspace admin but NOT a platform admin | | | |
-| 5 | Ergon Platform controls are invisible and inaccessible to the new company | | | |
-| 6 | Inventory, clients, quotes, projects, documents, channels, Support, Engineering, reports, notifications, and configuration contain no Ergon Test Workspace data | | | |
-| 7 | The four section channels belong to the new workspace | | | |
-| 8 | Support and Engineering notification rules exist for the new workspace | | | |
-| 9 | The new company can invite a teammate and assign roles | | | |
-| 10 | E can suspend and reactivate the company, with the reason preserved in the audit log | | | |
-| 11 | Suspension actually prevents normal company access | | | |
-| 12 | Ergon Test Workspace users cannot see the new company's records | | | |
-| 13 | The new company cannot see Ergon Test Workspace records | | | |
-| 14 | No Billing, subscription, payment, trial, plan, or usage-metering step appears anywhere | | | |
+| 1 | Correct company name and branding appear after sign-in | yes | yes (SQL: `company_branding.company_name = 'K-Tech Systems'`) | **yes, 2026-09-26** — E as `vltdadmin@gmail.com` saw "Welcome to K-Tech Systems Ops" directly |
+| 2 | Ergon remains the platform branding on signed-out pages | yes (never changed) | | |
+| 3 | Workspace status is `active` | yes | **yes, 2026-09-26** (SQL: `workspaces.status = 'active'` for K-Tech's real workspace id) | yes (implied — E used the app under this account) |
+| 4 | Founding user is a workspace admin but NOT a platform admin | yes | **yes, 2026-09-26** (SQL, simulated as this real account via RLS: `workspace_members.is_workspace_admin = true`, `app_admins`/`platform_admins` both empty) | |
+| 5 | Ergon Platform controls are invisible and inaccessible to the new company | yes (migration 198 test) | | **not yet checked** — E should confirm no "Ergon Platform" link/Shield icon appears anywhere in K-Tech's own session |
+| 6 | Inventory, clients, quotes, projects, documents, channels, Support, Engineering, reports, notifications, and configuration contain no Ergon Test Workspace data | yes (consolidated isolation suite) | **partially -- see the new finding below** | **not yet checked directly** |
+| 7 | The four section channels belong to the new workspace | yes | not yet re-confirmed specifically for K-Tech's own workspace | |
+| 8 | Support and Engineering notification rules exist for the new workspace | yes (migration 207 test) | not yet re-confirmed specifically for K-Tech's own workspace | |
+| 9 | The new company can invite a teammate and assign roles | **a real, fourth bug found and fixed 2026-09-26 -- see below, migration 212, NOT YET APPLIED** | | **not yet checked** |
+| 10 | E can suspend and reactivate the company, with the reason preserved in the audit log | yes (migration 198 test) | | (not applicable to check against a live company E wants to keep running) |
+| 11 | Suspension actually prevents normal company access | yes (migration 198 test) | | (same as #10 — do not suspend K-Tech just to prove this) |
+| 12 | Ergon Test Workspace users cannot see the new company's records | yes (consolidated isolation suite) | | **not yet checked** |
+| 13 | The new company cannot see Ergon Test Workspace records | yes (consolidated isolation suite) | **a real, adjacent gap found and fixed 2026-09-26 -- see below** | **yes, in the specific case found** — E directly reported and confirmed the fix |
+| 14 | No Billing, subscription, payment, trial, plan, or usage-metering step appears anywhere | yes (true by construction) | | **not yet checked** |
+
+## Real findings from the actual K-Tech Systems onboarding attempt, 2026-09-26 (not synthetic — read `HANDOFF.md`'s same-dated entries for full detail)
+
+Three real, previously-invisible bugs were found and fixed, all confirmed live by E directly:
+
+1. **The `isApproved` sign-in gate never checked `workspace_members.is_workspace_admin` at all** — only
+   a legacy, pre-multi-tenancy `app_admins` flag or a generically-approved `app_user_status` row. Would
+   have stranded every future company's founding admin on "Waiting for approval," identically, forever.
+   Fixed directly in the frontend (no migration).
+2. **`app_user_status`'s only UPDATE policy required `is_app_admin()`/`is_app_manager()`**, both
+   predating `workspace_members` — a workspace-only admin's own `has_seen_welcome` flag silently never
+   persisted (PostgREST returns 200 with zero rows affected, not an error), so the first-login
+   walkthrough reappeared on every sign-in. Fixed via migration 210 (`mark_own_welcome_seen()`, a
+   security-definer RPC touching exactly one column for exactly the caller's own row).
+3. **This is the real, live version of requirement #13's concern, found by E directly, not by any
+   test:** the Dashboard's "Package Matrix" panel (`packageOptions`, main.tsx) is a hardcoded,
+   Ergon-specific array (camera-install business presets) with zero workspace scoping — it rendered
+   identically for every company. Fixed via migration 211: a real per-workspace
+   `company_branding.show_reference_packages` flag, backfilled `true` only for the one workspace that
+   predates the self-serve signup system entirely, `false` for every company onboarded through it
+   (past or future) by construction. This was NOT a database-row-level cross-tenant leak (no real
+   Ergon customer data was exposed) — it was hardcoded UI content never made tenant-aware in the first
+   place, which is exactly why the consolidated isolation suite's exhaustive RLS-level proofs never
+   caught it: there was no RLS policy to test, because there was no database query at all.
+
+**Standing lesson from all three:** every one of them was invisible to code review and to the isolation
+suite precisely because they weren't RLS/data-model bugs — they were assumptions ("every admin has an
+`app_admins` row", "this content is universal") left over from this app's single-company MVP era,
+never revisited when multi-tenancy was bolted on.
+
+**A fourth instance, found proactively (E said "carry on," used the time to audit rather than wait for
+the next live incident):** `user_invites`' own read AND write RLS policies (migration 181) require
+`is_app_admin(auth.uid())` only, with no `is_workspace_admin(workspace_id)` fallback at all — unlike
+every other table migration 185 already widened. A real K-Tech founding admin can neither see nor
+create any invite for their own company. Fixed via migration 212 (exactly migration 185's own
+established pattern, applied to the two policies it missed) — NOT YET APPLIED, needs E to run it
+before requirement #9 can be checked at all.
 
 ## What's already proven, and by what (fill in the table above from this, don't re-derive it)
 
