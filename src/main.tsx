@@ -1593,6 +1593,46 @@ function App() {
               inviteFailure = error instanceof Error ? error.message : "Could not finish accepting your invite.";
             }
           }
+          // BUG FIX, found live (2026-09-26): this Google-redirect completion
+          // path only ever checked pendingInviteToken (the employee-invite
+          // case) -- it never checked pendingChannelGuestToken or
+          // pendingCompanySignupToken at all, even though handleSignIn's own
+          // plain email/password path (below) has always handled all three.
+          // A real company-signup account that got its email auto-confirmed
+          // via Google (Google-verified emails skip Supabase's own "confirm
+          // email" step entirely) landed on the generic "Waiting for
+          // approval" screen with its signup token still sitting, unapplied,
+          // in localStorage -- confirmed live against a real production
+          // account, not assumed. Mirrors handleSignIn's exact same two
+          // blocks, same localStorage keys, same failure-message shape.
+          const pendingChannelGuestToken = window.localStorage.getItem("pendingChannelGuestToken");
+          if (pendingChannelGuestToken) {
+            window.localStorage.removeItem("pendingChannelGuestToken");
+            const pendingDisplayName = window.localStorage.getItem("pendingChannelGuestDisplayName") ?? "";
+            window.localStorage.removeItem("pendingChannelGuestDisplayName");
+            try {
+              const result = await acceptChannelGuestInvite(pendingChannelGuestToken, pendingDisplayName, session.accessToken);
+              if (result.outcome === "accepted" && result.guestChannelId) {
+                window.localStorage.setItem(`ergon:channelGuestToken:${result.guestChannelId}`, pendingChannelGuestToken);
+              } else {
+                inviteFailure = "Your channel guest invite has expired or was already used.";
+              }
+            } catch (error) {
+              inviteFailure = error instanceof Error ? error.message : "Could not finish accepting your channel guest invite.";
+            }
+          }
+          const pendingCompanySignupToken = window.localStorage.getItem("pendingCompanySignupToken");
+          if (pendingCompanySignupToken) {
+            window.localStorage.removeItem("pendingCompanySignupToken");
+            try {
+              const result = await acceptCompanySignup(pendingCompanySignupToken, session.accessToken);
+              if (result.outcome !== "accepted" || !result.workspaceId) {
+                inviteFailure = companySignupAcceptOutcomeMessage(result.outcome);
+              }
+            } catch (error) {
+              inviteFailure = error instanceof Error ? error.message : "Could not finish setting up your company.";
+            }
+          }
           setAuthSession(session);
           setAuthStatus(
             inviteFailure
