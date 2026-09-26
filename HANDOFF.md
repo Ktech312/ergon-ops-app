@@ -380,7 +380,7 @@ Ergon-only.
 
 **Fix (migration 213, `213_workspace_admin_bypass_sweep.sql`, canonical test
 `migration_213_workspace_admin_bypass_sweep_tests.sql`, 75/75 clean against the consolidated isolation
-suite, confirmed stable across 4 consecutive runs -- NOT YET APPLIED, needs E to run it):** the
+suite, confirmed stable across 4 consecutive runs -- confirmed applied by E, pushed as `dd37ae8`):** the
 remaining 43 policies across 19 tables, all of which already reference a real per-row workspace
 resolution expression (`workspace_id` directly, or an existing `..._owner_workspace_id()` resolver)
 alongside `is_app_admin` -- adding `or is_workspace_admin(<that same expression>)` grants no new
