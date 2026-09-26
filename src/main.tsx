@@ -1426,7 +1426,7 @@ function App() {
   const [userRoleMap, setUserRoleMap] = useState<Record<string, UserRoles>>({});
   const [ownRoleKeys, setOwnRoleKeys] = useState<string[]>([]);
   const [adminIds, setAdminIds] = useState<string[]>([]);
-  const [branding, setBranding] = useState<CompanyBranding>({ workspaceId: "", companyName: "Ergon", logoStoragePath: "" });
+  const [branding, setBranding] = useState<CompanyBranding>({ workspaceId: "", companyName: "Ergon", logoStoragePath: "", showReferencePackages: false });
   const [brandingStatus, setBrandingStatus] = useState("");
   const [invites, setInvites] = useState<UserInvite[]>([]);
   const [inviteStatus, setInviteStatus] = useState("");
@@ -8622,6 +8622,7 @@ function App() {
             unreadMessageTotal={totalUnreadMessages}
             tasks={tasks}
             onNavigateToView={navigateToView}
+            showReferencePackages={branding.showReferencePackages}
           />
         )}
         {(view === "purchasing" || view === "inventory" || view === "vendors") && (
@@ -9275,6 +9276,7 @@ function Dashboard({
   unreadMessageTotal,
   tasks,
   onNavigateToView,
+  showReferencePackages,
 }: {
   roleMode: RoleMode;
   projectSites: ProjectSite[];
@@ -9295,6 +9297,10 @@ function Dashboard({
   unreadMessageTotal?: number;
   tasks?: EOTask[];
   onNavigateToView?: (view: View) => void;
+  // Migration 211: gates the hardcoded, Ergon-specific "Package Matrix"
+  // reference content -- see persistence.ts's CompanyBranding type for
+  // why this is a real per-workspace flag, not a name/id comparison.
+  showReferencePackages?: boolean;
 }) {
   const importedLines = purchaseOrders.reduce((sum, order) => sum + order.lines.length, 0);
   const heldOrders = purchaseOrders.filter((order) => order.status === "On Hold");
@@ -9568,6 +9574,7 @@ function Dashboard({
         </div>
       </section>
 
+      {showReferencePackages && (
       <section className="panel wide">
         <PanelHeader title="Package Matrix" label="BOM presets" />
         <div className="package-grid">
@@ -9581,6 +9588,7 @@ function Dashboard({
           ))}
         </div>
       </section>
+      )}
 
       <section className="panel">
         <PanelHeader title="Procurement Attention" label="Orders needing follow-up" />

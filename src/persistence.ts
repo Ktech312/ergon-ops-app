@@ -3459,6 +3459,12 @@ export type CompanyBranding = {
   workspaceId: string;
   companyName: string;
   logoStoragePath: string;
+  // Migration 211: gates the Dashboard's hardcoded, Ergon-specific
+  // "Package Matrix" reference content -- true only for the one
+  // workspace that predates the self-serve company-signup system
+  // entirely, false for every company onboarded through it, by
+  // construction, forever.
+  showReferencePackages: boolean;
 };
 
 const COMPANY_BRANDING_BUCKET = "company-branding";
@@ -3471,7 +3477,7 @@ export function companyLogoUrl(logoStoragePath: string): string | null {
 }
 
 export async function loadCompanyBranding(accessToken?: string): Promise<CompanyBranding> {
-  const fallback: CompanyBranding = { workspaceId: "", companyName: "Ergon", logoStoragePath: "" };
+  const fallback: CompanyBranding = { workspaceId: "", companyName: "Ergon", logoStoragePath: "", showReferencePackages: false };
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return fallback;
   }
@@ -3479,7 +3485,7 @@ export async function loadCompanyBranding(accessToken?: string): Promise<Company
   // No id/workspace filter here -- migration 182's RLS ("workspace members
   // read company_branding") already restricts this to the caller's own
   // workspace's row.
-  const response = await fetch(supabaseUrl("company_branding?select=workspace_id,company_name,logo_storage_path&limit=1"), {
+  const response = await fetch(supabaseUrl("company_branding?select=workspace_id,company_name,logo_storage_path,show_reference_packages&limit=1"), {
     headers: supabaseHeaders(accessToken),
   });
 
@@ -3487,7 +3493,7 @@ export async function loadCompanyBranding(accessToken?: string): Promise<Company
     return fallback;
   }
 
-  const rows = (await response.json()) as Array<{ workspace_id: string; company_name: string; logo_storage_path: string | null }>;
+  const rows = (await response.json()) as Array<{ workspace_id: string; company_name: string; logo_storage_path: string | null; show_reference_packages: boolean }>;
   if (!rows[0]) {
     return fallback;
   }
@@ -3495,6 +3501,7 @@ export async function loadCompanyBranding(accessToken?: string): Promise<Company
     workspaceId: rows[0].workspace_id,
     companyName: rows[0].company_name || "Ergon",
     logoStoragePath: rows[0].logo_storage_path ?? "",
+    showReferencePackages: !!rows[0].show_reference_packages,
   };
 }
 

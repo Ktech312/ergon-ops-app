@@ -272,6 +272,44 @@ surfaced because K-Tech Systems was the first real company onboarded whose found
 legacy `app_admins` presence at all. Worth a deliberate audit for a third instance rather than waiting
 for E to find one live -- not done here, flagged for a dedicated follow-up.
 
+**Migration 210 confirmed applied by E; the fix pushed as `713824d`.**
+
+## 2026-09-26, a third finding, a genuinely different kind of bug: Ergon's own hardcoded business content leaking into K-Tech's dashboard
+
+E, straight from K-Tech Systems' own live dashboard: **"i also see this carry over, this Business
+should not have any reference"** -- a screenshot of the Dashboard's "Package Matrix" panel showing
+Ergon's own camera-install business presets (FLI Edge VPI, VPU case, solar panel mounts, cellular
+antennas -- 5 packages, $870-$1,441 each) on K-Tech Systems' dashboard. Traced directly: `main.tsx`'s
+`packageOptions` (const, module scope) is a plain hardcoded array -- never a database query, never
+workspace-scoped at all, baked into the shared frontend bundle. Every company using this app sees it
+identically. Not an RLS/security gap (no real Ergon customer data leaks -- it's static UI content), but
+exactly what the ORIGINAL onboarding acceptance spec explicitly named: "never populate a real second
+company with Ergon-specific starter data." `buildRecipes` (a similarly-shaped hardcoded array nearby)
+was checked too and is genuinely dead code -- declared, never rendered or referenced anywhere -- so no
+equivalent fix needed there.
+
+**Fix (migration 211, `211_gate_hardcoded_reference_package_matrix.sql`, canonical test
+`migration_211_gate_hardcoded_reference_package_matrix_tests.sql`, 73/73 clean against the
+consolidated isolation suite -- NOT YET APPLIED, needs E to run it before this deploys):** a real
+per-workspace `company_branding.show_reference_packages` boolean, default `false`. Deliberately NOT a
+hardcoded company-name or workspace-id string comparison in the frontend -- Ergon's own workspace is
+identified structurally instead: it is the ONE workspace never referenced by any
+`company_signup_requests` row (that whole self-serve system postdates Ergon's own workspace by ~80
+migrations), backfilled to `true`; every company onboarded through company-signup, past or future,
+defaults to `false` by construction -- no per-company update ever needed as more companies onboard.
+`loadCompanyBranding`/`CompanyBranding` (persistence.ts) now also carry `showReferencePackages`;
+`Dashboard` (main.tsx) takes it as a new prop and wraps the whole "Package Matrix" section in it.
+`npx tsc -b`, full vitest (641/641), `vite build`, and the full Playwright smoke suite (17/18, same
+pre-existing unrelated `auth-gate.spec.ts` issue) all clean.
+
+**"Deliberately still deferred, not built" (`CONTINUOUS_CODER_HANDOFF.md`): industry starter catalog/
+template data.** This migration does not build that -- it stops the accidental, undesigned version of
+it (Ergon's own content leaking everywhere by default, because it was never made tenant-aware in the
+first place) from showing up for a company it was never meant for.
+
+**Deploy-ordering note:** held locally, not pushed, until E confirms migration 211 applied -- same
+standing discipline as 209/210 today.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
