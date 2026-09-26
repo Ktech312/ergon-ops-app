@@ -145,6 +145,36 @@ diagnostic identifies whether it's actually the right remedy (vs., say, an accou
 with Google instead, needing no email at all). Onboarding stays NOT accepted until this account can
 actually authenticate into K-Tech Systems.
 
+**Root cause found, conclusively, 2026-09-26: this account has no password identity at all.**
+`auth.identities` for this user has exactly ONE row -- `provider: google`, `identity_email:
+vltdadmin@gmail.com`, `email_verified: true`, `created_at`/`last_sign_in_at` both 2026-09-26
+03:30:33 (the same instant as `auth.users.created_at`, and the same moment the K-Tech claim actually
+completed) -- **no `email`-provider identity exists.** This account was created via Google OAuth and
+has never had a password set, ever. Every email+password sign-in attempt was always going to fail
+with GoTrue's "Invalid login credentials" -- not a wrong password, not a broken confirmation, not a
+frontend bug: there is no password credential to check against. This is GoTrue behaving correctly,
+not a defect.
+
+**No new code or deploy needed to fix this.** "Sign in with Google" (pre-existing UI, `handleGoogleSignIn`/
+`signInWithGoogleRedirect`) is what completed the original claim, and `claim_own_pending_company_signup`
+already runs unconditionally on that path too (wired in `33655c7`, already confirmed deployed). E's
+exact next action: click "Sign in with Google" on production and choose the vltdadmin@gmail.com
+Google account -- no password, no email action of any kind. Awaiting E's confirmation that this signs
+in cleanly, opens K-Tech Systems (not the generic waiting-for-approval flow), grants founding-admin
+permissions, and survives a refresh and a sign-out/sign-in -- onboarding stays not-yet-accepted until
+that's confirmed, per E's own explicit item 8.
+
+**Reusable product gap flagged for later, not fixed here (out of scope for closing out this specific
+incident, worth a deliberate follow-up):** nothing in this app's UI currently tells someone in this
+exact situation (an account with only a Google identity) to use "Sign in with Google" BEFORE they
+try and fail with a password -- the improved failure message (`signInFailureMessage`, this same
+day's earlier entry) only surfaces that suggestion AFTER a failed attempt, which is what actually
+helped diagnose this, but a founder who never tries the password field at all and just assumes
+their account is broken would still be stuck without ever seeing that hint. A stronger fix would
+need a safe, non-enumerable way to hint "this email signs in with Google" on the sign-in form itself
+before submission -- deliberately not designed or built here without E's own review, since it touches
+account-enumeration-safety tradeoffs.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
