@@ -31024,7 +31024,32 @@ function CompanySignupLandingPage({ token }: { token: string }) {
     setFormError("");
     setPhase("submitting");
     try {
-      const session = await signUpWithPassword(email.trim(), password);
+      let session;
+      try {
+        session = await signUpWithPassword(email.trim(), password);
+      } catch (error) {
+        // BUG FIX, found live (2026-09-26): a real account can already exist
+        // for this email with no session ever having been applied yet --
+        // e.g. an earlier attempt on this same page created the account,
+        // then something else (Google sign-in from the plain sign-in page,
+        // which had its own separate bug -- see consumeOAuthRedirectSession's
+        // own fix note) consumed and cleared the pending token without
+        // actually finishing acceptance, or the account got confirmed but
+        // the person never came back through this exact page. Supabase's
+        // own signup endpoint rejects re-signup for an existing email with
+        // a distinct "already registered" error -- when that's what
+        // happened, fall back to signing IN with the same credentials
+        // instead of treating it as a hard failure. This is a genuine
+        // recovery path, not a workaround: it lets someone who got
+        // interrupted midway finish the exact same real flow by just
+        // retrying with the password they already set, instead of being
+        // stuck with no way to ever complete their own signup.
+        const message = error instanceof Error ? error.message : "";
+        if (!/already\s*(registered|exists)/i.test(message)) {
+          throw error;
+        }
+        session = await signInWithPassword(email.trim(), password);
+      }
       if (!session) {
         // "Confirm email" is enabled on this project -- no session yet to
         // call accept_company_signup with. Stash the token so
