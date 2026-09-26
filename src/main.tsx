@@ -8114,7 +8114,7 @@ function App() {
         companyName={branding.companyName}
         allowedTabs={allowedTabs}
         onFinish={() => {
-          markWelcomeSeen(authSession.userId, authSession.accessToken);
+          markWelcomeSeen(authSession.accessToken);
           setUserApprovalStatus((current) => (current ? { ...current, hasSeenWelcome: true } : current));
         }}
       />

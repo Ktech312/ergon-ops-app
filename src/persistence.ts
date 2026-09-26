@@ -4091,15 +4091,24 @@ function mapUserStatusRow(row: UserStatusRow): UserStatus {
 
 // Called once, when the first-login welcome slideshow finishes (or the
 // person skips it) -- so it never shows again for that account.
-export async function markWelcomeSeen(userId: string, accessToken?: string) {
+// Migration 210: was a raw PATCH to app_user_status directly -- silently
+// rejected by RLS for any caller who isn't is_app_admin()/is_app_manager()
+// (that table's only UPDATE policy, migration 014, predates
+// workspace_members entirely), meaning a workspace-only admin's welcome
+// flag never actually persisted and the walkthrough reappeared every
+// sign-in. mark_own_welcome_seen() is a security-definer RPC resolved
+// from auth.uid() server-side, touching only has_seen_welcome for the
+// caller's own row -- callable by anyone, not gated to admins, since this
+// was never meant to be an admin-only action.
+export async function markWelcomeSeen(accessToken?: string) {
   if (!isRemotePersistenceConfigured() || !accessToken) {
     return;
   }
 
-  await fetch(supabaseUrl(`app_user_status?user_id=eq.${userId}`), {
-    method: "PATCH",
+  await fetch(supabaseUrl("rpc/mark_own_welcome_seen"), {
+    method: "POST",
     headers: supabaseHeaders(accessToken),
-    body: JSON.stringify({ has_seen_welcome: true }),
+    body: JSON.stringify({}),
   }).catch(() => undefined);
 }
 

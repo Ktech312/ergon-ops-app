@@ -219,10 +219,58 @@ none of those flags still correctly sees it -- proving the fix didn't accidental
 through, only a real workspace admin. Full suite: vitest 641/641, Playwright 17/18 (only the
 already-flagged pre-existing `auth-gate.spec.ts` issue, `task_7b5e0bc2`, unrelated), `tsc`/build clean.
 
-**Still awaiting E's live confirmation** that this actually resolves it in real production once
-deployed -- this is a frontend-only fix, no migration, safe to ship as soon as it's committed/pushed/
-deployed. Onboarding stays not-yet-accepted until E confirms clean sign-in, K-Tech Systems opens (not
-this screen), founding-admin permissions are present, and a refresh/sign-out/sign-in all preserve it.
+**Confirmed fixed, 2026-09-26, by E directly:** after a hard refresh past a stuck Vercel edge-cache
+window (real, but a caching delay, not a build failure -- the Deployments dashboard already showed
+`d19d874` Ready/Production; direct `curl` checks kept hitting a stale cached edge response for over
+30 minutes after that), E signed in via Google and reached **"Welcome to K-Tech Systems Ops"** --
+correct branding, correct company, no more "Waiting for approval." Item 1 (correct branding) and item
+7 (workspace active with a real founding admin) of the original acceptance checklist are now directly,
+live-confirmed, not just inferred from database rows.
+
+## 2026-09-26 continued yet again: a second instance of the exact same bug class -- the welcome walkthrough never actually marks itself seen
+
+E signed out and back in and got the first-login welcome walkthrough AGAIN, despite having already
+gone through it. Same root-cause shape as the isApproved gate fixed earlier today, found by reading
+the actual RLS policy rather than guessing: `markWelcomeSeen` (persistence.ts) sent a raw
+`PATCH app_user_status?user_id=eq.<id>` -- but `app_user_status`'s only UPDATE policy (migration 014,
+"admins and managers review status") requires `is_app_admin(auth.uid()) or is_app_manager(auth.uid())`,
+both of which predate `workspace_members` (migration 115) by a hundred migrations. A workspace-only
+admin's own `has_seen_welcome` update matches zero rows under that policy -- PostgREST returns 200
+with an empty result, not an error, so `markWelcomeSeen`'s own `.catch(() => undefined)` never even
+fires. The walkthrough would reappear on every single sign-in, forever, for every future company's
+founding admin identically -- not a one-account bug.
+
+**Fix (migration 210, `210_own_welcome_seen_rpc.sql`, canonical test
+`migration_210_own_welcome_seen_rpc_tests.sql`, 72/72 clean against the consolidated isolation suite
+-- NOT YET APPLIED, needs E to run it before this deploys):** deliberately NOT a fourth RLS policy
+opening self-updates on this table -- `auth.uid() = user_id` would let ANY authenticated user PATCH
+their own `approval_status` straight to `'approved'` via the public REST API, a real self-approval
+hole. Instead, `mark_own_welcome_seen()`, a `security definer` RPC that touches exactly one column,
+for exactly the caller's own row, resolved from `auth.uid()` server-side (never a client-supplied id)
+-- callable by anyone, not gated to admins, since marking your own welcome tour seen was never meant
+to be an admin-only action in the first place. `markWelcomeSeen` (persistence.ts) now POSTs to
+`rpc/mark_own_welcome_seen` instead of the raw PATCH; the now-unused `userId` parameter was removed
+from its signature and its one call site, not left as dead backwards-compat cruft.
+
+**Verification:** the canonical test covers both directions explicitly -- a workspace-admin-only
+caller AND an entirely ordinary caller (no admin/manager/workspace-admin flags at all) can each mark
+their OWN welcome seen (this was never admin-gated), a bystander's row is provably untouched, an
+anonymous caller is rejected, and -- the specific risk the naive RLS-broadening fix would have
+created -- calling this RPC cannot change `approval_status`. `npx tsc -b`, full vitest (641/641), and
+`vite build` all clean.
+
+**Deploy-ordering note:** this frontend change depends on migration 210 existing server-side (the RPC
+it now calls). Held locally, not pushed, until E confirms 210 applied -- same standing discipline as
+every other migration-dependent frontend change this session.
+
+**Broader pattern now confirmed twice in one day, worth remembering:** this app's original
+single-company MVP design used `app_admins`/`is_app_manager()` as its ONLY notion of "elevated user,"
+and when multi-tenancy was bolted on later (`workspace_members`/`is_workspace_admin`, migration 115+),
+not every pre-existing gate got updated to also recognize a workspace-scoped admin. The isApproved
+frontend gate and `app_user_status`'s UPDATE policy were two instances found today, both only
+surfaced because K-Tech Systems was the first real company onboarded whose founding admin has zero
+legacy `app_admins` presence at all. Worth a deliberate audit for a third instance rather than waiting
+for E to find one live -- not done here, flagged for a dedicated follow-up.
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
