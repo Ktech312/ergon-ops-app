@@ -307,8 +307,7 @@ template data.** This migration does not build that -- it stops the accidental, 
 it (Ergon's own content leaking everywhere by default, because it was never made tenant-aware in the
 first place) from showing up for a company it was never meant for.
 
-**Deploy-ordering note:** held locally, not pushed, until E confirms migration 211 applied -- same
-standing discipline as 209/210 today.
+**Confirmed applied by E; the fix pushed as `100b130`.**
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
