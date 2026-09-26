@@ -31,8 +31,9 @@ actual account, not re-claiming anything.
 **Root architecture fix, not just another patch: migration 209
 (`209_company_signup_claim_ux_hardening.sql`, canonical test
 `migration_209_company_signup_claim_ux_hardening_tests.sql`, 71/71 clean against the consolidated
-isolation suite, real Playwright + vitest coverage below -- confirmed applied by E, 2026-09-26).**
-Two backend changes:
+isolation suite, real Playwright + vitest coverage below -- confirmed applied by E, 2026-09-26, AND
+its canonical test confirmed run clean directly against real production data the same day, begin;/
+rollback;, never committed).** Two backend changes:
 
 1. `get_company_signup_by_token` now also returns `requester_email` and `account_exists` (does an
    `auth.users` row already exist for that exact, already-approved email) -- safe to disclose because
