@@ -42,7 +42,7 @@ For each row, record the result using this doc's own three-tier standard (do not
 | 6 | Inventory, clients, quotes, projects, documents, channels, Support, Engineering, reports, notifications, and configuration contain no Ergon Test Workspace data | yes (consolidated isolation suite) | **partially -- see the new finding below** | **not yet checked directly** |
 | 7 | The four section channels belong to the new workspace | yes | not yet re-confirmed specifically for K-Tech's own workspace | |
 | 8 | Support and Engineering notification rules exist for the new workspace | yes (migration 207 test) | not yet re-confirmed specifically for K-Tech's own workspace | |
-| 9 | The new company can invite a teammate and assign roles | **a real, fourth bug found and fixed 2026-09-26 -- see below, migration 212, NOT YET APPLIED** | | **not yet checked** |
+| 9 | The new company can invite a teammate and assign roles | **fourth bug fixed 2026-09-26, migration 212, confirmed applied** (invites now work); role assignment itself (`app_user_roles`) still has a separate, deliberately-not-yet-fixed gap -- see below | | **not yet checked** |
 | 10 | E can suspend and reactivate the company, with the reason preserved in the audit log | yes (migration 198 test) | | (not applicable to check against a live company E wants to keep running) |
 | 11 | Suspension actually prevents normal company access | yes (migration 198 test) | | (same as #10 — do not suspend K-Tech just to prove this) |
 | 12 | Ergon Test Workspace users cannot see the new company's records | yes (consolidated isolation suite) | | **not yet checked** |
@@ -83,8 +83,20 @@ the next live incident):** `user_invites`' own read AND write RLS policies (migr
 `is_app_admin(auth.uid())` only, with no `is_workspace_admin(workspace_id)` fallback at all — unlike
 every other table migration 185 already widened. A real K-Tech founding admin can neither see nor
 create any invite for their own company. Fixed via migration 212 (exactly migration 185's own
-established pattern, applied to the two policies it missed) — NOT YET APPLIED, needs E to run it
-before requirement #9 can be checked at all.
+established pattern, applied to the two policies it missed) — confirmed applied.
+
+**A systemic sweep, requested by E after seeing the scale of the pattern ("fix everything now"):** a
+direct query of the real, live schema's `pg_policies` (not migration-file grepping, which is unreliable
+once a later migration supersedes an earlier one) found **59 policies across ~30 tables** with this
+same gap — including `projects`, `inventory_items`, `equipment_types`, `build_transactions`, and
+`purchase_requests`. Concretely: K-Tech's founding admin could not create or edit a project, add
+inventory, add an equipment type, or create a purchase request — the app's core day-to-day functions —
+for their own company. Fixed 43 of the 59 via migration 213 (the ones that already reference a real
+per-row workspace expression, safe to broaden the same way). The other 16 were deliberately left
+alone, each for a stated reason (full detail in migration 213's own header and `HANDOFF.md`'s same-
+dated entry) — most notably `app_admins` itself (broadening it would be a privilege-escalation bug, not
+a fix) and `app_user_roles` (no `workspace_id` column at all — a company's own admin still cannot
+assign roles to their own team; genuinely separate follow-up work, not done here).
 
 ## What's already proven, and by what (fill in the table above from this, don't re-derive it)
 

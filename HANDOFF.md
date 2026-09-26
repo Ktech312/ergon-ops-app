@@ -341,14 +341,77 @@ company, not just K-Tech.
 
 **Fix (migration 212, `212_workspace_admin_manage_user_invites.sql`, canonical test
 `migration_212_workspace_admin_manage_user_invites_tests.sql`, 74/74 clean against the consolidated
-isolation suite -- NOT YET APPLIED, needs E to run it):** exactly migration 185's own established
-pattern, applied to the two policies it missed -- adds `or public.is_workspace_admin(workspace_id)` to
-both. Pure backend fix, no frontend change needed at all (`createInvite`/`loadInvites` were already
+isolation suite -- confirmed applied by E, pushed as `1c41e85`):** exactly migration 185's own
+established pattern, applied to the two policies it missed -- adds `or public.is_workspace_admin(workspace_id)`
+to both. Pure backend fix, no frontend change needed at all (`createInvite`/`loadInvites` were already
 correct; they were only ever blocked by RLS). Canonical test covers the actual bug (a workspace-admin-
 only user reading/creating their own workspace's invites, via the real no-`workspace_id`-supplied
 insert path createInvite itself uses), cross-workspace isolation staying intact both directions, an
 ordinary non-admin member still correctly locked out, and a suspended workspace's own admin keeping
 read access to a pending invite while losing write access -- unaffected by this fix.
+
+## 2026-09-26, E said "carry on" -- the systemic version of the same bug, found by directly querying the live schema's pg_policies
+
+E asked for the same fix-everything approach after seeing how big the pattern was. Rather than
+grepping migration file history (unreliable -- a later migration can supersede an earlier one, and
+`user_invites` itself proved even a migration NAMED "_workspace_scoping" can still miss this), a small
+ad-hoc script built the full, real, currently-migrated schema (same bootstrap as
+`consolidated_isolation_suite/run_all.mjs`) and queried `pg_policies` directly for every policy
+checking `is_app_admin()` with no `is_workspace_admin(...)` fallback. **Found 59 across roughly 30
+tables** -- including `projects`, `inventory_items`, `equipment_types`, `build_transactions`, and
+`purchase_requests`. Concretely: K-Tech's founding admin could not create or edit a project, add an
+inventory item, add an equipment type, or create a purchase request -- the core day-to-day functions
+of this entire app -- for their own company, before this fix.
+
+**Not all 59 were safe to fix the same mechanical way, and treating them all identically would have
+been a real mistake.** Ten were deliberately left alone, each for a stated reason (full detail in
+migration 213's own header comment): `app_admins` (both policies) is genuinely Ergon-only, global
+admin-list management -- broadening it would let any company's workspace admin add themselves to
+ERGON's own admin list, a privilege-escalation bug, not a fix. `app_known_users` is already correctly
+reachable via its own separate `shares_workspace_with()` branch. `app_user_roles`, `proposal_template_sections`,
+and `workspace_sales_approval_settings` have NO `workspace_id` reference in their policies at all --
+fixing role assignment or these settings needs its own real design work (a workspace resolution path
+via a target row's own foreign key, or a genuine design decision about whether the content is meant to
+be shared/global), not a one-line mechanical change. `app_user_status`'s remaining gap (approving a
+second employee's pending request, distinct from the already-fixed has_seen_welcome case) and
+`notifications`'s admin-sees-everyone clause are real but lower-priority, and Ergon's own internal
+ops/monitoring tooling (`restore_runs`, `system_health_events`, etc.) is correctly meant to stay
+Ergon-only.
+
+**Fix (migration 213, `213_workspace_admin_bypass_sweep.sql`, canonical test
+`migration_213_workspace_admin_bypass_sweep_tests.sql`, 75/75 clean against the consolidated isolation
+suite, confirmed stable across 4 consecutive runs -- NOT YET APPLIED, needs E to run it):** the
+remaining 43 policies across 19 tables, all of which already reference a real per-row workspace
+resolution expression (`workspace_id` directly, or an existing `..._owner_workspace_id()` resolver)
+alongside `is_app_admin` -- adding `or is_workspace_admin(<that same expression>)` grants no new
+cross-workspace access, it only lets a real workspace admin do for their own company's rows what an
+app_admin could already do for every company's rows.
+
+**The canonical test proves two distinct things, not one:** (a) STRUCTURAL -- every one of the 19
+fixed tables now has `is_workspace_admin(...)` in its policy text, and every one of the 10 deliberately
+-excluded tables still correctly does NOT (proving the sweep neither missed a table nor accidentally
+over-broadened an excluded one); (b) FUNCTIONAL -- a real workspace-admin-only user can actually
+create/update/delete a project, an inventory item, an equipment type, and a purchase request for their
+own workspace, cross-workspace isolation holds (a second workspace's admin cannot read or write it),
+and an ordinary non-admin member is still correctly locked out.
+
+**A genuine, confirmed-unrelated test flake found and fixed along the way:** migration 201's own
+canonical test intermittently failed (reproduced non-deterministically across otherwise-identical
+consecutive runs -- confirmed via `git`-style bisection by removing migration 213 entirely, which made
+it pass reliably again, then reproducing the SAME intermittent failure by re-adding it). Root cause:
+`product_request_reviews.reviewed_at` uses `clock_timestamp()` (deliberately, to avoid a same-
+transaction timestamp collision migration 198 already found and fixed once) but PGlite's in-memory
+clock resolution can still tie two rows written moments apart -- migration 213 being large enough to
+perturb the query planner's tie-break behavior is what surfaced it, not a bug in migration 213's own
+logic. Fixed by editing migration 201's OWN TEST FILE (never the applied migration itself) to filter
+by the expected `new_status` value directly instead of relying on `order by reviewed_at desc limit 1`
+alone for correctness -- confirmed stable across repeated runs afterward. Real production Postgres has
+far finer clock resolution and would not hit this.
+
+**Still not started, genuinely separate, worth a dedicated follow-up when there's time:** the 10
+deliberately-excluded items above, most notably `app_user_roles` (a company's own admin currently
+cannot assign roles to their own team at all) and the design question on `proposal_template_sections`/
+`workspace_sales_approval_settings` (shared/global vs. genuinely per-workspace).
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 

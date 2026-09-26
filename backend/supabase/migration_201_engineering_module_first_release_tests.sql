@@ -191,8 +191,17 @@ begin
     raise exception 'TEST FAILED: technical_review outcome=pass did not move the request to prototyping (got %)', request_row.status;
   end if;
 
+  -- Filtered by the expected new_status value itself, not just "most
+  -- recent" -- reviewed_at uses clock_timestamp() (deliberately, see
+  -- this table's own column comment) but PGlite's clock resolution can
+  -- still tie two rows written moments apart, making `order by
+  -- reviewed_at desc limit 1` alone non-deterministic under this
+  -- specific in-memory test engine (confirmed: this assertion flaked
+  -- intermittently across otherwise-identical runs). Real production
+  -- Postgres has far finer clock resolution and would not hit this.
   select previous_status, new_status into review_row from public.product_request_reviews
-    where product_request_id = request_id and kind = 'status_change' order by reviewed_at desc limit 1;
+    where product_request_id = request_id and kind = 'status_change' and new_status = 'prototyping'
+    order by reviewed_at desc limit 1;
   if review_row.previous_status is distinct from 'requirements_review' or review_row.new_status is distinct from 'prototyping' then
     raise exception 'TEST FAILED: the automatic status_change row recorded previous_status=%/new_status=% (expected requirements_review/prototyping)', review_row.previous_status, review_row.new_status;
   end if;
@@ -255,8 +264,12 @@ begin
     raise exception 'TEST FAILED: change_product_request_status did not move the request to requirements_review';
   end if;
 
+  -- Same non-determinism concern as the other status_change lookup
+  -- above -- filtered by the expected new_status value, not just
+  -- "most recent".
   select previous_status, new_status into review_row from public.product_request_reviews
-    where product_request_id = second_request_id and kind = 'status_change' order by reviewed_at desc limit 1;
+    where product_request_id = second_request_id and kind = 'status_change' and new_status = 'requirements_review'
+    order by reviewed_at desc limit 1;
   if review_row.previous_status is distinct from 'submitted' or review_row.new_status is distinct from 'requirements_review' then
     raise exception 'TEST FAILED: manual status_change row recorded previous_status=%/new_status=% (expected submitted/requirements_review)', review_row.previous_status, review_row.new_status;
   end if;
