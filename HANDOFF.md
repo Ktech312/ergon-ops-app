@@ -1524,12 +1524,8 @@ neither assumes a fixed row count or a fixed set of event types. The Admin panel
 label lookup table to keep in sync -- a new company having 16 rows instead of 0, or a future company
 having 17, requires zero frontend code change.
 
-**Not yet applied to production** -- prepared and locally verified only (this session had no live
-Supabase access). Per this repo's established one-migration-at-a-time discipline, send
-`backend/supabase/migrations/207_notification_event_types_and_auto_provisioning.sql` to E as the next
-single Supabase SQL editor action, then its canonical test
-(`backend/supabase/migration_207_notification_event_types_and_auto_provisioning_tests.sql`), same
-one-at-a-time order as every other migration this session.
+— *Migration 207 applied and its canonical test PASSED in production (E confirmed, 2026-09-25, "Both
+ran good including 208").* **Do not run migration 207 or its canonical test again.**
 
 ## 2026-09-25: URGENT live regression found + fixed (migration 208) while running the consolidated suite before the real second-company acceptance test
 
@@ -1570,10 +1566,12 @@ actually work again.
 This is the trustworthy baseline the real second-company acceptance test's own re-run (checklist's
 "after the real workspace exists" step) will be compared against.
 
-— *Not yet applied to production.* Send `backend/supabase/migrations/208_restore_bridge_set_primary_role_manager_branch.sql`
-to E next, immediately after (or alongside) migration 207 -- both are queued, in either order, since
-they touch unrelated functions. **This is the higher-priority of the two** (URGENT, live regression
-affecting real manager accounts today) even though 207 was drafted first.
+— *Migration 208 applied in production (E confirmed, 2026-09-25, "Both ran good including 208").*
+**Do not run migration 208 again.** Real managers can once again set a user's primary role.
+
+**Migrations 207 and 208 are both confirmed applied. The consolidated isolation suite is 70/70 clean
+against the real, current production schema. The real second-company onboarding acceptance test
+(`PRODUCT_SECOND_COMPANY_ACCEPTANCE_CHECKLIST.md`) is now unblocked and ready to begin.**
 
 ## Next coder session
 
