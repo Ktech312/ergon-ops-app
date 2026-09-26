@@ -307,7 +307,21 @@ template data.** This migration does not build that -- it stops the accidental, 
 it (Ergon's own content leaking everywhere by default, because it was never made tenant-aware in the
 first place) from showing up for a company it was never meant for.
 
-**Confirmed applied by E; the fix pushed as `100b130`.**
+**Confirmed applied by E; the fix pushed as `100b130`. E, directly: "Data is clear" -- the Package
+Matrix panel is confirmed gone from K-Tech's dashboard.**
+
+**Migration 210's own fix also confirmed live by E in the same message: "the start up page doesn't
+come back after logging in and out again"** -- the welcome walkthrough now correctly persists as seen
+across sign-out/sign-in, exactly what `mark_own_welcome_seen()` was built to fix. All three of today's
+fixes (isApproved gate, welcome-seen persistence, Package Matrix gating) are now live-confirmed by E
+directly, not just inferred from database rows or local tests.
+
+**Still open from the original acceptance checklist, not yet confirmed:** founding-admin permissions
+actually functional (admin settings reachable, teammate invite works), zero cross-contamination with
+Ergon Test Workspace data, the 4 default section channels present and correctly scoped, Support/
+Engineering notification rules provisioned, suspend/reactivate with audit log, and no Billing/
+subscription/trial/usage-metering surface anywhere. Multi-company switching for `eck1679@gmail.com`
+remains explicitly separate, not started.
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
