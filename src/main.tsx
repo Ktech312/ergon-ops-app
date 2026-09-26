@@ -8017,8 +8017,31 @@ function App() {
     );
   }
 
+  // BUG FIX, found live 2026-09-26 against a real K-Tech Systems founding
+  // admin: this never checked isWorkspaceAdmin at all -- only isAdmin
+  // (app_admins, migration 185's own comment: "a flat list with no
+  // workspace concept at all", Ergon's own legacy single-company admin
+  // flag) or an approved app_user_status row (ensureOwnApprovalRequest
+  // inserts one for EVERY signed-in user with no workspace-admin
+  // exception). Every existing Ergon Test Workspace admin happened to
+  // already have an app_admins row from before workspace_members even
+  // existed, so this gap was invisible until a genuinely NEW company's
+  // founding admin (workspace_members.is_workspace_admin = true, but
+  // never touched app_admins -- that table is correctly never written to
+  // by accept_company_signup/claim_own_pending_company_signup, since it's
+  // global and not workspace-scoped) signed in for the first time and
+  // was stuck behind this screen despite having a real, correctly-scoped
+  // membership. Confirmed safe to add: app_user_status is never
+  // referenced by any RLS policy (grep across every migration), so this
+  // is a pure frontend UX gate -- isWorkspaceAdmin only ever reflects the
+  // caller's OWN workspace's own membership row (loadOwnWorkspaceMembership,
+  // persistence.ts), so this grants no new data access, it just stops
+  // blocking someone who already legitimately has it. Would otherwise
+  // strand the founding admin of every future company identically, not
+  // just this one.
   const isApproved =
     isAdmin ||
+    isWorkspaceAdmin ||
     (userApprovalStatus?.approvalStatus === "approved" &&
       (!userApprovalStatus.expiresAt || new Date(userApprovalStatus.expiresAt).getTime() > Date.now()));
 

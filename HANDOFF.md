@@ -175,6 +175,55 @@ need a safe, non-enumerable way to hint "this email signs in with Google" on the
 before submission -- deliberately not designed or built here without E's own review, since it touches
 account-enumeration-safety tradeoffs.
 
+## 2026-09-26 continued again: the REAL bug -- Google sign-in worked, but every future founding admin would still be stuck on "Waiting for approval"
+
+E tried "Sign in with Google" as instructed and got stuck in a loop with no error -- signed in, but
+landing on **"Waiting for approval -- Your account is signed in but a Manager or Admin needs to
+approve access before you can use Ergon"** every time. This is a real, previously-invisible, genuinely
+reusable defect, not another dead end -- found by reading the exact gate condition rather than
+guessing again.
+
+**Root cause:** `isApproved` (main.tsx, just above the "Waiting for approval" render) was:
+```
+isAdmin || (userApprovalStatus?.approvalStatus === "approved" && ...)
+```
+`isAdmin` comes from `checkIsAdmin()` -> the `app_admins` table -- migration 185's own header
+describes this exactly: "a flat list with no workspace concept at all", Ergon's own legacy
+single-company admin flag, from before `workspace_members` existed. `userApprovalStatus` comes from
+`app_user_status`, which `ensureOwnApprovalRequest` inserts a fresh **pending** row into for EVERY
+signed-in user with no workspace-admin exception at all. **`isApproved` never once checked
+`workspace_members.is_workspace_admin`** -- the actual, correct, workspace-scoped flag that
+`accept_company_signup`/`claim_own_pending_company_signup` DOES set to `true` for a founding admin
+(correctly -- neither of those functions should ever touch the global, non-workspace-scoped
+`app_admins` table, and correctly don't).
+
+Net effect: **every founding admin of every future company, without exception, would hit this exact
+wall** the first time they signed in -- not a one-account bug. It was invisible until now because
+every existing Ergon Test Workspace admin already had an `app_admins` row from before multi-tenancy
+existed, so nobody had ever actually been "a real workspace admin with zero legacy app_admins
+presence" until K-Tech's founder, today.
+
+**Fix (`main.tsx`, the `isApproved` computation):** added `isWorkspaceAdmin` to the OR. Confirmed safe
+before touching it -- `grep -rn "app_user_status" backend/supabase/migrations/*.sql` for any RLS
+policy referencing it returns nothing at all; this is a pure frontend UX gate, and the real data
+access was already correctly governed by workspace-scoped RLS the whole time. `isWorkspaceAdmin`
+(`loadOwnWorkspaceMembership`, persistence.ts) only ever reflects the caller's OWN single workspace's
+own membership row, so this grants no new privilege and creates zero cross-workspace exposure -- it
+just stops blocking someone who already legitimately had access.
+
+**New regression coverage, both directions, both passing:**
+`tests/smoke/workspace-admin-not-blocked-by-approval-gate.spec.ts` -- (1) a founding admin with no
+`app_admins` row and an unapproved `app_user_status` row, but a real `workspace_members.is_workspace_admin
+= true` row, reaches the app, never sees "Waiting for approval"; (2) an ordinary new employee with
+none of those flags still correctly sees it -- proving the fix didn't accidentally let everyone
+through, only a real workspace admin. Full suite: vitest 641/641, Playwright 17/18 (only the
+already-flagged pre-existing `auth-gate.spec.ts` issue, `task_7b5e0bc2`, unrelated), `tsc`/build clean.
+
+**Still awaiting E's live confirmation** that this actually resolves it in real production once
+deployed -- this is a frontend-only fix, no migration, safe to ship as soon as it's committed/pushed/
+deployed. Onboarding stays not-yet-accepted until E confirms clean sign-in, K-Tech Systems opens (not
+this screen), founding-admin permissions are present, and a refresh/sign-out/sign-in all preserve it.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
