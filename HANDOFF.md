@@ -94,9 +94,9 @@ suggestion, `task_7b5e0bc2`):** `tests/smoke/auth-gate.spec.ts` fails on current
 `git stash` to isolate it from this session's changes -- the real sign-in gate renders correctly but
 `.auth-gate` no longer matches any element. Pre-existing, unrelated to the company-signup work.
 
-Committed as `(pending commit -- filled in immediately after, same turn, per the standing rule below)`
-and pushed once migration 209 was confirmed applied -- the earlier hold (a "held back" commit still
-rides out on the next unrelated `git push`) no longer applies now that the dependency is real.
+Committed as `33655c7` and pushed once migration 209 was confirmed applied -- the earlier hold (a
+"held back" commit still rides out on the next unrelated `git push`) no longer applies now that the
+dependency is real.
 
 **Still separate, still not started, per E's own explicit instruction not to conflate the two:**
 building multi-company switching so `eck1679@gmail.com` can access both the real Ergon Test Workspace
