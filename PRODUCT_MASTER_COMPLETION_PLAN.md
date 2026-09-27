@@ -1878,5 +1878,10 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    with a new "Leads" tab in the Marketing page and passing Playwright coverage. Also fixed along the
    way: a real, pre-existing latent bug in `create_client_channel()` (migration 102, unqualified table
    reference, invisible for 118 migrations until this one), and a spoofable `actor_email` gap caught
-   and closed before the migration was even sent for confirmation. Full detail in `HANDOFF.md`'s two
-   matching 2026-09-26 Phase 5 entries.
+   and closed before the migration was even sent for confirmation.
+
+   **Phase 5 is now closed.** All decision-free scope delivered, workspace-scoped throughout, real
+   empty states, traceable ownership, regression coverage, and production verification on every push.
+   **All five phases of E's original 2026-09-26 queue (isolation audit, permission-model completion,
+   second-company acceptance, guided onboarding, Marketing depth) are now closed.** Full detail in
+   `HANDOFF.md`'s matching 2026-09-26 entries.

@@ -841,6 +841,26 @@ pre-existing, confirmed-unrelated `auth-gate.spec.ts` issue. `tsc --noEmit`, `np
 
 **Confirmed applied by E and pushed as `6028cc0`.**
 
+## 2026-09-26, Phase 5 closed
+
+All of Phase 5's own decision-free scope is now delivered: the reconciliation audit found Marketing
+clean on workspace-isolation/demo-data-leak (the exact pattern this whole session hunted for
+elsewhere), closed the one pure-parity gap (Tasks tab), and closed the one genuine permissions
+decision (lead capture -> convert to Sales Quote, migration 220) by asking E directly rather than
+guessing. Real empty states throughout (no demo/placeholder data anywhere in Marketing), traceable
+ownership (`converted_by`/`converted_at`, activity timelines), workspace-scoped RLS matching this
+session's established conventions, regression coverage (Playwright + the consolidated isolation suite,
+82/82 stable), and production verification (zero console errors on the live deploy after every push)
+are all in place. What remains out of Marketing's scope -- HubSpot integration, a real qualification/
+scoring methodology, a general `sales_quotes` audit trail, a richer opportunity/pipeline-stage object --
+is explicitly deferred future work per the design doc's own §5/§7, not guessed at here.
+
+**All five phases of E's original queue (2026-09-26's governing directive) are now closed**: Phase 1
+(isolation audit), Phase 2 (permission-model completion), Phase 3 (second-company acceptance), Phase 4
+(guided onboarding), Phase 5 (Marketing depth). Everything shipped this session is confirmed applied in
+production and pushed to `main` -- see this file's own dated entries above for the full, exact
+migration-by-migration, commit-by-commit record.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
