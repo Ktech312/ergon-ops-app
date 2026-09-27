@@ -962,6 +962,18 @@ under the new project -- added as a second test in the same file, checking the m
 its "More" overflow sheet directly: Sales appears in neither, for the same marketing-only role, on a
 real phone viewport. **Full suite is now 30/30 across all three projects** (desktop chromium, the
 original mobile nav-shell project, and the new mobile-features project). `tsc`/`eslint` both clean.
+
+**A real visual check, not just a structural assertion**: with Playwright's pass/fail assertions
+covering behavior, a hands-on check in the actual browser pane (local no-backend dev mode, real Pixel-
+width viewport, real screenshots) confirmed the Marketing Leads panel specifically -- segmented tabs,
+the Add Lead form (all fields correctly collapse to one column), and the Save/Cancel buttons -- renders
+cleanly with no overflow, no cut-off controls, no cramped tap targets. Module Settings/Onboarding
+Checklist couldn't get the same visual pass this way (both gated to `isAdmin || isWorkspaceAdmin`,
+which local no-backend mode always resolves false, unlike Marketing's Leads tab which any signed-in
+role can reach) -- their mobile coverage rests on the structural Playwright assertions above, which did
+pass genuinely at a real Pixel 7 viewport, just without an accompanying screenshot.
+
+**Next roadmap item, not started, not reopening any completed phase:** Billing/subscriptions/trials/
 usage metering/SaaS payment work -- explicitly called out in E's own original 2026-09-26 directive as
 "remain last," and now the only thing left unstarted with all five named phases closed. Deliberately
 not begun in this pass: it touches real payment/financial logic, which this assistant's own standing
