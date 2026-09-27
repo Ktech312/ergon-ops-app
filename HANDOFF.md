@@ -947,7 +947,21 @@ checks, so the locator silently never matched. Fixed by asserting on the real si
 ever removed rather than only if it's renamed again. **Full smoke suite is now 25/25 green** -- the
 first fully clean run this entire session. Dismissed the stale background-task chip for this issue.
 
-**Next roadmap item, not started, not reopening any completed phase:** Billing/subscriptions/trials/
+**E asked directly: "no more testing you can do while i sleep?" -- yes, one real gap, closed:** this
+codebase has a standing, previously-documented rule ("mobile readiness... already a standing, enforced
+requirement for every new feature") that nothing in this session's own acceptance pass had actually
+checked yet -- every new feature (Module Settings, Onboarding Checklist, Marketing Leads, Marketing's
+Tasks tab) had only ever been run at a desktop viewport. Closed by adding a new `mobile-features`
+Playwright project (`playwright.config.ts`, Pixel 7 viewport) that re-runs those same four specs,
+unmodified mocks and assertions, at a real phone viewport -- all four passed with zero code changes
+needed, a genuine confirmation rather than an assumption (`.account-menu-trigger`/`.account-menu-panel`
+stay reachable on mobile, just repositioned, unlike the desktop-only `.nav-list` tab strip these four
+specs never touch). `marketing-role-no-sales-access.spec.ts` specifically DOES touch `.nav-list`
+(desktop-only by design), so it needed its own dedicated mobile counterpart rather than just re-running
+under the new project -- added as a second test in the same file, checking the mobile bottom nav and
+its "More" overflow sheet directly: Sales appears in neither, for the same marketing-only role, on a
+real phone viewport. **Full suite is now 30/30 across all three projects** (desktop chromium, the
+original mobile nav-shell project, and the new mobile-features project). `tsc`/`eslint` both clean.
 usage metering/SaaS payment work -- explicitly called out in E's own original 2026-09-26 directive as
 "remain last," and now the only thing left unstarted with all five named phases closed. Deliberately
 not begun in this pass: it touches real payment/financial logic, which this assistant's own standing

@@ -35,6 +35,21 @@ export default defineConfig({
       grep: /mobile application shell/,
       use: { ...devices["Pixel 7"] },
     },
+    {
+      // 2026-09-27: mobile-viewport pass for the newer Admin-panel/
+      // Marketing features (Module Settings, Onboarding Checklist,
+      // Marketing Leads, Marketing's Tasks tab) -- these navigate via
+      // .account-menu-trigger/.account-menu-panel, which stays reachable
+      // on mobile (repositioned, not hidden -- see styles.css's own
+      // 760px media query), unlike the desktop .nav-list tab strip these
+      // specs never touch. Re-runs the exact same specs (same mocks,
+      // same assertions) at a real phone viewport -- this codebase's own
+      // standing mobile-first requirement, applied to every feature
+      // shipped this session rather than only checked on desktop.
+      name: "mobile-features",
+      testMatch: /module-settings\.spec\.ts|onboarding-checklist\.spec\.ts|marketing-leads-crud\.spec\.ts|marketing-tasks-tab\.spec\.ts/,
+      use: { ...devices["Pixel 7"] },
+    },
   ],
   webServer: [
     {

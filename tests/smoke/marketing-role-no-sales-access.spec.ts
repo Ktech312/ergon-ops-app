@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, devices } from "@playwright/test";
 
 // Production acceptance follow-up (2026-09-27), E's own explicit
 // requirement: "Marketing may retain read-only access for attribution,
@@ -16,6 +16,27 @@ function jsonRoute(body: unknown, status = 200) {
     route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
+async function mockMarketingRoleSession(context: import("@playwright/test").BrowserContext) {
+  await context.route(/\/rest\/v1\//, jsonRoute([]));
+  await context.route(/\/auth\/v1\/token\?grant_type=password/, jsonRoute({
+    access_token: "at-1", refresh_token: "rt-1", expires_in: 3600, user: { id: "u1", email: "marketing-user@example.com" },
+  }));
+  await context.route(/\/rest\/v1\/rpc\//, jsonRoute([{ outcome: "none_pending", joined_workspace_id: null }]));
+  await context.route(/\/rest\/v1\/app_admins/, jsonRoute([]));
+  await context.route(/\/rest\/v1\/platform_admins/, jsonRoute([]));
+  await context.route(/\/rest\/v1\/workspace_members\?select=is_workspace_admin/, jsonRoute([{ is_workspace_admin: false }]));
+  await context.route(/\/rest\/v1\/app_user_status/, jsonRoute([{ user_id: "u1", approval_status: "approved", expires_at: null, has_seen_welcome: true }]));
+  await context.route(/\/rest\/v1\/company_branding/, jsonRoute([{ workspace_id: "ws-ktech", company_name: "K-Tech Systems", logo_storage_path: null, show_reference_packages: false }]));
+  await context.route(/\/rest\/v1\/app_user_roles/, (route) => {
+    const url = route.request().url();
+    if (url.includes("select=allowed_views")) {
+      // No per-user override -- falls back to DEFAULT_TABS_BY_ROLE.marketing.
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ allowed_views: null }]) });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ role_key: "marketing" }]) });
+  });
+}
+
 test.describe("Marketing role: no access to the Sales tab (and therefore no quote edit access)", () => {
   test.use({ baseURL: "http://127.0.0.1:5191" });
 
@@ -24,25 +45,7 @@ test.describe("Marketing role: no access to the Sales tab (and therefore no quot
     page.on("console", (msg) => { if (msg.type() === "error") consoleErrors.push(msg.text()); });
     page.on("pageerror", (err) => consoleErrors.push(`PAGEERROR: ${err.message}`));
 
-    await context.route(/\/rest\/v1\//, jsonRoute([]));
-    await context.route(/\/auth\/v1\/token\?grant_type=password/, jsonRoute({
-      access_token: "at-1", refresh_token: "rt-1", expires_in: 3600, user: { id: "u1", email: "marketing-user@example.com" },
-    }));
-    await context.route(/\/rest\/v1\/rpc\//, jsonRoute([{ outcome: "none_pending", joined_workspace_id: null }]));
-    await context.route(/\/rest\/v1\/app_admins/, jsonRoute([]));
-    await context.route(/\/rest\/v1\/platform_admins/, jsonRoute([]));
-    await context.route(/\/rest\/v1\/workspace_members\?select=is_workspace_admin/, jsonRoute([{ is_workspace_admin: false }]));
-    await context.route(/\/rest\/v1\/app_user_status/, jsonRoute([{ user_id: "u1", approval_status: "approved", expires_at: null, has_seen_welcome: true }]));
-    await context.route(/\/rest\/v1\/company_branding/, jsonRoute([{ workspace_id: "ws-ktech", company_name: "K-Tech Systems", logo_storage_path: null, show_reference_packages: false }]));
-
-    await context.route(/\/rest\/v1\/app_user_roles/, (route) => {
-      const url = route.request().url();
-      if (url.includes("select=allowed_views")) {
-        // No per-user override -- falls back to DEFAULT_TABS_BY_ROLE.marketing.
-        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ allowed_views: null }]) });
-      }
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ role_key: "marketing" }]) });
-    });
+    await mockMarketingRoleSession(context);
 
     await page.goto("/");
     await page.getByLabel("Email address").fill("marketing-user@example.com");
@@ -63,6 +66,49 @@ test.describe("Marketing role: no access to the Sales tab (and therefore no quot
     await page.evaluate(() => { window.location.hash = "sales"; });
     await page.waitForTimeout(700);
     await expect(page.getByText(/Sales Quote/i)).toHaveCount(0);
+
+    expect(consoleErrors).toEqual([]);
+  });
+});
+
+test.describe("Marketing role: same access rule on the mobile bottom nav", () => {
+  // Only the viewport/UA-relevant fields from devices["Pixel 7"] --
+  // defaultBrowserType can't be set inside a describe-level test.use
+  // (Playwright: "forces a new worker," project-level only).
+  test.use({
+    baseURL: "http://127.0.0.1:5191",
+    viewport: devices["Pixel 7"].viewport,
+    userAgent: devices["Pixel 7"].userAgent,
+    isMobile: devices["Pixel 7"].isMobile,
+    hasTouch: devices["Pixel 7"].hasTouch,
+  });
+
+  test("Sales never appears anywhere in the mobile bottom nav (direct tabs or the More sheet) for a marketing-only role", async ({ page, context }) => {
+    const consoleErrors: string[] = [];
+    page.on("console", (msg) => { if (msg.type() === "error") consoleErrors.push(msg.text()); });
+    page.on("pageerror", (err) => consoleErrors.push(`PAGEERROR: ${err.message}`));
+
+    await mockMarketingRoleSession(context);
+
+    await page.goto("/");
+    await page.getByLabel("Email address").fill("marketing-user@example.com");
+    await page.getByLabel("Password", { exact: true }).fill("whatever");
+    await page.getByRole("button", { name: "Log in" }).click();
+    await page.waitForTimeout(1500);
+
+    const bottomNav = page.locator("nav.mobile-bottom-nav");
+    await expect(bottomNav).toBeVisible();
+    await expect(bottomNav.getByText("Sales", { exact: true })).toHaveCount(0);
+
+    // Open the "More" overflow sheet too -- Sales must not be hiding in
+    // there either, the same "nowhere at all" bar the desktop test holds
+    // this to.
+    const moreButton = bottomNav.getByRole("button", { name: "More", exact: true });
+    if (await moreButton.count() > 0) {
+      await moreButton.click();
+      await page.waitForTimeout(300);
+      await expect(page.getByText("Sales", { exact: true })).toHaveCount(0);
+    }
 
     expect(consoleErrors).toEqual([]);
   });
