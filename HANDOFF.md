@@ -717,6 +717,28 @@ this needs its own careful design pass (the prior §7 design in `PRODUCT_ONBOARD
 explicitly superseded by a later decision, per this session's own Explore-agent research) rather than
 being guessed at alongside the decision-free pieces above, which are now both built.
 
+## 2026-09-26, Phase 4 closed: industry catalogs deliberately not built -- E's decision, already the live default
+
+The one remaining genuine open question -- ship pre-built industry/vertical starter catalogs, one
+generic starter, or nothing at all -- was put to E directly rather than guessed at (§7's own prior
+design was explicitly superseded, with no replacement decided). **E's answer: empty start only. No
+pre-built industry catalogs for now -- a new workspace starts with a clean, empty catalog and builds
+its own; industry templates are explicit future work once there's a concrete vertical to build one
+for, not something to build speculatively here.**
+
+Verified this is already the live, correct behavior, not something requiring new code: no migration
+seeds `product_catalog` rows tied to workspace creation (the one `insert into public.product_catalog`
+outside a test file, migration 201:563, is `release_product_request()` writing a REAL released
+product during normal Engineering module use, not a seed), and this session's own diagnostic earlier
+today directly confirmed K-Tech's real catalog is empty with zero Ergon business content leaked in.
+**Net: zero code change needed -- this closes Phase 4's last open item by confirming the current
+default already matches the decision, not by building anything new.**
+
+**Phase 4 (guided onboarding) is now closed.** Delivered this session: workspace-toggleable modules
+(migration 218), the onboarding checklist (migration 219), and this decision closing out the
+industry-catalog question with no new surface area. Phase 5 (Marketing depth) is the only remaining
+phase in E's original queue, not started.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`

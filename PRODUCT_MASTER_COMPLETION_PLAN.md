@@ -1854,6 +1854,9 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    Company Branding/Team Roster/Module Settings/Proposal Template/Notification Rules panels) are both
    built, 81/81 clean against the consolidated isolation suite, with real Playwright coverage
    (`module-settings.spec.ts`, `onboarding-checklist.spec.ts`) — **both confirmed applied by E and
-   pushed as `7ad341a`.** Full detail in `HANDOFF.md`'s two matching 2026-09-26 Phase 4 entries. Still
-   open for Phase 4: industry selection + catalog/template import as an explicit opt-in choice — needs
-   its own design pass, deliberately not guessed at. Phase 5 (Marketing depth) remains not started.
+   pushed as `7ad341a`.** The last open item, industry selection + catalog/template import, was closed
+   by asking E directly rather than guessing: **E chose empty-start-only — no pre-built industry
+   catalogs — which this session verified is already the live default (no migration seeds
+   `product_catalog` at workspace creation), so this closed with zero new code.** **Phase 4 (guided
+   onboarding) is now closed in full.** Full detail in `HANDOFF.md`'s three matching 2026-09-26 Phase 4
+   entries. Phase 5 (Marketing depth) is the only remaining phase in E's original queue, not started.
