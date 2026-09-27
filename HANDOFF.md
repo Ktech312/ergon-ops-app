@@ -934,6 +934,19 @@ thing this pass could not substitute for -- worth doing whenever E is next at th
 blocker on treating this body of work (migrations 218/219/220 and everything built on top of them) as
 accepted.
 
+**One more thing fixed while continuing to work (E: "continue working without stopping every 10
+minutes"):** the sole pre-existing failure in the full smoke suite all session,
+`tests/smoke/auth-gate.spec.ts` (background task `task_7b5e0bc2`, confirmed via git-stash bisection
+earlier this session to be unrelated to anything shipped here), was actually fixed rather than left
+open now that there was time to do it properly. Root cause: the test asserted on `.auth-gate`, a class
+that stopped being used on the plain sign-in screen once the branded login redesign (HANDOFF.md,
+2026-09-23) replaced it with a new `.auth-shell` two-panel layout -- `.auth-gate` is still real
+elsewhere (loading screen, password reset, guest shell), just never on the screen this test actually
+checks, so the locator silently never matched. Fixed by asserting on the real sign-in form controls
+(Email address field, Log in button) instead of either class name, which fails honestly if the gate is
+ever removed rather than only if it's renamed again. **Full smoke suite is now 25/25 green** -- the
+first fully clean run this entire session. Dismissed the stale background-task chip for this issue.
+
 **Next roadmap item, not started, not reopening any completed phase:** Billing/subscriptions/trials/
 usage metering/SaaS payment work -- explicitly called out in E's own original 2026-09-26 directive as
 "remain last," and now the only thing left unstarted with all five named phases closed. Deliberately
