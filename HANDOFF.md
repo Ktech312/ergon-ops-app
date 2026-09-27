@@ -628,7 +628,7 @@ just shipped -- nine real bugs found and fixed along the way, none of them guess
 Phases 4 (guided onboarding) and 5 (Marketing depth) remain not started -- substantial, separate bodies
 of work for a future session, per E's own queue.
 
-## 2026-09-26, Phase 4 begins: workspace-toggleable modules (migration 218, confirmed applied)
+## 2026-09-26, Phase 4 begins: workspace-toggleable modules (migration 218, confirmed applied, pushed as `7ad341a`)
 
 First piece of the guided-onboarding queue: "enabled modules." E's own answer to the one genuine
 open design question this needed -- "Disabling a module removes it from navigation and access for
@@ -677,7 +677,7 @@ already-flagged, confirmed-unrelated issue from earlier in this session (backgro
 `task_7b5e0bc2`), not a new regression. `tsc --noEmit`, `npm run build`, and `eslint` are all clean
 with zero new warnings.
 
-## 2026-09-26, Phase 4 continued: onboarding checklist/progress persistence (migration 219, confirmed applied)
+## 2026-09-26, Phase 4 continued: onboarding checklist/progress persistence (migration 219, confirmed applied, pushed as `7ad341a`)
 
 Second piece of the guided-onboarding queue, built immediately after migration 218 while it awaited
 E's confirmation (no dependency between the two). Resolved the one naming disagreement between the

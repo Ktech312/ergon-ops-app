@@ -1853,8 +1853,7 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    (`workspace_onboarding_progress` — a five-step onboarding checklist wrapping the already-working
    Company Branding/Team Roster/Module Settings/Proposal Template/Notification Rules panels) are both
    built, 81/81 clean against the consolidated isolation suite, with real Playwright coverage
-   (`module-settings.spec.ts`, `onboarding-checklist.spec.ts`) — sent to E for confirmation, not yet
-   committed pending that (frontend depends on both). Full detail in `HANDOFF.md`'s two matching
-   2026-09-26 Phase 4 entries. Still open for Phase 4: industry selection + catalog/template import as
-   an explicit opt-in choice — needs its own design pass, deliberately not guessed at. Phase 5
-   (Marketing depth) remains not started.
+   (`module-settings.spec.ts`, `onboarding-checklist.spec.ts`) — **both confirmed applied by E and
+   pushed as `7ad341a`.** Full detail in `HANDOFF.md`'s two matching 2026-09-26 Phase 4 entries. Still
+   open for Phase 4: industry selection + catalog/template import as an explicit opt-in choice — needs
+   its own design pass, deliberately not guessed at. Phase 5 (Marketing depth) remains not started.
