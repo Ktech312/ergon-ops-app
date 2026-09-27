@@ -6698,6 +6698,13 @@ td.empty-compact-state {
   gap: 14px;
 }
 
+.activity-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
 .onboarding-checklist-list {
   display: flex;
   flex-direction: column;

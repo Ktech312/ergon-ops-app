@@ -15007,6 +15007,212 @@ export async function setOnboardingStepStatus(stepKey: OnboardingStepKey, status
   }
 }
 
+// Phase 5 (Marketing depth), migration 220: lead capture -> convert to
+// Sales Quote, per PRODUCT_MARKETING_SALES_DESIGN.md's own "smallest
+// useful first release" (§8) plus E's own permissions answer (2026-09-26)
+// on what happens after conversion.
+export type MarketingLeadStatus = "new" | "qualifying" | "qualified" | "disqualified" | "converted";
+
+export type MarketingLead = {
+  id: string;
+  companyName: string;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  leadSource: string;
+  campaign: string | null;
+  status: MarketingLeadStatus;
+  disqualifiedReason: string | null;
+  ownerEmail: string | null;
+  convertedSalesQuoteId: string | null;
+  convertedBy: string | null;
+  convertedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type MarketingLeadRow = {
+  id: string;
+  company_name: string;
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  lead_source: string;
+  campaign: string | null;
+  status: MarketingLeadStatus;
+  disqualified_reason: string | null;
+  owner_email: string | null;
+  converted_sales_quote_id: string | null;
+  converted_by: string | null;
+  converted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapMarketingLeadRow(row: MarketingLeadRow): MarketingLead {
+  return {
+    id: row.id,
+    companyName: row.company_name,
+    contactName: row.contact_name,
+    contactEmail: row.contact_email,
+    contactPhone: row.contact_phone,
+    leadSource: row.lead_source,
+    campaign: row.campaign,
+    status: row.status,
+    disqualifiedReason: row.disqualified_reason,
+    ownerEmail: row.owner_email,
+    convertedSalesQuoteId: row.converted_sales_quote_id,
+    convertedBy: row.converted_by,
+    convertedAt: row.converted_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function loadMarketingLeads(accessToken?: string): Promise<MarketingLead[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("marketing_leads?select=*&order=created_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as MarketingLeadRow[];
+  return rows.map(mapMarketingLeadRow);
+}
+
+export async function createMarketingLead(
+  input: { companyName: string; contactName?: string; contactEmail?: string; contactPhone?: string; leadSource: string; campaign?: string },
+  accessToken?: string,
+): Promise<MarketingLead | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("marketing_leads"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({
+      company_name: input.companyName,
+      contact_name: input.contactName || null,
+      contact_email: input.contactEmail || null,
+      contact_phone: input.contactPhone || null,
+      lead_source: input.leadSource,
+      campaign: input.campaign || null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not create this lead"));
+  }
+  const rows = (await response.json()) as MarketingLeadRow[];
+  return rows[0] ? mapMarketingLeadRow(rows[0]) : null;
+}
+
+export async function updateMarketingLeadStatus(
+  id: string,
+  status: MarketingLeadStatus,
+  disqualifiedReason?: string,
+  accessToken?: string,
+): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return;
+  }
+  const payload: Record<string, unknown> = { status };
+  if (disqualifiedReason !== undefined) payload.disqualified_reason = disqualifiedReason || null;
+  const response = await fetch(supabaseUrl(`marketing_leads?id=eq.${id}`), {
+    method: "PATCH",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not update this lead"));
+  }
+}
+
+export type MarketingLeadActivity = {
+  id: string;
+  marketingLeadId: string;
+  kind: "note" | "status_change" | "contact_attempt" | "qualification_note";
+  body: string | null;
+  actorEmail: string | null;
+  occurredAt: string;
+};
+
+type MarketingLeadActivityRow = {
+  id: string;
+  marketing_lead_id: string;
+  kind: MarketingLeadActivity["kind"];
+  body: string | null;
+  actor_email: string | null;
+  occurred_at: string;
+};
+
+function mapMarketingLeadActivityRow(row: MarketingLeadActivityRow): MarketingLeadActivity {
+  return {
+    id: row.id,
+    marketingLeadId: row.marketing_lead_id,
+    kind: row.kind,
+    body: row.body,
+    actorEmail: row.actor_email,
+    occurredAt: row.occurred_at,
+  };
+}
+
+export async function loadMarketingLeadActivity(accessToken?: string): Promise<MarketingLeadActivity[]> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return [];
+  }
+  const response = await fetch(supabaseUrl("marketing_lead_activity?select=*&order=occurred_at.desc"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const rows = (await response.json()) as MarketingLeadActivityRow[];
+  return rows.map(mapMarketingLeadActivityRow);
+}
+
+export async function addMarketingLeadActivity(
+  leadId: string,
+  kind: MarketingLeadActivity["kind"],
+  body: string,
+  accessToken?: string,
+): Promise<MarketingLeadActivity | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  // actor_email is resolved server-side from the caller's own signed-in
+  // identity (add_marketing_lead_activity, migration 220) -- never a
+  // client-supplied value, so it can't be spoofed to someone else's name.
+  const response = await fetch(supabaseUrl("rpc/add_marketing_lead_activity"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ p_lead_id: leadId, p_kind: kind, p_body: body || null }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not log this activity"));
+  }
+  const row = (await response.json()) as MarketingLeadActivityRow;
+  return row ? mapMarketingLeadActivityRow(row) : null;
+}
+
+export async function convertMarketingLeadToQuote(leadId: string, accessToken?: string): Promise<{ id: string; quoteRef: string | null } | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("rpc/convert_marketing_lead_to_quote"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_lead_id: leadId }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not convert this lead"));
+  }
+  const row = (await response.json()) as { id: string; quote_ref: string | null };
+  return { id: row.id, quoteRef: row.quote_ref };
+}
+
 // --- D16 (migration 149): client proposal Q&A ------------------------------
 // Scoped to one proposal VERSION, not the quote (E's own correction to the
 // original recommendation) -- questions asked against an earlier version

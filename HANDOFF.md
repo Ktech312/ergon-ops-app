@@ -778,6 +778,70 @@ Next for Phase 5: the lead/campaign schema in `PRODUCT_MARKETING_SALES_DESIGN.md
 permissions decision (§7) before any of it can be built -- to be put to E directly, same as the
 industry-catalog question above, rather than guessed at.
 
+## 2026-09-26, Phase 5 continued: lead capture -> convert to Sales Quote (migration 220, sent for confirmation)
+
+E's answer to §7's permissions question, in full: "After conversion, Sales owns the quote. Marketing
+may retain read-only access for attribution, reporting, and conversion history, but cannot edit the
+quote. Record who converted the lead and when. Any later correction must be made by an authorized
+Sales user and captured in the audit log." Built exactly against this, per the design doc's own §8
+"smallest useful first release" (capture -> qualify -> convert, no HubSpot, no automatic fuzzy dedup).
+
+**"Sales owns the quote"/"Marketing cannot edit it" needed zero new restriction** -- verified by direct
+read, not assumed: `sales_quotes` RLS (migration 155) has no role-based write gate at all, matching this
+schema's established convention that role restriction on internal workflows is a frontend concern.
+`DEFAULT_TABS_BY_ROLE.marketing` already excludes `"sales"`, so a marketing-role user's `allowedTabs`
+never include the Sales tab today -- they cannot reach `SalesQuoteBuilder`'s edit controls by default,
+and widening a specific user's allowed views is an existing, separate, general admin override (the
+"authorized Sales user" escape hatch), not new capability this migration adds.
+
+`marketing_leads`/`marketing_lead_activity` (migration 220,
+`migration_220_marketing_leads_tests.sql`, 82/82 clean across 3 consecutive consolidated-suite runs).
+`converted_sales_quote_id`/`converted_by`/`converted_at` on the lead itself satisfy "record who
+converted and when," readable by any workspace member -- Marketing never needs Sales-tab access to see
+their own conversion history. `convert_marketing_lead_to_quote()` (SECURITY DEFINER) does the whole
+handoff atomically: looks up-or-creates the `clients` row by name (case/whitespace-insensitive,
+workspace-scoped, never cross-workspace), creates the `sales_quotes` row with company/contact fields
+carried over with no re-typing, flips the lead to `converted`, and logs one activity row -- all in one
+transaction. "Any later correction... captured in the audit log": `sales_quotes` has NO audit trail at
+all today for any role (confirmed by direct search) -- building a general one is a separate, larger
+undertaking out of this feature's scope, so this is deliberately, explicitly scoped down to
+`marketing_lead_activity` itself being the place a correction gets logged (a real, working, but manual
+mechanism, not automatic field-change detection) -- recorded here as a scoping decision, not silently
+dropped.
+
+**A real, pre-existing latent bug found and fixed while building this migration's own conversion RPC,
+not new functionality**: `create_client_channel()` (migration 102, ancient) never pinned its own
+`search_path` and referenced `channels`/its columns unqualified -- invisible for 118 migrations because
+every previous `clients` INSERT was a plain PostgREST call from the frontend (full search_path), never
+from inside a `SECURITY DEFINER` function with `search_path = ''` pinned (this session's own
+established convention for every new RPC since migration 214). `convert_marketing_lead_to_quote()` is
+the first such caller, and its own canonical test caught the resulting "relation channels does not
+exist" directly rather than the bug being guessed at. Fixed at its source, same function name/signature
+(the existing `clients_create_channel` trigger needed no change), byte-for-byte identical behavior
+otherwise.
+
+**Also fixed before shipping, not after**: the design doc's own SQL sketch would have given
+`marketing_lead_activity` a direct authenticated INSERT policy with a client-supplied `actor_email` --
+inconsistent with the established, more secure pattern already used for `support_case_activity`/
+`product_request_reviews` (no direct insert policy at all, actor identity resolved server-side inside a
+SECURITY DEFINER RPC, so it can never be spoofed to someone else's name). Caught before this migration
+was sent to E, not after: removed the direct insert policy, added `add_marketing_lead_activity()`
+instead, and added a test section proving a raw INSERT bypassing it is rejected.
+
+Frontend: `MarketingLeadsPanel` (`main.tsx`), a new self-contained "Leads" sub-tab inside Marketing
+(alongside the existing Overview/Discussion tabs, via a new `marketingSubview` state kept separate from
+the shared `activeDiscussionSection` rather than overloading its two-state semantics) -- lazy-loaded on
+mount like Support/Engineering, not threaded through the top-level App bootstrap. Lists leads, an Add
+Lead form, per-lead status controls (Start Qualifying / Mark Qualified / Disqualify with a reason /
+Convert to Sales Quote), and an activity timeline with a Log Activity form. New Playwright coverage:
+`tests/smoke/marketing-leads-crud.spec.ts` -- create a lead, qualify it, convert it, confirm the real
+RPC fires with zero console errors. Full smoke suite: 24/25 passed, the one failure still the same
+pre-existing, confirmed-unrelated `auth-gate.spec.ts` issue. `tsc --noEmit`, `npm run build`, and
+`eslint` all clean.
+
+**Sent to E for confirmation (migration 220) -- not yet committed**, since the frontend now depends on
+it (same discipline as migrations 218/219 earlier this session).
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`

@@ -507,6 +507,15 @@ import {
   logProductRequestReview,
   changeProductRequestStatus,
   releaseProductRequest,
+  type MarketingLead,
+  type MarketingLeadStatus,
+  type MarketingLeadActivity,
+  loadMarketingLeads,
+  createMarketingLead,
+  updateMarketingLeadStatus,
+  loadMarketingLeadActivity,
+  addMarketingLeadActivity,
+  convertMarketingLeadToQuote,
 } from "./persistence";
 import { DataLoadErrorBanner } from "./components/DataLoadErrorBanner";
 import { runClosedWonConversionFlow, buildProjectConversionStatusMessage } from "./quote-conversion-flow";
@@ -1494,6 +1503,11 @@ function App() {
   // the group's own real tabs, so Discussion behaves like one more tab
   // in that same row rather than a separate mode to get stuck in.
   const [activeDiscussionSection, setActiveDiscussionSection] = useState<string | null>(null);
+  // Phase 5 (Marketing depth): Marketing's own third sub-tab (Overview /
+  // Discussion / Leads) -- kept separate from activeDiscussionSection
+  // (shared across every section's Overview/Discussion toggle) rather
+  // than overloading its two-state semantics with a third value.
+  const [marketingSubview, setMarketingSubview] = useState<"overview" | "leads">("overview");
   const [teamMemberStatus, setTeamMemberStatus] = useState("");
   const [pendingPhotoCount, setPendingPhotoCount] = useState(0);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -8864,7 +8878,8 @@ function App() {
         {view === "marketing" && allowedTabs.includes("marketing") && (
           <>
             <div className="segmented-tabs operations-subtabs">
-              <button className={!activeDiscussionSection ? "active" : ""} type="button" onClick={() => setActiveDiscussionSection(null)}>Overview</button>
+              <button className={!activeDiscussionSection && marketingSubview === "overview" ? "active" : ""} type="button" onClick={() => { setActiveDiscussionSection(null); setMarketingSubview("overview"); }}>Overview</button>
+              <button className={!activeDiscussionSection && marketingSubview === "leads" ? "active" : ""} type="button" onClick={() => { setActiveDiscussionSection(null); setMarketingSubview("leads"); }}>Leads</button>
               <button className={activeDiscussionSection === "marketing" ? "active" : ""} type="button" onClick={() => setActiveDiscussionSection("marketing")}>Discussion</button>
             </div>
             {activeDiscussionSection === "marketing" ? (
@@ -8876,6 +8891,8 @@ function App() {
                   <div className="empty-compact-state">Discussion channel isn't set up yet -- run migration 101.</div>
                 );
               })()
+            ) : marketingSubview === "leads" ? (
+              <MarketingLeadsPanel accessToken={authSession?.accessToken} />
             ) : (
               <Marketing projectSites={projectSites} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} />
             )}
@@ -26542,6 +26559,227 @@ function Marketing({
               </button>
             </div>
           </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const MARKETING_LEAD_STATUS_LABELS: Record<MarketingLeadStatus, string> = {
+  new: "New",
+  qualifying: "Qualifying",
+  qualified: "Qualified",
+  disqualified: "Disqualified",
+  converted: "Converted",
+};
+
+const MARKETING_LEAD_ACTIVITY_KIND_LABELS: Record<MarketingLeadActivity["kind"], string> = {
+  note: "Note",
+  status_change: "Status change",
+  contact_attempt: "Contact attempt",
+  qualification_note: "Qualification note",
+};
+
+// Phase 5 (Marketing depth), migration 220: lead capture -> qualify ->
+// convert into a Sales Quote with no re-typed company/contact data, per
+// PRODUCT_MARKETING_SALES_DESIGN.md §8's "smallest useful first release."
+// Self-contained (loads its own data on mount, same lazy-per-tab pattern
+// as Support/Engineering) rather than threaded through the top-level App
+// state -- nothing here is needed until a user actually opens this tab.
+function MarketingLeadsPanel({ accessToken }: { accessToken?: string }) {
+  const [leads, setLeads] = useState<MarketingLead[]>([]);
+  const [activity, setActivity] = useState<MarketingLeadActivity[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [status, setStatus] = useState("");
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createDraft, setCreateDraft] = useState({ companyName: "", contactName: "", contactEmail: "", contactPhone: "", leadSource: "", campaign: "" });
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [disqualifyReasonDraft, setDisqualifyReasonDraft] = useState("");
+  const [activityDraft, setActivityDraft] = useState<{ kind: MarketingLeadActivity["kind"]; body: string }>({ kind: "note", body: "" });
+
+  async function refresh() {
+    const [leadRows, activityRows] = await Promise.all([loadMarketingLeads(accessToken), loadMarketingLeadActivity(accessToken)]);
+    setLeads(leadRows);
+    setActivity(activityRows);
+    setLoaded(true);
+  }
+
+  useEffect(() => {
+    if (accessToken && !loaded) {
+      refresh();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, loaded]);
+
+  async function submitCreate() {
+    if (!createDraft.companyName.trim() || !createDraft.leadSource.trim()) {
+      setStatus("Company name and lead source are required.");
+      return;
+    }
+    try {
+      const created = await createMarketingLead(
+        {
+          companyName: createDraft.companyName.trim(),
+          contactName: createDraft.contactName.trim() || undefined,
+          contactEmail: createDraft.contactEmail.trim() || undefined,
+          contactPhone: createDraft.contactPhone.trim() || undefined,
+          leadSource: createDraft.leadSource.trim(),
+          campaign: createDraft.campaign.trim() || undefined,
+        },
+        accessToken,
+      );
+      if (created) {
+        setLeads((current) => [created, ...current]);
+        setCreateDraft({ companyName: "", contactName: "", contactEmail: "", contactPhone: "", leadSource: "", campaign: "" });
+        setShowCreateForm(false);
+        setStatus("");
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not create this lead.");
+    }
+  }
+
+  async function handleSetStatus(lead: MarketingLead, next: MarketingLeadStatus) {
+    try {
+      await updateMarketingLeadStatus(lead.id, next, next === "disqualified" ? disqualifyReasonDraft : undefined, accessToken);
+      setLeads((current) => current.map((entry) => (entry.id === lead.id ? { ...entry, status: next, disqualifiedReason: next === "disqualified" ? disqualifyReasonDraft || null : entry.disqualifiedReason } : entry)));
+      setDisqualifyReasonDraft("");
+      setStatus("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not update this lead's status.");
+    }
+  }
+
+  async function handleConvert(lead: MarketingLead) {
+    try {
+      const quote = await convertMarketingLeadToQuote(lead.id, accessToken);
+      if (quote) {
+        setLeads((current) => current.map((entry) => (entry.id === lead.id ? { ...entry, status: "converted", convertedSalesQuoteId: quote.id } : entry)));
+        setStatus(`Converted to Sales Quote ${quote.quoteRef ?? quote.id}.`);
+        refresh();
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not convert this lead.");
+    }
+  }
+
+  async function submitActivity(leadId: string) {
+    if (!activityDraft.body.trim() && activityDraft.kind !== "status_change") {
+      return;
+    }
+    try {
+      const created = await addMarketingLeadActivity(leadId, activityDraft.kind, activityDraft.body.trim(), accessToken);
+      if (created) {
+        setActivity((current) => [created, ...current]);
+        setActivityDraft({ kind: "note", body: "" });
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not log this activity.");
+    }
+  }
+
+  const selectedLead = leads.find((entry) => entry.id === selectedLeadId) ?? null;
+  const selectedLeadActivity = activity.filter((entry) => entry.marketingLeadId === selectedLeadId).sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+
+  return (
+    <section className="panel full">
+      <div className="action-header">
+        <div>
+          <h2>Leads</h2>
+          <p>Capture a lead, qualify it, and convert it into a Sales Quote with no re-typed company or contact info.</p>
+        </div>
+        <div className="action-row">
+          <button className="primary-action" type="button" onClick={() => setShowCreateForm((current) => !current)}>
+            <Plus size={17} /> Add Lead
+          </button>
+        </div>
+      </div>
+      {status && <small className="muted">{status}</small>}
+
+      {showCreateForm && (
+        <div className="compact-edit-section">
+          <div className="bom-modal-grid">
+            <label className="span-2">Company name *<input value={createDraft.companyName} onChange={(event) => setCreateDraft((current) => ({ ...current, companyName: event.target.value }))} /></label>
+            <label>Contact name<input value={createDraft.contactName} onChange={(event) => setCreateDraft((current) => ({ ...current, contactName: event.target.value }))} /></label>
+            <label>Contact email<input value={createDraft.contactEmail} onChange={(event) => setCreateDraft((current) => ({ ...current, contactEmail: event.target.value }))} /></label>
+            <label>Contact phone<input value={createDraft.contactPhone} onChange={(event) => setCreateDraft((current) => ({ ...current, contactPhone: event.target.value }))} /></label>
+            <label>Lead source *<input value={createDraft.leadSource} onChange={(event) => setCreateDraft((current) => ({ ...current, leadSource: event.target.value }))} placeholder="website_form, referral, trade_show..." /></label>
+            <label>Campaign<input value={createDraft.campaign} onChange={(event) => setCreateDraft((current) => ({ ...current, campaign: event.target.value }))} /></label>
+          </div>
+          <div className="action-row">
+            <button className="primary-action" type="button" onClick={submitCreate}>Save Lead</button>
+            <button className="secondary-action" type="button" onClick={() => setShowCreateForm(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {loaded && leads.length === 0 && <p className="empty-compact-state">No leads yet -- add one to start tracking it toward a Sales Quote.</p>}
+
+      <table className="stack-table-mobile">
+        <thead>
+          <tr><th>Company</th><th>Contact</th><th>Source</th><th>Status</th><th>Converted</th></tr>
+        </thead>
+        <tbody>
+          {leads.map((lead) => (
+            <tr key={lead.id} className="clickable-row" onClick={() => setSelectedLeadId(selectedLeadId === lead.id ? null : lead.id)}>
+              <td data-label="Company">{lead.companyName}</td>
+              <td data-label="Contact">{lead.contactName || lead.contactEmail || "--"}</td>
+              <td data-label="Source">{lead.leadSource}</td>
+              <td data-label="Status"><span className={`status ${lead.status === "converted" ? "ok" : lead.status === "disqualified" ? "warn" : ""}`}>{MARKETING_LEAD_STATUS_LABELS[lead.status]}</span></td>
+              <td data-label="Converted">{lead.convertedSalesQuoteId ? "Yes" : "--"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {selectedLead && (
+        <div className="compact-edit-section">
+          <div className="compact-section-header">
+            <div>
+              <h3>{selectedLead.companyName}</h3>
+              <p>{selectedLead.contactName} {selectedLead.contactEmail ? `-- ${selectedLead.contactEmail}` : ""} {selectedLead.contactPhone ? `-- ${selectedLead.contactPhone}` : ""}</p>
+            </div>
+          </div>
+
+          {selectedLead.status === "converted" ? (
+            <p className="muted">Converted to a Sales Quote -- owned by Sales from here. Ask Sales for edits; this record stays as your own conversion history.</p>
+          ) : (
+            <div className="action-row">
+              {selectedLead.status === "new" && <button className="secondary-action" type="button" onClick={() => handleSetStatus(selectedLead, "qualifying")}>Start Qualifying</button>}
+              {selectedLead.status === "qualifying" && (
+                <>
+                  <button className="secondary-action" type="button" onClick={() => handleSetStatus(selectedLead, "qualified")}>Mark Qualified</button>
+                  <input placeholder="Reason (for Disqualify)" value={disqualifyReasonDraft} onChange={(event) => setDisqualifyReasonDraft(event.target.value)} />
+                  <button className="secondary-action" type="button" onClick={() => handleSetStatus(selectedLead, "disqualified")}>Disqualify</button>
+                </>
+              )}
+              {selectedLead.status === "qualified" && <button className="primary-action" type="button" onClick={() => handleConvert(selectedLead)}>Convert to Sales Quote</button>}
+              {selectedLead.status === "disqualified" && selectedLead.disqualifiedReason && <p className="muted">Disqualified: {selectedLead.disqualifiedReason}</p>}
+            </div>
+          )}
+
+          <div className="bom-modal-grid">
+            <label>Activity type
+              <select value={activityDraft.kind} onChange={(event) => setActivityDraft((current) => ({ ...current, kind: event.target.value as MarketingLeadActivity["kind"] }))}>
+                {(Object.keys(MARKETING_LEAD_ACTIVITY_KIND_LABELS) as MarketingLeadActivity["kind"][]).map((kind) => (
+                  <option key={kind} value={kind}>{MARKETING_LEAD_ACTIVITY_KIND_LABELS[kind]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="span-2">Note<input value={activityDraft.body} onChange={(event) => setActivityDraft((current) => ({ ...current, body: event.target.value }))} /></label>
+          </div>
+          <div className="action-row">
+            <button className="secondary-action" type="button" onClick={() => submitActivity(selectedLead.id)}>Log Activity</button>
+          </div>
+
+          <div className="activity-timeline">
+            {selectedLeadActivity.map((entry) => (
+              <div key={entry.id} className="source-file">
+                <span><strong>{MARKETING_LEAD_ACTIVITY_KIND_LABELS[entry.kind]}</strong>{entry.body ? ` -- ${entry.body}` : ""} ({entry.actorEmail}, {new Date(entry.occurredAt).toLocaleString()})</span>
+              </div>
+            ))}
+            {selectedLeadActivity.length === 0 && <p className="empty-compact-state">No activity logged yet.</p>}
+          </div>
         </div>
       )}
     </section>
