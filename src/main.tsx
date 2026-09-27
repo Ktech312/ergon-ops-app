@@ -157,6 +157,8 @@ import {
   loadShareLinkActivity,
   loadProposalTemplateSections,
   updateProposalTemplateSection,
+  createProposalTemplateSection,
+  deleteProposalTemplateSection,
   loadProposalsForQuote,
   requestOrSendQuoteProposalVersion,
   type ProposalApprovalRequest,
@@ -5442,6 +5444,33 @@ function App() {
     );
   }
 
+  async function handleCreateProposalTemplateSection() {
+    if (!authSession) {
+      return;
+    }
+    const nextOrder = proposalTemplateSections.reduce((max, section) => Math.max(max, section.sequenceOrder), -1) + 1;
+    try {
+      const created = await createProposalTemplateSection({ title: "New Section", body: "", sequenceOrder: nextOrder }, authSession.accessToken);
+      if (created) {
+        setProposalTemplateSections((current) => [...current, created]);
+      }
+    } catch (error) {
+      setAdminStatus(error instanceof Error ? error.message : "Could not create the proposal template section.");
+    }
+  }
+
+  async function handleDeleteProposalTemplateSection(id: string) {
+    if (!authSession || !window.confirm("Delete this proposal template section? Proposals already sent keep their own frozen copy and are not affected.")) {
+      return;
+    }
+    const ok = await deleteProposalTemplateSection(id, authSession.accessToken);
+    if (ok) {
+      setProposalTemplateSections((current) => current.filter((section) => section.id !== id));
+    } else {
+      setAdminStatus("Could not delete the proposal template section. Try again.");
+    }
+  }
+
   async function handleSaveStandardInstallTime(entry: Omit<StandardInstallTime, "id">) {
     if (!authSession) {
       return;
@@ -8950,6 +8979,8 @@ function App() {
             proposalTemplateSections={proposalTemplateSections}
             onUpdateProposalTemplateSection={handleUpdateProposalTemplateSection}
             onReorderProposalTemplateSection={handleReorderProposalTemplateSection}
+            onCreateProposalTemplateSection={handleCreateProposalTemplateSection}
+            onDeleteProposalTemplateSection={handleDeleteProposalTemplateSection}
             deletionLog={deletionLog}
             notificationDeliveryFailures={notificationDeliveryFailures}
             systemHealthEvents={systemHealthEvents}
@@ -21573,6 +21604,8 @@ function AdminPage({
   proposalTemplateSections,
   onUpdateProposalTemplateSection,
   onReorderProposalTemplateSection,
+  onCreateProposalTemplateSection,
+  onDeleteProposalTemplateSection,
   deletionLog,
   notificationDeliveryFailures,
   systemHealthEvents,
@@ -21657,6 +21690,8 @@ function AdminPage({
   proposalTemplateSections: ProposalTemplateSection[];
   onUpdateProposalTemplateSection: (id: string, updates: Partial<{ title: string; body: string; sequenceOrder: number }>) => void;
   onReorderProposalTemplateSection: (sectionId: string, direction: "up" | "down") => void;
+  onCreateProposalTemplateSection: () => void;
+  onDeleteProposalTemplateSection: (sectionId: string) => void;
   deletionLog?: DeletionLogEntry[];
   notificationDeliveryFailures?: NotificationDeliveryFailure[];
   systemHealthEvents?: SystemHealthEvent[];
@@ -22657,9 +22692,16 @@ function AdminPage({
           </div>
         </section>
 
-        {(isAdmin || isManagerRole) && (
+        {(isAdmin || isManagerRole || isWorkspaceAdmin) && (
         <section className="panel wide">
-          <PanelHeader title="Proposal Template" label="Shared boilerplate sent with every Quote Proposal -- Assumptions, Warranty, Payment Terms, etc. Seeded from EnSight's real proposal wording; edit here and every future proposal picks up the change." />
+          <div className="action-header">
+            <PanelHeader title="Proposal Template" label="Your own boilerplate sent with every Quote Proposal -- Assumptions, Warranty, Payment Terms, etc. Edit here and every future proposal picks up the change; proposals already sent keep their own frozen copy." />
+            <div className="action-row">
+              <button className="primary-action" type="button" onClick={onCreateProposalTemplateSection}>
+                <Plus size={17} /> Add Section
+              </button>
+            </div>
+          </div>
           <div className="proposal-template-list">
             {proposalTemplateSections
               .slice()
@@ -22687,9 +22729,17 @@ function AdminPage({
                     </button>
                   </div>
                   <ProposalTemplateSectionEditor section={section} onSave={onUpdateProposalTemplateSection} />
+                  <button
+                    className="icon-button compact-remove"
+                    type="button"
+                    onClick={() => onDeleteProposalTemplateSection(section.id)}
+                    aria-label={`Delete ${section.title}`}
+                  >
+                    <Trash2 size={15} />
+                  </button>
                 </div>
               ))}
-            {proposalTemplateSections.length === 0 && <p className="empty-compact-state">No template sections yet -- run migration 053.</p>}
+            {proposalTemplateSections.length === 0 && <p className="empty-compact-state">No template sections yet -- add one to include with every proposal your company sends.</p>}
           </div>
         </section>
         )}

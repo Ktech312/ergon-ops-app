@@ -14303,6 +14303,39 @@ export async function updateProposalTemplateSection(
   return response.ok;
 }
 
+// Migration 216: workspace_id and section_key are both resolved
+// server-side (a trigger and a column default respectively) -- never
+// client-supplied, so this never needs to know or guess either.
+export async function createProposalTemplateSection(
+  input: { title: string; body: string; sequenceOrder: number },
+  accessToken?: string,
+): Promise<ProposalTemplateSection | null> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return null;
+  }
+  const response = await fetch(supabaseUrl("proposal_template_sections"), {
+    method: "POST",
+    headers: { ...supabaseHeaders(accessToken), prefer: "return=representation" },
+    body: JSON.stringify({ title: input.title, body: input.body, sequence_order: input.sequenceOrder }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not create this proposal template section"));
+  }
+  const rows = (await response.json()) as ProposalTemplateSectionRow[];
+  return rows[0] ? mapProposalTemplateSectionRow(rows[0]) : null;
+}
+
+export async function deleteProposalTemplateSection(id: string, accessToken?: string): Promise<boolean> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return false;
+  }
+  const response = await fetch(supabaseUrl(`proposal_template_sections?id=eq.${id}`), {
+    method: "DELETE",
+    headers: supabaseHeaders(accessToken),
+  });
+  return response.ok;
+}
+
 export type ProposalBomLineSnapshot = {
   item: string;
   qty: number;

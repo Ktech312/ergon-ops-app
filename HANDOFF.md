@@ -519,8 +519,46 @@ own legal/warranty boilerplate, never meant to be dynamically created per compan
 with an empty default for new companies (matching this session's own "no silent pre-seeding of Ergon
 content" standard) would leave K-Tech (and every future company) permanently unable to ever add a
 single proposal template section without a brand-new migration each time -- a real regression, not a
-fix. Asked E directly which way to go rather than guessing (see the next message) -- continuing all
-other independent work in the meantime, not blocked on this.
+fix. Asked E directly which way to go rather than guessing -- **E's answer: build it properly.** "Add
+workspace_id, assign existing rows only to Ergon's workspace, enforce workspace-scoped RLS, and build
+Admin controls to create, edit, reorder, and delete template sections. K-Tech and future companies
+must start empty unless their admin explicitly creates or imports templates. Never automatically copy
+Ergon's boilerplate into another company. Existing sent proposal snapshots must remain unchanged if a
+template is later edited or deleted."
+
+**Built (migration 216, `216_workspace_scope_proposal_template_sections.sql`, canonical test
+`migration_216_workspace_scope_proposal_template_sections_tests.sql`, 78/78 clean against the
+consolidated isolation suite, confirmed stable across 2 consecutive runs -- NOT YET APPLIED, needs E to
+run it):**
+
+- The "existing sent proposal snapshots must remain unchanged" requirement was already true by
+  construction, confirmed directly against the real code (not assumed):
+  `createAndSendQuoteProposalVersion` freezes section content into `content_snapshot` at send time
+  (see `handleReorderProposalTemplateSection`'s own comment) -- a live template row being edited or
+  deleted afterward can never retroactively touch an already-sent proposal, since sending never reads
+  the live table again. Nothing extra needed for this part.
+- Added `workspace_id`, backfilled to the one pre-existing workspace using the same structural
+  identification migration 211 already established (never referenced by any
+  `company_signup_requests` row), then locked `not null`. Replaced the old globally-unique
+  `section_key` with `unique(workspace_id, section_key)`, and gave `section_key` a random default so
+  creating a section never needs to invent one client-side (it was always a machine key, never shown
+  to users). A new trigger (reusing `guard_workspace_id_mutation()` verbatim from migration 117,
+  already generic) stamps `workspace_id` from the caller's own resolved workspace on insert and forbids
+  changing it afterward -- the same pattern every other workspace-owned content table in this schema
+  already uses.
+- RLS: read scoped to workspace membership (was `using (true)` -- every company could read every other
+  company's boilerplate before this); write scoped the same way as everything else this session, with
+  this table's own pre-existing `manager`-role branch preserved exactly, not dropped.
+- **Real Admin UI built, not just backend plumbing:** `createProposalTemplateSection`/
+  `deleteProposalTemplateSection` (persistence.ts), an "Add Section" button and a per-row delete
+  button (main.tsx), and the panel's own gate widened from `isAdmin || isManagerRole` to also include
+  `isWorkspaceAdmin`. Confirmed working end-to-end in a real browser, not just RLS-verified: a new
+  Playwright spec (`tests/smoke/proposal-template-sections-crud.spec.ts`) signs in as a mocked
+  workspace-admin-only session, adds a section, edits its title, and deletes it, asserting zero
+  console errors throughout -- passing. Full suite: `tsc`/`vite build` clean, vitest 641/641,
+  Playwright 18/19 (same pre-existing, already-flagged `auth-gate.spec.ts` issue, unrelated).
+- Canonical test also proves the actual "no auto-copy" requirement directly: a brand-new synthetic
+  workspace (K-Tech's own real shape) starts with exactly zero `proposal_template_sections` rows.
 
 **Still open, Phase 2D from E's own queue, not started:** `notifications`'s remaining legacy global-
 admin-sees-everyone clause (lower priority, no workspace-level notification-management UI exists yet
