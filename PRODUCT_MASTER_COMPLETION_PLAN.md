@@ -156,10 +156,17 @@ production currently has one real operator and the notification pipeline correct
 acting user from their own notification recipients (`excludingSelf()`) — not a defect, genuinely not
 provable without a second real account.
 
-### Phase 9 — Commercial SaaS readiness — **EXPLICITLY DEFERRED, standing stop boundary**
+### Phase 9 — Commercial SaaS readiness — **DESIGN BEGUN 2026-09-27, at E's own explicit go-ahead**
 Subscription tiers, usage metering, payment processing for Ergon itself (distinct from a customer's
-own operational Billing/Client Ledger, which Ergon already tracks for the customer). **Do not begin
-design work on this phase without an explicit go-ahead — standing instruction, unchanged.**
+own operational Billing/Client Ledger, which Ergon already tracks for the customer). The standing stop
+boundary ("do not begin design work without an explicit go-ahead") is now satisfied — E directly
+instructed this design pass on 2026-09-27. **Status: a full architecture trace plus a consolidated
+decision document (`PRODUCT_BILLING_SAAS_DECISIONS.md`, every open question with a recommended default)
+and a technical design companion (`PRODUCT_BILLING_TECHNICAL_DESIGN.md`, threat model/test plan/
+migration sequencing built against those recommended defaults) are both done. No schema, RLS, or
+payment code has been written — implementation starts once E answers the decision document, per that
+document's own "one reply... is enough to move to implementation" framing. Still a stop boundary on
+actually writing/applying any billing migration or touching real payment flow without that reply.**
 
 ## 3. Completed and live — migration range 115 through 150, plus 152 through 163
 
@@ -1054,8 +1061,9 @@ table in place of the fixed pair) plus frontend UI work — tracked here, not sc
   (e.g. `ZZ Test Signup Co`, `ZZ Test 199 Notification Co v2`) have since been created through that
   approved flow and are live in production. No longer a stop boundary; ordinary workspace creation
   through the shipped onboarding flow is expected, normal operation now.
-- **Commercial SaaS subscription billing** (Phase 9) — no design work begins without an explicit
-  go-ahead to even start designing it.
+- **Commercial SaaS subscription billing** (Phase 9) — **design go-ahead given 2026-09-27** (see §2's
+  Phase 9 entry); the decision document and technical design are done, but no schema/RLS/payment code
+  gets written or applied without E's actual answers to `PRODUCT_BILLING_SAAS_DECISIONS.md` first.
 - **Any claim of legal signature weight beyond today's typed-name + IP + content-hash pattern** —
   no drawn signature, no third-party e-signature integration, no OTP/click-through identity
   verification, and no marketing or UI copy implying stronger legal weight than what's actually
@@ -1138,7 +1146,7 @@ Only D15 remains genuinely gated on a future E decision.
 | D18 — frozen proposal PDF | **APPROVED, FULLY SHIPPED.** See §3/§9 — `d92a114`. |
 | D11 — Phase 3 RLS | **APPROVED 2026-09-16 — standing authorization for the full staged rollout** (Clients/Sales → Projects/BOM → Purchasing/Inventory → Documents/Notifications/Storage → remaining indirect paths → full isolation suite), in that order, one coherent table group at a time. Group 1 (Clients + Sales) implemented — migration 155, §11. |
 | D13/D14 — Support/Engineering modules | **APPROVED 2026-09-16 — first-release scope authorized**, built using the existing design documents (`PRODUCT_SUPPORT_MODULE_DESIGN.md`, `PRODUCT_ENGINEERING_MODULE_DESIGN.md`) and their recommended first-release boundaries. **BOTH FULLY SHIPPED 2026-09-23** — migrations 200/201 applied and canonical-tested in production, frontends deployed and live-verified, notification wiring confirmed working (migration 202 fixed a real gap found during verification). See §11. |
-| D15 — Commercial SaaS billing | Still gated — explicitly deferred, no design work without an explicit go-ahead. Not part of this authorization. |
+| D15 — Commercial SaaS billing | **Design go-ahead given 2026-09-27** — `PRODUCT_BILLING_SAAS_DECISIONS.md`/`PRODUCT_BILLING_TECHNICAL_DESIGN.md` done. Implementation (schema/RLS/payment code) still gated on E's answers to that decision document; not part of this authorization. |
 
 ## 8b. Queue R3 — approved decisions (D5/D6/D9/D12/D18) — ALL IMPLEMENTED (2026-09-16)
 

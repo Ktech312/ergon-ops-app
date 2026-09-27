@@ -1024,6 +1024,46 @@ whoever is signed in in the future, or by this assistant if handed an already-au
 document) exactly as directed -- "continue any independent design... work while awaiting answers,"
 which does not depend on this blocker at all.
 
+## 2026-09-27, continued: Billing/SaaS design go-ahead -- consolidated decision document produced, no code written
+
+E's own explicit instruction ("begin the final deferred area: Billing/SaaS... produce one consolidated
+decision document") is the exact go-ahead `PRODUCT_MASTER_COMPLETION_PLAN.md`'s Phase 9 stop boundary
+("do not begin design work... without an explicit go-ahead") was waiting for -- not a conflict with that
+boundary, its fulfillment. Both the master plan (§2 Phase 9, D15's row, the stop-boundary list) and this
+entry record that the boundary is now satisfied for *design* work specifically; writing or applying any
+actual billing schema/RLS/payment code remains gated on E's real answers, per the decision document's
+own framing.
+
+**Traced first, not assumed** (an Explore agent, read-only): `workspaces.status` is `'active'|
+'suspended'` only, zero billing columns anywhere in the schema; zero billing UI exists (every "billing"/
+"payment" hit in `main.tsx` is a customer's own operational field, never Ergon charging its tenants --
+`PRODUCT_MARKETING_CLAIMS.md` already flags this explicitly as not-true-to-claim); three permission
+tiers exist (`is_workspace_admin`/`is_platform_admin`/`is_app_admin`) with `is_workspace_admin` the
+natural fit for "manage this company's own billing" and `is_platform_admin` for "administer billing
+across all tenants"; no existing `api/*.js` function receives an unauthenticated inbound webhook (every
+one requires the app's own session auth first) -- a Stripe webhook handler would be the first of its
+kind here; `workspace_enabled_modules` (migration 218) already does per-workspace feature-gating, a
+real, reusable mechanism for tier-gating rather than a second one.
+
+**Two new documents, both written in this same pass, not stopped after the first**:
+[`PRODUCT_BILLING_SAAS_DECISIONS.md`](PRODUCT_BILLING_SAAS_DECISIONS.md) -- every real decision E needs
+to make (pricing model, trial policy, processor choice, checkout flow, webhook architecture, workspace-
+lifecycle integration, who manages billing, card-data/tax/invoicing posture, currency, seat overage),
+each with a recommended default and its reasoning, so one reply is enough to unblock implementation.
+[`PRODUCT_BILLING_TECHNICAL_DESIGN.md`](PRODUCT_BILLING_TECHNICAL_DESIGN.md) -- a threat model (webhook
+forgery/replay, cross-tenant billing-data leaks, privilege escalation, stale webhook ordering,
+suspension-bypass, secret exposure, the comped-workspace exemption), a test plan (11 items, each mapped
+to this session's own established canonical-test/Playwright conventions), and a migration-sequencing
+plan (9 ordered steps: `workspace_billing`, `stripe_webhook_events`, a separate
+`workspace_billing_audit_log`, widening the existing suspension chokepoint rather than a second one,
+plan-to-modules wiring, seat-cap enforcement, the webhook handler, a Customer Portal session endpoint,
+and the Admin Billing panel) -- built against the decision document's own recommended defaults as
+working assumptions, explicitly flagged as correctable wherever E's actual answers differ.
+
+**Nothing was implemented.** No migration file, no RLS policy, no `api/stripe-webhook.js`, no Stripe
+dependency was added. This is planning only, exactly as instructed ("do not implement payment or
+subscription behavior from assumptions").
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
