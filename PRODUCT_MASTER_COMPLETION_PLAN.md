@@ -1841,9 +1841,20 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    teammate invite, and exercised the new proposal-template-section create/edit/delete flow
    end-to-end.
 
-   **Status: Phase 1 (isolation audit) and Phase 2 (permission-model completion) are functionally
-   done; Phase 3 (closing acceptance) is blocked only on E confirming migrations 214/215/217 are
-   applied (216 already confirmed) and running one outstanding read-only bootstrap diagnostic**
-   (`diagnostic_ktech_bootstrap_check.sql` — section channels + notification rules specifically for
-   K-Tech's own real workspace id). Phases 4 (guided onboarding) and 5 (Marketing depth) per E's own
-   queue are not started this session — a substantial, separate body of work for next time.
+   **Status, updated 2026-09-26: Phases 1 (isolation audit), 2 (permission-model completion), and 3
+   (closing acceptance) are all complete** — migrations 214/215/217 confirmed applied via a direct
+   schema check, all 14 second-company acceptance requirements code/test-verified and (all but the
+   two deliberately-not-live-tested ones) production-verified. Full detail in `HANDOFF.md`'s "Phase 2
+   status: complete"/"Phase 3 status: closed" sections and `PRODUCT_SECOND_COMPANY_ACCEPTANCE_CHECKLIST.md`.
+
+   **Phase 4 (guided onboarding) has begun, same day:** migration 218 (`workspace_enabled_modules` —
+   per-workspace module enable/disable, backend-enforced for the Support and Engineering modules,
+   nav/URL-enforced for all twelve toggleable modules) and migration 219
+   (`workspace_onboarding_progress` — a five-step onboarding checklist wrapping the already-working
+   Company Branding/Team Roster/Module Settings/Proposal Template/Notification Rules panels) are both
+   built, 81/81 clean against the consolidated isolation suite, with real Playwright coverage
+   (`module-settings.spec.ts`, `onboarding-checklist.spec.ts`) — sent to E for confirmation, not yet
+   committed pending that (frontend depends on both). Full detail in `HANDOFF.md`'s two matching
+   2026-09-26 Phase 4 entries. Still open for Phase 4: industry selection + catalog/template import as
+   an explicit opt-in choice — needs its own design pass, deliberately not guessed at. Phase 5
+   (Marketing depth) remains not started.

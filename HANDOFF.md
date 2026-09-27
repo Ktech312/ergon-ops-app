@@ -628,6 +628,95 @@ just shipped -- nine real bugs found and fixed along the way, none of them guess
 Phases 4 (guided onboarding) and 5 (Marketing depth) remain not started -- substantial, separate bodies
 of work for a future session, per E's own queue.
 
+## 2026-09-26, Phase 4 begins: workspace-toggleable modules (migration 218, confirmed applied)
+
+First piece of the guided-onboarding queue: "enabled modules." E's own answer to the one genuine
+open design question this needed -- "Disabling a module removes it from navigation and access for
+everyone in that workspace immediately, including existing members. Preserve its data so re-enabling
+restores access. Block direct URL access and backend operations for disabled modules. Workspace admins
+must retain access to the module-settings control needed to re-enable it. Record enable/disable
+changes in the audit log." -- is implemented exactly as stated.
+
+`workspace_enabled_modules` (migration 218, `migration_218_workspace_enabled_modules_tests.sql`,
+80/80 clean across 3 consecutive consolidated-suite runs) is opt-OUT: a workspace with no row for a
+module is treated as enabled, so every existing workspace (K-Tech, Ergon itself) needed zero backfill
+and saw zero behavior change. Writes go only through `set_workspace_module_enabled()` (workspace admin
+or global app_admin, resolves the CALLER's own workspace via `resolve_caller_workspace_id()` -- a
+global admin can only toggle a workspace they actually belong to, same posture as every other
+bridge-style RPC in this schema), which also writes one row to the new `workspace_module_audit_log`
+table (separate from migration 198's `company_admin_audit_log`, which is platform-level and
+platform-admin-only-readable; this one is workspace-level and that workspace's own admins can read it).
+
+**Backend enforcement is deliberately scoped to two modules in this migration, not all twelve
+toggleable ones** -- Support and Engineering (migrations 200/201), the two most recent, fully
+self-contained modules with no tables shared by any other module, made safe to gate in one pass via a
+`BEFORE INSERT OR UPDATE` trigger on each module's own tables/child tables
+(`support_cases`/`support_case_assets`/`support_case_activity`,
+`product_requests`/`product_request_reviews`) plus a matching `AND is_module_enabled(...)` on their
+SELECT policies. Generalizing the same pattern to the other ten (purchasing, inventory, vendors,
+projects, sales, reports, saas_calendar, library, marketing, client_ledger) is explicit, deliberate
+follow-up scope, not an oversight -- several of those tables are read across multiple views at once
+(e.g. `projects`), and gating them correctly needs its own per-table audit rather than being rushed
+here. The frontend enforcement (nav hiding in the top nav via the existing `allowedTabs` filter, plus
+a new redirect-to-dashboard effect for direct `#hash` URL access) is generic and already covers all
+twelve modules today, independent of which ones have backend gating yet.
+
+Frontend: `loadDisabledModuleKeys`/`setWorkspaceModuleEnabled` (`src/persistence.ts`), a new
+`disabledModuleKeys` state loaded alongside `isWorkspaceAdmin` etc. in the post-signin bootstrap
+(`src/main.tsx`), `allowedTabs` now filters out any disabled module key (applies to `isAdmin` too, per
+E's "everyone... including existing members"), a new effect bounces `view` back to `#dashboard` if the
+current hash resolves to a now-disabled module, and a new "Module Settings" panel in Admin
+(`isAdmin || isWorkspaceAdmin`, so a workspace admin always keeps the control needed to re-enable
+something) lists all twelve toggleable modules as checkboxes wired to `set_workspace_module_enabled`.
+
+New Playwright coverage: `tests/smoke/module-settings.spec.ts` -- a workspace-admin session with
+Support pre-disabled sees it missing from the top nav, gets redirected away from a forced `#support`
+hash, and re-enabling it from Admin > Module Settings fires the real RPC with the right payload. Full
+smoke suite: 20/21 passed, the one failure being `auth-gate.spec.ts`, the same pre-existing,
+already-flagged, confirmed-unrelated issue from earlier in this session (background task
+`task_7b5e0bc2`), not a new regression. `tsc --noEmit`, `npm run build`, and `eslint` are all clean
+with zero new warnings.
+
+## 2026-09-26, Phase 4 continued: onboarding checklist/progress persistence (migration 219, confirmed applied)
+
+Second piece of the guided-onboarding queue, built immediately after migration 218 while it awaited
+E's confirmation (no dependency between the two). Resolved the one naming disagreement between the
+two prior planning docs (`workspace_onboarding_state` in `PRODUCT_ONBOARDING_CONFIG.md` §2 step 10 vs.
+`workspace_onboarding_progress` in `PRODUCT_ONBOARDING_CONFIGURATION_PLAN.md` §12) in favor of
+`workspace_onboarding_progress` -- it's the name `PRODUCT_ONBOARDING_CONFIGURATION_PLAN.md` §12 uses
+for the exact concrete checklist this migration builds ("Add your logo -> Invite your team -> Set up
+your first sales template -> Configure notification rules -> You're ready"), and both docs already
+cite it as the working name, so this isn't a fresh decision so much as picking the more specific of
+two already-proposed names.
+
+`workspace_onboarding_progress` (migration 219, `migration_219_workspace_onboarding_progress_tests.sql`,
+81/81 clean across 2 consecutive consolidated-suite runs) is additive/opt-out the same way migration
+218 is: a step with no row is simply "not done yet," so no backfill was needed. Five steps, one per
+already-real, workspace-scoped panel: `company_branding`, `team_invited`, `modules_reviewed` (the
+Module Settings panel from migration 218, above), `sales_template` (Proposal Template sections),
+`notifications_reviewed`. Writes go only through `set_onboarding_step_status()` (workspace admin or
+global app_admin, same `resolve_caller_workspace_id()`-scoped shape as migration 218's RPC). Two
+items from the two planning docs' longer 10-item version were deliberately left out, not overlooked:
+timezone/regional settings (doesn't exist as a real field anywhere yet -- nothing to mark done) and a
+starter-catalog/industry-template review step (needs its own design pass, per Phase 4's own scoping
+note above -- not guessed at here).
+
+Frontend: `loadOnboardingProgress`/`setOnboardingStepStatus` (`src/persistence.ts`), a new
+`onboardingProgress` state loaded in the same post-signin bootstrap `Promise.all` as
+`disabledModuleKeys`, and a new "Onboarding Checklist" panel at the very top of Admin
+(`isAdmin || isWorkspaceAdmin`) listing all five steps with per-step Mark done/Skip/Reopen controls
+and a "You're ready" message once every step is done or skipped. New Playwright coverage:
+`tests/smoke/onboarding-checklist.spec.ts` -- a workspace-admin session with one step pre-marked done
+sees it rendered correctly, can mark a second step done (firing the real RPC with the right payload),
+and can reopen the first step back to pending. Full smoke suite: 22/23 passed, the one failure still
+being the same pre-existing, confirmed-unrelated `auth-gate.spec.ts` issue. `tsc --noEmit`, `npm run
+build`, and `eslint` all clean with zero new warnings.
+
+Still open for Phase 4: industry selection + catalog/template import as an explicit opt-in choice --
+this needs its own careful design pass (the prior §7 design in `PRODUCT_ONBOARDING_CONFIG.md` is
+explicitly superseded by a later decision, per this session's own Explore-agent research) rather than
+being guessed at alongside the decision-free pieces above, which are now both built.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`

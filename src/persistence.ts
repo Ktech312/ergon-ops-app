@@ -14935,6 +14935,78 @@ export async function saveSalesApprovalSettings(
   }
 }
 
+// Phase 4 guided onboarding (migration 218): per-workspace module
+// enable/disable. Opt-out model -- a module with no row here is enabled;
+// loadEnabledModules returns only the DISABLED module_keys so callers can
+// treat "not in this set" as enabled, matching is_module_enabled()'s own
+// default on the backend.
+export async function loadDisabledModuleKeys(accessToken?: string): Promise<Set<string>> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return new Set();
+  }
+  const response = await fetch(
+    supabaseUrl("workspace_enabled_modules?select=module_key,enabled&enabled=eq.false"),
+    { headers: supabaseHeaders(accessToken) },
+  );
+  if (!response.ok) {
+    return new Set();
+  }
+  const rows = (await response.json()) as Array<{ module_key: string; enabled: boolean }>;
+  return new Set(rows.map((row) => row.module_key));
+}
+
+export async function setWorkspaceModuleEnabled(moduleKey: string, enabled: boolean, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/set_workspace_module_enabled"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_module_key: moduleKey, p_enabled: enabled }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not update module settings"));
+  }
+}
+
+// Phase 4 guided onboarding (migration 219): checklist progress, one row
+// per (workspace, step) once marked -- a step with no row is "pending"
+// (same opt-out shape as the enabled-modules table above).
+export type OnboardingStepKey = "company_branding" | "team_invited" | "modules_reviewed" | "sales_template" | "notifications_reviewed";
+export type OnboardingStepStatus = "pending" | "done" | "skipped";
+
+export async function loadOnboardingProgress(accessToken?: string): Promise<Partial<Record<OnboardingStepKey, OnboardingStepStatus>>> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    return {};
+  }
+  const response = await fetch(supabaseUrl("workspace_onboarding_progress?select=step_key,status"), {
+    headers: supabaseHeaders(accessToken),
+  });
+  if (!response.ok) {
+    return {};
+  }
+  const rows = (await response.json()) as Array<{ step_key: OnboardingStepKey; status: OnboardingStepStatus }>;
+  const result: Partial<Record<OnboardingStepKey, OnboardingStepStatus>> = {};
+  for (const row of rows) {
+    result[row.step_key] = row.status;
+  }
+  return result;
+}
+
+export async function setOnboardingStepStatus(stepKey: OnboardingStepKey, status: OnboardingStepStatus, accessToken?: string): Promise<void> {
+  if (!isRemotePersistenceConfigured() || !accessToken) {
+    throw new Error("Not configured.");
+  }
+  const response = await fetch(supabaseUrl("rpc/set_onboarding_step_status"), {
+    method: "POST",
+    headers: supabaseHeaders(accessToken),
+    body: JSON.stringify({ p_step_key: stepKey, p_status: status }),
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response, "Could not update onboarding progress"));
+  }
+}
+
 // --- D16 (migration 149): client proposal Q&A ------------------------------
 // Scoped to one proposal VERSION, not the quote (E's own correction to the
 // original recommendation) -- questions asked against an earlier version

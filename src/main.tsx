@@ -167,6 +167,12 @@ import {
   type SalesApprovalSettings,
   loadSalesApprovalSettings,
   saveSalesApprovalSettings,
+  loadDisabledModuleKeys,
+  setWorkspaceModuleEnabled,
+  type OnboardingStepKey,
+  type OnboardingStepStatus,
+  loadOnboardingProgress,
+  setOnboardingStepStatus,
   type ProposalQuestion,
   loadProposalQuestionsForProposals,
   submitProposalQuestion,
@@ -728,6 +734,17 @@ const DEFAULT_TABS_BY_ROLE: Record<RoleMode, View[]> = {
   support: ["dashboard", "support", "tasks", "reports", "messages"],
   marketing: ["dashboard", "marketing", "reports", "tasks", "messages"],
 };
+
+// Phase 4 guided onboarding (migration 218): the toggleable business
+// modules a workspace admin may disable. Deliberately excludes
+// "dashboard", "tasks", "messages", "search", "profile", and "admin" --
+// always-on, not modules a company would ever turn off (and "admin"
+// specifically must stay reachable so a workspace admin can always get
+// back to the control that re-enables everything else).
+const DISABLEABLE_MODULE_KEYS: View[] = [
+  "purchasing", "inventory", "vendors", "projects", "sales", "reports",
+  "saas_calendar", "library", "marketing", "client_ledger", "support", "engineering_requests",
+];
 
 // Mobile bottom nav's center button -- v1 is a navigation shortcut to
 // whichever tab is that role's main job (E: "Sales = New Sale, PM =
@@ -1391,6 +1408,15 @@ function App() {
   // affordance (granting/revoking global admin, System Health, approving
   // sign-ins, etc.) stays isAdmin-only, unchanged.
   const [isWorkspaceAdmin, setIsWorkspaceAdmin] = useState(false);
+  // Phase 4 guided onboarding (migration 218): module_keys the CALLER'S
+  // OWN workspace has explicitly disabled. Opt-out model -- a module not
+  // in this set is enabled, matching is_module_enabled()'s own backend
+  // default, so this starts empty (everything enabled) rather than
+  // needing to be pre-populated.
+  const [disabledModuleKeys, setDisabledModuleKeys] = useState<Set<string>>(new Set());
+  // Phase 4 guided onboarding (migration 219): checklist progress for the
+  // CALLER'S OWN workspace. A step key absent from this map is "pending".
+  const [onboardingProgress, setOnboardingProgressState] = useState<Partial<Record<OnboardingStepKey, OnboardingStepStatus>>>({});
   // External guest access (migration 188). A channel guest is a real
   // authenticated user (auth.uid() resolves) but has ZERO workspace_members
   // rows and zero rows in every other workspace-scoped table's RLS-visible
@@ -3115,6 +3141,8 @@ function App() {
       loadUserRoleMode(authSession.userId, authSession.accessToken),
       loadOwnRoleKeys(authSession.userId, authSession.accessToken),
       loadOwnAllowedViews(authSession.userId, authSession.accessToken),
+      loadDisabledModuleKeys(authSession.accessToken),
+      loadOnboardingProgress(authSession.accessToken),
       ensureOwnApprovalRequest(authSession.userId, authSession.accessToken).then((isNewSignup) => {
         if (isNewSignup) {
           // Brand-new pending sign-up -- previously nothing surfaced this
@@ -3127,13 +3155,15 @@ function App() {
         }
         return loadOwnApprovalStatus(authSession.userId, authSession.accessToken);
       }),
-    ]).then(([adminFlag, platformAdminFlag, workspaceAdminFlag, savedRole, roleKeys, allowedViews, status]) => {
+    ]).then(([adminFlag, platformAdminFlag, workspaceAdminFlag, savedRole, roleKeys, allowedViews, disabledModules, onboardingProgressRows, status]) => {
       if (cancelled) {
         return;
       }
       setIsAdmin(adminFlag);
       setIsPlatformAdmin(platformAdminFlag);
       setIsWorkspaceAdmin(workspaceAdminFlag);
+      setDisabledModuleKeys(disabledModules);
+      setOnboardingProgressState(onboardingProgressRows);
       const resolvedRole = savedRole && (ALL_ROLE_KEYS as string[]).includes(savedRole) ? (savedRole as RoleMode) : null;
       if (resolvedRole) {
         setRoleMode(resolvedRole);
@@ -5875,6 +5905,42 @@ function App() {
     }
   }
 
+  async function handleSetModuleEnabled(moduleKey: string, enabled: boolean) {
+    if (!authSession) {
+      return;
+    }
+    const previous = disabledModuleKeys;
+    setDisabledModuleKeys((current) => {
+      const next = new Set(current);
+      if (enabled) {
+        next.delete(moduleKey);
+      } else {
+        next.add(moduleKey);
+      }
+      return next;
+    });
+    try {
+      await setWorkspaceModuleEnabled(moduleKey, enabled, authSession.accessToken);
+    } catch (error) {
+      setDisabledModuleKeys(previous);
+      setAdminStatus(error instanceof Error ? error.message : "Could not update module settings.");
+    }
+  }
+
+  async function handleSetOnboardingStepStatus(stepKey: OnboardingStepKey, status: OnboardingStepStatus) {
+    if (!authSession) {
+      return;
+    }
+    const previous = onboardingProgress;
+    setOnboardingProgressState((current) => ({ ...current, [stepKey]: status }));
+    try {
+      await setOnboardingStepStatus(stepKey, status, authSession.accessToken);
+    } catch (error) {
+      setOnboardingProgressState(previous);
+      setAdminStatus(error instanceof Error ? error.message : "Could not update onboarding progress.");
+    }
+  }
+
   // System Health Phase B (migration 151): admin-only acknowledge/resolve
   // on a durable event. Reloads the list from the server afterward rather
   // than optimistically patching local state, matching this file's
@@ -6356,6 +6422,22 @@ function App() {
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
   }, []);
+
+  // Phase 4 guided onboarding (migration 218): "block direct URL access...
+  // for disabled modules" -- a nav-hidden tab still stops someone who
+  // already has the URL/bookmark, or the browser back button, from
+  // landing on a disabled module's content. Runs after authChecksReady so
+  // it never fires against the stale, empty disabledModuleKeys default
+  // during the initial load.
+  useEffect(() => {
+    if (!authChecksReady || !DISABLEABLE_MODULE_KEYS.includes(view)) {
+      return;
+    }
+    if (disabledModuleKeys.has(view)) {
+      navigateToView("dashboard");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, disabledModuleKeys, authChecksReady]);
 
   useEffect(() => {
     const activeHash = locationHash || `#${view}`;
@@ -8106,9 +8188,10 @@ function App() {
       ),
     ),
   );
-  const allowedTabs: View[] = isAdmin
+  const allowedTabs: View[] = (isAdmin
     ? ALL_TABS
-    : ((ownAllowedViews && ownAllowedViews.length > 0 ? ownAllowedViews : effectiveRoleDefaultTabs) as View[]);
+    : ((ownAllowedViews && ownAllowedViews.length > 0 ? ownAllowedViews : effectiveRoleDefaultTabs) as View[])
+  ).filter((tabView) => !disabledModuleKeys.has(tabView));
   const isManagerRole = authChecksReady && (roleMode === "manager" || ownRoleKeys.includes("manager"));
   // Widened for migration 185: this is the sole gate for reaching the
   // Admin page at all (nav link + route render below), and a workspace
@@ -8981,6 +9064,10 @@ function App() {
             onReorderProposalTemplateSection={handleReorderProposalTemplateSection}
             onCreateProposalTemplateSection={handleCreateProposalTemplateSection}
             onDeleteProposalTemplateSection={handleDeleteProposalTemplateSection}
+            disabledModuleKeys={disabledModuleKeys}
+            onSetModuleEnabled={handleSetModuleEnabled}
+            onboardingProgress={onboardingProgress}
+            onSetOnboardingStepStatus={handleSetOnboardingStepStatus}
             deletionLog={deletionLog}
             notificationDeliveryFailures={notificationDeliveryFailures}
             systemHealthEvents={systemHealthEvents}
@@ -21618,6 +21705,10 @@ function AdminPage({
   proposalApprovalRequests,
   discountApprovalReviewStatus,
   onRespondToApprovalRequest,
+  disabledModuleKeys,
+  onSetModuleEnabled,
+  onboardingProgress,
+  onSetOnboardingStepStatus,
 }: {
   currentUserId: string;
   isAdmin: boolean;
@@ -21704,6 +21795,10 @@ function AdminPage({
   proposalApprovalRequests: ProposalApprovalRequest[];
   discountApprovalReviewStatus: string;
   onRespondToApprovalRequest: (request: ProposalApprovalRequest, decision: "approved" | "rejected", note: string) => void;
+  disabledModuleKeys: Set<string>;
+  onSetModuleEnabled: (moduleKey: string, enabled: boolean) => void;
+  onboardingProgress: Partial<Record<OnboardingStepKey, OnboardingStepStatus>>;
+  onSetOnboardingStepStatus: (stepKey: OnboardingStepKey, status: OnboardingStepStatus) => void;
 }) {
   const [rosterDraft, setRosterDraft] = useState({ fullName: "", email: "", primaryRole: "", secondaryRoles: [] as string[] });
   const [editingRosterId, setEditingRosterId] = useState<string | null>(null);
@@ -21816,8 +21911,48 @@ function AdminPage({
     .map((entry) => usersByid.get(entry.userId))
     .filter((user): user is KnownUser => Boolean(user));
 
+  const ONBOARDING_STEPS: { key: OnboardingStepKey; label: string; description: string }[] = [
+    { key: "company_branding", label: "Add your logo", description: "Set your company name and logo in the Company Branding section below." },
+    { key: "team_invited", label: "Invite your team", description: "Send at least one teammate an invite from Team Roster below." },
+    { key: "modules_reviewed", label: "Choose your modules", description: "Review Module Settings below and turn off anything your company doesn't use." },
+    { key: "sales_template", label: "Set up your sales template", description: "Review your Proposal Template sections below -- Assumptions, Warranty, Payment Terms." },
+    { key: "notifications_reviewed", label: "Configure notifications", description: "Review Notification Rules below so the right people hear about the right events." },
+  ];
+  const onboardingDoneCount = ONBOARDING_STEPS.filter((step) => (onboardingProgress[step.key] ?? "pending") !== "pending").length;
+
   return (
     <div className="content-grid">
+      {(isAdmin || isWorkspaceAdmin) && (
+        <section className="panel wide">
+          <PanelHeader title="Onboarding Checklist" label={onboardingDoneCount === ONBOARDING_STEPS.length ? "You're ready -- every step below has been reviewed or completed." : "A few quick steps to get your company set up. Skip anything that doesn't apply -- you can always come back."} />
+          <div className="onboarding-checklist-list">
+            {ONBOARDING_STEPS.map((step) => {
+              const stepStatus = onboardingProgress[step.key] ?? "pending";
+              return (
+                <div key={step.key} className="onboarding-checklist-row">
+                  <div className="onboarding-checklist-row-text">
+                    <strong>{step.label}</strong>
+                    <p className="muted">{step.description}</p>
+                  </div>
+                  <div className="onboarding-checklist-row-actions">
+                    {stepStatus === "pending" ? (
+                      <>
+                        <button className="secondary-action mini-action" type="button" onClick={() => onSetOnboardingStepStatus(step.key, "done")}>Mark done</button>
+                        <button className="secondary-action mini-action" type="button" onClick={() => onSetOnboardingStepStatus(step.key, "skipped")}>Skip</button>
+                      </>
+                    ) : (
+                      <>
+                        <span className={`status ${stepStatus === "done" ? "ok" : "warn"}`}>{stepStatus === "done" ? "Done" : "Skipped"}</span>
+                        <button className="secondary-action mini-action" type="button" onClick={() => onSetOnboardingStepStatus(step.key, "pending")}>Reopen</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
       {(isAdmin || isManagerRole) && (deletionLog ?? []).length > 0 && (
         <section className="panel wide">
           <div className="panel-title-row">
@@ -22744,6 +22879,24 @@ function AdminPage({
         </section>
         )}
         </>
+      )}
+
+      {(isAdmin || isWorkspaceAdmin) && (
+        <section className="panel wide">
+          <PanelHeader title="Module Settings" label="Turn off a module your company doesn't use. It disappears from navigation and blocks access for everyone immediately -- its data is kept, and turning it back on restores everything exactly as it was." />
+          <div className="module-settings-list">
+            {DISABLEABLE_MODULE_KEYS.map((moduleKey) => (
+              <label key={moduleKey} className="module-settings-row">
+                <input
+                  type="checkbox"
+                  checked={!disabledModuleKeys.has(moduleKey)}
+                  onChange={(event) => onSetModuleEnabled(moduleKey, event.target.checked)}
+                />
+                <span>{TAB_LABELS[moduleKey]}</span>
+              </label>
+            ))}
+          </div>
+        </section>
       )}
 
       {(isAdmin || isManagerRole || isWorkspaceAdmin) && (
