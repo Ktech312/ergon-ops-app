@@ -592,16 +592,25 @@ unconditionally; a real global app_admin still works within their own real works
 read or write a synthetic other-workspace recipient's notification; an ordinary user can create a
 notification for a real teammate but not for a different workspace's recipient.
 
-## Phase 2 status: all four items traced and shipped, apply-confirmation in progress
+## Phase 2 status: complete -- all four migrations confirmed applied in production
 
 All four items from E's own queue (2A role assignment, 2B employee approval, 2C template sections +
-sales approval settings, 2D notifications) are now traced, resolved, and shipped as migrations
-214-217. Confirmed applied so far: **216** (proposal template sections, E confirmed directly, pushed as
-`a25d7b3`). **214, 215, and 217 are written, tested (79/79), and pushed to `main`** (safe to push ahead
-of confirmation since neither has any frontend dependency -- the old, more restrictive RLS/RPC behavior
-simply continues until each is actually run) **but not yet confirmed applied by E** -- do not treat
-their capabilities as live in production until confirmed. Moving to Phase 1 (the remaining K-Tech
-acceptance audit) and Phase 3 (closing out acceptance) next while these are pending.
+sales approval settings, 2D notifications) are traced, resolved, shipped as migrations 214-217, and
+**all four confirmed applied in production, 2026-09-26.** 216 was confirmed directly by E at the time;
+214/215/217's status was uncertain from chat alone ("I hope i did, i mentioned it to you"), so rather
+than trust memory on either side, a direct read-only check against the live database (`select exists
+(select 1 from pg_proc where proname = 'is_workspace_admin_of_user') ...` etc., checking for the
+specific new function/policy each migration creates) confirmed all three are genuinely live:
+`migration_214_applied = true`, `migration_215_applied = true`, `migration_217_applied = true`. Their
+three canonical test files were then sent to E to run directly against production for the same
+begin;/rollback; confidence every other migration this session got -- results pending.
+
+**Standing lesson, worth remembering:** "I hope I did" from either side is not confirmation -- a
+one-line existence check against the live schema resolved this in seconds and should be the default
+whenever migration-apply status is genuinely unclear, rather than re-asking or assuming.
+
+Moving to Phase 3 (closing out acceptance) next -- Phase 1's audit is already functionally complete
+(see the acceptance checklist's own table).
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
