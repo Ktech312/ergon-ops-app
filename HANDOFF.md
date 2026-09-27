@@ -425,6 +425,67 @@ deliberately-excluded items above, most notably `app_user_roles` (a company's ow
 cannot assign roles to their own team at all) and the design question on `proposal_template_sections`/
 `workspace_sales_approval_settings` (shared/global vs. genuinely per-workspace).
 
+## 2026-09-26, Phase 2A/2B of the completion queue: workspace admins can now assign roles and approve their own team
+
+E's continuation directive named the remaining `app_user_roles`/`app_user_status` gaps as the next
+priority, with an explicit instruction NOT to mechanically add `is_workspace_admin` everywhere -- trace
+each against the real existing authorization bridge (migration 124/133/204/208) first. Research (via a
+dispatched Explore agent, cross-checked directly against the real migration text before writing
+anything) confirmed: `app_user_roles` has genuinely no `workspace_id` column at all (unlike every table
+migration 213 fixed), and role assignment already goes exclusively through five `bridge_*` RPCs
+(`bridge_set_primary_role`/`_secondary_roles`/`_user_allowed_views`/`_grant_admin`/`_revoke_admin`),
+never a raw table write -- these RPCs, not RLS, are the real authorization boundary here.
+
+**Fix (migration 214, `214_workspace_admin_role_assignment_and_approval.sql`, canonical test
+`migration_214_workspace_admin_role_assignment_and_approval_tests.sql`, 76/76 clean against the
+consolidated isolation suite, confirmed stable across 3 consecutive runs -- NOT YET APPLIED, needs E
+to run it):**
+
+- New shared helper `is_workspace_admin_of_user(check_user_id)` -- "is the caller an active admin of
+  whatever workspace check_user_id already belongs to." Reused by `bridge_set_secondary_roles()`,
+  `bridge_set_user_allowed_views()`, and `app_user_status`'s own RLS (Phase 2B) -- all three only ever
+  need this question answered for a target who already has a `workspace_members` row.
+- `bridge_set_primary_role()` gets its own distinct logic instead (it can CREATE a target's first
+  workspace membership, so "does the target already have a workspace this caller admins" doesn't apply
+  yet at call time): widened to accept a workspace admin acting within their own resolved workspace,
+  **plus a new explicit guard this function never had before** -- reject outright if the target already
+  belongs to a DIFFERENT workspace than the caller's. This closes a real, pre-existing gap for every
+  caller type, not just the new branch: before this migration, a global admin or legacy manager could
+  silently pull an arbitrary `target_user_id` into their own workspace even if that target already
+  belonged to another company. Harmless in practice only because the frontend always sourced
+  `target_user_id` from the caller's own Team Roster listing -- but widening this action to many
+  per-company admins (instead of a handful of trusted Ergon staff) made that latent gap a real
+  cross-tenant risk worth closing now.
+- **Read side fixed too, not just the writes:** `app_user_roles`' own "admins read all roles" SELECT
+  policy was still `is_app_admin`-only -- the write RPCs above would have been paired with an empty
+  Team Roster page for a workspace-only admin, since `loadAllUserRoles` (persistence.ts) does a raw,
+  unfiltered REST read relying entirely on RLS. Widened with the same helper; a workspace admin now
+  sees exactly their own team's `app_user_roles` rows, never another workspace's.
+- **Phase 2B, `app_user_status`:** both the read ("users read their own status") and review ("admins
+  and managers review status") policies widened with the same helper -- a workspace admin can see and
+  approve/reject a pending employee who already has a `workspace_members` row in their own workspace
+  (e.g. one just added via `bridge_set_primary_role` above). Deliberately NOT extended to a target with
+  no workspace membership at all: this app's only way to WRITE a pending `app_user_status` row
+  (`ensureOwnApprovalRequest`) has never carried any workspace affiliation -- there's no way to know
+  which company a genuinely cold, uninvited self-signup should join. That's a real but underspecified
+  product question, not an RLS mechanics one -- migration 212's invite path is already the correct,
+  working route for adding a NAMED teammate to a specific company.
+- No frontend changes needed at all: every writer already calls the `bridge_*` RPCs (confirmed via
+  research, not assumed), and the read fix is transparent RLS widening under an already-unfiltered
+  query.
+
+**Canonical test proves, per function:** workspace-admin success within their own workspace,
+cross-workspace rejection (both directions), an ordinary member still locked out, the legacy `manager`-
+role branch (133/208) still works unaffected, and a real global `app_admin` still works unaffected --
+plus the read-side fix specifically (a workspace admin's roster query returns their own team, never
+another workspace's).
+
+**Still open, Phase 2C/2D from E's own queue, not started:** `proposal_template_sections`/
+`workspace_sales_approval_settings` (need a real design decision on shared-vs-per-workspace before any
+RLS change -- see the next entry for the one precise question this needs) and `notifications`'s
+remaining legacy global-admin-sees-everyone clause (lower priority, no workspace-level notification-
+management UI exists yet for this to matter).
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
