@@ -609,8 +609,24 @@ begin;/rollback; confidence every other migration this session got -- results pe
 one-line existence check against the live schema resolved this in seconds and should be the default
 whenever migration-apply status is genuinely unclear, rather than re-asking or assuming.
 
-Moving to Phase 3 (closing out acceptance) next -- Phase 1's audit is already functionally complete
-(see the acceptance checklist's own table).
+## Phase 3 status: closed
+
+The last open item on the acceptance checklist (#12 -- Ergon Test Workspace users cannot see K-Tech's
+records) was closed without needing a live second browser session: a real Ergon platform admin's own
+session, simulated via RLS, sees exactly zero of K-Tech's channels, projects, inventory, notification
+rules, or branding. The only two non-zero values (the workspace's own basic row, and a membership
+count) trace to `"platform admins read all memberships"`/`"members and platform admins read
+workspaces"` -- real, deliberate policies from migration 115 itself (the Ergon Platform console's own
+intentional company-oversight capability, already covered by requirement #10's suspend/reactivate), not
+a leak of operational data.
+
+**All 14 requirements on `PRODUCT_SECOND_COMPANY_ACCEPTANCE_CHECKLIST.md` are now code/test-verified;
+all but #2 (trivially true) and #10/#11 (deliberately not tested against the real, currently-running
+K-Tech workspace) are also production-verified.** Second-company onboarding is genuinely proven, not
+just shipped -- nine real bugs found and fixed along the way, none of them guessed at.
+
+Phases 4 (guided onboarding) and 5 (Marketing depth) remain not started -- substantial, separate bodies
+of work for a future session, per E's own queue.
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
