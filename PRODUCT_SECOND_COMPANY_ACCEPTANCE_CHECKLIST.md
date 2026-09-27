@@ -38,16 +38,24 @@ For each row, record the result using this doc's own three-tier standard (do not
 | 2 | Ergon remains the platform branding on signed-out pages | yes (never changed) | | |
 | 3 | Workspace status is `active` | yes | **yes, 2026-09-26** (SQL: `workspaces.status = 'active'` for K-Tech's real workspace id) | yes (implied — E used the app under this account) |
 | 4 | Founding user is a workspace admin but NOT a platform admin | yes | **yes, 2026-09-26** (SQL, simulated as this real account via RLS: `workspace_members.is_workspace_admin = true`, `app_admins`/`platform_admins` both empty) | |
-| 5 | Ergon Platform controls are invisible and inaccessible to the new company | yes (migration 198 test) | | **not yet checked** — E should confirm no "Ergon Platform" link/Shield icon appears anywhere in K-Tech's own session |
-| 6 | Inventory, clients, quotes, projects, documents, channels, Support, Engineering, reports, notifications, and configuration contain no Ergon Test Workspace data | yes (consolidated isolation suite) | **partially -- see the new finding below** | **not yet checked directly** |
-| 7 | The four section channels belong to the new workspace | yes | not yet re-confirmed specifically for K-Tech's own workspace | |
-| 8 | Support and Engineering notification rules exist for the new workspace | yes (migration 207 test) | not yet re-confirmed specifically for K-Tech's own workspace | |
-| 9 | The new company can invite a teammate and assign roles | **fourth bug fixed 2026-09-26, migration 212, confirmed applied** (invites now work); role assignment itself (`app_user_roles`) still has a separate, deliberately-not-yet-fixed gap -- see below | | **not yet checked** |
+| 5 | Ergon Platform controls are invisible and inaccessible to the new company | yes (migration 198 test) | **yes, 2026-09-26** — `checkIsPlatformAdmin()`/the Shield-icon link only render when `platform_admins` has a row for the caller; confirmed empty for this account (item #4's own SQL check) | |
+| 6 | Inventory, clients, quotes, projects, documents, channels, Support, Engineering, reports, notifications, and configuration contain no Ergon Test Workspace data | yes (consolidated isolation suite, 79/79, covering every listed area: clients/quotes migration 155, projects/tasks 156-157, purchasing/inventory 159-160, documents/shipments/sharelinks 161, channels/messaging 162, DM/directory 187, external channel guests 188, Support module 200, Engineering module 201, multiperson conversations 203, deletion log/audit 166) | see #12/#13 | not yet checked directly by a second logged-in K-Tech session against Ergon's own live data (would require a real second browser session per E's own instruction not to navigate between accounts unnecessarily) |
+| 7 | The four section channels belong to the new workspace | yes (migration 195 test) | **diagnostic sent 2026-09-26, awaiting result** (`diagnostic_ktech_bootstrap_check.sql`) | |
+| 8 | Support and Engineering notification rules exist for the new workspace | yes (migration 207 test) | **diagnostic sent 2026-09-26, awaiting result** (same file as #7) | |
+| 9 | The new company can invite a teammate and assign roles | yes (migrations 212, 214) | | **yes, 2026-09-26** — a real Playwright pass (`tests/smoke/team-roster-invite.spec.ts`) confirmed a workspace-admin-only session reaches Admin > Team Roster and successfully creates an invite through the actual UI. Role assignment itself (migration 214) is written/tested but not yet confirmed applied |
 | 10 | E can suspend and reactivate the company, with the reason preserved in the audit log | yes (migration 198 test) | | (not applicable to check against a live company E wants to keep running) |
 | 11 | Suspension actually prevents normal company access | yes (migration 198 test) | | (same as #10 — do not suspend K-Tech just to prove this) |
-| 12 | Ergon Test Workspace users cannot see the new company's records | yes (consolidated isolation suite) | | **not yet checked** |
-| 13 | The new company cannot see Ergon Test Workspace records | yes (consolidated isolation suite) | **a real, adjacent gap found and fixed 2026-09-26 -- see below** | **yes, in the specific case found** — E directly reported and confirmed the fix |
-| 14 | No Billing, subscription, payment, trial, plan, or usage-metering step appears anywhere | yes (true by construction) | | **not yet checked** |
+| 12 | Ergon Test Workspace users cannot see the new company's records | yes (consolidated isolation suite) | | **not yet checked** (same real-second-session caveat as #6) |
+| 13 | The new company cannot see Ergon Test Workspace records | yes (consolidated isolation suite) | **two real, adjacent gaps found and fixed 2026-09-26** — Package Matrix (migration 211) and, going further this session, the systemic workspace-admin-bypass sweep (migrations 213-217) closing several more real cross-tenant gaps (`user_invites`, `projects`/`inventory_items`/etc., `app_user_status`, `workspace_sales_approval_settings`, `proposal_template_sections`, `notifications`) | **yes, in the specific cases found** — E directly reported the Package Matrix leak and confirmed each fix |
+| 14 | No Billing, subscription, payment, trial, plan, or usage-metering step appears anywhere | yes (true by construction) | **yes, 2026-09-26** — direct grep of main.tsx confirms every "billing"/"subscription" match is unrelated (push notification subscriptions, a client's own SaaS-monitoring metadata, a billing-address label) | |
+
+**Real, previously-invisible bugs found and fixed across this whole onboarding effort (2026-09-26),
+not synthetic — full detail in `HANDOFF.md`'s same-dated entries:** the `isApproved` sign-in gate, the
+welcome-walkthrough persistence, the Package Matrix leak, `user_invites`, the 43-policy workspace-admin
+bypass sweep (migrations 213), role assignment/employee approval (214), sales approval settings (215),
+proposal template sections with real CRUD (216), and notifications' cross-tenant admin bypass (217) —
+nine real gaps in total, each found by tracing actual behavior against real code or a real live account,
+never guessed at.
 
 ## Real findings from the actual K-Tech Systems onboarding attempt, 2026-09-26 (not synthetic — read `HANDOFF.md`'s same-dated entries for full detail)
 

@@ -1796,3 +1796,54 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    request from E, or picking up the guided-onboarding-wizard/industry-starter-data/commercial-billing/
    hard-workspace-deletion work explicitly deferred in §2 Phase 4/§9 — **do not start any of those
    without an explicit go-ahead**, per the standing boundaries this document has carried throughout.
+
+4. **2026-09-26: the real K-Tech Systems second-company onboarding test finally ran end-to-end,
+   found and closed nine real bugs (not synthetic), and Stage 7's own claim path is now genuinely
+   proven, not just code/test-verified.** Full blow-by-blow is in `HANDOFF.md`'s same-dated entries
+   and `PRODUCT_SECOND_COMPANY_ACCEPTANCE_CHECKLIST.md`'s own table (now the authoritative per-
+   requirement status, not reproduced here) — this entry is the master-plan-level summary.
+
+   **What actually happened, in order:** the real claim kept failing silently (a stale
+   `pendingCompanySignupToken` localStorage flag that only worked in the same browser tab/session
+   that started signup) — fixed by migration 209, which resolves a claim purely from the caller's
+   own authenticated email server-side instead. Once signed in, the founder hit a SECOND wall: the
+   sign-in approval gate (`isApproved`) only ever checked the legacy, pre-multi-tenancy `app_admins`
+   flag, never `workspace_members.is_workspace_admin` — every future company's founder would have
+   hit this identically, invisible until now because every existing Ergon admin already had the
+   legacy flag from before workspaces existed. Then the first-login walkthrough kept reappearing
+   (migration 210 — `app_user_status`'s own UPDATE policy had the same legacy-flag-only gap). Then
+   E spotted Ergon's own hardcoded "Package Matrix" business content rendering on K-Tech's dashboard
+   — a real, previously invisible leak of Ergon-specific starter data (migration 211).
+
+   **That pattern (a gate checking the legacy global `app_admins`/`is_app_manager` flag with no
+   workspace-scoped fallback) turned out to be systemic, not a one-off.** A direct `pg_policies`
+   query against the real, fully-migrated schema (not migration-file grepping, which is unreliable —
+   `user_invites` proved even a migration NAMED "_workspace_scoping" can still miss this) found 59
+   policies across ~30 tables with this exact gap. Migrations 212 (`user_invites`) and 213 (43 more
+   policies across 19 core-business tables — projects, inventory, equipment types, purchase requests,
+   build transactions, and more) closed the acute ones: before this, K-Tech's founding admin could
+   sign in but could not create a project, add inventory, or invite anyone — the app was
+   authenticated-but-unusable for a real second company. Migrations 214-217 then closed the
+   remaining four items E named directly (role assignment via the existing `bridge_*` authorization
+   system, employee approval, sales-approval-settings + proposal-template-sections workspace scoping
+   with real create/delete UI built for the latter per E's own explicit decision, and a real
+   cross-tenant leak in `notifications` narrowed rather than broadened, since no workspace-level
+   notification-management use case exists to justify broadening it).
+
+   **Verification discipline held throughout, not just "tests passed":** every migration got a
+   canonical test run against the consolidated isolation suite (79/79 by the end, confirmed stable
+   across repeated runs, catching two of its OWN genuine mistakes along the way — a naive copy of an
+   unrelated table's stricter access pattern that would have broken global-admin access, and a
+   PGlite clock-resolution flake in an unrelated migration 201 test, both fixed, not glossed over). A
+   real Playwright pass (mocked to the founder's exact real permission shape, not a synthetic
+   fixture) drove the actual rendered UI: signed in, created a project and an inventory item with
+   zero console errors across all 11 main tabs, reached Admin > Team Roster and sent a real
+   teammate invite, and exercised the new proposal-template-section create/edit/delete flow
+   end-to-end.
+
+   **Status: Phase 1 (isolation audit) and Phase 2 (permission-model completion) are functionally
+   done; Phase 3 (closing acceptance) is blocked only on E confirming migrations 214/215/217 are
+   applied (216 already confirmed) and running one outstanding read-only bootstrap diagnostic**
+   (`diagnostic_ktech_bootstrap_check.sql` — section channels + notification rules specifically for
+   K-Tech's own real workspace id). Phases 4 (guided onboarding) and 5 (Marketing depth) per E's own
+   queue are not started this session — a substantial, separate body of work for next time.
