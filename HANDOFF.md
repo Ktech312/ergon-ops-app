@@ -480,11 +480,51 @@ role branch (133/208) still works unaffected, and a real global `app_admin` stil
 plus the read-side fix specifically (a workspace admin's roster query returns their own team, never
 another workspace's).
 
-**Still open, Phase 2C/2D from E's own queue, not started:** `proposal_template_sections`/
-`workspace_sales_approval_settings` (need a real design decision on shared-vs-per-workspace before any
-RLS change -- see the next entry for the one precise question this needs) and `notifications`'s
-remaining legacy global-admin-sees-everyone clause (lower priority, no workspace-level notification-
-management UI exists yet for this to matter).
+## 2026-09-26, Phase 2C: workspace_sales_approval_settings fixed; proposal_template_sections needs one real decision
+
+Investigated both tables named in Phase 2C directly against their real schema before assuming either
+needed a design decision.
+
+**`workspace_sales_approval_settings` did NOT need one -- fixed (migration 215,
+`215_workspace_sales_approval_settings_rls.sql`, canonical test
+`migration_215_workspace_sales_approval_settings_rls_tests.sql`, 77/77 clean against the consolidated
+isolation suite, confirmed stable across 2 consecutive runs -- NOT YET APPLIED, needs E to run it):**
+this table already has `workspace_id uuid primary key references workspaces(id)` (migration 147) -- it
+was ALREADY correctly designed as one row per workspace, it just never got its RLS updated to enforce
+that scoping. The SELECT policy was `using (true)` (every company could read every other company's
+discount-approval threshold -- a real, if low-severity, cross-tenant leak) and the write policy was
+`is_app_admin(auth.uid())` only, with no workspace concept at all. Fixed the same way as everything
+else this session, with one deliberate difference from migration 213's own pattern: global admin access
+stays UNCONDITIONAL (`is_app_admin(...) OR (active membership AND is_workspace_admin(...))`, not
+ANDed with membership the way migration 213's 19 tables are) -- that's this table's own original,
+pre-existing semantic (a global admin never needed to also be a workspace member to manage sales
+approval settings), and preserving it exactly is what the canonical test's Section (e) caught a real
+mistake on the first attempt (see the migration's own commit history). Also backfills a settings row
+for every active workspace missing one -- migration 147's own one-time seed only ever covered the one
+workspace that existed when it ran, before K-Tech existed, and no later migration seeds this table for
+a new company.
+
+**`proposal_template_sections` genuinely needs a product decision, not just an RLS fix -- flagged, not
+guessed at.** This table has NO `workspace_id` column at all (unlike every other table this session
+touched), its `section_key` is GLOBALLY unique, and its SELECT policy is `using (true)` -- every
+company can already read (and, with `is_app_admin`, effectively also share) the exact same rows. Making
+this properly per-workspace is straightforward on its own (add `workspace_id`, change the unique
+constraint to `(workspace_id, section_key)`, backfill Ergon's own rows using the same structural
+identification migration 211 already established, scope RLS the same way as everything else) --
+**except this table has no CREATE path in the UI at all.** `loadProposalTemplateSections`/
+`updateProposalTemplateSection` (persistence.ts) only ever READ and PATCH-by-id; there is no INSERT
+function anywhere in the frontend. The empty-state message already in the UI ("No template sections
+yet -- run migration 053") confirms this was designed as a one-time, migration-seeded set of Ergon's
+own legal/warranty boilerplate, never meant to be dynamically created per company. Workspace-scoping it
+with an empty default for new companies (matching this session's own "no silent pre-seeding of Ergon
+content" standard) would leave K-Tech (and every future company) permanently unable to ever add a
+single proposal template section without a brand-new migration each time -- a real regression, not a
+fix. Asked E directly which way to go rather than guessing (see the next message) -- continuing all
+other independent work in the meantime, not blocked on this.
+
+**Still open, Phase 2D from E's own queue, not started:** `notifications`'s remaining legacy global-
+admin-sees-everyone clause (lower priority, no workspace-level notification-management UI exists yet
+for this to matter).
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 

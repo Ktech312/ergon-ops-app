@@ -35,15 +35,13 @@ declare
     'sales_quote_proposal_approval_requests', 'standard_install_times', 'team_members',
     'workspace_share_link_settings'
   ];
-  -- app_user_status was deliberately excluded here (migration 213), then
-  -- correctly fixed by migration 214 (Phase 2B) via a workspace-scoped
-  -- helper rather than the same mechanical is_workspace_admin(workspace_id)
-  -- pattern -- removed from this list accordingly, not left stale.
+  -- app_user_status was fixed by migration 214 (Phase 2B) and
+  -- workspace_sales_approval_settings by migration 215 (Phase 2C) --
+  -- both correctly removed from this list, not left stale.
   excluded_tables text[] := array[
     'app_admins', 'app_user_roles', 'notifications',
     'proposal_template_sections', 'restore_run_sections', 'restore_runs',
-    'system_health_events', 'system_health_events_monthly_summary',
-    'workspace_sales_approval_settings'
+    'system_health_events', 'system_health_events_monthly_summary'
   ];
   t text;
   gap_count integer;
