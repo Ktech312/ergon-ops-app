@@ -1859,4 +1859,15 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    catalogs — which this session verified is already the live default (no migration seeds
    `product_catalog` at workspace creation), so this closed with zero new code.** **Phase 4 (guided
    onboarding) is now closed in full.** Full detail in `HANDOFF.md`'s three matching 2026-09-26 Phase 4
-   entries. Phase 5 (Marketing depth) is the only remaining phase in E's original queue, not started.
+   entries.
+
+   **Phase 5 (Marketing depth) has begun, same day.** An Explore agent reconciled Marketing against
+   `PRODUCT_MARKETING_SALES_DESIGN.md` (design-only, not implemented) and `PRODUCT_PLAN.md`: Marketing
+   is a real, working project-photo gallery, not a stub, with **no dedicated tables and no
+   workspace-isolation or demo-data-leak bug found** — clean on the exact pattern this whole session
+   hunted for elsewhere. One genuine decision-free gap was found and fixed: Marketing's own
+   section-channel Tasks tab silently never rendered because `"marketing"` had no `TaskSection` value
+   — a pure 3-line config gap (`persistence.ts`/`main.tsx`), zero schema dependency, committed and
+   pushed (`70309bd`) with new Playwright coverage. The remaining Marketing work (the lead/campaign
+   schema in `PRODUCT_MARKETING_SALES_DESIGN.md`) needs its own permissions decision from E before it
+   can be built — not guessed at. Full detail in `HANDOFF.md`'s matching 2026-09-26 Phase 5 entry.
