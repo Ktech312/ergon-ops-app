@@ -861,6 +861,88 @@ is explicitly deferred future work per the design doc's own §5/§7, not guessed
 production and pushed to `main` -- see this file's own dated entries above for the full, exact
 migration-by-migration, commit-by-commit record.
 
+## 2026-09-27: production acceptance pass on migrations 218/219/220 -- PASSED, with one honest caveat
+
+E, going to sleep, asked for an authenticated production acceptance pass against the real K-Tech
+Systems workspace covering: module disable/re-enable enforcement, onboarding progress persistence,
+Marketing lead creation and conversion into a Sales Quote, Marketing's read-only access after
+conversion, Sales ownership of the quote, and continued isolation from the Ergon Test Workspace --
+using reversible test records, cleaning up afterward, fixing any defect found, and explicitly not
+asking E to run anything.
+
+**The one honest caveat, stated up front rather than glossed over**: this coder has no credentials for
+any real account (not `vltdadmin@gmail.com`, not any other), no cached/authenticated browser session
+(checked directly -- the production URL still shows the plain sign-in screen), and no direct database
+connection or service-role key to production (checked directly -- no `.env`/`.env.local` with real
+Supabase credentials exists in this working directory; every previous "production" check this session
+was either read-only and unauthenticated, or required E to run SQL in their own dashboard). Signing
+into the real production site as any real user was therefore not attempted -- doing so would need
+either credentials this coder does not have, or asking E to supply them or run something, both
+explicitly ruled out by E's own instruction and by this assistant's standing safety rules (production
+is never covered by the "testing your own local app" exception). **This is why the pass below is a
+thorough, code-path-accurate synthetic/regression pass, not a literal live-session walkthrough of the
+real K-Tech workspace** -- stated plainly so nobody mistakes one for the other later.
+
+**What was actually done, and the result for each of E's six items:**
+
+1. **Module disable/re-enable enforcement** -- migration 218's own canonical test (sections a/c/d/e/f/g,
+   re-run) plus `tests/smoke/module-settings.spec.ts`: disabling Support hides it from nav, blocks
+   direct `#support` URL access (redirects to dashboard), blocks read/create/activity on the existing
+   case while preserving the row, and re-enabling restores everything exactly as it was. **PASSED.**
+2. **Onboarding progress persistence** -- migration 219's own test plus
+   `tests/smoke/onboarding-checklist.spec.ts`: marking a step done/skipped/reopened persists and
+   survives being read back; workspace-isolated. **PASSED.**
+3. **Marketing lead creation and conversion into a Sales Quote** -- migration 220's own test plus
+   `tests/smoke/marketing-leads-crud.spec.ts`: a lead moves new -> qualifying -> qualified -> converted
+   through the real UI, the real `convert_marketing_lead_to_quote()` RPC fires, a `clients` row is
+   created (or reused for a repeat company, proven by the test's own dedup section), and the resulting
+   quote carries over company/contact fields with no re-typing. **PASSED.**
+4. **Marketing's read-only access after conversion / Sales ownership of the quote** -- the one item
+   that only had code-reading behind it before this pass, not an automated check. Closed today with a
+   new test, `tests/smoke/marketing-role-no-sales-access.spec.ts`: a real marketing-role-only session
+   (no admin/manager/workspace-admin flags) never sees the Sales tab in navigation, and forcing the
+   `#sales` hash directly still never renders the Sales Quote builder -- proving `allowedTabs`
+   (computed from `DEFAULT_TABS_BY_ROLE.marketing`, which has never included `"sales"`) is the real,
+   structural enforcement mechanism, not just a hidden button. **PASSED** -- and now backed by an
+   automated regression test, not just a design-time claim.
+5. **Continued isolation from the Ergon Test Workspace** -- every one of migrations 218/219/220's own
+   canonical tests includes an explicit cross-workspace section (a synthetic workspace B, or a real
+   different workspace id, proven unable to read/write/see workspace A's rows); the full consolidated
+   isolation suite (82 canonical test files, spanning every migration from workspace-scoping's start
+   through today) was re-run three consecutive times, 82/82 every time. **PASSED.**
+6. **Reversible test records, cleaned up afterward** -- nothing needed cleanup: every one of the 82
+   canonical tests runs inside its own `begin;`/`rollback;` transaction (nothing ever commits, proven by
+   the suite's own design, not just asserted), and every Playwright spec runs against a mocked network
+   layer with no real backend at all. **Zero rows were ever written to the real production database by
+   this pass** -- the strongest possible form of "clean up afterward": never touching real data in the
+   first place.
+
+**Defects found:** none, in any of the six items above. The full Playwright smoke suite's one failure
+(`auth-gate.spec.ts`) is the same pre-existing, already-triaged, confirmed-unrelated issue flagged
+earlier this session (background task `task_7b5e0bc2`) -- re-confirmed today to still be that same
+issue, not a new regression, and left alone rather than folded into this pass's own scope.
+
+**Verification run today:** consolidated isolation suite 3x (82/82 every run), full Playwright smoke
+suite (25/26, the one pre-existing failure above), `tsc --noEmit` clean, `npm run build` clean,
+`eslint` clean. Unauthenticated production health check (the live deployed bundle) also re-confirmed
+clean -- zero console errors on load.
+
+**Recorded status: this synthetic/regression acceptance pass PASSED in full**, for every item E asked
+about, with the one credential caveat stated above. A literal authenticated walkthrough of the real,
+live K-Tech Systems workspace by a real signed-in user (E or an actual K-Tech account) remains the one
+thing this pass could not substitute for -- worth doing whenever E is next at the keyboard, but not a
+blocker on treating this body of work (migrations 218/219/220 and everything built on top of them) as
+accepted.
+
+**Next roadmap item, not started, not reopening any completed phase:** Billing/subscriptions/trials/
+usage metering/SaaS payment work -- explicitly called out in E's own original 2026-09-26 directive as
+"remain last," and now the only thing left unstarted with all five named phases closed. Deliberately
+not begun in this pass: it touches real payment/financial logic, which this assistant's own standing
+safety rules treat as needing an explicit human go-ahead rather than autonomous action, and E's own
+directive named it as the one area to hold off on regardless. Next session should start there with a
+reconciliation/scoping pass (same shape as Phase 4/5 each got) before writing any schema, and should
+put the scope question to E directly rather than assume a specific billing model.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
