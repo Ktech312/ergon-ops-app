@@ -1,6 +1,18 @@
 # Ergon Ops — Handoff Doc
 
-## 2026-09-25/26: K-Tech Systems onboarding test paused after failing to complete end-to-end; claim flow rebuilt (migration 209, NOT yet applied)
+**⚠️ CURRENT STATE (corrected 2026-09-26 -- the heading below is now stale, kept only for its
+detailed history): the K-Tech Systems onboarding test is RESOLVED, not paused.** Migrations 209-213
+are all confirmed applied and pushed (`268de79` is the current `main`/`origin/main`, clean working
+tree). `vltdadmin@gmail.com` signs in via Google, reaches K-Tech Systems as its founding workspace
+admin, refresh and sign-out/sign-in both correctly return to K-Tech, the welcome walkthrough stays
+dismissed, K-Tech's data is clear of Ergon's hardcoded Package Matrix, and a real Playwright pass
+(this session, mocked to the founder's exact real permission shape) confirmed the founder can create a
+project and an inventory item through the actual UI with zero console errors across all 11 main tabs.
+See this file's later, same-dated entries (search "confirmed applied by E") for the exact commit-by-
+commit history -- the heading immediately below was written mid-incident and is superseded by
+everything after it in this same file.
+
+## 2026-09-25/26: K-Tech Systems onboarding test paused after failing to complete end-to-end; claim flow rebuilt (migration 209, NOT yet applied) -- SUPERSEDED, see the banner above
 
 The real K-Tech Systems onboarding test (see the earlier 2026-09-26 entries below for the two live
 bugs found and fixed mid-test, `08f62da`/`056aa3e`) never actually completed -- `vltdadmin@gmail.com`
