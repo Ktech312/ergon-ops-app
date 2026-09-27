@@ -982,6 +982,48 @@ directive named it as the one area to hold off on regardless. Next session shoul
 reconciliation/scoping pass (same shape as Phase 4/5 each got) before writing any schema, and should
 put the scope question to E directly rather than assume a specific billing model.
 
+## 2026-09-27, continued: the live K-Tech authenticated walkthrough could not be completed -- a real, checked blocker, not skipped quietly
+
+E, resuming after sleep, asked for the one remaining acceptance gap to be closed: a real authenticated
+production walkthrough of K-Tech Systems (Module Settings, Onboarding Checklist, Marketing Tasks,
+Marketing Leads, lead-to-quote conversion, Sales ownership, workspace isolation), using "the existing
+authenticated K-Tech browser session," with E signing in once only if it had expired.
+
+**What was actually found, checked directly rather than assumed:** using Claude in Chrome (E's own real
+Chrome, not the isolated built-in browser pane used for every other production check this session), the
+production app was already signed in -- but as **`ehren@ensight-technologies.com`, a platform admin on
+the real Ergon Test Workspace** (E's own company: real inventory value, real projects like Exxon Mobil/
+Straub Medical HI, real teammates), not as `vltdadmin@gmail.com`/K-Tech Systems at all. Being a platform
+admin gives visibility into the company list via the Ergon Platform console, but does not create a
+`workspace_members` row in K-Tech -- there is no impersonation/"become this workspace" feature (never
+built, confirmed by this session's own earlier design work), so this account cannot act as a K-Tech
+member regardless.
+
+Signed out and opened "Sign in with Google" to check whether `vltdadmin@gmail.com` was already an
+authenticated Google identity on this machine (selecting an already-signed-in identity, not entering any
+password) -- **the account chooser showed only two of E's own accounts** (`eck1679@gmail.com` and
+`ehren@ensight-technologies.com`), no `vltdadmin@gmail.com` at all. **There is no existing authenticated
+K-Tech session anywhere on this machine, in either browser.** Restored E's own session
+(`ehren@ensight-technologies.com`) before moving on, out of courtesy, rather than leaving their real
+browser signed out.
+
+**This is a genuine blocker, not a skipped step**: completing it needs E to actually sign in as
+`vltdadmin@gmail.com` (real Google credentials this assistant does not have and will not ask for), which
+did not happen automatically the way E's own instruction assumed it might. Per this assistant's standing
+safety rules, entering someone else's real credentials, or asking for them, is not something to do even
+when explicitly requested -- the instruction to "sign in once" still requires E to be the one who does
+that one step. **Recording this honestly rather than declaring the live walkthrough done**: the synthetic/
+regression acceptance pass from earlier on 2026-09-27 (migrations 218/219/220, 82/82, 30/30 Playwright
+across desktop and mobile, zero defects) stands as-is and is not being re-litigated per E's own "do not
+reopen" instruction. The literal live-K-Tech walkthrough remains the one item genuinely still open,
+blocked purely on E signing into `vltdadmin@gmail.com` once, in either browser, whenever next available
+-- at that point the actual click-through (not a design question) can be completed same-session by
+whoever is signed in in the future, or by this assistant if handed an already-authenticated session.
+
+**Proceeding to the rest of E's instruction in the meantime** (Billing/SaaS reconciliation and decision
+document) exactly as directed -- "continue any independent design... work while awaiting answers,"
+which does not depend on this blocker at all.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
