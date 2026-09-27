@@ -4246,7 +4246,7 @@ export async function reviewUserApproval(
 // splits it into sales_catalog / sales_quotes (and reassigns any existing
 // "sales" rows to sales_catalog) so each area's task panel only shows what's
 // actually relevant to it.
-export type TaskSection = "warehouse" | "purchasing" | "inventory" | "projects" | "sales_catalog" | "sales_quotes" | "engineering" | "general";
+export type TaskSection = "warehouse" | "purchasing" | "inventory" | "projects" | "sales_catalog" | "sales_quotes" | "engineering" | "marketing" | "general";
 export type TaskStatus = "to_do" | "in_progress" | "ready_for_review" | "done" | "blocked";
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
 

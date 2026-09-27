@@ -803,6 +803,7 @@ const TASK_SECTION_OPTIONS: Array<{ value: TaskSection; label: string }> = [
   { value: "sales_catalog", label: "Sales - Product Catalog" },
   { value: "sales_quotes", label: "Sales - Site Builder" },
   { value: "engineering", label: "Engineering" },
+  { value: "marketing", label: "Marketing" },
   { value: "general", label: "General / Internal" },
 ];
 
@@ -18218,13 +18219,17 @@ function MessageThread({
 // (persistence.ts TaskSection) -- they only happen to share the words
 // "inventory" and "projects". "inventory" is really the combined
 // Inventory & Purchasing & Vendors tab group, so its channel covers both
-// task sections; "sales" splits into sales_catalog/sales_quotes;
-// "marketing" has no TaskSection at all yet (no page creates one) so it's
-// intentionally absent from this map -- see channelHasTaskSupport below.
+// task sections; "sales" splits into sales_catalog/sales_quotes. Phase 5
+// (Marketing depth): "marketing" now has its own TaskSection too -- its
+// per-section Discussion channel already received onCreateTask/
+// onUpdateTask/onDeleteTask identically to every other section; the
+// missing piece was purely this map entry plus a TaskSection value for
+// tasks created from within it to actually use.
 const SECTION_CHANNEL_TASK_SECTIONS: Partial<Record<string, TaskSection[]>> = {
   inventory: ["inventory", "purchasing"],
   projects: ["projects"],
   sales: ["sales_catalog", "sales_quotes"],
+  marketing: ["marketing"],
 };
 
 function channelHasTaskSupport(channel: Channel): boolean {

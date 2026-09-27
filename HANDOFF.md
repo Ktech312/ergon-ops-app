@@ -739,6 +739,45 @@ default already matches the decision, not by building anything new.**
 industry-catalog question with no new surface area. Phase 5 (Marketing depth) is the only remaining
 phase in E's original queue, not started.
 
+## 2026-09-26, Phase 5 begins: reconciliation audit + first decision-free fix (Marketing's Tasks tab)
+
+Per Phase 5's own instruction ("reconcile existing behavior against its plan, implement highest-value
+decision-free gaps... do not stop after producing another design document if implementation is
+already sufficiently specified"), an Explore agent reconciled the Marketing tab against
+`PRODUCT_MARKETING_SALES_DESIGN.md` (a full lead/campaign design, explicitly "DESIGN ONLY, NOT
+IMPLEMENTED") and `PRODUCT_PLAN.md`'s own Marketing section.
+
+**Finding: Marketing is real, not a stub, but narrow -- and it's clean on the exact bug pattern this
+whole session has been hunting for.** It's a project-photo gallery (`main.tsx`'s `Marketing`
+component) tagged by real `ProjectLocation` fields (FLI/LPR/Cameras/etc.), not campaigns/leads/
+attribution. It has **no dedicated tables at all** (reads `project_locations`/`project_location_images`,
+both already correctly workspace-scoped and RLS-contained via migration 157's established pattern) --
+so there is no separate RLS surface to have gotten wrong, and no hardcoded Ergon-specific demo content
+was found (the empty state is real: "No project photos match yet"). The lead/campaign schema the
+design doc proposes needs its own permissions and qualification-methodology decisions the doc itself
+leaves open -- correctly out of scope for a "decision-free gaps" pass.
+
+**One genuine decision-free gap found and closed the same session:** Marketing's own per-section
+Discussion channel already received `onCreateTask`/`onUpdateTask`/`onDeleteTask` props identically to
+every other section's channel (Projects/Inventory/Sales) -- but `"marketing"` had no `TaskSection`
+value at all and no entry in `SECTION_CHANNEL_TASK_SECTIONS`, so `channelHasTaskSupport()` always
+returned false and its Tasks tab silently never rendered, exactly matching a code comment that already
+flagged this as the one deliberate exception. Fixed: added `"marketing"` to the `TaskSection` union
+(`persistence.ts`), added it to `TASK_SECTION_OPTIONS` (`main.tsx`) so it shows correctly everywhere a
+task's section is labeled/filtered, and added `marketing: ["marketing"]` to
+`SECTION_CHANNEL_TASK_SECTIONS`. Zero other main.tsx changes needed -- `ChannelDiscussion` is fully
+generic, so this was a pure 3-line config gap, not new feature code.
+
+New Playwright coverage: `tests/smoke/marketing-tasks-tab.spec.ts` -- with a real marketing section
+channel present, the Discussion view's Tasks tab now renders and opens with zero console errors. Full
+smoke suite: 23/24 passed, the one failure still the same pre-existing, confirmed-unrelated
+`auth-gate.spec.ts` issue. `tsc --noEmit`, `npm run build`, and `eslint` all clean. Zero schema
+dependency, so committed and pushed immediately rather than held for a migration confirmation.
+
+Next for Phase 5: the lead/campaign schema in `PRODUCT_MARKETING_SALES_DESIGN.md` needs its own
+permissions decision (§7) before any of it can be built -- to be put to E directly, same as the
+industry-catalog question above, rather than guessed at.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
