@@ -560,9 +560,48 @@ run it):**
 - Canonical test also proves the actual "no auto-copy" requirement directly: a brand-new synthetic
   workspace (K-Tech's own real shape) starts with exactly zero `proposal_template_sections` rows.
 
-**Still open, Phase 2D from E's own queue, not started:** `notifications`'s remaining legacy global-
-admin-sees-everyone clause (lower priority, no workspace-level notification-management UI exists yet
-for this to matter).
+## 2026-09-26, Phase 2D: notifications -- narrowed, not broadened, closing a real cross-tenant leak
+
+E's own instruction was conditional: "Only broaden workspace-admin access if the product actually
+exposes a workspace-level notification-management use case." No such use case exists -- notifications
+are personal, per-user, like Slack/Teams; there is no "view my company's whole notification inbox"
+admin screen anywhere in this app. So this migration does NOT broaden anything for workspace admins.
+
+What tracing it down DID surface: `notifications` has no `workspace_id` column at all (keyed only by
+`recipient_email`), and its existing `is_app_admin(auth.uid())` bypass was GLOBAL -- any Ergon employee
+holding the legacy `app_admins` flag could read (and mark read/unread) every OTHER company's employees'
+personal notifications, and the INSERT policy (`with check (true)`) let any authenticated user create a
+notification targeting ANY recipient at all, regardless of company. Both are real cross-tenant
+isolation gaps directly relevant to the standing acceptance requirement "Ergon Test Workspace users
+cannot see the new company's records" (which explicitly names notifications) -- worth fixing on their
+own merits, separate from the workspace-admin-widening question.
+
+**Fix (migration 217, `217_notifications_workspace_isolation.sql`, canonical test
+`migration_217_notifications_workspace_isolation_tests.sql`, 79/79 clean against the consolidated
+isolation suite, confirmed stable across 2 consecutive runs -- NOT YET APPLIED, needs E to run it):** a
+new helper `is_same_workspace_as_email(check_email)` -- "does this email belong to a real user who
+shares an ACTIVE workspace with me?" Narrows the existing `is_app_admin` bypass on read/update to
+same-workspace-only, and gates insert the same way (an ordinary user creating a notification for a
+teammate -- always same-company in real usage). Backend-generated notifications (`api/*.js` routes
+using the service role, e.g. migration 199's platform-admin-on-signup notification) are entirely
+unaffected -- service role bypasses RLS, this only tightens the `authenticated` role's own policies. No
+frontend changes needed -- purely a transparent RLS tightening.
+
+**Canonical test proves both directions:** a user's own notifications stay fully accessible
+unconditionally; a real global app_admin still works within their own real workspace but can no longer
+read or write a synthetic other-workspace recipient's notification; an ordinary user can create a
+notification for a real teammate but not for a different workspace's recipient.
+
+## Phase 2 status: all four items traced and shipped, apply-confirmation in progress
+
+All four items from E's own queue (2A role assignment, 2B employee approval, 2C template sections +
+sales approval settings, 2D notifications) are now traced, resolved, and shipped as migrations
+214-217. Confirmed applied so far: **216** (proposal template sections, E confirmed directly, pushed as
+`a25d7b3`). **214, 215, and 217 are written, tested (79/79), and pushed to `main`** (safe to push ahead
+of confirmation since neither has any frontend dependency -- the old, more restrictive RLS/RPC behavior
+simply continues until each is actually run) **but not yet confirmed applied by E** -- do not treat
+their capabilities as live in production until confirmed. Moving to Phase 1 (the remaining K-Tech
+acceptance audit) and Phase 3 (closing out acceptance) next while these are pending.
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
