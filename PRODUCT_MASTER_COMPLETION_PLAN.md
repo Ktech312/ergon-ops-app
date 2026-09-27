@@ -1868,6 +1868,15 @@ else in this document, `HANDOFF.md`, or `CONTINUOUS_CODER_HANDOFF.md` written be
    hunted for elsewhere. One genuine decision-free gap was found and fixed: Marketing's own
    section-channel Tasks tab silently never rendered because `"marketing"` had no `TaskSection` value
    — a pure 3-line config gap (`persistence.ts`/`main.tsx`), zero schema dependency, committed and
-   pushed (`70309bd`) with new Playwright coverage. The remaining Marketing work (the lead/campaign
-   schema in `PRODUCT_MARKETING_SALES_DESIGN.md`) needs its own permissions decision from E before it
-   can be built — not guessed at. Full detail in `HANDOFF.md`'s matching 2026-09-26 Phase 5 entry.
+   pushed (`70309bd`) with new Playwright coverage.
+
+   **The lead/campaign schema (`PRODUCT_MARKETING_SALES_DESIGN.md`) is now also built and shipped.**
+   E's own permissions answer (Sales owns the quote post-conversion; Marketing keeps read-only history;
+   corrections logged manually since `sales_quotes` has no audit trail for anyone today) unblocked
+   migration 220 (`marketing_leads`/`marketing_lead_activity`/`convert_marketing_lead_to_quote()`),
+   82/82 clean against the consolidated isolation suite, confirmed applied and pushed as `6028cc0`,
+   with a new "Leads" tab in the Marketing page and passing Playwright coverage. Also fixed along the
+   way: a real, pre-existing latent bug in `create_client_channel()` (migration 102, unqualified table
+   reference, invisible for 118 migrations until this one), and a spoofable `actor_email` gap caught
+   and closed before the migration was even sent for confirmation. Full detail in `HANDOFF.md`'s two
+   matching 2026-09-26 Phase 5 entries.

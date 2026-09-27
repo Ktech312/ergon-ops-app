@@ -778,7 +778,7 @@ Next for Phase 5: the lead/campaign schema in `PRODUCT_MARKETING_SALES_DESIGN.md
 permissions decision (§7) before any of it can be built -- to be put to E directly, same as the
 industry-catalog question above, rather than guessed at.
 
-## 2026-09-26, Phase 5 continued: lead capture -> convert to Sales Quote (migration 220, sent for confirmation)
+## 2026-09-26, Phase 5 continued: lead capture -> convert to Sales Quote (migration 220, confirmed applied, pushed as `6028cc0`)
 
 E's answer to §7's permissions question, in full: "After conversion, Sales owns the quote. Marketing
 may retain read-only access for attribution, reporting, and conversion history, but cannot edit the
@@ -839,8 +839,7 @@ RPC fires with zero console errors. Full smoke suite: 24/25 passed, the one fail
 pre-existing, confirmed-unrelated `auth-gate.spec.ts` issue. `tsc --noEmit`, `npm run build`, and
 `eslint` all clean.
 
-**Sent to E for confirmation (migration 220) -- not yet committed**, since the frontend now depends on
-it (same discipline as migrations 218/219 earlier this session).
+**Confirmed applied by E and pushed as `6028cc0`.**
 
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
