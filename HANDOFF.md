@@ -106,10 +106,23 @@ a code bug -- flagging rather than guessing the missing digits into a real custo
 4. Billing commercial values (§8 of `PRODUCT_BILLING_SAAS_DECISIONS.md`) -- explicitly deferred
    indefinitely per this entry's own opening line, listed here only for completeness, not to re-raise it.
 
-**Next automatic task:** continue the usability pass into the app surfaces not explicitly named in
-E's 10-item list but still real and unreviewed this round -- Reports, SaaS Calendar, Library, Vendors
--- same checklist, same fix-directly-and-deploy discipline, same consolidated-questions-not-one-at-a-
-time approach for anything requiring a business decision.
+**Addendum, same pass: Reports/SaaS Calendar/Library/Vendors also checked, item 3's fix live-verified.**
+- Clicked "Held purchase orders" on the real Dashboard post-deploy: landed on Reports > Procurement
+  with the search pre-filled and every panel (Project Spend/Vendor Spend/Category Mix/Open Requests)
+  correctly narrowed to just that one held order (Straub Medical HI / NeweggBusiness $1,120.60) --
+  fix 3 above confirmed working end-to-end in production, not just locally.
+- SaaS Calendar and Library: both clean, no defects found (Library's "Guides coming soon" everywhere
+  is an intentional placeholder, not a bug).
+- **Vendors has one junk row**: a vendor literally named "fdfdg" (Active status, every other field
+  blank) -- obvious leftover test debris from past manual testing, not created this pass. Left alone
+  rather than deleted blind, since nothing here confirms whether any purchase order references it;
+  low priority, safe for E to delete via the Vendors table whenever convenient, or ask and it'll be
+  checked for references first.
+
+**Next automatic task:** none queued -- this round's checklist (Dashboard, Sales, Projects,
+Inventory & Purchasing, Tasks, Messages, Support, Engineering, Marketing, Admin, plus Reports/SaaS
+Calendar/Library/Vendors) is now fully covered. Next session should either act on the 4 consolidated
+open items above once E responds, or pick a fresh continuous-work target if E gives one.
 
 ---
 
