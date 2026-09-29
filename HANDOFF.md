@@ -1,5 +1,118 @@
 # Ergon Ops — Handoff Doc
 
+## 2026-09-29: Billing deferred indefinitely; production usability pass across all 10 modules -- 6 real defects found and fixed, deployed, live-verified (`6697cb7`)
+
+**Billing/SaaS status, per E's explicit instruction: deferred indefinitely, not abandoned.** Do not
+request prices, configure Stripe, build checkout, add a Billing nav item/panel, or continue
+subscription work until E says otherwise. Migration 221's foundation (previous entry) stays exactly
+as shipped and dormant: `checkout_enabled=false`, every current workspace comped, Stripe Price IDs
+null, no Stripe env vars required, nothing Billing-related visible to any user. Confirmed nothing in
+this pass touched that surface.
+
+**Scope: a structured usability pass against the real, authenticated Ergon production session**
+(eck1679@gmail.com), one module at a time -- Dashboard, Sales (Product Catalog + Site Builder),
+Projects, Inventory & Purchasing, Tasks, Messages, Support, Engineering, Marketing (incl. Leads),
+Admin/team management -- checking navigation clarity, primary-action obviousness, form density,
+save/error states, empty states, table filtering, desktop/mobile layout, labels/focus, permission
+gating, and destructive-action safety, per E's own checklist. Also spot-checked the logged-out login
+page and a narrow-viewport (375px) pass on Dashboard/Tasks against a local dev build (production
+data isn't reachable from an unauthenticated/emulated session, so layout-only checks used a local
+build with empty/placeholder data -- structurally identical chrome, just no real numbers).
+
+**Six real defects found and fixed, all in `6697cb7`, `npx tsc --noEmit` clean, full vitest suite
+658/658 green, no migration needed (pure frontend):**
+
+1. **Top nav overflows on ordinary desktop widths, not just mobile.** 11 top-level nav items need
+   ~1463px but the nav container is often under 1000px on a real laptop window; the only affordance
+   was a bare native `overflow-x: auto` scrollbar (easy to miss entirely -- Engineering and Messages
+   were the items most often pushed out of view). Added `NavScroller` (`src/main.tsx`, new component
+   next to `NavButton`) -- appear-only-when-scrollable chevron buttons, `.nav-scroller`/`.nav-scroll-btn`
+   in `styles.css`. Verified at 1024px against a local dev build: right chevron appears, click scrolls
+   smoothly, left chevron then appears too.
+2. **Inventory > Parts filter is a real trap.** `usePersistedJson("inventory-filters", ...)` persists
+   the filter row across sessions/days with zero visible "N filters active" indicator anywhere in the
+   app (confirmed it's the only page using a persisted filter). Found live: my own browser had "Demo"
+   left in the part-name filter from earlier verification work, making a real 33-SKU inventory look
+   like exactly 1 item, with "Showing 1 of 1 matching items (all loaded)" reading as if that were the
+   whole inventory. Added an `.active-filters-banner` ("Filters are narrowing this list." + Clear
+   filters) that only renders when a filter differs from default.
+3. **Dashboard "Needs Attention" cards didn't do what their own copy promised.** Label says "click any
+   item to go there"; every card's `onClick` was a bare `onNavigateToView(tab)`, landing on the top of
+   Purchasing/Inventory/Projects/Tasks with no indication of which of e.g. 34 open requests was the
+   flagged one. Fixed by reusing the exact deep-link handlers global search already has
+   (`handleSelectSearchOrder`/`Part`/`Task`/`Project`, which set `reportsSearchFocus`/
+   `inventorySearchFocus`/`taskFocus` and navigate straight to project slugs) instead of building a
+   second, parallel mechanism -- `heldOrders`/`lowStock`/`overdueTasks`/`urgentTasks`/`overdueProjects`
+   now jump to the specific record; falls back to the old tab-only nav if the record's gone missing
+   between load and click. `unreadMessages` intentionally left as a tab-level jump (no single record to
+   land on).
+4. **Support > New Case's Project dropdown can be genuinely empty** (real current state: zero projects
+   have been marked Closed yet, so zero rows exist on the Client Ledger, which is Support's own
+   required source) **with no explanation, just a disabled Create button.** Added an inline hint under
+   the dropdown for that state. The disabled-button behavior itself was already correct (`!projectId`
+   in the guard) -- this was a missing-explanation gap, not a broken submit.
+5. **Admin > per-user directory's Approval column read as a bare, alarming "pending"** for admin
+   accounts (including the one currently signed in, actively using the whole app) whose real access
+   never depended on that field -- `isWorkspaceAdmin || approved` at the actual gate (`main.tsx:8172`)
+   means an admin's `approval_status` row can simply never get set without it mattering. Added
+   "(admin -- approval not required)" next to the raw value when `isUserAdmin` is true and status isn't
+   "approved".
+6. **Admin > System Health -- Events had 4 alerts sitting "active"/unacknowledged since 9/23-9/25**
+   (`company_signup_notification` / `email_send_failed` x3, `platform_admin_email_lookup_failed` x1).
+   Checked this file first before touching anything: this is the already-documented, already-decided
+   Gmail-SMTP/Resend-not-configured gap (search "E declined to set up Gmail SMTP" above) -- the
+   graceful-degradation path is working exactly as designed, not a fresh bug. Acknowledged all 4 via
+   the existing admin control so the panel reflects real triage state instead of looking like 4 ignored
+   live incidents to the next person who opens it.
+
+**Also investigated and explicitly ruled out (real findings, verified false, not worth "fixing"):**
+- Nav buttons appeared to have no accessible name via the `read_page` tool's own accessibility-tree
+  extraction -- a direct `element.textContent` check confirmed real names ARE present; the tool just
+  doesn't compute name-from-text-content the way an actual screen reader does. Same false lead hit
+  again on the login page's Email/Password fields (properly wrapped in `<label>`, confirmed via
+  `label.textContent`) -- worth remembering next pass: verify this class of finding with a raw DOM
+  check before reporting it, the tool's own tree is not authoritative for accessible names.
+  Do NOT reproduce this specific false lead again without re-verifying.
+- Sales "Avg Deal Size $0" / "Est. Profit (YTD) $0" despite 1 closed-won quote at 100% win rate --
+  the calc (`main.tsx` ~23383-23418) is correct; that one quote genuinely has no priced BOM lines.
+  Already-documented known limitation, not a fresh bug.
+- Two identically-labeled buttons per project-list row, per task card, etc. -- confirmed as the
+  established desktop-table-row + `.mobile-card`/`.mobile-card-list` responsive duplication pattern
+  used throughout this codebase, not an accessibility/focus-order bug.
+
+**One data-quality issue found, deliberately NOT touched -- needs E, not a guess:** Sales > Product
+Catalog has ~15-20 product names with garbled characters (mojibake), e.g. "65â Deluxe Wall-Mounted
+Display" (catalog rows include CAT-MSL9X5OE-284, -30, -31, -259, -216/-274, more). Side-by-side with
+correctly-encoded rows in the same table ("22" Display Kiosk", "43" A-Frame Outdoor Display") strongly
+suggests the intended character is an inch mark, corrupted during the original CSV/Excel-to-xlsx
+import (`flat_priced_products.csv` per this app's own xlsx-import code comment) before it ever reached
+this app -- `src/xlsx-import.ts` parses real `.xlsx` via `exceljs` correctly, so this isn't a bug in
+this app's importer. This is real, customer-facing catalog data that feeds quotes -- not rewriting
+product names on a guess. **Needs E to either confirm the intended text for a one-time corrected
+update, or re-export the source list with correct encoding and re-import** (existing rows would need
+matching by Catalog # to avoid duplicates).
+
+**Also noticed, low-priority, not acted on:** East Central Garage project's Client Address field reads
+"133 S. 40th Street, Springdale, AR 72" -- confirmed via direct DOM check this is the real stored
+value, not a CSS truncation artifact (an Arkansas zip can't be 2 digits). One field, one project, not
+a code bug -- flagging rather than guessing the missing digits into a real customer address.
+
+**Remaining consolidated open items for E (not blocking further independent work):**
+1. K-Tech Systems live authenticated walkthrough -- still purely blocked on E signing into
+   `vltdadmin@gmail.com` once; unchanged by this pass.
+2. Product Catalog mojibake data-quality issue above -- needs E's confirmation of intended text or a
+   re-import, not a guess.
+3. East Central Garage's truncated client zip code -- needs the real digits from E, not a guess.
+4. Billing commercial values (§8 of `PRODUCT_BILLING_SAAS_DECISIONS.md`) -- explicitly deferred
+   indefinitely per this entry's own opening line, listed here only for completeness, not to re-raise it.
+
+**Next automatic task:** continue the usability pass into the app surfaces not explicitly named in
+E's 10-item list but still real and unreviewed this round -- Reports, SaaS Calendar, Library, Vendors
+-- same checklist, same fix-directly-and-deploy discipline, same consolidated-questions-not-one-at-a-
+time approach for anything requiring a business decision.
+
+---
+
 **⚠️ CURRENT STATE (corrected 2026-09-26 -- the heading below is now stale, kept only for its
 detailed history): the K-Tech Systems onboarding test is RESOLVED, not paused.** Migrations 209-213
 are all confirmed applied and pushed (`268de79` is the current `main`/`origin/main`, clean working
