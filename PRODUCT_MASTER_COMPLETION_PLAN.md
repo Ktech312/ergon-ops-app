@@ -165,7 +165,7 @@ production currently has one real operator and the notification pipeline correct
 acting user from their own notification recipients (`excludingSelf()`) — not a defect, genuinely not
 provable without a second real account.
 
-### Phase 9 — Commercial SaaS readiness — **FOUNDATION BUILT 2026-09-29, migration 221 sent to E**
+### Phase 9 — Commercial SaaS readiness — **FOUNDATION SHIPPED AND LIVE-VERIFIED, 2026-09-29**
 Subscription tiers, usage metering, payment processing for Ergon itself (distinct from a customer's
 own operational Billing/Client Ledger, which Ergon already tracks for the customer). E answered the
 consolidated decision document 2026-09-29 — accepted every recommended default except 4 real
@@ -179,8 +179,13 @@ commercial values (pricing, seat caps, module-per-tier matrix, Stripe Price IDs)
 entitlement/blocking functions, the widened suspension chokepoints, auto-provisioning, and a safety
 backfill marking every existing workspace (Ergon + K-Tech) comped — plus `api/stripe-webhook.js`/
 `api/create-checkout-session.js`/`api/create-billing-portal-session.js`, all self-verified locally
-(83/83 against the full consolidated isolation suite, 658/658 `vitest`) before being sent to E as
-the next single Supabase action. See `HANDOFF.md`'s matching 2026-09-29 entry and
+(83/83 against the full consolidated isolation suite, 658/658 `vitest`) before being sent to E.
+**Applied and canonically tested in production (E, "Success. No rows returned" for both).**
+**Live-verified directly**: all 3 real production workspaces (Ergon + K-Tech + one more)
+confirmed correctly backfilled `comped = true` via a direct authenticated query (zero enforcement
+risk against any real company), and a real write (a task creation) confirmed the widened
+`is_active_workspace_member()`/`resolve_caller_workspace_id()` chokepoints didn't break ordinary
+usage — zero console errors either check. See `HANDOFF.md`'s matching 2026-09-29 entries and
 `PRODUCT_BILLING_TECHNICAL_DESIGN.md` §5 for full detail, including a real Vercel 12-function-cap
 consequence (now at the hard limit, zero headroom) and the still-open commercial values that
 genuinely block live checkout, tracked explicitly rather than guessed.

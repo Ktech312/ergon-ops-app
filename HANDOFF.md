@@ -1158,9 +1158,21 @@ zero headroom left. Flagged in `PRODUCT_BILLING_TECHNICAL_DESIGN.md` §5 so the 
 (billing or otherwise) doesn't get built and then silently fail to deploy the way `forward-attachment.js`
 did before.
 
-**Sent to E as the next single Supabase action.** Once applied and its canonical test confirmed:
-this is schema/backend only, no frontend Billing UI yet (deliberately -- E's own "foundation
-first" scoping), and production checkout stays structurally impossible regardless
+**Migration 221 APPLIED and its canonical test PASSED in production (E, "Success. No rows
+returned" for both).**
+
+**Live-verified directly, not just trusted from "tests passed"** -- warranted given how
+high-blast-radius `is_active_workspace_member()`/`resolve_caller_workspace_id()` are (used across
+nearly every write in the app): queried `workspace_billing` directly via the real authenticated
+session and confirmed all 3 real production workspaces (Ergon's own, K-Tech Systems, and one
+more) correctly backfilled to `is_comped = true, status = 'comped', plan_key = null` -- zero
+enforcement risk against any of them. Then did a real write regression check (Tasks page, a real
+`ZZ Test 221 Regression Check` task, created and saved successfully) to confirm the widened
+chokepoints didn't break ordinary Ergon-workspace usage -- zero console errors either check.
+
+**Migration 221 is fully shipped: applied, canonically tested, and live-verified.** This is
+schema/backend only, no frontend Billing UI yet (deliberately -- E's own "foundation first"
+scoping), and production checkout stays structurally impossible regardless
 (`billing_settings.checkout_enabled` defaults false, and every `billing_plans` row's Stripe Price
 IDs are still null) until E supplies the real commercial values `PRODUCT_BILLING_SAAS_DECISIONS.md`
 §8 lists.
