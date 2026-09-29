@@ -165,17 +165,25 @@ production currently has one real operator and the notification pipeline correct
 acting user from their own notification recipients (`excludingSelf()`) — not a defect, genuinely not
 provable without a second real account.
 
-### Phase 9 — Commercial SaaS readiness — **DESIGN BEGUN 2026-09-27, at E's own explicit go-ahead**
+### Phase 9 — Commercial SaaS readiness — **FOUNDATION BUILT 2026-09-29, migration 221 sent to E**
 Subscription tiers, usage metering, payment processing for Ergon itself (distinct from a customer's
-own operational Billing/Client Ledger, which Ergon already tracks for the customer). The standing stop
-boundary ("do not begin design work without an explicit go-ahead") is now satisfied — E directly
-instructed this design pass on 2026-09-27. **Status: a full architecture trace plus a consolidated
-decision document (`PRODUCT_BILLING_SAAS_DECISIONS.md`, every open question with a recommended default)
-and a technical design companion (`PRODUCT_BILLING_TECHNICAL_DESIGN.md`, threat model/test plan/
-migration sequencing built against those recommended defaults) are both done. No schema, RLS, or
-payment code has been written — implementation starts once E answers the decision document, per that
-document's own "one reply... is enough to move to implementation" framing. Still a stop boundary on
-actually writing/applying any billing migration or touching real payment flow without that reply.**
+own operational Billing/Client Ledger, which Ergon already tracks for the customer). E answered the
+consolidated decision document 2026-09-29 — accepted every recommended default except 4 real
+corrections (plan entitlement kept separate from `workspace_enabled_modules`; billing status never
+touches `workspaces.status`; an exact 7-day grace period from a real timestamp, never an assumed
+Stripe-retry duration; duplicate-subscription prevention + webhook-only reconciliation — full
+reasoning in `PRODUCT_BILLING_SAAS_DECISIONS.md` §8) and gave the explicit go-ahead to build the
+decision-independent foundation while keeping production checkout structurally disabled until real
+commercial values (pricing, seat caps, module-per-tier matrix, Stripe Price IDs) are approved.
+**Migration 221** (`backend/supabase/migrations/221_billing_foundation.sql`) — 6 new tables, the
+entitlement/blocking functions, the widened suspension chokepoints, auto-provisioning, and a safety
+backfill marking every existing workspace (Ergon + K-Tech) comped — plus `api/stripe-webhook.js`/
+`api/create-checkout-session.js`/`api/create-billing-portal-session.js`, all self-verified locally
+(83/83 against the full consolidated isolation suite, 658/658 `vitest`) before being sent to E as
+the next single Supabase action. See `HANDOFF.md`'s matching 2026-09-29 entry and
+`PRODUCT_BILLING_TECHNICAL_DESIGN.md` §5 for full detail, including a real Vercel 12-function-cap
+consequence (now at the hard limit, zero headroom) and the still-open commercial values that
+genuinely block live checkout, tracked explicitly rather than guessed.
 
 ## 3. Completed and live — migration range 115 through 150, plus 152 through 163
 
@@ -1070,9 +1078,12 @@ table in place of the fixed pair) plus frontend UI work — tracked here, not sc
   (e.g. `ZZ Test Signup Co`, `ZZ Test 199 Notification Co v2`) have since been created through that
   approved flow and are live in production. No longer a stop boundary; ordinary workspace creation
   through the shipped onboarding flow is expected, normal operation now.
-- **Commercial SaaS subscription billing** (Phase 9) — **design go-ahead given 2026-09-27** (see §2's
-  Phase 9 entry); the decision document and technical design are done, but no schema/RLS/payment code
-  gets written or applied without E's actual answers to `PRODUCT_BILLING_SAAS_DECISIONS.md` first.
+- **Commercial SaaS subscription billing** (Phase 9) — **E answered 2026-09-29** (see §2's Phase 9
+  entry); the decision-independent foundation (migration 221) is built and sent to E. **Still a hard
+  boundary**: real, live checkout stays structurally disabled (`billing_settings.checkout_enabled`
+  defaults false, every plan's Stripe Price IDs are null) until E supplies the still-open commercial
+  values `PRODUCT_BILLING_SAAS_DECISIONS.md` §8 lists — do not flip that switch or enter real Price
+  IDs without E's explicit instruction to do so.
 - **Any claim of legal signature weight beyond today's typed-name + IP + content-hash pattern** —
   no drawn signature, no third-party e-signature integration, no OTP/click-through identity
   verification, and no marketing or UI copy implying stronger legal weight than what's actually

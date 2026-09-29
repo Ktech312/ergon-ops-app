@@ -100,3 +100,46 @@ non-production Vercel environment, a complete pass of the full test plan (§2) a
 webhooks and a real (test-card) Checkout session — before any live key is ever placed in production Vercel
 env vars. Migrations still go out one file at a time with E's own confirmation, per this project's
 standing discipline; nothing here changes that cadence, only what the files will eventually contain.
+
+## 5. Built, 2026-09-29 — the decision-independent foundation from §3 items 1-3, 7-9
+
+`backend/supabase/migrations/221_billing_foundation.sql` (canonical test:
+`migration_221_billing_foundation_tests.sql`, 9 sections a-i, run locally against the full
+83-file consolidated isolation suite before being sent to E — zero regressions). Covers §3 items
+1 (`workspace_billing`, extended per E's Q3.1 correction — see `PRODUCT_BILLING_SAAS_DECISIONS.md`
+§8), 2 (`stripe_webhook_events`), 3 (`workspace_billing_audit_log`), 4 (the widened
+`is_active_workspace_member()`/`resolve_caller_workspace_id()` chokepoints), 7
+(`api/stripe-webhook.js`), 8 (`api/create-billing-portal-session.js`), 9 is deliberately NOT
+built yet (the admin Billing UI panel) — this pass is backend/schema/RLS/webhook-security only,
+per E's own explicit "foundation first" scoping.
+
+**Two real deviations from this document's original §3, both improvements, both driven by E's
+own review, not discovered independently:**
+- Item 5 (plan-to-modules mapping) is NOT "wire plan tiers into `workspace_enabled_modules`'s
+  existing defaults" as originally written here — E corrected this to a genuinely separate
+  entitlement layer (`plan_modules`, `plan_allows_module()`) rather than reusing the workspace's
+  own preference table as the gate itself. See decisions doc §8 point 1 for the full reasoning.
+- Item 6 (seat-cap enforcement) is NOT built yet — genuinely blocked on E's still-open "seat cap
+  per tier" answer, not skipped by oversight.
+
+**`api/create-checkout-session.js`** (§3 item 7's sibling, not originally split out as its own
+line item in this document) implements the Q2.3 duplicate-subscription-prevention correction
+directly: checks `get_my_billing_context()` for an existing active/trialing/past_due subscription
+before ever calling `stripe.checkout.sessions.create`, redirecting to the Portal instead.
+
+**A real bug the local isolation suite caught before this was ever sent to E**: the first draft
+called `is_platform_admin(auth.uid())` nine times, matching `is_app_admin()`'s own signature —
+`is_platform_admin()` actually takes no argument (resolves `auth.uid()` internally, migration
+115). Caught immediately by a full local replay-and-test run (`node
+backend/supabase/consolidated_isolation_suite/run_all.mjs`), fixed before migration 221 was ever
+shown to E, not found via a live production round-trip this time.
+
+**Real Vercel serverless-function-count consequence, worth tracking explicitly**: this repo hit a
+hard 12-function Hobby-plan cap once before (2026-09-21, documented in `HANDOFF.md`) and had to
+consolidate 7 routes into 2 dispatcher files to get back under it. Adding these three new routes
+(`stripe-webhook.js`, `create-checkout-session.js`, `create-billing-portal-session.js`) brings the
+real (non-`_lib`, non-`_test-helpers`) route count to exactly 12 — the hard cap itself, with zero
+headroom left. Any future new endpoint needs either a further dispatcher consolidation or a
+Vercel Pro upgrade (already flagged once in `HANDOFF.md` as "the better long-term fix, revisit
+once the app is in full commercial production with real paying customers" — building the actual
+billing system makes that revisit more relevant, not something to decide unilaterally here).

@@ -161,6 +161,63 @@ avoids building usage-based billing nobody asked for.
 
 ---
 
-**One reply from E covering the recommended defaults above (accept-all, or specific overrides) is
-enough to move to implementation.** Nothing here has been built; every "Recommended" is a default this
-assistant would implement if not corrected, not something already assumed into code.
+## 8. E's answer, 2026-09-29 — accepted with four corrections; foundation now shipped
+
+E accepted every recommended default above except four, each now implemented in
+`backend/supabase/migrations/221_billing_foundation.sql` exactly as corrected:
+
+1. **Plan entitlement is separate from module preference (Q1.2 corrected).** Not "reuse
+   `workspace_enabled_modules` as the gate" — instead, a new `plan_modules` table defines what a
+   PLAN allows; effective access is `plan_allows_module() AND is_module_enabled()`, both true.
+   An admin can never enable a module their plan excludes (enforced inside
+   `set_workspace_module_enabled()` itself); changing plans never touches
+   `workspace_enabled_modules` at all, so an upgrade never auto-enables something a workspace
+   had deliberately turned off. `plan_modules` starts empty and every plan starts
+   `modules_configured = false`, so this is a fully-built, fully-tested mechanism with zero
+   actual restriction in effect yet.
+2. **Billing status never touches `workspaces.status` (Q3.1 corrected).** `trialing`/`active`/
+   `past_due`/`unpaid`/`canceled`/`comped` all live in the new `workspace_billing.status` column
+   only — `workspaces.status`'s own existing `'active'`/`'suspended'` enum is completely
+   untouched by migration 221.
+3. **Exact payment-failure timing (Q3.2 corrected).** Not an assumed "~2 weeks" Stripe-retry
+   duration — a workspace gets normal access for exactly 7 calendar days from the first
+   `past_due` event (`workspace_billing.past_due_since`, set once per past_due episode, never
+   reset by a repeat event), then goes read-only until payment is confirmed, restoring
+   automatically. `unpaid`/`canceled` block outright; `is_comped = true` exempts a workspace from
+   all of the above, unconditionally, including at the webhook-processing level.
+4. **Duplicate-subscription prevention + webhook-only reconciliation (Q2.3/Q4 corrected).**
+   `api/create-checkout-session.js` checks for an existing active/trialing/past_due subscription
+   before ever creating a new Checkout session — redirects to the Billing Portal instead, per
+   Stripe's own documented guidance. All state changes flow through exactly one path,
+   `process_stripe_webhook_event()`, atomic (idempotency insert + state update in one function
+   call) and never trusting a client-side success redirect.
+
+**Still required before live checkout can ever be enabled — not guessed, not built** (E's own
+list, verbatim): monthly price for Starter/Growth/Enterprise; whether annual billing is offered
+and its discount; included modules per tier; seat soft cap per tier; whether the 14-day trial
+requires a payment method; what plan a new trial receives (migration 221's `'starter'` default is
+a structural placeholder, not a commercial commitment); whether upgrades take effect immediately
+with proration; whether downgrades take effect at period end. None of these block the foundation
+that's now shipped — every one is a plain data change (an `UPDATE` on `billing_plans`/
+`plan_modules`, or a one-line default change) once answered, not a new migration.
+
+**What's now built** (all 83/83 against the local consolidated isolation suite, run before ever
+being sent to E): the full schema/RLS from §0's threat model, `is_module_available()`/
+`plan_allows_module()`/`is_workspace_billing_blocked()`, the widened
+`is_active_workspace_member()`/`resolve_caller_workspace_id()` chokepoints, auto-provisioning for
+every new workspace, a safety backfill marking every currently-existing workspace (Ergon's own +
+K-Tech) `comped` so nothing can be accidentally enforced against before commercial terms land,
+`api/stripe-webhook.js` (signature verification + idempotent atomic processing),
+`api/create-checkout-session.js` (with BOTH the `billing_settings.checkout_enabled` kill-switch
+and the "no real Stripe Price ID configured" gate — either alone keeps production checkout
+structurally impossible today), and `api/create-billing-portal-session.js`. See
+`PRODUCT_BILLING_TECHNICAL_DESIGN.md` §5 and `HANDOFF.md`'s matching entry for full detail,
+including the two real bugs this pass found (a wrong `is_platform_admin()` call signature, caught
+by the local isolation suite before ever being sent) and the Vercel serverless-function-count
+consequence of adding three new routes.
+
+---
+
+Status as of 2026-09-29: **answered and built, not pending** — see §8. Migration 221 is the next
+single Supabase action; live checkout stays structurally disabled until the still-required
+commercial values above are answered.

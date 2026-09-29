@@ -1064,6 +1064,107 @@ working assumptions, explicitly flagged as correctable wherever E's actual answe
 dependency was added. This is planning only, exactly as instructed ("do not implement payment or
 subscription behavior from assumptions").
 
+## 2026-09-29: Billing/SaaS decision-independent foundation built (migration 221, not yet applied)
+
+E answered the consolidated decision document -- accepted every recommended default except four
+real corrections, each now implemented exactly as specified, and gave the explicit go-ahead to
+build the foundation: "Build the decision-independent billing foundation, webhook security, RLS,
+test-mode integration, comped-workspace handling, and configurable plan catalog first. Keep
+production checkout disabled until the prices, caps, module mapping, Stripe Price IDs, and
+tax-readiness are explicitly approved."
+
+**E's four corrections** (full reasoning in `PRODUCT_BILLING_SAAS_DECISIONS.md` §8, each cited to
+its Stripe documentation where E linked one): (1) plan entitlement (`plan_modules`,
+`plan_allows_module()`) is a genuinely separate layer from `workspace_enabled_modules`'s own
+per-workspace preference, never the same gate -- an admin can never enable a module outside their
+plan, and a plan change never auto-enables a previously-disabled module. (2) Billing status lives
+entirely in the new `workspace_billing.status` column -- `workspaces.status`'s own existing
+`'active'/'suspended'` enum is completely untouched. (3) An exact 7-calendar-day grace period from
+the first real `past_due` event, computed from a stored timestamp, never an assumed Stripe-retry
+duration -- auto-restores on confirmed payment, `unpaid`/`canceled` block outright, `comped`
+exempts unconditionally. (4) Duplicate-subscription prevention (`create-checkout-session.js`
+checks for an existing subscription and redirects to the Portal instead of creating a second one)
+and webhook-only state reconciliation (one atomic RPC, never a client-side success redirect).
+
+**Built and self-verified locally before ever being sent to E** -- new capability this session
+didn't have until now: `node backend/supabase/consolidated_isolation_suite/run_all.mjs` replays
+the ENTIRE real migration history (now 001 through 221) against a fresh embedded Postgres
+(PGlite) and runs every canonical test file against it, locally, in seconds, instead of relying on
+E to run something in production and report back. Used it twice this pass to catch two real bugs
+before they ever reached E:
+1. The first draft called `is_platform_admin(auth.uid())` nine times, matching `is_app_admin()`'s
+   own signature -- `is_platform_admin()` actually takes no argument at all (migration 115,
+   resolves `auth.uid()` internally). The suite failed immediately on migration 221's own apply
+   step with a clear `function public.is_platform_admin(uuid) does not exist` error. Fixed (a
+   plain search-and-replace, 9 occurrences), reran, passed.
+2. Confirmed migrations 207/208 (built by a different session between this assistant's own last
+   turn and now) never redefined `resolve_caller_workspace_id()`/`is_active_workspace_member()`
+   -- checked directly before widening either, not assumed from memory of migration 117/155's
+   original bodies.
+
+**Migration 221** (`backend/supabase/migrations/221_billing_foundation.sql`) -- 6 new tables
+(`billing_plans` seeded with 3 real plan_key rows and NULL commercial values throughout,
+`plan_modules`, `workspace_billing`, `billing_settings`, `stripe_webhook_events`,
+`workspace_billing_audit_log`), `is_workspace_billing_blocked()`/`is_module_available()`/
+`plan_allows_module()`, the widened `is_active_workspace_member()`/`resolve_caller_workspace_id()`
+chokepoints (reproduced byte-for-byte from their real current bodies plus exactly one addition
+each -- reads are completely unaffected, only write paths route through either function),
+`seed_default_workspace_billing()` (an `after insert on workspaces` trigger, same pattern as
+migration 182's `seed_default_company_branding()`), a safety backfill marking every
+currently-existing workspace (Ergon's own real workspace AND K-Tech Systems) `comped = true` --
+deliberate: with no commercial terms approved yet, no already-operating real company should have
+any chance of a trial-timer or payment-status lockout firing against it -- and
+`process_stripe_webhook_event()`, the one atomic entry point that makes both idempotency and
+webhook-only reconciliation real (idempotency-ledger insert and the state update happen in the
+SAME function call, so a webhook that fails partway through is never falsely marked processed).
+`set_workspace_module_enabled()` (migration 218) forward-fixed, not re-run, to add the entitlement
+check.
+
+Canonical test: `migration_221_billing_foundation_tests.sql`, sections (a)-(i) -- new-workspace
+auto-provisioning, `plan_allows_module()`'s safe-by-default behavior and a real configured
+allow-list, every real `is_workspace_billing_blocked()` state including the comped exemption, a
+regression proof that an existing comped workspace's ordinary writes are byte-for-byte unaffected,
+a genuinely blocked workspace's writes rejected while reads still work,
+`set_workspace_module_enabled()`'s entitlement enforcement, `process_stripe_webhook_event()`'s
+idempotency/past_due_since-transition-logic/comped-immunity, RLS proving an ordinary member can
+read but nobody (not even the workspace's own admin) can write `workspace_billing` directly, and
+`get_my_billing_context()` correctly resolving even for an already-blocked workspace (the entire
+reason it exists as a separate resolver from `resolve_caller_workspace_id()`). **83/83 against the
+full local isolation suite**, including every pre-existing migration's own test -- zero
+regressions anywhere in the schema.
+
+**New API layer, all three built together**: `api/stripe-webhook.js` (raw-body signature
+verification via `stripe.webhooks.constructEvent`, re-fetches the subscription fresh from Stripe
+rather than trusting the webhook payload alone for `checkout.session.completed`, maps Stripe's own
+subscription statuses onto `workspace_billing.status`), `api/create-checkout-session.js` (checks
+`billing_settings.checkout_enabled` AND a real Stripe Price ID both independently gate production
+checkout off today; duplicate-subscription check redirects to the Portal), and
+`api/create-billing-portal-session.js` -- both admin-facing routes resolve via the new
+`get_my_billing_context()` RPC specifically because they must keep working for an ALREADY-blocked
+workspace (fixing payment is the whole point of reaching the portal).
+Added the `stripe` npm package (`^22.6.2`). New test files:
+`tests/api/create-checkout-session.test.js`, `tests/api/create-billing-portal-session.test.js`,
+`tests/api/stripe-webhook.test.js` (17 tests, Stripe SDK mocked via `vi.mock` -- one real
+transcription bug caught and fixed immediately: `mockImplementation()` needs a `function`
+expression, not an arrow function, to be usable as a constructor by `new Stripe(...)` -- vitest's
+own console warning named the exact fix). `npx tsc -b` clean, full `vitest` suite **658/658
+passed**, `eslint` 0 errors (the 4 new `api/*.js` files are ignored by this repo's existing lint
+config, same as every other route already was).
+
+**Real, tracked consequence**: this repo hit Vercel's Hobby-plan 12-serverless-function cap once
+before (2026-09-21) and had to consolidate 7 routes into 2 dispatchers to get back under it.
+Adding these three new routes brings the real route count to exactly 12 -- the hard cap itself,
+zero headroom left. Flagged in `PRODUCT_BILLING_TECHNICAL_DESIGN.md` §5 so the next new endpoint
+(billing or otherwise) doesn't get built and then silently fail to deploy the way `forward-attachment.js`
+did before.
+
+**Sent to E as the next single Supabase action.** Once applied and its canonical test confirmed:
+this is schema/backend only, no frontend Billing UI yet (deliberately -- E's own "foundation
+first" scoping), and production checkout stays structurally impossible regardless
+(`billing_settings.checkout_enabled` defaults false, and every `billing_plans` row's Stripe Price
+IDs are still null) until E supplies the real commercial values `PRODUCT_BILLING_SAAS_DECISIONS.md`
+§8 lists.
+
 ## RESOLVED (2026-09-21): production deploy pipeline was broken, now fixed and confirmed live
 
 **Original incident:** Vercel Hobby plan caps a deployment at 12 serverless functions (every `.js`
