@@ -6,17 +6,26 @@
 > and exact next task. This document is the authoritative, always-current product roadmap: what's
 > live, what's staged, what's left, in what order, and what's explicitly off-limits without E.
 
-Status: **AUTHORITATIVE, RECONCILED 2026-09-23.** Phase 3 RLS Stages 1 through 6 are all complete —
-the full automated cross-workspace isolation suite passed 51/51 (GATE GREEN, 2026-09-22), lifting the
-standing "no second real workspace" stop boundary (§6). Stage 7 (lightweight company onboarding),
-D13 (Support module first release), and D14 (Engineering/Product Development module first release)
-have all since shipped and been live-verified in production (2026-09-22/23) — see §11 items 7-9.
-D1-D18 decision register: `CONTINUOUS_CODER_HANDOFF.md` §8. This document is reconciled against
-`HANDOFF.md`, that decision register, every applied migration (115 through 202), and every
-`PRODUCT_*.md` design/audit file — go to the named source document for full detail on any one
-workstream. **No completion dates are stated or implied anywhere in this document** — every date is
-an authoring or decision date, never a projection. Priority and ordering reflect risk and dependency,
-not calendar time.
+Status: **AUTHORITATIVE, RECONCILED 2026-09-27.** Phase 3 RLS is fully complete (Stages 1-7,
+including a real, live second company — K-Tech Systems). D13/D14 (Support/Engineering) shipped
+2026-09-22/23. Migrations through 220 are applied — see §11 item 4 for the full 2026-09-26 arc
+(isolation-model completion, second-company acceptance closing nine real bugs, guided onboarding via
+`workspace_enabled_modules`/`workspace_onboarding_progress`, and Marketing lead capture ->
+conversion into a Sales Quote). Consolidated isolation suite: 82/82. Full Playwright suite: 30/30,
+including real Pixel 7 mobile coverage. **One acceptance item remains open, blocked purely on E**:
+a live authenticated K-Tech walkthrough, which needs E to actually sign into
+`vltdadmin@gmail.com` once — no cached session for that account exists on this machine in either
+browser (checked directly, not assumed; see `HANDOFF.md`'s 2026-09-27 entry). **Billing/SaaS (Phase
+9) design is now complete** at E's own explicit go-ahead — `PRODUCT_BILLING_SAAS_DECISIONS.md`
+(every open business decision, each with a recommended default) and
+`PRODUCT_BILLING_TECHNICAL_DESIGN.md` (threat model, test plan, migration sequencing) — **no schema,
+RLS, or payment code written yet**, waiting on E's single consolidated answer before implementation
+starts. D1-D18 decision register: `CONTINUOUS_CODER_HANDOFF.md` §8. This document is reconciled
+against `HANDOFF.md`, that decision register, every applied migration, and every `PRODUCT_*.md`
+design/audit file — go to the named source document for full detail on any one workstream. **No
+completion dates are stated or implied anywhere in this document** — every date is an authoring or
+decision date, never a projection. Priority and ordering reflect risk and dependency, not calendar
+time.
 
 ## 0. Evidence labels — used throughout this document
 
