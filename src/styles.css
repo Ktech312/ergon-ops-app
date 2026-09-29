@@ -963,6 +963,41 @@ button {
   font-size: 13px;
 }
 
+.nav-scroller {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.nav-scroll-btn {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #ded7cb;
+  border-radius: 50%;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.14);
+  color: #413d37;
+  cursor: pointer;
+  display: flex;
+  flex-shrink: 0;
+  height: 28px;
+  justify-content: center;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  z-index: 2;
+}
+
+.nav-scroll-btn-left {
+  left: -6px;
+}
+
+.nav-scroll-btn-right {
+  right: -6px;
+}
+
 .nav-list {
   display: flex;
   flex: 1;
@@ -2520,6 +2555,20 @@ td small.quote-ref-tag {
     linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 45%),
     linear-gradient(135deg, #5c150c 0%, #6e1916 4%, #882429 8%, #96232e 12%, #981729 16%, #af1f38 20%, #cf3f48 24%, #ca3932 28%, #e04f37 32%, #ff966e 36%, #ffcc93 40%, #ffa867 44%, #fe6c2b 48%, #f2601f 52%, #ff6e2d 56%, #e8571e 60%, #d4431a 64%, #db4a32 68%, #e5544d 72%, #c3333c 76%, #a4142d 80%, #9a192b 84%, #97242f 88%, #7f1a1f 92%, #6a1512 96%, #5c150c 100%);
   color: white;
+}
+
+.active-filters-banner {
+  align-items: center;
+  background: #fdf3e2;
+  border: 1px solid #edd9ad;
+  border-radius: 8px;
+  color: #6b5a2a;
+  display: flex;
+  font-size: 13px;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 8px 12px;
 }
 
 .report-tabs {
@@ -6163,7 +6212,7 @@ td.empty-compact-state {
      essential header items (logo, sync status, notifications, account,
      search) stay, per the requirement that those remain reachable
      without crowding. */
-  .nav-list {
+  .nav-scroller {
     display: none;
   }
 

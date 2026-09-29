@@ -18,6 +18,8 @@ import {
   Camera,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   ClipboardList,
   Copy,
@@ -8259,7 +8261,7 @@ function App() {
               <div className="brand-subtitle">Ops Command</div>
             </div>
           </div>
-          <nav className="nav-list">
+          <NavScroller>
             {allowedTabs.includes("dashboard") && <NavButton icon={<LayoutDashboard size={16} />} label="Dashboard" active={view === "dashboard"} onClick={() => navigateToView("dashboard")} />}
             {(allowedTabs.includes("purchasing") || allowedTabs.includes("inventory") || allowedTabs.includes("vendors")) && (
               <NavButton
@@ -8285,7 +8287,7 @@ function App() {
               <NavButton icon={<FlaskConical size={16} />} label="Engineering" active={view === "engineering_requests"} onClick={() => navigateToView("engineering_requests")} />
             )}
             {allowedTabs.includes("messages") && <NavButton icon={<MessageCircle size={16} />} label="Messages" iconOnly active={view === "messages"} onClick={() => navigateToView("messages")} hasUnread={totalUnreadMessages > 0} />}
-          </nav>
+          </NavScroller>
           <div className="top-nav-actions">
             <div
               className={`sync-status ${hasCriticalLoadErrors && syncStatus === "synced" ? "error" : syncStatus}`}
@@ -8749,6 +8751,10 @@ function App() {
             unreadMessageTotal={totalUnreadMessages}
             tasks={tasks}
             onNavigateToView={navigateToView}
+            onSelectPart={handleSelectSearchPart}
+            onSelectOrder={handleSelectSearchOrder}
+            onSelectTask={handleSelectSearchTask}
+            onSelectProject={handleSelectSearchProject}
             showReferencePackages={branding.showReferencePackages}
           />
         )}
@@ -9115,6 +9121,54 @@ function App() {
   );
 }
 
+// The top nav has 11+ items and overflows on ordinary laptop widths (not just
+// mobile, which gets its own bottom nav below 760px). Scroll-x alone left
+// Engineering/Messages reachable only via an undiscoverable native scrollbar,
+// so this adds explicit chevrons that appear only when there's more to see.
+function NavScroller({ children }: { children: ReactNode }) {
+  const scrollRef = useRef<HTMLElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollState = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 4);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  };
+
+  useEffect(() => {
+    updateScrollState();
+    const el = scrollRef.current;
+    if (!el) return;
+    window.addEventListener("resize", updateScrollState);
+    const observer = new ResizeObserver(updateScrollState);
+    observer.observe(el);
+    return () => {
+      window.removeEventListener("resize", updateScrollState);
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <div className="nav-scroller">
+      {canScrollLeft && (
+        <button type="button" className="nav-scroll-btn nav-scroll-btn-left" aria-label="Scroll navigation left" onClick={() => scrollRef.current?.scrollBy({ left: -180, behavior: "smooth" })}>
+          <ChevronLeft size={16} />
+        </button>
+      )}
+      <nav className="nav-list" ref={scrollRef} onScroll={updateScrollState}>
+        {children}
+      </nav>
+      {canScrollRight && (
+        <button type="button" className="nav-scroll-btn nav-scroll-btn-right" aria-label="Scroll navigation right" onClick={() => scrollRef.current?.scrollBy({ left: 180, behavior: "smooth" })}>
+          <ChevronRight size={16} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function NavButton({ icon, label, active, onClick, hasUnread, iconOnly }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void; hasUnread?: boolean; iconOnly?: boolean }) {
   return (
     <button className={`nav-button ${active ? "active" : ""} ${iconOnly ? "icon-only" : ""}`} onClick={onClick} title={iconOnly ? label : undefined} aria-label={iconOnly ? label : undefined}>
@@ -9412,6 +9466,10 @@ function Dashboard({
   unreadMessageTotal,
   tasks,
   onNavigateToView,
+  onSelectPart,
+  onSelectOrder,
+  onSelectTask,
+  onSelectProject,
   showReferencePackages,
 }: {
   roleMode: RoleMode;
@@ -9433,6 +9491,13 @@ function Dashboard({
   unreadMessageTotal?: number;
   tasks?: EOTask[];
   onNavigateToView?: (view: View) => void;
+  // Needs Attention cards jump to the specific record via the same
+  // deep-link handlers global search already uses (handleSelectSearch*),
+  // not just the containing tab -- see the *SearchFocus state they set.
+  onSelectPart?: (part: Part) => void;
+  onSelectOrder?: (order: PurchaseOrder) => void;
+  onSelectTask?: (task: EOTask) => void;
+  onSelectProject?: (project: ProjectSite) => void;
   // Migration 211: gates the hardcoded, Ergon-specific "Package Matrix"
   // reference content -- see persistence.ts's CompanyBranding type for
   // why this is a real per-workspace flag, not a name/id comparison.
@@ -9610,35 +9675,35 @@ function Dashboard({
       label: "Held purchase orders",
       count: heldOrders.length,
       note: heldOrders[0] ? `${heldOrders[0].vendor} ${heldOrders[0].number}` : "",
-      onClick: () => onNavigateToView?.("purchasing"),
+      onClick: () => (heldOrders[0] && onSelectOrder ? onSelectOrder(heldOrders[0]) : onNavigateToView?.("purchasing")),
     },
     {
       key: "lowStock",
       label: "Inventory shortages",
       count: lowStock.length,
       note: lowStock[0]?.name ?? "",
-      onClick: () => onNavigateToView?.("inventory"),
+      onClick: () => (lowStock[0] && onSelectPart ? onSelectPart(lowStock[0]) : onNavigateToView?.("inventory")),
     },
     {
       key: "overdueProjects",
       label: "Overdue projects",
       count: overdueProjects.length,
       note: overdueProjects[0]?.name ?? "",
-      onClick: () => onNavigateToView?.("projects"),
+      onClick: () => (overdueProjects[0] && onSelectProject ? onSelectProject(overdueProjects[0]) : onNavigateToView?.("projects")),
     },
     {
       key: "overdueTasks",
       label: "Overdue tasks",
       count: overdueTasks.length,
       note: overdueTasks[0]?.title ?? "",
-      onClick: () => onNavigateToView?.("tasks"),
+      onClick: () => (overdueTasks[0] && onSelectTask ? onSelectTask(overdueTasks[0]) : onNavigateToView?.("tasks")),
     },
     {
       key: "urgentTasks",
       label: "Urgent tasks",
       count: urgentTasks.length,
       note: urgentTasks[0]?.title ?? "",
-      onClick: () => onNavigateToView?.("tasks"),
+      onClick: () => (urgentTasks[0] && onSelectTask ? onSelectTask(urgentTasks[0]) : onNavigateToView?.("tasks")),
     },
     {
       key: "unreadMessages",
@@ -11193,7 +11258,15 @@ function Inventory({
     return () => clearTimeout(timer);
   }, [buildActionStatus]);
   const [inventoryTab, setInventoryTab] = usePersistedJson<"parts" | "finished">("inventory-tab", "parts");
-  const [filters, setFilters] = usePersistedJson("inventory-filters", { ref: "", part: "", category: "All", manufacturer: "", status: "All", tag: "All" });
+  const defaultInventoryFilters = { ref: "", part: "", category: "All", manufacturer: "", status: "All", tag: "All" };
+  const [filters, setFilters] = usePersistedJson("inventory-filters", defaultInventoryFilters);
+  // Filters persist across sessions (usePersistedJson) so a search typed
+  // weeks ago silently keeps hiding items on next visit -- e.g. "Demo" left
+  // in the part filter made a 33-SKU inventory look like a single item,
+  // with no indication anything was filtered. A visible clear action is the
+  // fix, not un-persisting (the persistence itself is useful mid-session).
+  const hasActiveInventoryFilters =
+    filters.ref !== "" || filters.part !== "" || filters.category !== "All" || filters.manufacturer !== "" || filters.status !== "All" || filters.tag !== "All";
   useEffect(() => {
     if (!searchFocus) {
       return;
@@ -12050,6 +12123,12 @@ function Inventory({
           <button className={inventoryTab === "parts" ? "active" : ""} type="button" onClick={() => setInventoryTab("parts")}>Parts Inventory</button>
           <button className={inventoryTab === "finished" ? "active" : ""} type="button" onClick={() => setInventoryTab("finished")}>Finished Manufactured Equipment</button>
         </div>
+        {hasActiveInventoryFilters && (
+          <div className="active-filters-banner">
+            <span>Filters are narrowing this list.</span>
+            <button className="secondary-action mini-action" type="button" onClick={() => setFilters(defaultInventoryFilters)}>Clear filters</button>
+          </div>
+        )}
         <div className="inventory-table-scroll">
           <table className="inventory-table tight-table">
             <thead>
@@ -16342,6 +16421,9 @@ function NewSupportCaseModal({
                 <option key={p.id} value={p.id}>{p.projectName}{p.customerName ? ` -- ${p.customerName}` : ""}</option>
               ))}
             </select>
+            {ledgerProjects.length === 0 && (
+              <small className="muted">No projects are on the Client Ledger yet -- a PM marks a project Closed, then it moves onto the ledger, before it can have a Support case.</small>
+            )}
           </label>
           <label className="form-field">
             Summary
@@ -23088,6 +23170,11 @@ function AdminPage({
                     <td>
                       {approval?.approvalStatus ?? "-"}
                       {approval?.expiresAt ? ` (until ${new Date(approval.expiresAt).toLocaleDateString()})` : ""}
+                      {isUserAdmin && approval?.approvalStatus !== "approved" && (
+                        <small className="muted" title="Admins bypass the sign-in approval gate, so this field can sit unset even though the account has full access.">
+                          {" "}(admin -- approval not required)
+                        </small>
+                      )}
                       {approval?.approvalStatus === "approved" && approval.expiresAt && (
                         <button
                           className="secondary-action mini-action"
