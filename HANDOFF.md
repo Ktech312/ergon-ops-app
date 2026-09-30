@@ -1,5 +1,99 @@
 # Ergon Ops — Handoff Doc
 
+## 2026-09-29/30: Data-quality investigation (catalog mojibake / East Central Garage zip / "fdfdg" vendor) -- read-only trace, then safe corrections applied through the app's own UI; one new production bug found and blocked on it
+
+**Billing status, restated per E: deliberately parked, not blocked. Not being raised again unless E reopens it.**
+
+Follow-up to the usability pass below, at E's explicit request: a read-only investigation of the three data-quality findings, then applying only what was provably safe, through the app's normal UI, never a raw REST/DB write (that path was tried once for the catalog corrections, got a real permission denial from the session's own auto-mode classifier for writing to a shared/production resource outside the app's UI, and was not retried in any other form per that denial's own instructions -- the corrections were done through the Product Catalog edit modal instead, as directed).
+
+### 1. Catalog mojibake -- traced, warning shipped, corrections NOT yet applied (blocked by a newly-found bug)
+
+Root cause fully traced: all 305 Product Catalog rows import in a single batch, `created_at =
+2026-08-09T03:59:30.18977Z` (the PandaDoc `flat_priced_products.csv` import, migration/commit
+`74425f6`, 2026-08-07). 8 of those 304 rows contain C1 control characters (U+0080-U+009F), which
+never occur in legitimate text -- a reliable corruption signature. Each one's current characters,
+reinterpreted as raw byte values and decoded as UTF-8 (`TextDecoder('utf-8', {fatal:true})`),
+succeeds with zero errors on all 8 -- the unique, deterministic original text, not a guess. This
+app's own importer (`xlsx-import.ts`, `exceljs`) parses real `.xlsx` correctly, so the corruption
+was already in the source file before it reached this app.
+
+**Exact before -> after (prepared, verified deterministic, not yet saved to any row):**
+
+| Catalog # | Before | After |
+|---|---|---|
+| CAT-MSL9X5OE-284 | `65â Deluxe Wall-Mounted Display` | `65” Deluxe Wall-Mounted Display` |
+| CAT-MSL9X5OE-259 | `âSensor Installation Adhesive` | `​Sensor Installation Adhesive` (leading char is a zero-width space, invisible either way -- stripped, not substituted, if applied) |
+| CAT-MSL9X5OE-216 | `Full Matrix Display Board 5âx3â0â` | `Full Matrix Display Board 5'x3'0”` |
+| CAT-MSL9X5OE-274 | `Full Matrix Display Board 5âx3â6â` | `Full Matrix Display Board 5'x3'6”` |
+| CAT-MSL9X5OE-31 | `...55ââ - Expedited Lead Time` | `...55'' - Expedited Lead Time` |
+| CAT-MSL9X5OE-30 | `...55ââ - Standard Lead Time` | `...55'' - Standard Lead Time` |
+| CAT-MSL9X5OE-28 | `...55ââ High bright Screen` | `...55'' High bright Screen` |
+| CAT-MSL9X5OE-29 | `...65ââ High bright Screen` | `...65'' High bright Screen` |
+
+**Recurrence guard shipped and live (`50c577b`):** `containsMojibakeSignature()` in `src/main.tsx`
+flags any C1 control character in a parsed catalog-import row's text fields and appends a warning to
+the existing "review below, then commit" screen -- detection only, doesn't block the import. `tsc`
+clean, full vitest suite 658/658, `vite build` clean. **Live-verification of the warning text itself
+via a real file upload was attempted and could not be completed** -- a synthetic `.xlsx` upload
+through the browser-automation file input reproducibly hung forever at `file.arrayBuffer()` (no
+thrown error, `exceljs`'s own network chunk never even requested -- confirmed twice, clean single
+attempts both times), which is a tooling limitation in how that automation path constructs its File
+object, not a defect in the app -- ruled out by: the same file parses correctly with the app's own
+`exceljs` version run directly in Node, and the modal/input/button wiring all worked (button click
+opened the modal, file input existed, `Uploaded 1 file(s)` was reported) right up to the point of the
+File read itself. Nothing was left in a bad state -- the flow never reached the review-rows screen,
+so no partial import risk. Confirmed instead via: the deployed JS bundle now contains the literal
+warning string (`"corrupted character"`, checked against the live bundle post-deploy), plus the full
+test suite and a hand-trace of the (trivial: filter -> string-concat -> regex -> string-append) logic.
+**If E wants to see it fire for real, drag any `.xlsx`/`.csv` with a curly quote in a product name
+onto Sales > Product Catalog > Upload list -- that's the one thing this session couldn't drive by
+itself.**
+
+**Corrections themselves NOT applied -- blocked by a new, separate, currently-live production bug
+found while attempting this:** clicking Save on ANY Product Catalog edit (confirmed with two separate
+attempts, one with an actual field change and one with none) fails with:
+```
+Could not update catalog item (400): {"code":"PGRST204","details":null,"hint":null,
+"message":"Could not find the 'datasheet_storage_path' column of 'product_catalog' in the schema cache"}
+```
+The column is real (`product_catalog.datasheet_storage_path`, added by migration 052) and every read
+against it succeeds -- this is PostgREST's own schema cache being stale, not a missing column, and
+it is reproducible, not transient. **This blocks every Product Catalog save for every user right now,**
+not just these 8 corrections -- flagging this as the higher-priority item. Confirmed via source: `catalogItemWritePayload()` (`persistence.ts:3687-3717`) unconditionally includes
+`datasheet_storage_path` on every create AND update, so this can't be dodged by editing a different
+field. Fix note (not a migration -- changes no schema, so not gated by the "one migration link" rule
+the same way, but handed off the same way regardless): **[backend/supabase/ops/2026-09-29_reload_postgrest_schema_cache.sql](backend/supabase/ops/2026-09-29_reload_postgrest_schema_cache.sql)**
+-- either run the one `NOTIFY pgrst, 'reload schema';` line in the Supabase SQL editor, or click
+"Reload schema" in Supabase's own dashboard (Project Settings -> API), no SQL needed either way.
+**Once that's done, ask for the 8 corrections again and they'll go in through the same Edit Product ->
+Save flow used for the vendor/catalog verification this pass -- nothing else needs to change.**
+Pushed as `8f75c10`.
+
+Nothing was written to `product_catalog` -- verified directly: all 8 rows' `product_name` and
+`updated_at` are unchanged (`updated_at` still `2026-09-19T19:31:51.419323Z`, the same mass-touch
+timestamp from before this session), confirming the failed Save was cleanly atomic.
+
+### 2. East Central Garage zip -- confirmed unrecoverable from any internal source; not touched
+
+Traced every structured address field that could plausibly hold it:
+- `projects.site_address` (labeled "Client Address" in the UI) -- `"133 S. 40th Street, Springdale, AR 72"` -- the only place this address is stored, and it's genuinely truncated (confirmed via direct DOM/DB read, not a CSS-truncation artifact).
+- `projects.billing_address` -- `null`.
+- `clients` table (`id`, `name`, `created_at`, `workspace_id` only) -- **no address column exists on this table at all.**
+- `sales_quotes` (`client_street_address`/`client_city`/`client_state`/`client_zip`, a genuinely separate, more-structured source) -- **no matching quote exists for this client or project** (`source_sales_quote_id` is null on this project; a text search for "East Central" across `sales_quotes.client_name`/`site_name` returned zero rows) -- this project was never converted from a quote.
+- `project_stakeholders` -- one row, soft-deleted, a test fixture (`Test Verification GC`, `test@example.com`), `address` column is `null`.
+- `project_documents` -- zero documents on this project.
+
+**The complete zip does not exist anywhere in this database.** Not looked up externally (Springdale, AR has several real ZIPs -- 72762/72764/72765/72766 -- genuinely ambiguous even with a web search, and the instruction was explicit not to infer it externally regardless). **Needs the real digits from whoever has the actual client relationship** -- this field was left exactly as it was.
+
+### 3. "fdfdg" vendor -- deactivated, verified
+
+- **References, checked exhaustively** (the only two real linkage points to a vendor in this schema): `purchase_orders.vendor_id` and `purchase_requests.preferred_vendor` -- zero hits on either, both before and after the change.
+- **Creator: not determinable.** `vendors` has no `created_by`/`created_by_email` column, and the only creation-audit table in this schema (`task_activity_log`) is task-specific -- this is a genuine, confirmed gap in what this table records, not something inferred or guessed at.
+- **Timing:** created `2026-08-20T20:17:47Z`; `updated_at` had changed once before this session (`2026-09-17T23:36:08Z`, cause unknown, no row-history table exists to say what field changed).
+- **Action taken, through the normal Vendors UI** (click row -> Edit Vendor -> "Mark Inactive", the only removal mechanism this entity has -- no hard-delete button exists for vendors): deactivated, not deleted. Verified after: `is_active: false`, `updated_at` now reflects the change (`2026-09-30T04:38:28.995146Z`); disappears from the default (Active-only) Vendors list; reappears, correctly labeled "Inactive," only with "Show inactive" checked. Re-checked both linkage points again post-change -- still zero references, confirming no purchase order or request was touched by this.
+
+---
+
 ## 2026-09-29: Billing deferred indefinitely; production usability pass across all 10 modules -- 6 real defects found and fixed, deployed, live-verified (`6697cb7`)
 
 **Billing/SaaS status, per E's explicit instruction: deferred indefinitely, not abandoned.** Do not
