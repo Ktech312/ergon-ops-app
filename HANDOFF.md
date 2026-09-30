@@ -1,6 +1,6 @@
 # Ergon Ops — Handoff Doc
 
-## 2026-09-29/30: Data-quality investigation (catalog mojibake / East Central Garage zip / "fdfdg" vendor) -- read-only trace, then safe corrections applied through the app's own UI; one new production bug found and blocked on it
+## 2026-09-29/30: Data-quality investigation (catalog mojibake / East Central Garage zip / "fdfdg" vendor) -- all 3 resolved; a real, previously-undiscovered production bug found and fixed along the way (migration 222)
 
 **Billing status, restated per E: deliberately parked, not blocked. Not being raised again unless E reopens it.**
 
@@ -49,29 +49,56 @@ test suite and a hand-trace of the (trivial: filter -> string-concat -> regex ->
 onto Sales > Product Catalog > Upload list -- that's the one thing this session couldn't drive by
 itself.**
 
-**Corrections themselves NOT applied -- blocked by a new, separate, currently-live production bug
-found while attempting this:** clicking Save on ANY Product Catalog edit (confirmed with two separate
-attempts, one with an actual field change and one with none) fails with:
+**First blocked by, then unblocked from, a new, separate production bug found while attempting
+this:** clicking Save on ANY Product Catalog edit (confirmed with two separate attempts, one with an
+actual field change and one with none) failed with:
 ```
 Could not update catalog item (400): {"code":"PGRST204","details":null,"hint":null,
 "message":"Could not find the 'datasheet_storage_path' column of 'product_catalog' in the schema cache"}
 ```
-The column is real (`product_catalog.datasheet_storage_path`, added by migration 052) and every read
-against it succeeds -- this is PostgREST's own schema cache being stale, not a missing column, and
-it is reproducible, not transient. **This blocks every Product Catalog save for every user right now,**
-not just these 8 corrections -- flagging this as the higher-priority item. Confirmed via source: `catalogItemWritePayload()` (`persistence.ts:3687-3717`) unconditionally includes
-`datasheet_storage_path` on every create AND update, so this can't be dodged by editing a different
-field. Fix note (not a migration -- changes no schema, so not gated by the "one migration link" rule
-the same way, but handed off the same way regardless): **[backend/supabase/ops/2026-09-29_reload_postgrest_schema_cache.sql](backend/supabase/ops/2026-09-29_reload_postgrest_schema_cache.sql)**
--- either run the one `NOTIFY pgrst, 'reload schema';` line in the Supabase SQL editor, or click
-"Reload schema" in Supabase's own dashboard (Project Settings -> API), no SQL needed either way.
-**Once that's done, ask for the 8 corrections again and they'll go in through the same Edit Product ->
-Save flow used for the vendor/catalog verification this pass -- nothing else needs to change.**
-Pushed as `8f75c10`.
+First suspected a stale PostgREST schema cache -- E ran `NOTIFY pgrst, 'reload schema';`
+([backend/supabase/ops/2026-09-29_reload_postgrest_schema_cache.sql](backend/supabase/ops/2026-09-29_reload_postgrest_schema_cache.sql),
+confirmed applied, "Success. No rows returned") -- but the error persisted, now as a raw Postgres
+`42703` ("column product_catalog.datasheet_storage_path does not exist"), proof the column genuinely
+wasn't there, not a cache issue. Checked further and confirmed the same for
+`product_catalog.specifications` and the `catalog-datasheets` storage bucket -- all three are exactly
+what migration 052 was supposed to create, and it had never actually applied to this database (its
+own file header, and migration 184's, both still read "Not applied. Kept local for E's review" --
+neither one's confirmation had ever actually landed, despite the app depending on both columns
+unconditionally in every catalog write since 052 was written).
 
-Nothing was written to `product_catalog` -- verified directly: all 8 rows' `product_name` and
-`updated_at` are unchanged (`updated_at` still `2026-09-19T19:31:51.419323Z`, the same mass-touch
-timestamp from before this session), confirming the failed Save was cleanly atomic.
+**Root-caused and fixed via migration 222**
+([222_reapply_052_catalog_details_and_datasheets.sql](backend/supabase/migrations/222_reapply_052_catalog_details_and_datasheets.sql),
+confirmed applied by E; canonical test
+[migration_222_reapply_052_catalog_details_and_datasheets_tests.sql](backend/supabase/migration_222_reapply_052_catalog_details_and_datasheets_tests.sql)
+confirmed run clean -- both "Success. No rows returned"). Not a verbatim re-run of 052: a first draft
+that reproduced 052's original catalog-datasheets storage policies verbatim broke migration 180's own
+canonical containment test locally (a workspace-A caller could reach workspace-B's catalog item) --
+caught by this session's local isolation-suite run (84 canonical test files) before ever being sent
+for a real run, so the migration that actually shipped reproduces 052's missing columns/bucket but
+migration 180's (current, correct, workspace-scoped) storage policies, not 052's original wide-open
+ones. Local run: 84/84 passed, including the new dedicated test for 222 itself.
+
+**The 8 catalog corrections were then applied through the normal Edit Product -> Save flow** (the
+same UI path verified working throughout this pass) and reloaded fresh from the server to confirm:
+
+| Catalog # | Saved name (confirmed via fresh reload) | Still has mojibake? |
+|---|---|---|
+| CAT-MSL9X5OE-284 | `65” Deluxe Wall-Mounted Display` | No |
+| CAT-MSL9X5OE-259 | `Sensor Installation Adhesive` | No |
+| CAT-MSL9X5OE-216 | `Full Matrix Display Board 5’x3’0”` | No |
+| CAT-MSL9X5OE-274 | `Full Matrix Display Board 5’x3’6”` | No |
+| CAT-MSL9X5OE-31 | `Monument - Full Matrix - Freestanding - 55’’ - Expedited Lead Time` | No |
+| CAT-MSL9X5OE-30 | `Monument - Full Matrix - Freestanding - 55’’ - Standard Lead Time` | No |
+| CAT-MSL9X5OE-28 | `Monument - Full Matrix - Freestanding - 55’’ High bright Screen` | No |
+| CAT-MSL9X5OE-29 | `Monument - Full Matrix - Freestanding - 65’’ High bright Screen` | No |
+
+All 8 verified via a fresh, direct authenticated read (not just what the UI displayed after saving) --
+`updated_at` on each now reflects the 2026-09-30 15:33-15:35 UTC save window, `unit_cost`/
+`default_sell_price`/`linked_reference` unchanged from before (only `product_name` was touched, per
+the instruction not to make any other change), and a regex re-check confirms zero C1 control
+characters (U+0080-U+009F) remain in any of the 8 names. No purchase orders or requests reference
+these catalog rows by name, so nothing downstream was affected by the correction itself.
 
 ### 2. East Central Garage zip -- confirmed unrecoverable from any internal source; not touched
 
