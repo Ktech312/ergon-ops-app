@@ -1,0 +1,22 @@
+-- Not a migration -- changes no schema, just tells PostgREST to re-read it.
+--
+-- 2026-09-29: discovered live while applying the Product Catalog mojibake
+-- corrections (see HANDOFF.md). Every Product Catalog save (create or
+-- edit) is currently failing in production with:
+--   PGRST204 "Could not find the 'datasheet_storage_path' column of
+--   'product_catalog' in the schema cache"
+-- The column is real (added by migration 052, 2026-08-xx) and every read
+-- against it succeeds -- this is PostgREST's own schema cache being
+-- stale, not a missing column. Confirmed reproducible on two separate
+-- Save attempts (one with an edited field, one with no changes at all),
+-- same error both times -- not transient.
+--
+-- Run this in the Supabase SQL editor, or click "Reload schema" in
+-- Project Settings -> API instead (same effect, no SQL needed):
+NOTIFY pgrst, 'reload schema';
+
+-- After running, retry a Product Catalog save once to confirm it goes
+-- through -- if the 400/PGRST204 still appears, the column may need a
+-- literal no-op ALTER (e.g. `alter table product_catalog alter column
+-- datasheet_storage_path type text;`) to force PostgREST to pick it up,
+-- but try the NOTIFY first since it's non-destructive and usually sufficient.
