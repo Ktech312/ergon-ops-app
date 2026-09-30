@@ -556,6 +556,21 @@ function availableOf(part: Part): number {
   return part.stock - (part.allocated ?? 0);
 }
 
+// 2026-09-29 data-quality investigation: 8 of 304 rows from the 2026-08-09
+// Product Catalog bulk import (PandaDoc export) had mojibake product names
+// -- e.g. "65â Deluxe..." for what was originally "65" Deluxe..." -- a
+// UTF-8 quote/prime-mark character in the source file that got read back
+// as Latin-1 before it ever reached this app. The signature is always a
+// C1 control character (U+0080-U+009F): those code points have no
+// legitimate use in real text, so their presence is a reliable, low-noise
+// corruption signal -- unlike flagging any non-ASCII character, which
+// would false-positive on every real é/°/etc. This only detects the
+// pattern at import time (a warning, not a block, since the reviewer
+// still sees every row before committing) -- it does not repair it.
+function containsMojibakeSignature(text: string): boolean {
+  return /[\u0080-\u009F]/.test(text);
+}
+
 // E, from a screenshot with a $0-stock item circled: "what is gauged as
 // Healthy, we have no parts but everything says healthy." Root cause:
 // "Healthy" was the fallback for anything that wasn't Retired or over its
@@ -23972,9 +23987,15 @@ function SalesCatalog({
         })
         .filter((row) => row.productName);
       setImportRows(parsed);
+      const mojibakeCount = parsed.filter((row) =>
+        containsMojibakeSignature(`${row.productName} ${row.salesDescription} ${row.technicalDescription} ${row.manufacturer} ${row.linkedReference}`),
+      ).length;
       setImportStatus(
         parsed.length
-          ? `Parsed ${parsed.length} row(s) -- review below, then commit.`
+          ? `Parsed ${parsed.length} row(s) -- review below, then commit.` +
+              (mojibakeCount > 0
+                ? ` ${mojibakeCount} row(s) look like they have a corrupted character (usually a curly quote/inch mark misread from the source file) -- check those product names carefully before committing.`
+                : "")
           : "No recognizable rows found -- check column headers (Product Name is required).",
       );
       setImportStatusIsError(parsed.length === 0);
