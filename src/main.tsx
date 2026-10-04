@@ -8913,7 +8913,7 @@ function App() {
                 );
               })()
             ) : marketingSubview === "leads" ? (
-              <MarketingLeadsPanel accessToken={authSession?.accessToken} />
+              <MarketingLeadsPanel accessToken={authSession?.accessToken} onConverted={() => authSession && reloadSalesQuotes(authSession.accessToken)} />
             ) : (
               <Marketing projectSites={projectSites} onGetProjectLocationImageUrl={handleGetProjectLocationImageUrl} />
             )}
@@ -26694,7 +26694,7 @@ const MARKETING_LEAD_ACTIVITY_KIND_LABELS: Record<MarketingLeadActivity["kind"],
 // Self-contained (loads its own data on mount, same lazy-per-tab pattern
 // as Support/Engineering) rather than threaded through the top-level App
 // state -- nothing here is needed until a user actually opens this tab.
-function MarketingLeadsPanel({ accessToken }: { accessToken?: string }) {
+function MarketingLeadsPanel({ accessToken, onConverted }: { accessToken?: string; onConverted?: () => void }) {
   const [leads, setLeads] = useState<MarketingLead[]>([]);
   const [activity, setActivity] = useState<MarketingLeadActivity[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -26765,6 +26765,9 @@ function MarketingLeadsPanel({ accessToken }: { accessToken?: string }) {
         setLeads((current) => current.map((entry) => (entry.id === lead.id ? { ...entry, status: "converted", convertedSalesQuoteId: quote.id } : entry)));
         setStatus(`Converted to Sales Quote ${quote.quoteRef ?? quote.id}.`);
         refresh();
+        // The Sales tab's quote list is session-scoped App state; without this
+        // the new quote only appeared after a full page reload.
+        onConverted?.();
       }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not convert this lead.");

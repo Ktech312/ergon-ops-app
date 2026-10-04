@@ -48,6 +48,15 @@ test.describe("Marketing Leads: create, qualify, convert", () => {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(leads) });
     });
 
+    // Regression (2026-10-04 functional walkthrough): converting a lead used
+    // to leave the Sales tab's session-scoped quote list stale until a full
+    // page reload. Count GETs so the test can prove a reload fires on convert.
+    let salesQuoteLoads = 0;
+    await context.route(/\/rest\/v1\/sales_quotes\?/, (route) => {
+      if (route.request().method() === "GET") salesQuoteLoads += 1;
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    });
+
     let convertCalled = false;
     await context.route(/\/rest\/v1\/rpc\/convert_marketing_lead_to_quote/, (route) => {
       convertCalled = true;
@@ -82,10 +91,12 @@ test.describe("Marketing Leads: create, qualify, convert", () => {
 
     const convertButton = page.getByRole("button", { name: "Convert to Sales Quote", exact: true });
     await expect(convertButton).toBeVisible();
+    const loadsBeforeConvert = salesQuoteLoads;
     await convertButton.click();
     await page.waitForTimeout(500);
 
     expect(convertCalled).toBe(true);
+    expect(salesQuoteLoads).toBeGreaterThan(loadsBeforeConvert);
     await expect(page.getByText("Converted to Sales Quote SQ-2026-0099.")).toBeVisible();
     expect(consoleErrors).toEqual([]);
   });
