@@ -5262,8 +5262,26 @@ function App() {
       setNotificationRules([]);
       return;
     }
-    reloadNotifications(authSession.email, authSession.accessToken);
-    loadNotificationRules(authSession.accessToken).then(setNotificationRules).catch(() => {});
+    const email = authSession.email;
+    const accessToken = authSession.accessToken;
+    reloadNotifications(email, accessToken);
+    loadNotificationRules(accessToken).then(setNotificationRules).catch(() => {});
+    // Found in the 2026-10-04 functional walkthrough: the bell was loaded once
+    // per session, so a notification created by someone/something else (a
+    // client's proposal question, a teammate's task assignment) never appeared
+    // until a full page reload. Refresh on a timer while the tab is visible and
+    // whenever the tab regains focus.
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") {
+        reloadNotifications(email, accessToken);
+      }
+    };
+    const interval = window.setInterval(refreshIfVisible, 60_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
   }, [authSession]);
 
   function ruleActive(eventType: string, channel: string) {
@@ -5726,7 +5744,7 @@ function App() {
         if (emailResult.sent) {
           setSubmittalStatus(`Submittal v${created.version} created and emailed to ${clientEmail}.`);
         } else {
-          setSubmittalStatus(`Submittal v${created.version} created. ${emailResult.reason || emailResult.error || "Email was not sent."}`);
+          setSubmittalStatus(`Submittal v${created.version} was created, but the email was NOT sent: ${plainEmailFailureReason(emailResult.reason || emailResult.error)}. Use Copy client link to share it manually.`);
         }
       } catch (emailError) {
         setSubmittalStatus(`Submittal v${created.version} created, but the send request failed. Use Copy client link to share it manually.`);
@@ -5932,7 +5950,7 @@ function App() {
         if (emailResult.sent) {
           setDiscountApprovalReviewStatus(`Approved and emailed to ${request.clientEmail}.`);
         } else {
-          setDiscountApprovalReviewStatus(`Approved. ${emailResult.reason || emailResult.error || "Email was not sent."}`);
+          setDiscountApprovalReviewStatus(`Approved, but the email was NOT sent: ${plainEmailFailureReason(emailResult.reason || emailResult.error)}. Use Copy client link on the proposal to share it manually.`);
         }
       } catch (emailError) {
         setDiscountApprovalReviewStatus(`Approved, but the send request failed. Use Copy client link on the proposal to share it manually.`);
@@ -13196,6 +13214,7 @@ function ShareLinkLifecycleControls({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [showActivity, setShowActivity] = useState(false);
   const [activity, setActivity] = useState<ShareLinkActivity | null>(null);
   const [loadingActivity, setLoadingActivity] = useState(false);
@@ -13254,6 +13273,7 @@ function ShareLinkLifecycleControls({
     }
     setBusy(true);
     setError("");
+    setNotice("");
     const revokeResult = await permanentlyRevokeShareLink(token as string, "", accessToken);
     if (!revokeResult.ok) {
       setBusy(false);
@@ -13270,6 +13290,7 @@ function ShareLinkLifecycleControls({
       const newToken = await generateNewToken();
       onChange({ token: newToken, status: "active" });
       setActivity(null);
+      setNotice("The old link is permanently revoked and a new link is active. Use Copy client link to share it.");
     } catch (genError) {
       setError(genError instanceof Error ? genError.message : "Link revoked, but a new link could not be generated. Use \"Generate new link\" below to try again.");
     } finally {
@@ -13322,6 +13343,7 @@ function ShareLinkLifecycleControls({
         </button>
       </div>
       {error && <small className="error-text" role="alert">{error}</small>}
+      {notice && !error && <small className="muted" role="status">{notice}</small>}
       {showActivity && (
         <div className="share-link-activity">
           {loadingActivity || !activity ? (
