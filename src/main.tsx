@@ -59,6 +59,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { htmlToPlainText, plainEmailFailureReason } from "./text-utils";
 import {
   isRemotePersistenceConfigured,
   acquireTransactionLock,
@@ -5877,7 +5878,11 @@ function App() {
         if (emailResult.sent) {
           setQuoteProposalStatus(`Proposal v${created.version} created and emailed to ${quote.clientEmail}.`);
         } else {
-          setQuoteProposalStatus(`Proposal v${created.version} created. ${emailResult.reason || emailResult.error || "Email was not sent."}`);
+          // The proposal and its client link exist either way; only the email
+          // failed. Say so plainly (and don't dump the provider's raw JSON).
+          setQuoteProposalStatus(
+            `Proposal v${created.version} was created, but the email was NOT sent: ${plainEmailFailureReason(emailResult.reason || emailResult.error)}. Use "Copy client link" below to share it manually.`,
+          );
         }
       } catch (emailError) {
         setQuoteProposalStatus(`Proposal v${created.version} created, but the send request failed. Use Copy client link to share it manually.`);
@@ -31107,7 +31112,7 @@ function ProposalPublicPage({ token }: { token: string }) {
                 <tr key={`${line.item}-${index}`}>
                   <td data-label="Image">{line.imageUrl ? <img className="proposal-bom-thumb" src={line.imageUrl} alt={line.item} /> : null}</td>
                   <td data-label="Item"><strong>{line.item}</strong>{line.manufacturer ? <span className="muted"> - {line.manufacturer}</span> : null}{line.isOptional && <em className="muted"> (optional)</em>}</td>
-                  <td data-label="Description">{line.description || line.notes || "-"}</td>
+                  <td data-label="Description" style={{ whiteSpace: "pre-line" }}>{htmlToPlainText(line.description) || line.notes || "-"}</td>
                   <td data-label="Qty">{line.qty}</td>
                   {hasPricing && <td data-label="Unit Price">{line.unitPrice !== undefined ? money(line.unitPrice) : "-"}</td>}
                   {hasPricing && <td data-label="Line Total">{line.lineTotal !== undefined ? money(line.lineTotal) : "-"}</td>}
