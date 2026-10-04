@@ -9207,6 +9207,18 @@ function NavScroller({ children }: { children: ReactNode }) {
   );
 }
 
+function ActionToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  if (!message) {
+    return null;
+  }
+  return (
+    <div className="action-toast" role="status">
+      <span>{message}</span>
+      <button type="button" aria-label="Dismiss message" onClick={onDismiss}><X size={14} /></button>
+    </div>
+  );
+}
+
 function NavButton({ icon, label, active, onClick, hasUnread, iconOnly }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void; hasUnread?: boolean; iconOnly?: boolean }) {
   return (
     <button className={`nav-button ${active ? "active" : ""} ${iconOnly ? "icon-only" : ""}`} onClick={onClick} title={iconOnly ? label : undefined} aria-label={iconOnly ? label : undefined}>
@@ -13551,7 +13563,18 @@ function Projects({
   const [selectedProjectName, setSelectedProjectName] = useState(initialProject?.name ?? projectSites[0]?.name ?? "");
   const [projectMode, setProjectMode] = useState<"list" | "detail">(initialProject ? "detail" : "list");
   const [showDeletedProjectItems, setShowDeletedProjectItems] = useState(false);
-  const [actionStatus, setActionStatus] = useState("Select a project, add a blank project, or build one from a sales quote.");
+  // Every setActionStatus(...) message below used to be written to state that nothing rendered, so
+  // validation and failure feedback (wrong file type, BOM lines skipped, "submittal not approved") was
+  // invisible. It now surfaces as a dismissible toast (see ActionToast).
+  const [actionStatus, setActionStatus] = useState("");
+  useEffect(() => {
+    if (!actionStatus) {
+      return;
+    }
+    const timer = window.setTimeout(() => setActionStatus(""), 10000);
+    return () => window.clearTimeout(timer);
+  }, [actionStatus]);
+  const visibleActionStatus = /( opened\.|^Back to project list\.)$/.test(actionStatus) ? "" : actionStatus;
   const [galleryProjectName, setGalleryProjectName] = useState<string | null>(null);
   const galleryProject = galleryProjectName ? projectSites.find((project) => project.name === galleryProjectName) ?? null : null;
   const [isExtractingQuote, setIsExtractingQuote] = useState(false);
@@ -14279,6 +14302,7 @@ function Projects({
   if (projectMode === "list") {
     return (
       <div className="content-grid projects-layout">
+        <ActionToast message={visibleActionStatus} onDismiss={() => setActionStatus("")} />
         <div className="segmented-tabs operations-subtabs">
           <button className="active" type="button" onClick={() => onSetActiveDiscussionSection(null)}>Overview</button>
           <button type="button" onClick={() => onSetActiveDiscussionSection("projects")}>Discussion</button>
@@ -14461,6 +14485,7 @@ function Projects({
 
   return (
     <div className="content-grid projects-layout">
+      <ActionToast message={visibleActionStatus} onDismiss={() => setActionStatus("")} />
       <div className="project-detail-header">
         <div className="project-detail-breadcrumb">
           <span>Projects</span> / <strong>{selectedProject.name}</strong>

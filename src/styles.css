@@ -9220,3 +9220,31 @@ body:has(.modal-backdrop) .install-banner {
     display: none;
   }
 }
+
+.action-toast {
+  align-items: flex-start;
+  background: #2b2723;
+  border-radius: 10px;
+  bottom: 84px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  color: #fffaf2;
+  display: flex;
+  font-size: 14px;
+  gap: 12px;
+  left: 50%;
+  line-height: 1.4;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 12px 14px;
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 3000;
+}
+
+.action-toast button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 2px;
+}
