@@ -1,6 +1,7 @@
+/// <reference types="vite/client" />
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import source from "./main.tsx?raw";
+
 
 // Regression guard from the 2026-10-04 functional walkthrough: the Projects
 // screen had a `actionStatus` state that 19 handlers wrote validation and
@@ -12,7 +13,6 @@ import { resolve } from "node:path";
 
 describe("feedback state is always shown to the user", () => {
   it("has no *Status / *Message / *Error / *Notice useState that is set but never read", () => {
-    const source = readFileSync(resolve(process.cwd(), "src/main.tsx"), "utf8");
     const declaration = /const \[(\w*(?:Status|Message|Error|Notice)), (set\w+)\] = useState/g;
     const dead: string[] = [];
     for (const match of source.matchAll(declaration)) {
